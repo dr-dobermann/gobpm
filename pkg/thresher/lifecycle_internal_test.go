@@ -3,6 +3,7 @@ package thresher
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -200,4 +201,66 @@ func TestRunRollsBackOnHubStartFailure(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "couldn't start eventHub")
 	require.Equal(t, NotStarted, th.State())
+}
+
+// TestEngineContextIsRaceFree is FIX-036 T-1: the engine context is published
+// and read as one atomic pair, so a Run racing a Shutdown (and the launch
+// paths reading between them) carries no data race — the defect was a field
+// written unlocked by Run and read under m by Shutdown, which is a race
+// however well the reader locks.
+func TestEngineContextIsRaceFree(t *testing.T) {
+	th, err := New("lc-engine-ctx", WithoutBanner())
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+
+	// One writer (Run) against many readers — the shape the race detector
+	// needs to see. Readers use the same accessor every launch path uses.
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		_ = th.Run(context.Background())
+	}()
+
+	for range 8 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for range 50 {
+				if ctx, ok := th.engineContext(); ok {
+					_ = ctx.Err()
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// A Shutdown after a completed Run must cancel what Run published —
+	// the failure mode of the racy read was a nil cancel that tore down
+	// nothing while reporting Stopped.
+	ec := th.engine.Load()
+	require.NotNil(t, ec, "Run must publish the engine pair")
+
+	require.NoError(t, th.Shutdown(context.Background()))
+	require.Error(t, ec.ctx.Err(), "Shutdown must cancel the published context")
+}
+
+// TestEngineContextRefusedBeforeRun is FIX-036 T-1's sibling: before Run there
+// is no engine lifetime to hang work on, so the accessor says so and the launch
+// paths turn that into a classified error instead of dereferencing nil.
+func TestEngineContextRefusedBeforeRun(t *testing.T) {
+	th, err := New("lc-engine-ctx-unrun")
+	require.NoError(t, err)
+
+	_, ok := th.engineContext()
+	require.False(t, ok)
+
+	err = th.errEngineNotRunning("probe")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "isn't running")
 }

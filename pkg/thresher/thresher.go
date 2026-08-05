@@ -152,8 +152,13 @@ type instanceReg struct {
 //     per-key lock, never under m). State() never takes a per-key lock, so it
 //     adds no RC2 vector.
 type Thresher struct {
-	ctx           context.Context
-	engineCancel  context.CancelFunc
+	// engine holds the engine's own context and its cancel as ONE immutable
+	// pair, published atomically by Run and loaded by every user (FIX-036
+	// §1.1). It is deliberately NOT guarded by m — like state, and for the
+	// same reason: the launch paths read it while m may be held elsewhere,
+	// and a mutex taken on only one side of a shared write is not
+	// synchronization at all, which is what this replaces.
+	engine        atomic.Pointer[engineCtx]
 	eventHub      eventproc.EventHub
 	registrations map[string][]*ProcessRegistration
 	nextVersion   map[string]int
@@ -443,6 +448,34 @@ func (t *Thresher) logStartupConfig() {
 	}
 }
 
+// engineCtx is the engine's derived context and the cancel that ends it — one
+// immutable value so a reader can never see a context from one Run paired with
+// the cancel of another (FIX-036 §1.1). Replaced wholesale on every Run.
+type engineCtx struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+// engineContext returns the context every instance is launched under. ok is
+// false before the first Run — the engine has no lifetime to hang work on yet,
+// and callers turn that into a classified error instead of dereferencing nil.
+func (t *Thresher) engineContext() (context.Context, bool) {
+	ec := t.engine.Load()
+	if ec == nil {
+		return nil, false
+	}
+
+	return ec.ctx, true
+}
+
+// errEngineNotRunning is the classified refusal for work that needs the engine
+// context before Run established one.
+func (t *Thresher) errEngineNotRunning(op string) error {
+	return errs.New(
+		errs.M("%s: the thresher isn't running (state %q)", op, t.State()),
+		errs.C(errorClass, errs.InvalidState))
+}
+
 // State returns current state of the Threasher. It is lock-free (atomic load),
 // so it is safe to call while t.m is held — the property that removes the
 // FIX-002 RC2 re-entrant self-deadlock.
@@ -532,8 +565,17 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// their ctx still propagates here.
 	// engineCancel is stored on the Thresher and called by Shutdown (and both Run
 	// rollbacks) — the engine context lives for the engine's lifetime (SRD-019).
-	t.ctx, t.engineCancel = context.WithCancel(ctx)
-	runCtx := t.ctx
+	// Published as one immutable pair (FIX-036 §1.1); the rollbacks below use
+	// the local `ec` rather than re-loading, so a retry that has already
+	// replaced the pair can never cancel the newer engine.
+	//nolint:gosec // G118: the cancel is retained in the engine pair below and
+	// called by Shutdown and by every Run rollback — it outlives this scope by
+	// design, which is what an engine-lifetime context means.
+	engCtx, engCancel := context.WithCancel(ctx)
+	ec := &engineCtx{ctx: engCtx, cancel: engCancel}
+	t.engine.Store(ec)
+
+	runCtx := ec.ctx
 
 	// Synchronously initialize the EventHub so that any subsequent
 	// RegisterEvent / UnregisterEvent / PropagateEvent call sees a fully
@@ -542,11 +584,11 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// FIX-001 for the race this replaces (previously the hub was spun up
 	// in a goroutine guarded only by a 1ms sleep, which is not a memory
 	// barrier under the Go memory model).
-	if err := t.eventHub.Start(t.ctx); err != nil {
+	if err := t.eventHub.Start(runCtx); err != nil {
 		// The start failed: cancel the engine context we just derived (it is
 		// otherwise abandoned — a retry Run reassigns t.ctx/engineCancel) and roll
 		// the claim back to NotStarted so a retry stays possible.
-		t.engineCancel()
+		ec.cancel()
 		t.state.Store(uint32(NotStarted))
 
 		return errs.New(
@@ -584,7 +626,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 		// engine context is canceled to stop the live hub goroutine and the
 		// state returns to NotStarted. registerStarters is all-or-nothing
 		// (FIX-013 §1.3), so no partial subscriptions linger to unwind here.
-		t.engineCancel()
+		ec.cancel()
 		t.state.Store(uint32(NotStarted))
 
 		return errs.New(
@@ -601,7 +643,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 	if t.cfg.repoSet {
 		if m, ok := t.cfg.Repository().(renv.Migrator); ok {
 			if err := m.Migrate(runCtx); err != nil {
-				t.engineCancel()
+				ec.cancel()
 				t.state.Store(uint32(NotStarted))
 
 				return errs.New(
@@ -619,7 +661,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// Repository: a volatile engine writes no records.
 	if t.cfg.repoSet {
 		if err := t.ensureGroup(runCtx); err != nil {
-			t.engineCancel()
+			ec.cancel()
 			t.state.Store(uint32(NotStarted))
 
 			return err
@@ -703,9 +745,15 @@ func (t *Thresher) Shutdown(ctx context.Context) error {
 	for _, r := range t.instances {
 		regs = append(regs, r)
 	}
-
-	cancel := t.engineCancel
 	t.m.Unlock()
+
+	// The engine pair is atomic, never guarded by m (FIX-036 §1.1): loading it
+	// here — outside the registry lock — is both correct and the only way to
+	// read what Run published without racing it.
+	var cancel context.CancelFunc
+	if ec := t.engine.Load(); ec != nil {
+		cancel = ec.cancel
+	}
 
 	// Cancel the engine context: every instance (launched under t.ctx) observes
 	// it and walks to Terminated; the hub Run unblocks.
@@ -1167,8 +1215,13 @@ func (t *Thresher) launchInstanceFromEvent(
 
 	// The instance owns this context for its whole lifetime; cancel is retained
 	// in instanceReg.stop for later teardown (see launchInstance for why it is
-	// not deferred).
-	ctx, cancel := context.WithCancel(t.ctx)
+	// not deferred). The engine pair is loaded atomically (FIX-036 §1.1).
+	engCtx, ok := t.engineContext()
+	if !ok {
+		return t.errEngineNotRunning("launchInstanceFromEvent")
+	}
+
+	ctx, cancel := context.WithCancel(engCtx)
 	if err := inst.Run(ctx); err != nil {
 		cancel()
 
@@ -1343,7 +1396,13 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error)
 	// in instanceReg.stop for later teardown (engine stop / instance cleanup).
 	// It must NOT be deferred here — inst.Run is non-blocking, so a deferred
 	// cancel would terminate the instance the moment launchInstance returns.
-	ctx, cancel := context.WithCancel(t.ctx)
+	// The engine pair is loaded atomically (FIX-036 §1.1).
+	engCtx, ok := t.engineContext()
+	if !ok {
+		return nil, t.errEngineNotRunning("launchInstance")
+	}
+
+	ctx, cancel := context.WithCancel(engCtx)
 	if err = inst.Run(ctx); err != nil {
 		cancel()
 
