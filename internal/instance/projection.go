@@ -46,7 +46,7 @@ func (inst *Instance) GetTokens() []Token {
 			continue
 		}
 
-		if node, ok := inst.s.Nodes[views[i].NodeID]; ok {
+		if node, ok := inst.nodeByID(views[i].NodeID); ok {
 			out = append(out, Token{Node: node, State: TokenIncident})
 		}
 	}

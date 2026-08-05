@@ -832,12 +832,19 @@ func TestIncidentSubmitOps(t *testing.T) {
 		require.False(t, delivered)
 		require.NoError(t, err)
 
-		// and a canceled caller context reports its own error.
+		// a canceled caller context on a dead loop: select races the two
+		// closed channels, so either verdict — non-delivery or the ctx
+		// error — is correct; what's forbidden is a hang or a bogus success
+		// with delivery.
 		cctx, cancel := context.WithCancel(ctx)
 		cancel()
 
-		_, err = inst.SubmitIncidentOp(cctx, IncidentRetry, incID)
-		require.ErrorIs(t, err, context.Canceled)
+		delivered, err = inst.SubmitIncidentOp(cctx, IncidentRetry, incID)
+		require.False(t, delivered)
+
+		if err != nil {
+			require.ErrorIs(t, err, context.Canceled)
+		}
 	})
 }
 

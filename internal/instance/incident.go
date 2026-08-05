@@ -87,6 +87,10 @@ type incident struct {
 	cause      string   // rendered chain of the failing error
 	causeClass string   // errs class of the failing error, when typed
 	prev       []string // lineage of the failed track
+	// node is the failing node object — captured at raise, re-resolved by
+	// nodeByID after a restore. Nodes inside a sub-process are NOT in the
+	// snapshot's top-level Nodes map, so the id alone is not enough.
+	node flow.Node
 	// data is the failure-time snapshot (ADR-036 §2.1): the variables visible
 	// from the incident's scope at the last raise, so the operator sees what
 	// the attempt saw, immune to later sibling writes. Refreshed per raise.
@@ -263,6 +267,7 @@ func (ls *loopState) raiseIncident(ctx context.Context, t *track) {
 		ls.inst.incidents[inc.id] = inc
 	}
 
+	inc.node = node
 	inc.trackID = t.ID()
 	inc.prev = append(inc.prev[:0], t.prev...)
 	inc.cause = cause
@@ -519,7 +524,7 @@ func (ls *loopState) resolveIncident(
 	ctx context.Context,
 	inc *incident,
 ) error {
-	node, ok := ls.inst.s.Nodes[inc.nodeID]
+	node, ok := ls.incidentNode(inc)
 	if !ok {
 		return errs.New(
 			errs.M("resolve: node %q isn't in the process snapshot",
@@ -640,6 +645,62 @@ func (inst *Instance) deadLetters() int {
 	return n
 }
 
+// incidentNode resolves the incident's failing node: the reference captured
+// at raise while resident, or a recursive lookup after a restore (cached
+// back). Loop goroutine only.
+func (ls *loopState) incidentNode(inc *incident) (flow.Node, bool) {
+	if inc.node != nil {
+		return inc.node, true
+	}
+
+	if n, ok := ls.inst.nodeByID(inc.nodeID); ok {
+		inc.node = n
+
+		return n, true
+	}
+
+	return nil, false
+}
+
+// nodeByID finds a node anywhere in the instance's graph — the snapshot's
+// top-level map first, then recursively through every container (a
+// sub-process's inner nodes are not in that map; the incident machinery is
+// the first consumer that must reach them by id).
+func (inst *Instance) nodeByID(id string) (flow.Node, bool) {
+	if n, ok := inst.s.Nodes[id]; ok {
+		return n, true
+	}
+
+	for _, n := range inst.s.Nodes {
+		if found, ok := nodeInContainers(n, id); ok {
+			return found, true
+		}
+	}
+
+	return nil, false
+}
+
+// nodeInContainers descends into n's inner nodes, if it has any, looking for
+// id.
+func nodeInContainers(n flow.Node, id string) (flow.Node, bool) {
+	c, ok := n.(interface{ Nodes() []flow.Node })
+	if !ok {
+		return nil, false
+	}
+
+	for _, inner := range c.Nodes() {
+		if inner.ID() == id {
+			return inner, true
+		}
+
+		if found, ok := nodeInContainers(inner, id); ok {
+			return found, true
+		}
+	}
+
+	return nil, false
+}
+
 // incidentPolicyCarrier is the capability a node or the engine runtime offers
 // to drive automatic incident retries (SRD-079 §3.5). Read by assertion so
 // neither the flow.Node nor the renv.EngineRuntime contract grows a method.
@@ -671,7 +732,7 @@ func (ls *loopState) resolveIncidentRetryPolicy(
 // deadline and announces it; otherwise the incident stays open for the
 // operator. Loop goroutine only.
 func (ls *loopState) scheduleIncidentRetry(inc *incident, cause error) {
-	node, ok := ls.inst.s.Nodes[inc.nodeID]
+	node, ok := ls.incidentNode(inc)
 	if !ok {
 		return
 	}
@@ -765,7 +826,7 @@ func (ls *loopState) applyDueIncidentRetries(ctx context.Context) {
 // new attempt instead of re-arming (FR-6: failing repeatedly must not reset an
 // SLA clock). Loop goroutine only.
 func (ls *loopState) retryIncident(ctx context.Context, inc *incident) {
-	node, ok := ls.inst.s.Nodes[inc.nodeID]
+	node, ok := ls.incidentNode(inc)
 	if !ok {
 		ls.inst.Logger().Error("incident retry: node not in snapshot",
 			observability.AttrInstanceID, ls.inst.ID(),
@@ -799,10 +860,6 @@ func (ls *loopState) retryIncident(ctx context.Context, inc *incident) {
 
 	ls.transferWatches(inc.trackID, nt)
 
-	// the retry attempt takes over the incident's single scope pin: release
-	// the failed attempt's, let the new track's own spawn count stand in.
-	ls.decScopePinned(ctx, inc.scopePath)
-
 	prevTrackID := inc.trackID
 	inc.trackID = nt.ID()
 	inc.state = incidentOpen
@@ -822,6 +879,12 @@ func (ls *loopState) retryIncident(ctx context.Context, inc *incident) {
 
 	ls.inst.trackCount.Add(1)
 	ls.spawn(ctx, nt)
+
+	// the retry attempt takes over the incident's single scope pin: released
+	// only AFTER the spawn counted the new track in, so the scope never
+	// drains — and completes — in between (the MI per-instance scope would
+	// otherwise close under the retry).
+	ls.decScopePinned(ctx, inc.scopePath)
 }
 
 // transferWatches re-keys the armed boundary watches from the failed attempt
