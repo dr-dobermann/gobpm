@@ -272,9 +272,9 @@ race-stressed at `-count=20`; no regression (existing suite + `examples/*`).
 **Status:** **Accepted** (2026-06-07). The implementation landed (M1–M6) and was
 re-audited against the code with `/check-srd` before the flip — PASS once FR-8
 (non-sync merge) was deferred (above), all other FR/NFR green, `make ci` green,
-cross-doc pins to ADR-001 v.3 consistent. The Russian twin
-([SRD-001-…ru.md](SRD-001-instance-track-token-refactor.ru.md)) is added per the
-bilingual-on-Accepted rule.
+cross-doc pins to ADR-001 v.3 consistent. A Russian twin was added per the
+then-current bilingual-on-Accepted rule (since retired: twins are a SAD/ADR
+privilege, and the SRD twins were removed — see git history).
 
 ## 8. References
 

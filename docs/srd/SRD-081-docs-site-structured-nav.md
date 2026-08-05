@@ -72,6 +72,12 @@ none; the ADR twins link each other (same directory) and English docs via
   the Makefile pin block (`MKDOCS_AWESOME_NAV_VERSION`, enforced by
   `require-mkdocs`), and the Monday pin sweep (`pypi:` entry).
 
+- **FR-10** — Mermaid diagrams render on the site. They do not today
+  because ` ```mermaid ` fences pass through as plain code blocks;
+  `mkdocs.yml` gains the Material-native integration —
+  `pymdownx.superfences` with the `mermaid` custom fence
+  (`format: !!python/name:pymdownx.superfences.fence_code_format`) —
+  which Material bundles (no external CDN).
 - **FR-9** — the READMEs' status line drops its hardcoded release number
   (`README.md:11` and `README.ru.md:13` say `v0.9.0`; `.version` is
   `v0.11.0`): the sentence keeps only the prose ("active development, not
@@ -161,8 +167,10 @@ sections are ordered with; unchanged `make docs-build` / `docs-serve`.
 
 1. **M1 — twin cleanup**: delete SRD/FIX ru twins, `git mv` ADR twins to
    `design/ru/` + link-depth fixes, `SRD-001.md` prose fix; linkcheck green.
-2. **M2 — structured nav**: plugin pin (workflow, Makefile, sweep),
-   `mkdocs.yml` plugins block, the three `.nav.yml` files; V-1…V-5.
+2. **M2 — structured nav + mermaid**: plugin pin (workflow, Makefile,
+   sweep), `mkdocs.yml` plugins block + the mermaid custom fence (FR-10 —
+   84 pages carry ` ```mermaid ` blocks today, all rendering as plain
+   code), the three `.nav.yml` files; V-1…V-5.
 3. **M3 — convention record + README hygiene**: `CLAUDE.md` twin rule,
    `design/index.md` note, `/sdd-fix` skill update, README en/ru status-line
    version drop (FR-9), CHANGELOG entry, linked-docs sweep.
