@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The documentation publishes as a searchable site** (SRD-080):
+  <https://dr-dobermann.github.io/gobpm/> — the developer manual, the design
+  docs, and the BPMN 2.0 extract, built with MkDocs Material from the `docs/`
+  tree (`camunda7/` stays internal). A new `docs` workflow validates every
+  docs-touching PR with `mkdocs build --strict` and redeploys the site on
+  every docs-touching push to `master`; links that leave `docs/` are
+  rewritten to GitHub URLs at build time, so the Markdown sources stay
+  relative and in-repo reading is unchanged. Locally: `make docs-build` /
+  `make docs-serve` (pinned `mkdocs-material`, guarded like the Go tools).
+  The Monday pin sweep now also covers the new PyPI pin and the
+  previously-unswept `linkcheck`, and bumps only the Makefile pin line
+  itself instead of every occurrence of the version string.
 - **A durable PostgreSQL repository** (`adapters/postgres`, SRD-078,
   closes #276). `postgres.New(db)` over a user-owned `*sql.DB` stores
   instance checkpoints in a namespaced schema the adapter migrates

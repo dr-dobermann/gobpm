@@ -1,6 +1,6 @@
 # GoBPM Documentation Index
 
-This file provides an organized index to all documentation throughout the GoBPM project. Documentation is located alongside the code it describes, following the principle of keeping documentation close to implementation.
+This file provides an organized index to all documentation throughout the GoBPM project. Documentation is located alongside the code it describes, following the principle of keeping documentation close to implementation. The `docs/` tree is also published as a searchable site: <https://dr-dobermann.github.io/gobpm/>.
 
 ## 📋 Quick Links
 

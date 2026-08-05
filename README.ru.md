@@ -241,6 +241,11 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 
 ## Документация
 
+Руководства, design-документы и BPMN 2.0-справочник публикуются как сайт с
+поиском: **<https://dr-dobermann.github.io/gobpm/>** — пересобирается при
+каждом merge, затрагивающем документацию. Те же страницы файлами, для чтения
+прямо в репозитории:
+
 - [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) и [ADR'ы](docs/design/) — концепция
 - [Руководства пользователя](docs/guides/index.md) — построение и запуск процессов, каждый элемент BPMN, с исполняемым кодом
 - [Работа с данными процесса](docs/guides/data/index.md) — руководство по структурным данным (пути, ярусы, нативные структуры, наблюдение изменений; EN)

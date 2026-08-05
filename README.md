@@ -451,6 +451,10 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 
 ## Documentation
 
+The manual, the design docs, and the BPMN 2.0 reference are published as a
+searchable site at **<https://dr-dobermann.github.io/gobpm/>** — rebuilt on
+every docs-touching merge. The same pages as files, for in-repo reading:
+
 - [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) and [ADRs](docs/design/) — the conception
 - [User Guides](docs/guides/index.md) — build and run processes, every BPMN element, with runnable code
 - [Working with process data](docs/guides/data/index.md) — the structural-data guide (paths, tiers, native structs, change observation)
