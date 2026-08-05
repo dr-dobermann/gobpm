@@ -298,8 +298,38 @@ func TestDTableE2E(t *testing.T) {
 			link(t, start, brt)
 			link(t, brt, end)
 
-			_, werr := runBRT(t, proc, deployedDiscountEngine(t))
-			require.Error(t, werr)
-			require.Contains(t, werr.Error(), "total")
+			// revised by SRD-079 FR-1: the missing datum is a technical
+			// failure — it opens an incident carrying the cause instead of
+			// terminating the instance.
+			cause := runBRTToIncident(t, proc, deployedDiscountEngine(t))
+			require.Contains(t, cause, "total")
 		})
+}
+
+// runBRTToIncident wires eng into a thresher, runs proc to its incident and
+// returns the incident's cause.
+func runBRTToIncident(
+	t *testing.T, proc *process.Process, eng *dtable.Engine,
+) string {
+	t.Helper()
+
+	th, err := thresher.New("test-"+proc.ID(),
+		thresher.WithoutBanner(), thresher.WithRuleEngine(eng))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, th.Run(ctx))
+
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return h.OpenIncidents() == 1 },
+		5*time.Second, 5*time.Millisecond,
+		"the rule failure must open an incident")
+
+	return h.Incidents()[0].Cause
 }
