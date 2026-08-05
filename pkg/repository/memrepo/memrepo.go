@@ -219,6 +219,13 @@ func (r *Repo) GroupExists(_ context.Context, group string) (bool, error) {
 	return ok, nil
 }
 
+// ClusterCompatibility declares memrepo unfit to back a multi-engine
+// deployment (renv.ClusterAware, SRD-078 FR-3): the store lives in one
+// process, so engines on other nodes can never see its records.
+func (r *Repo) ClusterCompatibility() (bool, string) {
+	return false, "in-memory; state is not shared across nodes"
+}
+
 // evictTerminalLocked drops oldest terminal records past the cap. Caller holds mu.
 func (r *Repo) evictTerminalLocked() {
 	if r.maxTerminal <= 0 {

@@ -55,6 +55,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
 	"github.com/dr-dobermann/gobpm/pkg/script"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
@@ -590,6 +591,25 @@ func (t *Thresher) Run(ctx context.Context) error {
 			errs.M("couldn't register instance-starters at startup"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
+	}
+
+	// The storage migration hook (SRD-078 FR-3, ADR-033 §2.7): a
+	// Repository that implements renv.Migrator prepares its own objects
+	// BEFORE the group registry is touched and recovery lists anything —
+	// a half-created schema must never look like an empty store. Its
+	// error aborts the start loud.
+	if t.cfg.repoSet {
+		if m, ok := t.cfg.Repository().(renv.Migrator); ok {
+			if err := m.Migrate(runCtx); err != nil {
+				t.engineCancel()
+				t.state.Store(uint32(NotStarted))
+
+				return errs.New(
+					errs.M("the repository migration failed"),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.E(err))
+			}
+		}
 	}
 
 	// The engine group (SRD-078 FR-2, ADR-033 v.3 §2.8): establish it in
