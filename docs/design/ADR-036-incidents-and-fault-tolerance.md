@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-08-04 |
 | Owner | Ruslan Gabitov |
@@ -103,8 +103,11 @@ Consequences, stated as contract:
   shipping branch.
 - **The instance stays alive.** Its condition becomes *active with
   incidents* — a queryable predicate, not a terminal state. An instance
-  whose only remaining continuations are open incidents holds no goroutine
-  at all and is quiescent like any all-waiting instance (ADR-007 v.2.1).
+  whose only remaining continuations are **operator-waiting** incidents
+  holds no goroutine at all and is quiescent like any all-waiting instance
+  (ADR-007 v.2.1); one holding a *scheduled* retry stays resident until the
+  deadline — its dehydration is the wait-holder integration of a later
+  slice, and either way there is never a goroutine per retry.
 - **Completion waits.** An instance cannot complete while an incident is
   open on it; resolution (§2.6) is what un-sticks it.
 
@@ -220,10 +223,10 @@ honest majority: the operator fixed the world and the process may proceed.
 ### 2.7 Observability
 
 The reserved `Incident` phase in the ADR-013 v.2 taxonomy activates:
-raised, retry-scheduled, retried, resolved, dead-lettered — each a fact on
-the stream, carrying the incident's identity and cause class. The stream
-remains announcement, not record (§2.1): a lost fact loses a notification,
-never the incident.
+raised, retry-scheduled, retried, resolved, dead-lettered, overtaken — each a
+fact on the stream, carrying the incident's identity and cause class. The
+stream remains announcement, not record (§2.1): a lost fact loses a
+notification, never the incident.
 
 ## 3. Grounding
 

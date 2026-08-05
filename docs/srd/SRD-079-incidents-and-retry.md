@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-04 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-036 v.1](../design/ADR-036-incidents-and-fault-tolerance.md) — the whole decision |
@@ -370,17 +370,62 @@ signature; `repository.Status` is append-only (wire-compatible, no
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-11 implemented and demonstrated by §6
-- [ ] NFR-1: `go.mod` unchanged
-- [ ] NFR-2/NFR-3: no state mutation off the loop; no per-retry goroutine
-- [ ] NFR-4: diff coverage ≥95% on touched lines; `make ci` green incl. `-race`
-- [ ] ADR-036 status flip to Accepted at the PR handover (with its RU twin)
-- [ ] `examples/incident-retry` runs under the CI timeout asserting its outcome
-- [ ] `/check-srd` PASS
+- [x] FR-1…FR-11 implemented and demonstrated by §6
+- [x] NFR-1: `go.mod` unchanged
+- [x] NFR-2/NFR-3: no state mutation off the loop; no per-retry goroutine
+- [x] NFR-4: diff coverage ≥95% on touched lines; `make ci` green incl. `-race`
+- [x] ADR-036 status flip to Accepted at the PR handover (with its RU twin)
+- [x] `examples/incident-retry` runs under the CI timeout asserting its outcome
+- [x] `/check-srd` PASS
 
 ## §10 Implementation summary
 
-_To be filled after the milestones land._
+Landed on `feat/incidents-retry`, the seven planned milestones plus the
+linked-docs sync:
+
+| Milestone | Commit | What landed |
+|---|---|---|
+| Docs | `400b687`, `a2d9b5e` | ADR-036 v.1 (with the scoping amendments), this SRD |
+| M1 — the raise path | `928914d` | `TrackIncident`, the incident entity, the three-way taxonomy, the incident park, `KindFault`/`PhaseIncident` facts; FR-11's `StepFailed` and `trackPhase` fixes |
+| M2 — visibility | `2420add` | `TokenIncident`, `Incidents()` views, the failure-time snapshot, scope pinning |
+| M3 — persistence | `4fa2e99` | checkpoint schema 3, `StatusActiveIncidents`, restore, `ListInFlight` (FR-11) |
+| M4 — retry | `713dc1c` | both policy options, the single-timer scheduler, the respawn with transferred watches, close-by-progress |
+| M5 — resolution | `be9cfbb` | the loop's operator channel, resolve/drop/overtaken, the handle ops with the parked-instance rebuild (`WithPendingIncidentOp`) |
+| M6 — contracts | `36cd001` | T-11/T-12/T-13 green through the real machinery |
+| M7 — example + docs | `573d3f6`, `8e13275` | `examples/incident-retry`, the incidents guide, the front-door sync |
+
+Deltas against the draft, decided at their gates:
+
+- **The taxonomy grew three carve-outs** (§2, ADR-036 §2.1): an Error End
+  Event's uncaught throw stays fatal (the modeled outcome), and a **child
+  instance propagates every uncaught failure** across the call boundary —
+  incidents exist only at top-level instances, the caller's Call Activity
+  being the retry unit ("the whole child is a single task").
+- **A dropped incident blocks completion**: the dead letter keeps its scope
+  pin and the instance parks `Active` until the operator's next act — it
+  never silently settles `Completed` past a dead letter.
+- **Ops on a parked instance ride the rebuild** as a pending request (the
+  `PendingTrigger` shape), applied before the fresh loop's park decision.
+- **The incident carries its node object** (with a recursive `nodeByID`
+  fallback after restore): nodes inside a sub-process are not in the
+  snapshot's top-level map — the MI contract test caught that, along with a
+  pin-release-before-spawn ordering bug in the retry.
+- Fixed on the way, per the no-pre-existing-errors rule: the `SnapshotAt`
+  clone-shape gap (`Property`/`DataObject` shadow `Clone`), the call
+  watcher's loop-exit-as-completion read (`childProcess.Done` → the settled
+  signal), `StepFailed` never assigned, `trackPhase` missing
+  `TrackDehydrated`, and `ListInFlight`'s exact-status filter.
+
+**Scoped out, recorded**: boundary watches over incident nodes do not yet
+persist across a restart (`boundaryRecords` skips non-live hosts) — in-memory
+they stay armed (T-11); the cross-restart re-arm belongs with the wait-holder
+integration of a later slice. The dehydration of an instance holding only a
+*scheduled* retry is likewise deferred: such an instance stays resident (one
+loop goroutine total; NFR-3's no-per-retry-goroutine holds).
+
+Verification: `make ci` green end to end; per-milestone diff-coverage
+100.0 / 98.7 / 96.7 / 98.4 / 96.7 / 96.1%, all above the 95% gate;
+`go.mod` unchanged (NFR-1); `/check-srd` audit PASS.
 
 ## Open questions
 
