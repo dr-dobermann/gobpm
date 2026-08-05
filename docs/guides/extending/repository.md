@@ -21,8 +21,9 @@ recovers what the store says is unfinished (see
 
 ## The Repository contract
 
-`repository.Repository` is four methods — a compare-and-set store over
-`InstanceRecord` plus the recovery listing:
+`repository.Repository` is a compare-and-set store over
+`InstanceRecord`, the group-scoped recovery listing, and the
+engine-group registry (ADR-033 v.3 §2.8):
 
 ```go
 type Repository interface {
@@ -34,18 +35,27 @@ type Repository interface {
     Load(ctx context.Context, id string) (InstanceRecord, bool, error)
     // Delete removes the record for id (a no-op if it is absent).
     Delete(ctx context.Context, id string) error
-    // ListInFlight returns the IDs of the CLAIMABLE in-flight instances:
-    // non-terminal, not suspended, and with no live lease at now.
-    ListInFlight(ctx context.Context, now time.Time) ([]string, error)
+    // ListInFlight returns the IDs of the CLAIMABLE in-flight instances
+    // of the given engine group: non-terminal, not suspended, and with
+    // no live lease at now.
+    ListInFlight(
+        ctx context.Context, group string, now time.Time,
+    ) ([]string, error)
+    // RegisterGroup establishes the engine group, idempotently.
+    RegisterGroup(ctx context.Context, group string) error
+    // GroupExists reports whether the group is established.
+    GroupExists(ctx context.Context, group string) (bool, error)
 }
 ```
 
 | Method | Implement it to |
 |---|---|
-| `Save` | **compare-and-set** upsert: accept only when `rec.RecVersion` equals the stored version (0 creates); increment the stored version on success; reject a mismatch with an `errs.ConcurrentUpdate`-classified error — the split-brain fencing every adapter implements identically. |
+| `Save` | **compare-and-set** upsert: accept only when `rec.RecVersion` equals the stored version (0 creates); increment the stored version on success; reject a mismatch with an `errs.ConcurrentUpdate`-classified error — the split-brain fencing every adapter implements identically. Reject a record with an empty `Group` or an unregistered one. |
 | `Load` | fetch a **value copy** by id; return `false` (not an error) when absent. |
 | `Delete` | remove by id; a no-op when the id is unknown — do not error. |
-| `ListInFlight` | list only the **claimable** records: `StatusActive` with an expired-or-absent lease at `now` (`rec.Lease.Expired(now)`). Suspended and live-leased records never list. |
+| `ListInFlight` | list only the given group's **claimable** records, by EXCLUSION: not terminal, not `StatusSuspended`, and with an expired-or-absent lease at `now` (`rec.Lease.Expired(now)`). The exclusion form matters — the status vocabulary is append-only, and a status your adapter has never heard of must still list. An empty group fails loud; an unregistered one lists empty. |
+| `RegisterGroup` | establish the group in your registry, idempotently; reject an empty name loud. |
+| `GroupExists` | report membership — the assertion behind `WithExistingEngineGroup`'s "join existing groups only". |
 
 ## The record
 
@@ -59,6 +69,8 @@ type Lease struct {
 type InstanceRecord struct {
     ID         string
     Payload    []byte // the schema-versioned checkpoint document, opaque
+    Group      string // the creator engine's group — never empty
+    Tenant     string // "" = the group's default tenant
     Lease      Lease
     RecVersion int64  // the CAS version
     Status     Status
@@ -70,6 +82,8 @@ type InstanceRecord struct {
 | `ID` | the instance id — your primary key. |
 | `Payload` | the engine's **schema-versioned checkpoint document**, opaque bytes. The serialization model is the engine's; the storage's job is bytes. Store and return **copies** — never alias the caller's slice. |
 | `Lease` | the **ownership claim** (ADR-033 §2.8): the engine running the instance, its fencing incarnation, and the claim's expiry. A zero lease means "unowned"; `Lease.Expired(now)` reports whether it still holds. |
+| `Group` | the creator engine's group (ADR-033 v.3 §2.8) — **never empty**: an ungrouped engine forms a single-engine group under its own id, and a store MUST reject a group-less record. |
+| `Tenant` | the owning tenant (ADR-033 v.3 §2.7). `""` means the group's default tenant; resolution is the store's concern (the postgres adapter resolves it to the group's flag-designated default row). The engine stamps `""` until the Multi-tenancy ADR lands. |
 | `RecVersion` | the compare-and-set version — see `Save`. |
 | `Status` | `StatusActive`, `StatusSuspended` (in-flight, refuses triggers — reserved for the suspend/resume slice), or terminal `StatusCompleted` / `StatusTerminated` (`Status.IsTerminal()`). |
 
@@ -87,6 +101,38 @@ that this store is the state of record, so instances checkpoint into it
 and `Run` recovers claimable records. The zero-config default (no
 `WithRepository`) keeps the in-memory `memrepo` as a dormant slot —
 volatile, zero overhead.
+
+## Prove it: the conformance suite
+
+Every adapter runs the same published contract suite the bundled
+stores pass — one truth, N backends:
+
+```go
+func TestConformance(t *testing.T) {
+    repositorytest.Conformance(t, func(t *testing.T) repository.Repository {
+        return newYourStore(t) // a fresh, isolated store per subtest
+    })
+}
+```
+
+`pkg/repository/repositorytest` covers the CAS discipline, group
+scoping, the registry, lease and tenant round-trips, payload isolation
+and the listing filters. A green run is the definition of "implements
+the contract".
+
+## Optional capabilities
+
+Two `pkg/renv` interfaces an adapter may additionally satisfy —
+structurally, no import needed:
+
+- **`renv.Migrator`** — `Migrate(ctx) error`: prepare your own objects
+  in the shared, user-owned backend, idempotently. `thresher.Run`
+  calls it on the wired repository **before** recovery; an error
+  aborts the start loud.
+- **`renv.ClusterAware`** — `ClusterCompatibility() (bool, string)`:
+  declare whether the store may back a multi-engine deployment, with
+  the reason. `memrepo` says `(false, "in-memory; state is not shared
+  across nodes")`; the postgres adapter says `(true, …)`.
 
 ## Implementation notes for a durable adapter
 
@@ -124,7 +170,9 @@ the engine that owned it died, and a live engine keeps waking it from memory.
 
 ## See also
 
-- Reference implementation: `repository/memrepo`
+- Reference implementations: `repository/memrepo` (in-memory) and
+  [`adapters/postgres`](../../../adapters/postgres/) (durable, with
+  embedded migrations)
 - Operating guide: [Persistence & recovery](../operating/persistence.md)
 - Related: [Custom Data Store](data-store.md) · [The engine (Thresher)](../concepts/engine.md)
 - Design: [ADR-033 — Persistence & State](../../design/ADR-033-persistence-and-state.md)

@@ -27,6 +27,75 @@ The zero-config engine (no `WithRepository`) stays exactly as before:
 holds the state of record": every instance checkpoints into it, and
 `Run` recovers what the store says is unfinished.
 
+## Running on PostgreSQL
+
+The durable adapter lives in its own module,
+[`adapters/postgres`](../../../adapters/postgres/). The database
+handle is **yours** — pool, credentials and driver stay with the
+application; the adapter imports `database/sql` only:
+
+```go
+import (
+    _ "github.com/jackc/pgx/v5/stdlib" // or any database/sql driver
+
+    "github.com/dr-dobermann/gobpm/adapters/postgres"
+)
+
+db, _ := sql.Open("pgx", os.Getenv("DATABASE_URL"))
+
+repo, _ := postgres.New(db,
+    postgres.WithSchema("gobpm"))       // the namespaced schema (default)
+
+th, _ := thresher.New("engine-A",
+    thresher.WithRepository(repo))
+```
+
+The adapter implements `renv.Migrator`, so **`Run` migrates the schema
+itself** before recovery: embedded, versioned SQL applied one file per
+transaction under an advisory lock (concurrently booting engines
+serialize), recorded in a `schema_version` ledger; re-running is a
+no-op. A migration failure aborts the start loud — a half-created
+schema never looks like an empty store.
+
+The schema holds four tables: `groups` (the engine-group registry),
+`tenants` (per group, with a flag-designated default the database
+limits to one per group), `instances` (the checkpoints; records
+reference their group and tenant by foreign key), and
+`schema_version`. There is deliberately **no CHECK constraint on
+`status`** — the vocabulary is append-only, and DDL must not reject a
+status a newer engine writes.
+
+For development and the test suite, `make pg-up` runs a disposable
+`postgres:17-alpine` container and prints the
+`GOBPM_PG_TEST_DSN` export the postgres-gated tests read (unset, they
+skip; `make pg-down` stops it). **`make ci` expects that DSN** — with
+it unset the adapter's tests skip and the diff-coverage gate goes red
+on adapter changes, which is the loud version of "you forgot the
+database". CI provides the same database as a service container.
+
+## Engine groups
+
+Recovery is scoped to an **engine group** (ADR-033 v.3 §2.8): an
+engine lists, claims and recovers only its own group's instances.
+
+- **Ungrouped = solo.** Without options, an engine forms a
+  single-engine group under its **own id** — clustering is explicit
+  opt-in, never accidental. A restarted engine with the same id
+  recovers its own instances; a differently-named neighbor over the
+  same store sees nothing.
+- **`thresher.WithEngineGroup("billing")`** — create-or-join: `Run`
+  establishes the group in the store's registry and every checkpoint
+  carries it. Engines sharing the group name over one store form a
+  recovery cluster.
+- **`thresher.WithExistingEngineGroup("billing")`** — join-only: `Run`
+  refuses to start when the group is not already established. This is
+  the typo-guard for fleet members — a misspelled group name refuses
+  loud instead of silently minting a fresh one-engine partition. It
+  requires an explicit `WithRepository`.
+
+A record reached by id across groups (a wiring mistake, not a race) is
+refused loud on the claim, on both the recovery and the wake paths.
+
 ## What is written, and when
 
 One **schema-versioned document per instance**, written by the
@@ -82,6 +151,8 @@ on the zombie, never as corrupted state.
 
 Several engines MAY share one repository (ADR-033 §2.8). The rules:
 
+- engines that should recover each other share an **engine group**
+  (`WithEngineGroup`, above); groups never cross-list;
 - an instance is **owned by a lease** (engine id + incarnation +
   expiry); only its owner runs it;
 - a crashed engine's instances become claimable when the lease lapses

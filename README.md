@@ -243,6 +243,19 @@ with CAS fencing keep zombie engines from ever corrupting state. The
 zero-config engine stays volatile at zero overhead. The guide:
 [**docs/guides/operating/persistence.md**](docs/guides/operating/persistence.md).
 
+Durability now has a production backend:
+[**`adapters/postgres`**](adapters/postgres/) stores the checkpoints in a
+user-owned PostgreSQL database (`postgres.New(db)` over your `*sql.DB`;
+the adapter migrates its own namespaced schema at `Run`). Engines that
+should recover each other share an **engine group**
+(`thresher.WithEngineGroup`; join-only assertion via
+`WithExistingEngineGroup`) — an ungrouped engine is a solo group under
+its own id, so clustering is explicit, never accidental. The storage is
+tenant-ready: each record carries its tenant, with a flag-designated
+default per group enforced by the database. Any adapter proves itself
+against the published conformance suite
+(`pkg/repository/repositorytest`) — the same one `memrepo` passes.
+
 The same switch buys **dehydration** — see
 [`examples/dehydration/`](examples/dehydration/): an instance whose every
 live track sits on a long wait releases *all* of its goroutines, its loop
@@ -445,7 +458,7 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 - [Activity iteration](docs/guides/iteration/index.md) — Standard Loop + Multi-Instance (sequential & parallel): loopCondition / testBefore / loopMaximum, cardinality / collection fan-out / completionCondition (stop vs. cancel), loopCounter & numberOf* attributes, leaf-in-place vs. composite / concurrent scopes
 - [Composition](docs/guides/subprocesses/index.md) — sub-processes (nested scopes) & call activities (child-instance reuse boundary): the §13.3.4 shapes, data visibility/isolation, versioning, scope-wide interruption
 - [Interchange converters](docs/guides/extending/converters.md) — import and export BPMN 2.0 XML: the format-agnostic `convert` seam, blank-import registration, id preservation as the version key, unsupported-element feedback, semantic round-trip
-- [Persistence & recovery](docs/guides/operating/persistence.md) — instance checkpoints & restart recovery: arming with `WithRepository`, per-wait recovery semantics (overdue timers fire once), ownership leases + CAS fencing for shared stores, stable element ids as the deployment-parity contract
+- [Persistence & recovery](docs/guides/operating/persistence.md) — instance checkpoints & restart recovery: arming with `WithRepository`, per-wait recovery semantics (overdue timers fire once), ownership leases + CAS fencing for shared stores, engine groups, the PostgreSQL adapter, stable element ids as the deployment-parity contract
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstreams + milestones
 - [Conformance scope](docs/bpmn-spec/conformance.md) and [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — what's implemented vs what remains, mapped to issues
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)

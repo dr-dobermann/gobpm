@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A durable PostgreSQL repository** (`adapters/postgres`, SRD-078,
+  closes #276). `postgres.New(db)` over a user-owned `*sql.DB` stores
+  instance checkpoints in a namespaced schema the adapter migrates
+  itself at `Run` (embedded versioned SQL under an advisory lock; a
+  failure aborts the start loud). CAS saves and ownership leases make
+  the fencing a database guarantee — proven by a real zombie-engine
+  test and a kill-and-resume e2e over postgres. Recovery is now scoped
+  to **engine groups**: records carry their creator's group, an
+  ungrouped engine is a solo group under its own id, and
+  `thresher.WithEngineGroup` / `WithExistingEngineGroup` (join-only,
+  the typo-guard) form explicit recovery clusters over one store. The
+  storage is tenant-ready (ADR-033 v.3): each record carries its
+  tenant, `""` resolves to the group's flag-designated default row,
+  and a partial unique index enforces one default per group. New
+  `pkg/renv` capabilities `Migrator` and `ClusterAware`; a published
+  conformance suite (`pkg/repository/repositorytest`) every adapter
+  runs — memrepo and postgres both pass it. `make pg-up`/`pg-down`
+  provide the disposable test database; CI runs the postgres paths on
+  every PR.
+
 - **A timer can now wait for a plain duration.** `timeDuration` alone —
   BPMN's one-shot relative timer, *"wait five minutes, then fire"* (§10.5.5,
   Table 10.101) — was unconstructible: the guard required a `timeCycle` beside
@@ -59,6 +79,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offending attributes, and cites Table 10.101 where the standard is the reason.
 
 ### Fixed
+
+- **memrepo could evict a live instance.** A terminal record re-saved
+  back to a non-terminal status stayed in the terminal-eviction
+  ledger, so cap pressure could evict an Active instance (audit
+  remediation row 11). It now leaves the ledger on the transition —
+  an Active record is never evicted (SRD-078 FR-9).
 
 - **`examples/usertask` was compiled but never run.** It had no `go.mod`, so it
   fell into the root module instead of being one of the example modules — and
