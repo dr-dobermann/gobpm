@@ -6,7 +6,7 @@
 | Date | 2026-08-05 |
 | Owner | Ruslan Gabitov |
 | Implements | — (standalone tooling landing; no parent ADR — the engine concept is untouched) |
-| Related | [FIX-034](../fix/FIX-034-gate-blind-spots-and-doc-drift.md) (the blocking `linkcheck` gate this site build complements); [FIX-029](../fix/FIX-029-ci-runs-examples.md) (the CI split whose workflow conventions this follows) |
+| Related | the blocking `linkcheck` gate this site build complements, and the CI core/examples workflow split whose conventions `docs.yml` follows (both landed by earlier one-shot fix records; per the hierarchy rule an SRD does not reference FIX docs downward) |
 
 ## §1 Background
 
@@ -30,7 +30,7 @@ the current tree:
 Any published subset of `docs/` leaves hundreds of dead links; links that
 escape `docs/` entirely can never resolve on a docs site and must be rewritten
 to GitHub URLs at build time. The repository's `make ci` already runs a
-blocking relative-link checker (FIX-034), so the source tree is known-clean —
+blocking relative-link checker (`make link-check`), so the source tree is known-clean —
 the site build must preserve that property, not erode it.
 
 "Kept up to date" must be a property of CI, not a ritual: the site redeploys
@@ -172,7 +172,7 @@ repository"). SRD/FIX one-shots publish as the historical records they are.
 ### §4.3 Navigation — auto-derived in v1
 
 A hand-maintained `nav:` over 337 files is unmaintainable and would go stale
-at the first added page (the exact drift class FIX-034 exists to kill).
+at the first added page (the exact drift class the link gate exists to kill).
 Plugins (`literate-nav`, `awesome-pages`) can curate ordering but add
 dependencies and per-directory dot-files; deferred until the auto sidebar
 proves inadequate in practice. The curated index pages already provide the
@@ -219,8 +219,10 @@ No Go code, so verification is build-level, each step mechanical:
 
 ## §8 Cross-doc references
 
-Upward/sideways only: FIX-034 and FIX-029 (unversioned one-shots, cited as
-historical records). No ADR/SAD contract is touched; no version bumps.
+None. This SRD implements no ADR and pins no versioned doc; the two related
+one-shot fix records (link gate, CI split) are described in prose only —
+an SRD does not reference FIX docs downward. No ADR/SAD contract is
+touched; no version bumps.
 
 ## §9 Definition of Done
 
