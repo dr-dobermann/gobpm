@@ -841,6 +841,11 @@ func (ls *loopState) applyFailed(ctx context.Context, ev trackEvent) {
 		} else {
 			ls.raiseIncident(ctx, ev.track)
 			incident = true
+
+			// the raise is a persist point of its own (FR-5): evFailed is
+			// not in checkpointTransitions, so the incident checkpoint is
+			// requested explicitly under its own kind.
+			ls.maybeCheckpoint(ctx, evIncident)
 		}
 	}
 

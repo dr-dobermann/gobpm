@@ -40,6 +40,9 @@ var checkpointTransitions = map[trackEventKind]bool{
 	evTaskWaiting: true,
 	evJobWaiting:  true,
 	evScopeOpen:   true,
+	// an incident raise is a persist point (SRD-079 FR-5): an incident that
+	// vanished with the process would be no incident at all.
+	evIncident: true,
 }
 
 // liveTrackStates lists the states a track restores from — everything
@@ -100,7 +103,7 @@ func (ls *loopState) checkpointNow(ctx context.Context) {
 
 	rec := repository.InstanceRecord{
 		ID:      inst.ID(),
-		Status:  persistedStatus(inst.State()),
+		Status:  persistedStatusOf(inst),
 		Payload: payload,
 		// The partition keys (SRD-078 FR-1/FR-2): the engine's group;
 		// the tenant stays the default ("") until the Multi-tenancy ADR
@@ -184,6 +187,7 @@ func (ls *loopState) captureDocument(
 	}
 
 	doc.Boundaries = ls.boundaryRecords()
+	doc.Incidents = inst.incidentRecords()
 
 	return doc, ""
 }
@@ -313,6 +317,21 @@ func persistedStatus(s State) repository.Status {
 	}
 
 	return repository.StatusActive
+}
+
+// persistedStatusOf is the incident-aware persisted status (SRD-079 FR-5,
+// ADR-036 §2.5): an in-flight instance with open incidents persists as
+// StatusActiveIncidents, so "what needs an operator" is answerable from the
+// store without loading payloads. The runtime State vocabulary is untouched —
+// the condition is a predicate, not a state (SRD-079 §4.2). Loop goroutine
+// only (it reads the loop-owned incident set).
+func persistedStatusOf(inst *Instance) repository.Status {
+	st := persistedStatus(inst.State())
+	if st == repository.StatusActive && inst.openIncidents() > 0 {
+		return repository.StatusActiveIncidents
+	}
+
+	return st
 }
 
 // reportCheckpointDeferred emits the FR-8 degradation fact: the

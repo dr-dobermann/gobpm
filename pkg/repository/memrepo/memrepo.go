@@ -171,11 +171,10 @@ func (r *Repo) ListInFlight(
 	ids := make([]string, 0, len(r.records))
 	for id, rec := range r.records {
 		// Claimable is defined by EXCLUSION — non-terminal and not
-		// suspended — so a growing status vocabulary (e.g. an
-		// incidents-holding non-terminal status) lists automatically.
+		// suspended — so a growing status vocabulary (e.g. SRD-079's
+		// StatusActiveIncidents) lists automatically.
 		if rec.Group == group &&
 			!rec.Status.IsTerminal() &&
-			rec.Status != repository.StatusSuspended &&
 			rec.Lease.Expired(now) {
 			ids = append(ids, id)
 		}

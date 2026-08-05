@@ -295,6 +295,100 @@ func (ls *loopState) raiseIncident(ctx context.Context, t *track) {
 	})
 }
 
+// incidentStateFromName is String()'s inverse, for restore.
+var incidentStateFromName = func() map[string]incidentState {
+	m := make(map[string]incidentState, len(incidentStateNames))
+	for st, n := range incidentStateNames {
+		m[n] = incidentState(st)
+	}
+
+	return m
+}()
+
+// incidentRecords serializes the incident table for the checkpoint (SRD-079
+// §3.3) — open AND closed, ordered by first raise (then id): a dead-lettered
+// incident's record is the durable dead letter. Loop goroutine only.
+func (inst *Instance) incidentRecords() []checkpoint.IncidentRecord {
+	if len(inst.incidents) == 0 {
+		return nil
+	}
+
+	out := make([]checkpoint.IncidentRecord, 0, len(inst.incidents))
+
+	for _, inc := range inst.incidents {
+		out = append(out, checkpoint.IncidentRecord{
+			FirstAt:    inc.firstAt,
+			LastAt:     inc.lastAt,
+			ID:         inc.id,
+			NodeID:     inc.nodeID,
+			NodeName:   inc.nodeName,
+			TrackID:    inc.trackID,
+			ScopePath:  string(inc.scopePath),
+			ScopeSeg:   inc.scopeSeg,
+			Cause:      inc.cause,
+			CauseClass: inc.causeClass,
+			State:      inc.state.String(),
+			Prev:       inc.prev,
+			Data:       inc.data,
+			Attempts:   inc.attempts,
+		})
+	}
+
+	slices.SortFunc(out, func(a, b checkpoint.IncidentRecord) int {
+		if c := a.FirstAt.Compare(b.FirstAt); c != 0 {
+			return c
+		}
+
+		return strings.Compare(a.ID, b.ID)
+	})
+
+	return out
+}
+
+// restoreIncidents rebuilds the incident table from a checkpoint document
+// (SRD-079 FR-5). An unknown state name is a corrupt document — loud and
+// per-instance, per ADR-033 §2.5.
+func (inst *Instance) restoreIncidents(doc *checkpoint.Document) error {
+	for i := range doc.Incidents {
+		rec := &doc.Incidents[i]
+
+		st, ok := incidentStateFromName[rec.State]
+		if !ok {
+			return errs.New(
+				errs.M("restoreIncidents: unknown incident state %q (id %q)",
+					rec.State, rec.ID),
+				errs.C(errorClass, errs.InvalidState))
+		}
+
+		inst.incidents[rec.ID] = &incident{
+			firstAt:    rec.FirstAt,
+			lastAt:     rec.LastAt,
+			id:         rec.ID,
+			nodeID:     rec.NodeID,
+			nodeName:   rec.NodeName,
+			trackID:    rec.TrackID,
+			scopePath:  scope.DataPath(rec.ScopePath),
+			scopeSeg:   rec.ScopeSeg,
+			cause:      rec.Cause,
+			causeClass: rec.CauseClass,
+			prev:       rec.Prev,
+			data:       rec.Data,
+			attempts:   rec.Attempts,
+			state:      st,
+		}
+
+		if st.open() {
+			inst.openIncCount.Add(1)
+		}
+	}
+
+	if len(doc.Incidents) > 0 {
+		inst.refreshIncidentsSnap()
+	}
+
+	return nil
+}
+
 // snapshotIncidentScope captures the failure-time data snapshot (ADR-036
 // §2.1): value-copies of every variable visible from the failing node's scope
 // (SnapshotAt — the same walk-up surface the compensation ledger freezes),

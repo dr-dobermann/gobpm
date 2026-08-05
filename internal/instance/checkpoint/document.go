@@ -19,7 +19,11 @@ import (
 // document rather than rejecting it (see Unmarshal); only a document from a
 // FUTURE schema is refused, because that one may contain state this engine
 // would silently drop.
-const CurrentSchema = 2
+//
+// 2 → 3 (SRD-079 FR-5) added the incident table — same additive rule: a
+// Schema-2 document simply carries no incidents, which is the state the
+// engine was in when it wrote one.
+const CurrentSchema = 3
 
 // Document is one instance's durable state (SRD-070 FR-3): identity +
 // the version pin, status, the scope table, conversation keys, the
@@ -61,9 +65,37 @@ type Document struct {
 	// (Schema 2, SRD-071 FR-9a). Absent in a Schema-1 document, which is
 	// why the field is optional rather than a migration.
 	Boundaries []BoundaryRecord `json:"boundaries,omitempty"`
+	// Incidents is the incident table (Schema 3, SRD-079 FR-5) — open AND
+	// closed: a dead-lettered incident's record is the durable dead letter
+	// (ADR-036 §2.5), so closing never removes it.
+	Incidents []IncidentRecord `json:"incidents,omitempty"`
 
 	Schema  int `json:"schema"`
 	Version int `json:"version"` // the FR-1 pin
+}
+
+// IncidentRecord is one durable incident (ADR-036 §2.1, SRD-079 §3.3): the
+// failure the model did not handle, with everything a future attempt needs —
+// the node, the scope binding, the lineage of the failed track, the cause,
+// the attempt history and the failure-time data snapshot.
+type IncidentRecord struct {
+	FirstAt time.Time `json:"first_at"`
+	LastAt  time.Time `json:"last_at"`
+	// RetryAt is the scheduled policy-retry deadline; absent when the
+	// incident waits for an operator (the retry slice re-arms it at restore).
+	RetryAt    *time.Time      `json:"retry_at,omitempty"`
+	ID         string          `json:"id"`
+	NodeID     string          `json:"node_id"`
+	TrackID    string          `json:"track_id"`
+	NodeName   string          `json:"node_name,omitempty"`
+	ScopePath  string          `json:"scope_path"`
+	ScopeSeg   string          `json:"scope_seg,omitempty"`
+	Cause      string          `json:"cause"`
+	CauseClass string          `json:"cause_class,omitempty"`
+	State      string          `json:"state"`
+	Prev       []string        `json:"prev,omitempty"`
+	Data       json.RawMessage `json:"data,omitempty"`
+	Attempts   int             `json:"attempts"`
 }
 
 // ScopeRecord is one open scope: its path and the codec-encoded data

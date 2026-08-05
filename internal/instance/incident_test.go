@@ -10,6 +10,7 @@ package instance
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -32,6 +34,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"github.com/dr-dobermann/gobpm/pkg/repository"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
@@ -94,12 +97,12 @@ func (fr *factRecorder) byPhase(p observability.Phase) []observability.Fact {
 	return out
 }
 
-// forkedFailInstance builds start → split(parallel) → {fail(op) → endA,
+// forkedFailProcess builds start → split(parallel) → {fail(op) → endA,
 // ok → endB}: the branch that fails and the sibling that must complete.
-func forkedFailInstance(
+func forkedFailProcess(
 	t *testing.T,
 	op service.Operation,
-) (*Instance, *factRecorder, string) {
+) (*process.Process, string) {
 	t.Helper()
 
 	require.NoError(t, data.CreateDefaultStates())
@@ -142,6 +145,19 @@ func forkedFailInstance(
 	_, err = flow.Link(okTask, endB)
 	require.NoError(t, err)
 
+	return p, failTask.ID()
+}
+
+// forkedFailInstance is forkedFailProcess run into an instance with a fact
+// recorder attached.
+func forkedFailInstance(
+	t *testing.T,
+	op service.Operation,
+) (*Instance, *factRecorder, string) {
+	t.Helper()
+
+	p, failID := forkedFailProcess(t, op)
+
 	s, err := snapshot.New(p)
 	require.NoError(t, err)
 
@@ -152,7 +168,7 @@ func forkedFailInstance(
 	fr := &factRecorder{}
 	inst.AddObserver(fr.add)
 
-	return inst, fr, failTask.ID()
+	return inst, fr, failID
 }
 
 // runToLoopExit runs the instance and waits for its loop to return — an
@@ -438,6 +454,140 @@ func TestIncidentDataSnapshot(t *testing.T) {
 	// the pin, the incident track's exit would have drained it.
 	require.Len(t, inst.sc.plane.OpenPaths(), 2,
 		"the incident's scope must stay open while the incident is")
+}
+
+// T-6: raising an incident is a persist point — the checkpoint carries the
+// schema-3 incident table under StatusActiveIncidents — and a restore rebuilds
+// the incident, its snapshot, its count and its token view.
+func TestIncidentCheckpointRecovery(t *testing.T) {
+	p, failID := forkedFailProcess(t, failingOp(t, fmt.Errorf("boom")))
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	rt := enginert.Default()
+
+	inst, err := New(s, scope.EmptyDataPath, rt, &recordingProducer{}, nil,
+		WithCheckpointing("engine-A", time.Minute))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	// the raise checkpoints on its own transition: poll the repository for
+	// the record carrying the incident.
+	var doc *checkpoint.Document
+
+	require.Eventually(t, func() bool {
+		rec, ok, lerr := rt.Repository().Load(ctx, inst.ID())
+		if lerr != nil || !ok ||
+			rec.Status != repository.StatusActiveIncidents {
+			return false
+		}
+
+		d, uerr := checkpoint.Unmarshal(rec.Payload)
+		if uerr != nil || len(d.Incidents) == 0 {
+			return false
+		}
+
+		doc = d
+
+		return true
+	}, 3*time.Second, 5*time.Millisecond)
+
+	require.Equal(t, 3, doc.Schema)
+	require.Len(t, doc.Incidents, 1)
+	require.Equal(t, failID, doc.Incidents[0].NodeID)
+	require.Equal(t, "open", doc.Incidents[0].State)
+	require.Equal(t, 1, doc.Incidents[0].Attempts)
+	require.Contains(t, doc.Incidents[0].Cause, "boom")
+	require.NotEmpty(t, doc.Incidents[0].Data,
+		"the failure-time snapshot persists")
+
+	cancel() // the source instance is done serving
+
+	// restore into a fresh snapshot pinned to the recorded version.
+	s2, err := snapshot.New(p)
+	require.NoError(t, err)
+	s2.Version = doc.Version
+
+	restored, err := Restore(doc, s2, scope.EmptyDataPath,
+		enginert.Default(), &recordingProducer{}, nil, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, restored.OpenIncidents(),
+		"the incident survives the restart")
+
+	views := restored.IncidentViews()
+	require.Len(t, views, 1)
+	require.Equal(t, failID, views[0].NodeID)
+	require.Contains(t, views[0].Cause, "boom")
+	require.NotEmpty(t, views[0].Data)
+
+	var found bool
+
+	for _, tok := range restored.GetTokens() {
+		if tok.Node.ID() == failID {
+			require.Equal(t, TokenIncident, tok.State)
+
+			found = true
+		}
+	}
+
+	require.True(t, found,
+		"the incident token projects from the restored record")
+}
+
+// TestIncidentRecordRoundTrip pins the schema-3 codec: an incident record
+// survives Marshal → Unmarshal bit-exact, and a schema-2 document (no
+// incidents) still reads.
+func TestIncidentRecordRoundTrip(t *testing.T) {
+	at := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
+
+	doc := &checkpoint.Document{
+		InstanceID: "i1",
+		ProcessID:  "p1",
+		Incidents: []checkpoint.IncidentRecord{{
+			FirstAt:    at,
+			LastAt:     at.Add(time.Minute),
+			ID:         "inc1",
+			NodeID:     "n1",
+			TrackID:    "t1",
+			NodeName:   "task",
+			ScopePath:  "/p1",
+			ScopeSeg:   "seg",
+			Cause:      "boom",
+			CauseClass: "OPERATION_FAILED",
+			State:      "dead-lettered",
+			Prev:       []string{"t0"},
+			Data:       []byte(`[{"name":"x"}]`),
+			Attempts:   3,
+		}},
+	}
+
+	raw, err := doc.Marshal()
+	require.NoError(t, err)
+
+	back, err := checkpoint.Unmarshal(raw)
+	require.NoError(t, err)
+	require.Equal(t, 3, back.Schema)
+	require.Equal(t, doc.Incidents, back.Incidents)
+
+	// a pre-incident (schema 2) document still reads.
+	old := &checkpoint.Document{InstanceID: "i2", ProcessID: "p2"}
+	oldRaw, err := old.Marshal()
+	require.NoError(t, err)
+
+	var loose map[string]any
+	require.NoError(t, json.Unmarshal(oldRaw, &loose))
+	loose["schema"] = 2
+	oldRaw, err = json.Marshal(loose)
+	require.NoError(t, err)
+
+	back2, err := checkpoint.Unmarshal(oldRaw)
+	require.NoError(t, err)
+	require.Empty(t, back2.Incidents)
 }
 
 // T-14 (raise slice): the raise emits KindFault/PhaseIncident with the action

@@ -29,6 +29,12 @@ const (
 	// reserved by SRD-070, wired by the suspend/resume slice): dehydrated
 	// state that refuses triggers until resume.
 	StatusSuspended
+	// StatusActiveIncidents marks an in-flight Instance with at least one
+	// OPEN incident (ADR-036 §2.5, SRD-079 FR-5) — alive, not terminal, and
+	// waiting for a retry or an operator. It exists so "what needs me?" is
+	// answerable from the store without loading payloads; recovery treats it
+	// exactly like StatusActive.
+	StatusActiveIncidents
 )
 
 // IsTerminal reports whether the status is a terminal (no longer

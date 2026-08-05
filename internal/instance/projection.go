@@ -21,17 +21,33 @@ func (inst *Instance) addToSnap(t *track) {
 // (those whose token is Alive or WaitForEvent), derived lock-free from the
 // tracks snapshot.
 func (inst *Instance) GetTokens() []Token {
-	snap := inst.tracksSnap.Load()
-	if snap == nil {
-		return nil
+	var out []Token
+
+	// A nil snapshot is not "no tokens": a restored instance may hold no
+	// live track yet still project its incident tokens below.
+	if snap := inst.tracksSnap.Load(); snap != nil {
+		out = make([]Token, 0, len(*snap))
+
+		for _, t := range *snap {
+			tok := t.Token()
+			if tok.State == TokenAlive || tok.State == TokenWaitForEvent {
+				out = append(out, tok)
+			}
+		}
 	}
 
-	out := make([]Token, 0, len(*snap))
-	for _, t := range *snap {
-		tok := t.Token()
-		if tok.State == TokenAlive || tok.State == TokenWaitForEvent ||
-			tok.State == TokenIncident {
-			out = append(out, tok)
+	// Incident tokens project from the open incident RECORDS, not from the
+	// (terminal, unpersisted) incident tracks (ADR-036 §2.2): the projection
+	// then survives a restore, where the track no longer exists but the
+	// incident does.
+	views := inst.IncidentViews()
+	for i := range views {
+		if st, ok := incidentStateFromName[views[i].State]; !ok || !st.open() {
+			continue
+		}
+
+		if node, ok := inst.s.Nodes[views[i].NodeID]; ok {
+			out = append(out, Token{Node: node, State: TokenIncident})
 		}
 	}
 
