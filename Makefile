@@ -228,6 +228,32 @@ clear:
 	rm -rf ./bin/
 .PHONY: clear
 
+# ---------------------------------------------------------------------------
+# Disposable postgres for the adapters/postgres tests (SRD-078 FR-10): a
+# plain docker container by decision — no testcontainers dependency. The
+# DSN below is what the tests read from GOBPM_PG_TEST_DSN; CI provides the
+# same database via a `services: postgres` container instead.
+PG_CONTAINER = gobpm-pg-test
+PG_PORT = 5499
+PG_PASSWORD = gobpm-test
+PG_IMAGE = postgres:17-alpine
+PG_TEST_DSN = postgres://postgres:$(PG_PASSWORD)@localhost:$(PG_PORT)/postgres?sslmode=disable
+
+pg-up:
+	$(call require-command,docker)
+	docker run -d --rm --name $(PG_CONTAINER) \
+		-e POSTGRES_PASSWORD=$(PG_PASSWORD) -p $(PG_PORT):5432 $(PG_IMAGE)
+	@until docker exec $(PG_CONTAINER) pg_isready -U postgres -q; do \
+		sleep 0.5; done
+	@echo "postgres is up — run the gated tests with:"
+	@echo "  export GOBPM_PG_TEST_DSN='$(PG_TEST_DSN)'"
+.PHONY: pg-up
+
+pg-down:
+	$(call require-command,docker)
+	docker stop $(PG_CONTAINER)
+.PHONY: pg-down
+
 # Regenerate the committed mocks (FIX-023) — run when a mocked interface
 # changes, then commit generated/. No `go mod tidy`: committed mocks add no
 # deps (testify is already required), and tidy-check-all guards go.mod/go.sum
