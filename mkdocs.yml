@@ -18,7 +18,12 @@ docs_dir: docs
 theme:
   name: material
   features:
-    - navigation.sections
+    # navigation.sections was dropped deliberately: it renders top-level
+    # sections as static always-expanded groups — a 40-entry design list
+    # cannot be folded away. Without it every section is collapsible.
+    # navigation.indexes makes a section's index.md the clickable section
+    # header instead of a duplicated child entry.
+    - navigation.indexes
     - navigation.top
     - search.suggest
     - content.code.copy
