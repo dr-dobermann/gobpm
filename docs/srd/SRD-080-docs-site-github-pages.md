@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-05 |
 | Owner | Ruslan Gabitov |
 | Implements | — (standalone tooling landing; no parent ADR — the engine concept is untouched) |
@@ -233,7 +233,39 @@ historical records). No ADR/SAD contract is touched; no version bumps.
 
 ## §10 Implementation summary
 
-*Placeholder — filled at landing.*
+Landed on `feat/docs-site-gh-pages` in three milestones:
+
+- **M1 `32ed338`** — `mkdocs.yml` (Material, whole-docs scope minus
+  `camunda7/` and `bpmn-spec/scripts/`, hardened `--strict` validation),
+  `scripts/mkdocs_hooks.py` (out-of-tree link rewrite + GitHub-compatible
+  heading slugify — an addition over the §3 model: the repo's in-page
+  anchors are authored against GitHub's slugs, which Python-Markdown's
+  default breaks), `docs/index.md` and `docs/design/index.md` landing pages,
+  `site/` gitignored. Strict mode surfaced link rot beyond `linkcheck`'s
+  relative-file scope, fixed at the source: bare directory links in
+  `bpmn-spec/index.md` (→ code spans), guides (→ `design/index.md`),
+  SAD-001 / ADR-024 / SRD-051 (→ `bpmn-spec/index.md`, mechanical retargets,
+  no version bumps); ADR-005 en/ru paraphrase away the camunda7 links.
+- **M2 `153bd83`** — `.github/workflows/docs.yml` (PR strict-build check;
+  master push + dispatch → `actions/deploy-pages`, SHA-pinned, job-scoped
+  permissions), Makefile `MKDOCS_MATERIAL_VERSION` + `docs-build` /
+  `docs-serve` behind `require-mkdocs`; `scripts/check-tool-pins.sh` learns
+  a `pypi:` source and per-tool workflow, gains the missing `linkcheck`
+  entry, and bumps only the Makefile pin line (a version-string collision
+  with the covercheck comment would have corrupted prose).
+- **M3 `2daafd1`** — README en/ru + `README_INDEX.md` site links,
+  `CHANGELOG.md` entry, `docs/guides/CONTRIBUTING.md` site-facing authoring
+  rules, `CLAUDE.md` command inventory. Sweep found no stale claims in the
+  roadmap or backlog.
+
+Verification: V-1…V-5 green (strict build 8.2s exit 0; 30 built guide pages
+carry rewritten GitHub `examples/` links, zero escaping hrefs; exclusions
+absent from `site/`; `make ci` exit 0 across modules; `make link-check`
+green). The `/check-srd` audit passed with no red findings. Post-merge tail:
+V-6 (the `docs / build` PR check) proves out on the pushed branch; the owner
+flips *Settings → Pages → Source: GitHub Actions* once, and V-7 (first
+deploy, site reachable at <https://dr-dobermann.github.io/gobpm/>) closes
+with the first master run.
 
 ## Open questions
 
