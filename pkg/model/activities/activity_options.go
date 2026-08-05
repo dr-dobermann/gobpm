@@ -6,6 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 type (
@@ -16,6 +17,7 @@ type (
 		dataAssociations map[data.Direction][]*data.Association
 		params           map[data.Direction][]*data.Parameter
 		defaultFlow      *flow.SequenceFlow
+		incidentRetry    tasks.RetryPolicy
 		name             string
 		baseOpts         []options.Option
 		startQ           int
@@ -59,6 +61,7 @@ func (ac *activityConfig) newActivity() (*activity, error) {
 		dataAssociations:    ac.dataAssociations,
 		defaultFlow:         ac.defaultFlow,
 		loopCharacteristics: ac.loop,
+		incidentRetry:       ac.incidentRetry,
 	}
 
 	return &a, nil
@@ -94,6 +97,27 @@ func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 	}
 
 	return ioSpecs, nil
+}
+
+// WithIncidentRetryPolicy sets the activity's incident retry policy (ADR-036
+// §2.3, SRD-079 §3.5): after an unhandled failure of this activity opens an
+// incident, the policy decides whether — and after what backoff — the engine
+// re-enters the node on its own before an operator is needed. Without it (and
+// without an engine-wide default) every incident waits for an operator.
+func WithIncidentRetryPolicy(p tasks.RetryPolicy) ActivityOption {
+	f := func(cfg *activityConfig) error {
+		if p == nil {
+			return errs.New(
+				errs.M("WithIncidentRetryPolicy: a nil RetryPolicy isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		cfg.incidentRetry = p
+
+		return nil
+	}
+
+	return ActivityOption(f)
 }
 
 // WithCompensation sets isForCompensation Activity flag to true.

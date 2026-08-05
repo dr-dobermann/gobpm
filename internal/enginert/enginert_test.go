@@ -132,6 +132,25 @@ func TestWithWorkerRetryPolicy(t *testing.T) {
 	}
 }
 
+// TestWithIncidentRetryPolicy covers SRD-079 §3.5: the engine-wide incident
+// retry policy is nil by default (operator-only), set by
+// WithIncidentRetryPolicy, nil ignored.
+func TestWithIncidentRetryPolicy(t *testing.T) {
+	p := tasks.NoRetry()
+
+	if Default().IncidentRetryPolicy() != nil {
+		t.Fatal("the default incident retry policy should be nil")
+	}
+
+	if Default().WithIncidentRetryPolicy(p).IncidentRetryPolicy() != p {
+		t.Fatal("WithIncidentRetryPolicy was not applied")
+	}
+
+	if Default().WithIncidentRetryPolicy(nil).IncidentRetryPolicy() != nil {
+		t.Fatal("a nil policy should be ignored (default kept)")
+	}
+}
+
 // TestWithWorkerTrustDefault covers SRD-039 M9: the engine-wide default trust
 // mode is unset (zero) by default and set by WithWorkerTrustDefault.
 func TestWithWorkerTrustDefault(t *testing.T) {

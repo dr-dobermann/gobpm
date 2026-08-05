@@ -13,8 +13,10 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 // incidentState enumerates an incident's lifecycle (ADR-036 §2.1): it opens on
@@ -71,8 +73,11 @@ func (s incidentState) open() bool {
 // binding, the lineage, the cause and the attempt history. Mutated only on the
 // loop goroutine.
 type incident struct {
-	firstAt    time.Time
-	lastAt     time.Time
+	firstAt time.Time
+	lastAt  time.Time
+	// retryAt is the scheduled policy-retry deadline; zero unless the state
+	// is incidentRetryScheduled (SRD-079 §3.4).
+	retryAt    time.Time
 	id         string
 	nodeID     string
 	nodeName   string
@@ -127,6 +132,7 @@ func (inst *Instance) refreshIncidentsSnap() {
 		views = append(views, IncidentView{
 			FirstAt:    inc.firstAt,
 			LastAt:     inc.lastAt,
+			RetryAt:    inc.retryAt,
 			ID:         inc.id,
 			NodeID:     inc.nodeID,
 			NodeName:   inc.nodeName,
@@ -267,7 +273,9 @@ func (ls *loopState) raiseIncident(ctx context.Context, t *track) {
 	inc.data = ls.snapshotIncidentScope(ctx, t)
 
 	t.updateState(TrackIncident)
+	ls.scheduleIncidentRetry(inc, t.lastErr)
 	ls.inst.refreshIncidentsSnap()
+	ls.rearmIncidentRetryTimer()
 
 	ls.inst.Logger().Error("incident raised",
 		observability.AttrInstanceID, ls.inst.ID(),
@@ -316,9 +324,16 @@ func (inst *Instance) incidentRecords() []checkpoint.IncidentRecord {
 	out := make([]checkpoint.IncidentRecord, 0, len(inst.incidents))
 
 	for _, inc := range inst.incidents {
+		var retryAt *time.Time
+		if !inc.retryAt.IsZero() {
+			at := inc.retryAt
+			retryAt = &at
+		}
+
 		out = append(out, checkpoint.IncidentRecord{
 			FirstAt:    inc.firstAt,
 			LastAt:     inc.lastAt,
+			RetryAt:    retryAt,
 			ID:         inc.id,
 			NodeID:     inc.nodeID,
 			NodeName:   inc.nodeName,
@@ -360,9 +375,15 @@ func (inst *Instance) restoreIncidents(doc *checkpoint.Document) error {
 				errs.C(errorClass, errs.InvalidState))
 		}
 
+		var retryAt time.Time
+		if rec.RetryAt != nil {
+			retryAt = *rec.RetryAt
+		}
+
 		inst.incidents[rec.ID] = &incident{
 			firstAt:    rec.FirstAt,
 			lastAt:     rec.LastAt,
+			retryAt:    retryAt,
 			id:         rec.ID,
 			nodeID:     rec.NodeID,
 			nodeName:   rec.NodeName,
@@ -387,6 +408,242 @@ func (inst *Instance) restoreIncidents(doc *checkpoint.Document) error {
 	}
 
 	return nil
+}
+
+// incidentPolicyCarrier is the capability a node or the engine runtime offers
+// to drive automatic incident retries (SRD-079 §3.5). Read by assertion so
+// neither the flow.Node nor the renv.EngineRuntime contract grows a method.
+type incidentPolicyCarrier interface {
+	IncidentRetryPolicy() tasks.RetryPolicy
+}
+
+// resolveIncidentRetryPolicy resolves the retry policy for a failing node:
+// per-activity first, engine-wide second, nil — no automatic retry, the
+// conservative default — last.
+func (ls *loopState) resolveIncidentRetryPolicy(
+	node flow.Node,
+) tasks.RetryPolicy {
+	if a, ok := node.(incidentPolicyCarrier); ok {
+		if p := a.IncidentRetryPolicy(); p != nil {
+			return p
+		}
+	}
+
+	if r, ok := ls.inst.EngineRuntime.(incidentPolicyCarrier); ok {
+		return r.IncidentRetryPolicy()
+	}
+
+	return nil
+}
+
+// scheduleIncidentRetry consults the policy for a just-raised incident
+// (SRD-079 §3.4): a positive verdict flips it to retry-scheduled with its
+// deadline and announces it; otherwise the incident stays open for the
+// operator. Loop goroutine only.
+func (ls *loopState) scheduleIncidentRetry(inc *incident, cause error) {
+	node, ok := ls.inst.s.Nodes[inc.nodeID]
+	if !ok {
+		return
+	}
+
+	p := ls.resolveIncidentRetryPolicy(node)
+	if p == nil {
+		return
+	}
+
+	backoff, retry := p.Retry(inc.attempts, cause)
+	if !retry {
+		return
+	}
+
+	inc.state = incidentRetryScheduled
+	inc.retryAt = ls.inst.now().Add(backoff)
+
+	ls.inst.report(observability.Fact{
+		Kind:     observability.KindFault,
+		Phase:    observability.PhaseIncident,
+		NodeID:   inc.nodeID,
+		NodeName: inc.nodeName,
+		Details: map[string]string{
+			"action":      "retry-scheduled",
+			"incident_id": inc.id,
+			"retry_at":    inc.retryAt.Format(time.RFC3339Nano),
+		},
+	})
+}
+
+// rearmIncidentRetryTimer points the loop's single retry channel at the
+// earliest pending deadline — one Clock.After per instance, never one per
+// retry (NFR-3). A nil channel blocks its select case. Loop goroutine only.
+func (ls *loopState) rearmIncidentRetryTimer() {
+	var earliest time.Time
+
+	for _, inc := range ls.inst.incidents {
+		if inc.state == incidentRetryScheduled &&
+			(earliest.IsZero() || inc.retryAt.Before(earliest)) {
+			earliest = inc.retryAt
+		}
+	}
+
+	if earliest.IsZero() {
+		ls.retryC = nil
+
+		return
+	}
+
+	d := earliest.Sub(ls.inst.now())
+	if d < 0 {
+		d = 0
+	}
+
+	ls.retryC = ls.inst.Clock().After(d)
+}
+
+// pendingRetries counts the scheduled automatic retries — the reason the loop
+// stays resident at active == 0 instead of parking. Loop goroutine only.
+func (ls *loopState) pendingRetries() int {
+	n := 0
+
+	for _, inc := range ls.inst.incidents {
+		if inc.state == incidentRetryScheduled {
+			n++
+		}
+	}
+
+	return n
+}
+
+// applyDueIncidentRetries fires every scheduled retry whose deadline passed,
+// then re-arms the timer. Loop goroutine only.
+func (ls *loopState) applyDueIncidentRetries(ctx context.Context) {
+	now := ls.inst.now()
+
+	for _, inc := range ls.inst.incidents {
+		if inc.state == incidentRetryScheduled && !inc.retryAt.After(now) {
+			ls.retryIncident(ctx, inc)
+		}
+	}
+
+	ls.inst.refreshIncidentsSnap()
+	ls.rearmIncidentRetryTimer()
+}
+
+// retryIncident is the respawn (ADR-036 §2.2/§2.3, SRD-079 §3.4): a fresh
+// track re-enters the failed node, bound by the incident RECORD — scope path,
+// segment, lineage — so it works identically after a restore, where the failed
+// track object no longer exists. The armed boundary watches transfer to the
+// new attempt instead of re-arming (FR-6: failing repeatedly must not reset an
+// SLA clock). Loop goroutine only.
+func (ls *loopState) retryIncident(ctx context.Context, inc *incident) {
+	node, ok := ls.inst.s.Nodes[inc.nodeID]
+	if !ok {
+		ls.inst.Logger().Error("incident retry: node not in snapshot",
+			observability.AttrInstanceID, ls.inst.ID(),
+			observability.AttrNodeID, inc.nodeID,
+			"incident_id", inc.id)
+
+		inc.state = incidentOpen
+		inc.retryAt = time.Time{}
+
+		return
+	}
+
+	nt, err := newTrack(node, ls.inst, nil)
+	if err != nil {
+		ls.inst.Logger().Error("incident retry: track build failed",
+			observability.AttrInstanceID, ls.inst.ID(),
+			observability.AttrNodeID, inc.nodeID,
+			"incident_id", inc.id,
+			observability.AttrError, err.Error())
+
+		inc.state = incidentOpen
+		inc.retryAt = time.Time{}
+
+		return
+	}
+
+	nt.scopePath = inc.scopePath
+	nt.scopeSeg = inc.scopeSeg
+	nt.prev = append(append([]string{}, inc.prev...), inc.trackID)
+	nt.skipInitialArm = true
+
+	ls.transferWatches(inc.trackID, nt)
+
+	// the retry attempt takes over the incident's single scope pin: release
+	// the failed attempt's, let the new track's own spawn count stand in.
+	ls.decScopePinned(ctx, inc.scopePath)
+
+	prevTrackID := inc.trackID
+	inc.trackID = nt.ID()
+	inc.state = incidentOpen
+	inc.retryAt = time.Time{}
+
+	ls.inst.report(observability.Fact{
+		Kind:     observability.KindFault,
+		Phase:    observability.PhaseIncident,
+		NodeID:   inc.nodeID,
+		NodeName: inc.nodeName,
+		Details: map[string]string{
+			"action":      "retried",
+			"incident_id": inc.id,
+			"prev_track":  prevTrackID,
+		},
+	})
+
+	ls.inst.trackCount.Add(1)
+	ls.spawn(ctx, nt)
+}
+
+// transferWatches re-keys the armed boundary watches from the failed attempt
+// to its retry (FR-6): the watches — and a timer boundary's running deadline —
+// carry over, they are never rebuilt. Loop goroutine only.
+func (ls *loopState) transferWatches(oldTrackID string, nt *track) {
+	ws, ok := ls.watchers[oldTrackID]
+	if !ok {
+		return
+	}
+
+	delete(ls.watchers, oldTrackID)
+
+	for _, w := range ws {
+		w.host = nt
+	}
+
+	ls.watchers[nt.ID()] = ws
+}
+
+// closeIncidentsOnProgress closes an open incident whose current attempt just
+// moved PAST the incident's node — the retry succeeded (SRD-079 §3.4). No
+// scope pin releases here: the retry already took the pin over as its own
+// live count, which the attempt's eventual normal end releases. Loop
+// goroutine only.
+func (ls *loopState) closeIncidentsOnProgress(t *track) {
+	for _, inc := range ls.inst.incidents {
+		if !inc.state.open() || inc.trackID != t.ID() {
+			continue
+		}
+
+		inc.state = incidentResolved
+		inc.retryAt = time.Time{}
+		inc.lastAt = ls.inst.now()
+
+		ls.inst.openIncCount.Add(-1)
+
+		ls.inst.report(observability.Fact{
+			Kind:     observability.KindFault,
+			Phase:    observability.PhaseIncident,
+			NodeID:   inc.nodeID,
+			NodeName: inc.nodeName,
+			Details: map[string]string{
+				"action":      "resolved",
+				"incident_id": inc.id,
+				"resolution":  "retry",
+			},
+		})
+	}
+
+	ls.inst.refreshIncidentsSnap()
+	ls.rearmIncidentRetryTimer()
 }
 
 // snapshotIncidentScope captures the failure-time data snapshot (ADR-036

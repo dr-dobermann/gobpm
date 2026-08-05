@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
@@ -588,6 +590,344 @@ func TestIncidentRecordRoundTrip(t *testing.T) {
 	back2, err := checkpoint.Unmarshal(oldRaw)
 	require.NoError(t, err)
 	require.Empty(t, back2.Incidents)
+}
+
+// TestIncidentRetryInternalEdges covers the retry machinery's small branches:
+// deterministic ordering ties, the corrupt-restore guard, the unknown-node
+// retry guard, the past-deadline clamp, the watch transfer, the pinned-scope
+// release and the token projection's unknown-node skip.
+func TestIncidentRetryInternalEdges(t *testing.T) {
+	inst, _, _ := forkedFailInstance(t, failingOp(t, fmt.Errorf("unused")))
+	ls := newLoopState(inst)
+	ctx := context.Background()
+	at := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+
+	t.Run("ordering ties break by id", func(t *testing.T) {
+		inst.incidents["b"] = &incident{id: "b", firstAt: at, state: incidentOpen}
+		inst.incidents["a"] = &incident{id: "a", firstAt: at, state: incidentOpen}
+		inst.refreshIncidentsSnap()
+
+		views := inst.IncidentViews()
+		require.Equal(t, "a", views[0].ID)
+		require.Equal(t, "b", views[1].ID)
+
+		recs := inst.incidentRecords()
+		require.Equal(t, "a", recs[0].ID)
+		require.Equal(t, "b", recs[1].ID)
+	})
+
+	t.Run("an unknown restored state is loud", func(t *testing.T) {
+		bad := &Instance{incidents: map[string]*incident{}}
+		err := bad.restoreIncidents(&checkpoint.Document{
+			Incidents: []checkpoint.IncidentRecord{{ID: "x", State: "nope"}}})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "unknown incident state")
+	})
+
+	t.Run("a retry with a vanished node stays open", func(t *testing.T) {
+		inc := &incident{id: "g", nodeID: "ghost",
+			state: incidentRetryScheduled, retryAt: at}
+		ls.retryIncident(ctx, inc)
+
+		require.Equal(t, incidentOpen, inc.state)
+		require.True(t, inc.retryAt.IsZero())
+	})
+
+	t.Run("a past deadline arms an immediate fire", func(t *testing.T) {
+		inst.incidents["past"] = &incident{id: "past",
+			state: incidentRetryScheduled,
+			retryAt: inst.now().Add(-time.Minute)}
+		ls.rearmIncidentRetryTimer()
+		require.NotNil(t, ls.retryC)
+
+		delete(inst.incidents, "past")
+		ls.rearmIncidentRetryTimer()
+		require.Nil(t, ls.retryC)
+	})
+
+	t.Run("watches transfer to the retry attempt", func(t *testing.T) {
+		old := &track{}
+		w := &boundaryWatch{host: old}
+		ls.watchers["old-id"] = []*boundaryWatch{w}
+
+		nt := &track{}
+		nt.BaseElement = *foundation.MustBaseElement()
+		ls.transferWatches("old-id", nt)
+
+		require.NotContains(t, ls.watchers, "old-id")
+		require.Len(t, ls.watchers[nt.ID()], 1)
+		require.Same(t, nt, ls.watchers[nt.ID()][0].host)
+
+		// a transfer with no watches is a no-op.
+		ls.transferWatches("absent", nt)
+	})
+
+	t.Run("pinned scope release", func(t *testing.T) {
+		// a missing entry is a no-op; a live count just decrements; an
+		// aborting scope never completes from here.
+		ls.decScopePinned(ctx, "/nope")
+
+		ls.scopes["/pin"] = &scopeEntry{active: 2}
+		ls.decScopePinned(ctx, "/pin")
+		require.Equal(t, 1, ls.scopes["/pin"].active)
+
+		ls.scopes["/ab"] = &scopeEntry{active: 1, aborting: true}
+		ls.decScopePinned(ctx, "/ab")
+		require.Equal(t, 0, ls.scopes["/ab"].active)
+	})
+
+	t.Run("an unknown-node incident projects no token", func(t *testing.T) {
+		inst.incidents["ghost"] = &incident{id: "ghost", nodeID: "no-such",
+			state: incidentOpen}
+		inst.refreshIncidentsSnap()
+
+		for _, tok := range inst.GetTokens() {
+			require.NotNil(t, tok.Node)
+		}
+	})
+}
+
+// capPolicy retries with a tiny fixed backoff while attempt <= max — a
+// deterministic test policy.
+type capPolicy struct {
+	backoff time.Duration
+	max     int
+}
+
+func (p capPolicy) Retry(attempt int, _ error) (time.Duration, bool) {
+	return p.backoff, attempt <= p.max
+}
+
+// flakyOp fails the first n calls, then succeeds.
+func flakyOp(t *testing.T, n int32) service.Operation {
+	t.Helper()
+
+	var calls atomic.Int32
+
+	op, err := gooper.New("flaky-op",
+		func(_ context.Context, _ service.DataReader,
+			_ *data.ItemDefinition,
+		) (*data.ItemDefinition, error) {
+			if calls.Add(1) <= n {
+				return nil, fmt.Errorf("flaky failure %d", calls.Load())
+			}
+
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	return op
+}
+
+// lineInstance builds start → task(op, extra opts) → end and returns the
+// unstarted instance (on rt) with the task id.
+func lineInstance(
+	t *testing.T,
+	rt *enginert.Runtime,
+	op service.Operation,
+	taskOpts ...activities.ActivityOption,
+) (*Instance, string) {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("srd079-retry")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	allOpts := []options.Option{activities.WithoutParams()}
+	for _, o := range taskOpts {
+		allOpts = append(allOpts, o)
+	}
+
+	task, err := activities.NewServiceTask("flaky", op, allOpts...)
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, task, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	_, err = flow.Link(start, task)
+	require.NoError(t, err)
+	_, err = flow.Link(task, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	inst, err := New(s, scope.EmptyDataPath, rt, &recordingProducer{}, nil)
+	require.NoError(t, err)
+
+	return inst, task.ID()
+}
+
+// T-7: the per-activity policy retries the incident — the respawn re-enters
+// the node, a success closes the incident as resolved, and the instance
+// completes; an exhausted policy leaves the incident open with its attempt
+// history.
+func TestIncidentRetryRespawns(t *testing.T) {
+	t.Run("fail once, then succeed", func(t *testing.T) {
+		inst, taskID := lineInstance(t, enginert.Default(), flakyOp(t, 1),
+			activities.WithIncidentRetryPolicy(
+				capPolicy{backoff: 10 * time.Millisecond, max: 5}))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, inst.Run(ctx))
+
+		require.Eventually(t, func() bool { return inst.State() == Completed },
+			3*time.Second, 5*time.Millisecond)
+
+		views := inst.IncidentViews()
+		require.Len(t, views, 1)
+		require.Equal(t, taskID, views[0].NodeID)
+		require.Equal(t, "resolved", views[0].State)
+		require.Equal(t, 1, views[0].Attempts)
+		require.Zero(t, inst.OpenIncidents())
+	})
+
+	t.Run("exhausted policy leaves the incident open", func(t *testing.T) {
+		inst, _ := lineInstance(t, enginert.Default(),
+			failingOp(t, fmt.Errorf("always")),
+			activities.WithIncidentRetryPolicy(
+				capPolicy{backoff: 5 * time.Millisecond, max: 1}))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, inst.Run(ctx))
+
+		// raise 1 (attempt 1 ≤ 1: retry) → fail again → raise 2 (attempt 2:
+		// exhausted) → open, waiting for an operator.
+		require.Eventually(t, func() bool {
+			vs := inst.IncidentViews()
+
+			return len(vs) == 1 && vs[0].State == "open" && vs[0].Attempts == 2
+		}, 3*time.Second, 5*time.Millisecond)
+
+		require.Equal(t, 1, inst.OpenIncidents())
+	})
+}
+
+// T-8: policy resolution — the engine-wide default applies when the activity
+// carries none, and a scheduled retry exposes its deadline on the view.
+func TestIncidentRetryPolicySchedules(t *testing.T) {
+	t.Run("engine-wide default drives the retry", func(t *testing.T) {
+		rt := enginert.Default().WithIncidentRetryPolicy(
+			capPolicy{backoff: 10 * time.Millisecond, max: 5})
+
+		inst, _ := lineInstance(t, rt, flakyOp(t, 1))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, inst.Run(ctx))
+
+		require.Eventually(t, func() bool { return inst.State() == Completed },
+			3*time.Second, 5*time.Millisecond)
+	})
+
+	t.Run("a scheduled retry carries its deadline", func(t *testing.T) {
+		inst, _ := lineInstance(t, enginert.Default(),
+			failingOp(t, fmt.Errorf("slow")),
+			activities.WithIncidentRetryPolicy(
+				capPolicy{backoff: time.Hour, max: 5}))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		require.NoError(t, inst.Run(ctx))
+
+		require.Eventually(t, func() bool {
+			vs := inst.IncidentViews()
+
+			return len(vs) == 1 && vs[0].State == "retry-scheduled" &&
+				!vs[0].RetryAt.IsZero()
+		}, 3*time.Second, 5*time.Millisecond)
+	})
+}
+
+// T-6b: a scheduled retry survives a restart — the checkpoint carries the
+// deadline, and the restored instance fires it to completion.
+func TestIncidentScheduledRetryRecovery(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	op := flakyOp(t, 1)
+
+	p, err := process.New("srd079-retry-rec")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	task, err := activities.NewServiceTask("flaky", op,
+		activities.WithoutParams(),
+		activities.WithIncidentRetryPolicy(
+			capPolicy{backoff: 300 * time.Millisecond, max: 5}))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, task, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	_, err = flow.Link(start, task)
+	require.NoError(t, err)
+	_, err = flow.Link(task, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	rt := enginert.Default()
+
+	inst, err := New(s, scope.EmptyDataPath, rt, &recordingProducer{}, nil,
+		WithCheckpointing("engine-A", time.Minute))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, inst.Run(ctx))
+
+	var doc *checkpoint.Document
+
+	require.Eventually(t, func() bool {
+		rec, ok, lerr := rt.Repository().Load(ctx, inst.ID())
+		if lerr != nil || !ok {
+			return false
+		}
+
+		d, uerr := checkpoint.Unmarshal(rec.Payload)
+		if uerr != nil || len(d.Incidents) == 0 ||
+			d.Incidents[0].RetryAt == nil {
+			return false
+		}
+
+		doc = d
+
+		return true
+	}, 3*time.Second, 5*time.Millisecond)
+
+	cancel() // the crash
+
+	s2, err := snapshot.New(p)
+	require.NoError(t, err)
+	s2.Version = doc.Version
+
+	restored, err := Restore(doc, s2, scope.EmptyDataPath,
+		enginert.Default(), &recordingProducer{}, nil, nil)
+	require.NoError(t, err)
+
+	rctx, rcancel := context.WithCancel(context.Background())
+	t.Cleanup(rcancel)
+	require.NoError(t, restored.Run(rctx))
+
+	require.Eventually(t, func() bool { return restored.State() == Completed },
+		3*time.Second, 5*time.Millisecond)
+	require.Zero(t, restored.OpenIncidents())
 }
 
 // T-14 (raise slice): the raise emits KindFault/PhaseIncident with the action

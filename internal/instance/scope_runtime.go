@@ -328,6 +328,27 @@ func (ls *loopState) incScope(t *track) {
 	}
 }
 
+// decScopePinned releases one incident scope pin (SRD-079 §3.2): the count the
+// failing track's exit deliberately skipped, released when the incident closes
+// or its next attempt takes over the pin. The track object may be gone (a
+// post-restore incident), so the ad-hoc settle — which needs the live track —
+// is skipped; an ad-hoc scope re-routes on its next natural settle. Runs on
+// the loop goroutine.
+func (ls *loopState) decScopePinned(ctx context.Context, path scope.DataPath) {
+	entry, ok := ls.scopes[path]
+	if !ok {
+		return
+	}
+
+	entry.active--
+
+	if entry.active > 0 || entry.aborting {
+		return
+	}
+
+	ls.completeScope(ctx, path, entry)
+}
+
 // decScope counts a terminal track out of its scope; at zero the scope
 // drained (§13.3.4 — no tokens remain) and completes. Runs on the loop
 // goroutine.

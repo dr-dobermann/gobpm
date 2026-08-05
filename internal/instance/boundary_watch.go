@@ -252,6 +252,15 @@ func (ls *loopState) armBoundaries(
 		return
 	}
 
+	// an incident-retry respawn arrives with its watches transferred from the
+	// failed attempt (SRD-079 FR-6) — rebuilding them here would reset a
+	// running SLA timer. One-shot: the track's later moves arm normally.
+	if t.skipInitialArm {
+		t.skipInitialArm = false
+
+		return
+	}
+
 	var ws []*boundaryWatch
 
 	for _, bev := range host.BoundaryEvents() {

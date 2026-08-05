@@ -36,22 +36,23 @@ import (
 
 // Runtime is a concrete renv.EngineRuntime backed by the bundled defaults.
 type Runtime struct {
-	exprReg            *expression.Registry
-	ruleEng            rules.Engine
-	scriptReg          *script.Registry
-	dataStores         *memstore.Registry
-	tracer             observability.Tracer
-	metrics            observability.MetricsRecorder
-	clk                clock.Clock
-	repo               repository.Repository
-	broker             messaging.MessageBroker
-	logger             observability.Logger
-	authz              auth.AuthorizationProvider
-	dispatcher         tasks.WorkerDispatcher
-	workerErrorMapper  tasks.ErrorMapper
-	workerRetryPolicy  tasks.RetryPolicy
-	reporter           observability.Reporter
-	workerTrustDefault tasks.TrustMode
+	exprReg             *expression.Registry
+	ruleEng             rules.Engine
+	scriptReg           *script.Registry
+	dataStores          *memstore.Registry
+	tracer              observability.Tracer
+	metrics             observability.MetricsRecorder
+	clk                 clock.Clock
+	repo                repository.Repository
+	broker              messaging.MessageBroker
+	logger              observability.Logger
+	authz               auth.AuthorizationProvider
+	dispatcher          tasks.WorkerDispatcher
+	workerErrorMapper   tasks.ErrorMapper
+	workerRetryPolicy   tasks.RetryPolicy
+	incidentRetryPolicy tasks.RetryPolicy
+	reporter            observability.Reporter
+	workerTrustDefault  tasks.TrustMode
 }
 
 // Default returns a Runtime with every extension set to its bundled default.
@@ -255,6 +256,23 @@ func (r *Runtime) WorkerRetryPolicy() tasks.RetryPolicy { return r.workerRetryPo
 func (r *Runtime) WithWorkerRetryPolicy(p tasks.RetryPolicy) *Runtime {
 	if p != nil {
 		r.workerRetryPolicy = p
+	}
+
+	return r
+}
+
+// IncidentRetryPolicy returns the engine-wide default incident retry policy
+// (SRD-079 §3.5). nil — the deliberate default — means no automatic retry:
+// every incident waits for an operator unless its activity opts in.
+func (r *Runtime) IncidentRetryPolicy() tasks.RetryPolicy {
+	return r.incidentRetryPolicy
+}
+
+// WithIncidentRetryPolicy overrides the engine-wide incident retry policy and
+// returns the Runtime. A nil policy is ignored (the current default is kept).
+func (r *Runtime) WithIncidentRetryPolicy(p tasks.RetryPolicy) *Runtime {
+	if p != nil {
+		r.incidentRetryPolicy = p
 	}
 
 	return r

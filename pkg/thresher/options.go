@@ -32,23 +32,24 @@ import (
 // thresherConfig holds the resolved engine-level extensions (ADR-002 §4.3).
 // EventHub is NOT here — it stays internal and the Thresher builds it itself.
 type thresherConfig struct {
-	exprEngines       []expression.Engine
-	exprRegistry      *expression.Registry
-	logger            observability.Logger
-	workerErrorMapper tasks.ErrorMapper
-	ruleEngine        rules.Engine
-	clock             clock.Clock
-	repository        repository.Repository
-	msgBroker         messaging.MessageBroker
-	tracer            observability.Tracer
-	dispatcher        tasks.WorkerDispatcher
-	reporter          observability.Reporter
-	metrics           observability.MetricsRecorder
-	dataStores        *memstore.Registry
-	authz             auth.AuthorizationProvider
-	workerRetryPolicy tasks.RetryPolicy
-	taskDist          interactor.TaskDistributor
-	scriptRegistry    *script.Registry
+	exprEngines         []expression.Engine
+	exprRegistry        *expression.Registry
+	logger              observability.Logger
+	workerErrorMapper   tasks.ErrorMapper
+	ruleEngine          rules.Engine
+	clock               clock.Clock
+	repository          repository.Repository
+	msgBroker           messaging.MessageBroker
+	tracer              observability.Tracer
+	dispatcher          tasks.WorkerDispatcher
+	reporter            observability.Reporter
+	metrics             observability.MetricsRecorder
+	dataStores          *memstore.Registry
+	authz               auth.AuthorizationProvider
+	workerRetryPolicy   tasks.RetryPolicy
+	incidentRetryPolicy tasks.RetryPolicy
+	taskDist            interactor.TaskDistributor
+	scriptRegistry      *script.Registry
 	// engineGroup is the configured engine group (SRD-078 FR-2); empty
 	// means the solo default (New resolves it to the engine id).
 	// groupJoinOnly asserts membership: Run refuses when the group is
@@ -328,6 +329,24 @@ func WithWorkerRetryPolicy(p tasks.RetryPolicy) Option {
 	}
 }
 
+// WithIncidentRetryPolicy sets the engine-wide default incident retry policy
+// (ADR-036 §2.3, SRD-079 §3.5), applied when a failing activity carries no
+// activities.WithIncidentRetryPolicy of its own. Without either, every
+// incident waits for an operator — the deliberate conservative default.
+func WithIncidentRetryPolicy(p tasks.RetryPolicy) Option {
+	return func(c *thresherConfig) error {
+		if p == nil {
+			return errs.New(
+				errs.M("WithIncidentRetryPolicy: a nil RetryPolicy isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.incidentRetryPolicy = p
+
+		return nil
+	}
+}
+
 // WithWorkerTrustDefault sets the engine-wide default trust mode applied to a
 // worker-dispatched ServiceTask that carries no per-service activities.WithWorkerTrust
 // (SRD-039 M9, two-level config). An invalid mode is rejected.
@@ -502,6 +521,10 @@ func (c *thresherConfig) Reporter() observability.Reporter {
 func (c *thresherConfig) WorkerErrorMapper() tasks.ErrorMapper { return c.workerErrorMapper }
 
 func (c *thresherConfig) WorkerRetryPolicy() tasks.RetryPolicy { return c.workerRetryPolicy }
+
+// IncidentRetryPolicy is the engine-wide incident retry default the instance
+// loop reads through a capability assertion (SRD-079 §3.5); nil = operator-only.
+func (c *thresherConfig) IncidentRetryPolicy() tasks.RetryPolicy { return c.incidentRetryPolicy }
 
 func (c *thresherConfig) WorkerTrustDefault() tasks.TrustMode { return c.workerTrustDefault }
 

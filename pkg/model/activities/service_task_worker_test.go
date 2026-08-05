@@ -338,6 +338,23 @@ func TestWithRetryPolicyRejectsNil(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestWithIncidentRetryPolicy (SRD-079 §3.5): the per-activity incident retry
+// policy sets, exposes through the capability accessor, and rejects nil.
+func TestWithIncidentRetryPolicy(t *testing.T) {
+	p := tasks.NoRetry()
+
+	st, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithoutParams(), activities.WithIncidentRetryPolicy(p))
+	require.NoError(t, err)
+	require.Equal(t, p, st.IncidentRetryPolicy())
+
+	_, err = activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithoutParams(), activities.WithIncidentRetryPolicy(nil))
+	require.Error(t, err)
+}
+
 // TestWithWorkerTrustRejectsInvalidMode: an unknown trust mode is rejected.
 func TestWithWorkerTrustRejectsInvalidMode(t *testing.T) {
 	_, err := activities.NewServiceTask("svc",

@@ -236,6 +236,11 @@ type track struct {
 	// across goroutines from the arming track.
 	held        atomic.Bool
 	timerHinted bool
+	// skipInitialArm suppresses the spawn-time boundary arming ONCE — for an
+	// incident-retry respawn, whose watches transfer from the failed attempt
+	// instead of re-arming (SRD-079 FR-6: a repeated failure must not reset
+	// an SLA clock). Consumed by armBoundaries; later moves arm normally.
+	skipInitialArm bool
 	// woken marks a continuation-fork track spawned to WAKE a dehydrated wait
 	// (SRD-071 FR-4): it re-enters the wait node with the trigger already
 	// present in evtCh and fires through it, so it must NOT be re-armed as a

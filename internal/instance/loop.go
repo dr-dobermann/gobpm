@@ -3,10 +3,12 @@ package instance
 import (
 	"context"
 	"fmt"
-	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -53,6 +55,10 @@ type loopState struct {
 	// arrives on an activity with interrupting boundaries (spawn / evMoved), torn down when it
 	// leaves, ends, or fails.
 	watchers map[string][]*boundaryWatch
+	// retryC delivers the earliest scheduled incident-retry deadline (SRD-079
+	// §3.4) — ONE Clock.After per instance, re-armed on every incident
+	// mutation; nil (blocking its select case) when nothing is scheduled.
+	retryC <-chan time.Time
 	// tasks is the loop-owned human-task registry (SRD-034): taskID → the parked
 	// UserTask track and node. Populated on evTaskWaiting (and at spawn for a task
 	// parked at construction), read by a Take/Complete taskReq, and cleared when
@@ -173,8 +179,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	// root scope — they guard the whole instance's window (SRD-052 FR-5).
 	ls.armScopeHandlers(ctx, rootNodes(inst), inst.sc.root)
 
-	if ls.active == 0 {
-		inst.setState(Completed)
+	if !ls.loopPreflight() {
 		return
 	}
 
@@ -191,28 +196,19 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	ls.maybeDehydrate(ctx)
 
 	done := ctx.Done()
-	for ls.active > 0 {
-		// A cancellation the loop can ALREADY see is recorded before any
-		// further terminal-event accounting. `select` chooses uniformly among
-		// ready cases (Go spec), so a canceled — and therefore permanently
-		// ready — done can lose every turn while evEnded drives ls.active to
-		// zero; the loop would then exit with ls.stopping false and settle
-		// Completed for an instance that was torn down (ADR-001 v.6 §7,
-		// FIX-033 §2.1). Once canceled, done is nil and this costs nothing.
-		if done != nil {
-			select {
-			case <-done:
-				done = nil
-				ls.stopAll()
-
-			default:
-			}
-		}
+	for ls.active > 0 || ls.pendingRetries() > 0 {
+		done = ls.drainCancel(done)
 
 		select {
 		case <-done:
 			done = nil
 			ls.stopAll()
+
+		case <-ls.retryC:
+			// a scheduled incident retry came due (SRD-079 §3.4): respawn,
+			// then persist the new attempt under the incident transition.
+			ls.applyDueIncidentRetries(ctx)
+			ls.maybeCheckpoint(ctx, evIncident)
 
 		case ev := <-inst.events:
 			// Lock-free attrs only (ID is immutable): this runs per event, and the
@@ -430,6 +426,9 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		ls.position[ev.track.ID()] = ev.node
 		delete(ls.parked, ev.track.ID())
 		ls.armBoundaries(ctx, ev.track, ev.node)
+		// a retry attempt moving past its incident's node closed the
+		// incident — the retry succeeded (SRD-079 §3.4).
+		ls.closeIncidentsOnProgress(ev.track)
 
 	case evEnded:
 		// a compensation-handler track's end advances its sweep (SRD-059
@@ -714,6 +713,51 @@ func trackEndKind(t *track) trackEventKind {
 	default:
 		return evEnded
 	}
+}
+
+// drainCancel records a cancellation the loop can ALREADY see, before any
+// further terminal-event accounting. `select` chooses uniformly among ready
+// cases (Go spec), so a canceled — and therefore permanently ready — done can
+// lose every turn while evEnded drives ls.active to zero; the loop would then
+// exit with ls.stopping false and settle Completed for an instance that was
+// torn down (ADR-001 v.6 §7, FIX-033 §2.1). Returns nil once canceled, so the
+// check costs nothing afterwards.
+func (ls *loopState) drainCancel(done <-chan struct{}) <-chan struct{} {
+	if done == nil {
+		return nil
+	}
+
+	select {
+	case <-done:
+		ls.stopAll()
+
+		return nil
+
+	default:
+		return done
+	}
+}
+
+// loopPreflight decides the loop's entry after the initial spawns. A restored
+// incident instance may start with no live track at all — its continuations
+// are the incident records: scheduled retries drive it into the loop, an
+// operator-waiting one parks again without settling, and only a truly empty
+// instance completes. It also arms the incident-retry timer (a restored
+// deadline may already be due). Reports whether the loop should run.
+func (ls *loopState) loopPreflight() bool {
+	ls.rearmIncidentRetryTimer()
+
+	if ls.active > 0 {
+		return true
+	}
+
+	if ls.inst.openIncidents() == 0 {
+		ls.inst.setState(Completed)
+
+		return false
+	}
+
+	return ls.pendingRetries() > 0
 }
 
 // parkOnIncidents is the loop's incident exit (ADR-036 §2.2, SRD-079 §3.2):
