@@ -49,9 +49,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install the site toolchain
-        # Pin mirrored by MKDOCS_MATERIAL_VERSION in the Makefile
-        # (make docs-build) and swept by scripts/check-tool-pins.sh.
-        run: pip install mkdocs-material==9.7.7
+        # Pins mirrored by MKDOCS_MATERIAL_VERSION / MKDOCS_AWESOME_NAV_VERSION
+        # in the Makefile (make docs-build) and swept by
+        # scripts/check-tool-pins.sh.
+        run: pip install mkdocs-material==9.7.7 mkdocs-awesome-nav==3.3.0
 
       - name: Build the site (strict)
         # The `python -m` form puts the repo root on sys.path — mkdocs.yml

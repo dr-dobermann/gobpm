@@ -175,17 +175,21 @@ tools:
 # import scripts.mkdocs_hooks.github_slugify during config load.
 # ---------------------------------------------------------------------------
 
-MKDOCS_MATERIAL_VERSION := 9.7.7
+MKDOCS_MATERIAL_VERSION    := 9.7.7
+MKDOCS_AWESOME_NAV_VERSION := 3.3.0
 
 # The docs analogue of require-go-tool: presence alone is insufficient, the
-# installed mkdocs-material must match the CI pin exactly.
+# installed packages must match the CI pins exactly.
 define require-mkdocs
 $(call require-command,python3,Install Python 3 to build the docs site.)
-@actual="$$(python3 -c "from importlib.metadata import version; print(version('mkdocs-material'))" 2>/dev/null)"; \
-if [ "$$actual" != "$(MKDOCS_MATERIAL_VERSION)" ]; then \
-	echo "ERROR: mkdocs-material $${actual:-is not installed}; the site build requires $(MKDOCS_MATERIAL_VERSION). Run 'pip install mkdocs-material==$(MKDOCS_MATERIAL_VERSION)'."; \
-	exit 1; \
-fi
+@for pkg in mkdocs-material:$(MKDOCS_MATERIAL_VERSION) mkdocs-awesome-nav:$(MKDOCS_AWESOME_NAV_VERSION); do \
+	name="$${pkg%%:*}"; want="$${pkg##*:}"; \
+	actual="$$(python3 -c "from importlib.metadata import version; print(version('$$name'))" 2>/dev/null)"; \
+	if [ "$$actual" != "$$want" ]; then \
+		echo "ERROR: $$name $${actual:-is not installed}; the site build requires $$want. Run 'pip install $$name==$$want'."; \
+		exit 1; \
+	fi; \
+done
 endef
 
 docs-build:

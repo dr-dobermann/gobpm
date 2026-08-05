@@ -24,6 +24,7 @@ tools=(
 	"covercheck|COVERCHECK_VERSION|github.com/dr-dobermann/covercheck|$check_wf"
 	"linkcheck|LINKCHECK_VERSION|github.com/dr-dobermann/linkcheck|$check_wf"
 	"mkdocs-material|MKDOCS_MATERIAL_VERSION|pypi:mkdocs-material|$docs_wf"
+	"mkdocs-awesome-nav|MKDOCS_AWESOME_NAV_VERSION|pypi:mkdocs-awesome-nav|$docs_wf"
 )
 
 latest_version() { # go module

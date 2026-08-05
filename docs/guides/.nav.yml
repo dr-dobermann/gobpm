@@ -1,0 +1,18 @@
+# Developer Manual parts in the reading order guides/index.md prescribes
+# (SRD-081 FR-3) — the auto tree sorted them alphabetically.
+nav:
+  - index.md
+  - Getting started: getting-started
+  - Architecture & runtime: concepts
+  - The value & data model: data
+  - Tasks: tasks
+  - Events: events
+  - Gateways: gateways
+  - Sub-processes & call activities: subprocesses
+  - Activity iteration: iteration
+  - Foundation elements: foundation
+  - Operating processes & instances: operating
+  - Extending gobpm: extending
+  - Reference: reference
+  - glossary.md
+  - CONTRIBUTING.md
