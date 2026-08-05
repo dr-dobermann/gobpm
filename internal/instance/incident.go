@@ -410,6 +410,236 @@ func (inst *Instance) restoreIncidents(doc *checkpoint.Document) error {
 	return nil
 }
 
+// IncidentOp enumerates the operator's incident operations (ADR-036 §2.6,
+// SRD-079 §3.6), submitted through SubmitIncidentOp and applied on the loop.
+type IncidentOp uint8
+
+const (
+	// IncidentRetry re-enters the failed node now, regardless of the policy's
+	// remaining budget.
+	IncidentRetry IncidentOp = iota
+	// IncidentResolve closes the incident as handled-outside-the-engine: the
+	// continuation spawns from the node's outgoing flows without re-executing
+	// it — the operator asserts the work's effect exists.
+	IncidentResolve
+	// IncidentDrop closes the incident as dead-lettered; the record is the
+	// durable dead letter, and the instance waits for the operator's next act
+	// (it never completes normally past a dead letter).
+	IncidentDrop
+)
+
+// incidentRequest is one operator operation crossing into the loop.
+type incidentRequest struct {
+	resp chan error
+	id   string
+	op   IncidentOp
+}
+
+// SubmitIncidentOp submits an operator incident operation to the instance's
+// loop and waits for its verdict. The boolean reports DELIVERY: false means
+// the loop has exited (an incident park or a dehydration) and the engine must
+// rebuild the instance from its checkpoint before re-submitting — the same
+// not-lost-to-the-race contract as the wake path (SRD-071 NFR-1).
+func (inst *Instance) SubmitIncidentOp(
+	ctx context.Context,
+	op IncidentOp,
+	incidentID string,
+) (bool, error) {
+	req := incidentRequest{op: op, id: incidentID, resp: make(chan error, 1)}
+
+	select {
+	case inst.incidentReq <- req:
+
+	case <-inst.loopDone:
+		return false, nil
+
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+
+	select {
+	case err := <-req.resp:
+		return true, err
+
+	case <-ctx.Done():
+		return true, ctx.Err()
+	}
+}
+
+// handleIncidentRequest applies one operator operation on the loop goroutine
+// (NFR-2): validation names the incident, and every op persists under the
+// incident checkpoint transition.
+func (ls *loopState) handleIncidentRequest(
+	ctx context.Context,
+	req incidentRequest,
+) {
+	inc, ok := ls.inst.incidents[req.id]
+	if !ok {
+		req.resp <- errs.New(
+			errs.M("incident %q isn't found", req.id),
+			errs.C(errorClass, errs.ObjectNotFound))
+
+		return
+	}
+
+	if !inc.state.open() {
+		req.resp <- errs.New(
+			errs.M("incident %q is already closed (%s)", req.id, inc.state),
+			errs.C(errorClass, errs.InvalidState))
+
+		return
+	}
+
+	var err error
+
+	switch req.op {
+	case IncidentRetry:
+		ls.retryIncident(ctx, inc)
+
+	case IncidentResolve:
+		err = ls.resolveIncident(ctx, inc)
+
+	case IncidentDrop:
+		ls.dropIncident(inc)
+	}
+
+	ls.inst.refreshIncidentsSnap()
+	ls.rearmIncidentRetryTimer()
+	ls.maybeCheckpoint(ctx, evIncident)
+
+	req.resp <- err
+}
+
+// resolveIncident closes the incident as handled outside the engine (ADR-036
+// §2.6): the continuation spawns from the node's OUTGOING flows — the node is
+// deemed complete with the scope's current data, never re-executed. The
+// spawned continuation's own live count stands in for the incident's scope
+// pin. Loop goroutine only.
+func (ls *loopState) resolveIncident(
+	ctx context.Context,
+	inc *incident,
+) error {
+	node, ok := ls.inst.s.Nodes[inc.nodeID]
+	if !ok {
+		return errs.New(
+			errs.M("resolve: node %q isn't in the process snapshot",
+				inc.nodeID),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	ls.closeIncident(inc, incidentResolved,
+		map[string]string{"resolution": "operator"})
+
+	// the node is deemed complete: its attempt's armed watches go, and its
+	// recorded position clears.
+	ls.disarmBoundaries(inc.trackID)
+	delete(ls.position, inc.trackID)
+
+	for _, s := range succsOf(node.Outgoing()) {
+		nt, err := newTrack(s.node, ls.inst, nil)
+		if err != nil {
+			// mirror spawnForks: a continuation that can't be built is a
+			// genuine instance fault.
+			ls.inst.fail(err)
+			ls.stopAll()
+
+			return nil
+		}
+
+		nt.scopePath = inc.scopePath
+		nt.scopeSeg = inc.scopeSeg
+		nt.prev = append(append([]string{}, inc.prev...), inc.trackID)
+		nt.steps[0].inFlow = s.inFlow
+
+		ls.inst.trackCount.Add(1)
+		ls.spawn(ctx, nt)
+	}
+
+	// released AFTER the continuations counted in, so the scope never drains
+	// in between.
+	ls.decScopePinned(ctx, inc.scopePath)
+
+	return nil
+}
+
+// dropIncident closes the incident as dead-lettered (ADR-036 §2.5/§2.6). The
+// scope pin is deliberately KEPT: the node's token died unconsumed, so the
+// process must never settle Completed past a dead letter — the instance stays
+// alive (parked, Active) until the operator's next act, a Cancel or a
+// compensation. Loop goroutine only.
+func (ls *loopState) dropIncident(inc *incident) {
+	ls.closeIncident(inc, incidentDeadLettered, nil)
+
+	ls.disarmBoundaries(inc.trackID)
+	delete(ls.position, inc.trackID)
+}
+
+// closeIncidentsOvertaken closes the open incident of a host an interrupting
+// boundary just canceled (ADR-036 §2.4, FR-9): the model made the operator's
+// decision. The pin releases — the boundary's exception-flow track, spawned in
+// the same scope, stands in. Loop goroutine only.
+func (ls *loopState) closeIncidentsOvertaken(
+	ctx context.Context,
+	hostTrackID string,
+) {
+	for _, inc := range ls.inst.incidents {
+		if !inc.state.open() || inc.trackID != hostTrackID {
+			continue
+		}
+
+		ls.closeIncident(inc, incidentOvertaken, nil)
+		delete(ls.position, inc.trackID)
+		ls.decScopePinned(ctx, inc.scopePath)
+	}
+
+	ls.inst.refreshIncidentsSnap()
+	ls.rearmIncidentRetryTimer()
+}
+
+// closeIncident flips one open incident to a closed state, emitting its fact.
+// The record stays — closing never removes it (a dead-lettered record IS the
+// dead letter). Loop goroutine only.
+func (ls *loopState) closeIncident(
+	inc *incident,
+	to incidentState,
+	extraDetails map[string]string,
+) {
+	inc.state = to
+	inc.retryAt = time.Time{}
+	inc.lastAt = ls.inst.now()
+	ls.inst.openIncCount.Add(-1)
+
+	details := map[string]string{
+		"action":      to.String(),
+		"incident_id": inc.id,
+	}
+	for k, v := range extraDetails {
+		details[k] = v
+	}
+
+	ls.inst.report(observability.Fact{
+		Kind:     observability.KindFault,
+		Phase:    observability.PhaseIncident,
+		NodeID:   inc.nodeID,
+		NodeName: inc.nodeName,
+		Details:  details,
+	})
+}
+
+// deadLetters counts the dead-lettered incidents — the reason a settled
+// instance parks instead of completing (dropIncident). Loop goroutine only.
+func (inst *Instance) deadLetters() int {
+	n := 0
+
+	for _, inc := range inst.incidents {
+		if inc.state == incidentDeadLettered {
+			n++
+		}
+	}
+
+	return n
+}
+
 // incidentPolicyCarrier is the capability a node or the engine runtime offers
 // to drive automatic incident retries (SRD-079 §3.5). Read by assertion so
 // neither the flow.Node nor the renv.EngineRuntime contract grows a method.

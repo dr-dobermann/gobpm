@@ -46,6 +46,7 @@ type Instance struct {
 	jobReq              chan jobRequest
 	callReq             chan callRequest
 	scopeReq            chan scopeRequest
+	incidentReq         chan incidentRequest
 	invoker             exec.ProcessInvoker
 	waitHolders         exec.WaitHolders
 	sc                  instanceScope
@@ -64,6 +65,9 @@ type Instance struct {
 	// (at the struct tail with the other int-sized fields) mirrors the OPEN
 	// count for lock-free reads off the loop.
 	incidents map[string]*incident
+	// pendingIncidentOp is an operator op riding a rebuild (SRD-079 §3.6),
+	// consumed once by the loop before its park decision.
+	pendingIncidentOp *incidentRequest
 	// incidentsSnap is the copy-on-write projection IncidentViews serves —
 	// rebuilt by the loop after every incident mutation (the tracksSnap
 	// pattern).
@@ -225,6 +229,20 @@ func (inst *Instance) pinnedResident() bool {
 	return inst.dehydrationPins.Load() > 0
 }
 
+// WithPendingIncidentOp hands a rebuild the operator's incident operation that
+// caused it (SRD-079 §3.6): a parked instance has no loop to deliver to, so
+// the op rides the rebuild — the PendingTrigger shape — and the fresh loop
+// applies it BEFORE deciding whether to park again. The verdict lands on resp.
+func WithPendingIncidentOp(
+	op IncidentOp, incidentID string, resp chan error,
+) Option {
+	return func(cfg *newConfig) {
+		cfg.pendingIncidentOp = &incidentRequest{
+			op: op, id: incidentID, resp: resp,
+		}
+	}
+}
+
 // WithSettledSignal gives the instance the channel to close when it reaches a
 // TERMINAL state (SRD-071). The engine owns it per instance ID and passes the
 // same channel to every rebuild, so a host waiting for completion is not woken
@@ -301,6 +319,9 @@ type newConfig struct {
 	cpOwner    string
 	cpGroup    string
 	restoredID string
+	// pendingIncidentOp is an operator incident operation riding a rebuild
+	// (SRD-079 §3.6) — applied by the loop before its park decision.
+	pendingIncidentOp *incidentRequest
 	// invoker launches child instances for the Call Activities this instance
 	// runs (SRD-050 FR-3); nil for a library embedder without a thresher — a
 	// call then fails fast with a classified no-invoker error.
@@ -435,11 +456,13 @@ func New(
 		now:                 er.Clock().Now,
 		tracks:              map[string]*track{},
 		incidents:           map[string]*incident{},
+		pendingIncidentOp:   cfg.pendingIncidentOp,
 		events:              make(chan trackEvent),
 		taskReq:             make(chan taskRequest),
 		jobReq:              make(chan jobRequest),
 		callReq:             make(chan callRequest),
 		scopeReq:            make(chan scopeRequest),
+		incidentReq:         make(chan incidentRequest),
 		invoker:             cfg.invoker,
 		waitHolders:         cfg.waitHolders,
 		settled:             cfg.settled,

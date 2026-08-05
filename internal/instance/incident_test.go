@@ -687,6 +687,192 @@ func TestIncidentRetryInternalEdges(t *testing.T) {
 	})
 }
 
+// TestIncidentOpValidationAndClose covers the operator-op guard rails and the
+// close mechanics directly on the loop state: unknown and already-closed
+// incidents are named errors; an overtaken close releases the pin and emits
+// its fact (the T-14 close slice).
+func TestIncidentOpValidationAndClose(t *testing.T) {
+	inst, fr, _ := forkedFailInstance(t, failingOp(t, fmt.Errorf("unused")))
+	ls := newLoopState(inst)
+	ctx := context.Background()
+
+	t.Run("unknown incident is named", func(t *testing.T) {
+		req := incidentRequest{resp: make(chan error, 1),
+			id: "ghost", op: IncidentRetry}
+		ls.handleIncidentRequest(ctx, req)
+
+		err := <-req.resp
+		require.Error(t, err)
+		require.Contains(t, err.Error(), `incident "ghost" isn't found`)
+	})
+
+	t.Run("a closed incident is named", func(t *testing.T) {
+		inst.incidents["done"] = &incident{id: "done",
+			state: incidentResolved}
+
+		req := incidentRequest{resp: make(chan error, 1),
+			id: "done", op: IncidentDrop}
+		ls.handleIncidentRequest(ctx, req)
+
+		err := <-req.resp
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "already closed (resolved)")
+	})
+
+	t.Run("overtaken closes, releases the pin, reports", func(t *testing.T) {
+		ls.scopes["/ot"] = &scopeEntry{active: 2}
+		inst.incidents["ot"] = &incident{id: "ot", trackID: "t-ot",
+			nodeID: "n-ot", scopePath: "/ot", state: incidentOpen}
+		inst.openIncCount.Add(1)
+
+		ls.closeIncidentsOvertaken(ctx, "t-ot")
+
+		require.Equal(t, incidentOvertaken, inst.incidents["ot"].state)
+		require.Equal(t, 1, ls.scopes["/ot"].active)
+		require.Zero(t, inst.openIncidents())
+
+		var seen bool
+
+		for _, f := range fr.byPhase(observability.PhaseIncident) {
+			if f.Details["action"] == "overtaken" &&
+				f.Details["incident_id"] == "ot" {
+				seen = true
+			}
+		}
+
+		require.True(t, seen, "the overtaken fact must be on the stream")
+	})
+
+	t.Run("resolve with a vanished node is named", func(t *testing.T) {
+		inst.incidents["rv"] = &incident{id: "rv", nodeID: "no-such",
+			state: incidentOpen}
+
+		req := incidentRequest{resp: make(chan error, 1),
+			id: "rv", op: IncidentResolve}
+		ls.handleIncidentRequest(ctx, req)
+
+		err := <-req.resp
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "isn't in the process snapshot")
+	})
+}
+
+// residentIncident builds a line instance whose task fails under a 1h-backoff
+// policy: the scheduled retry keeps the loop resident, so operator ops deliver
+// directly.
+func residentIncident(
+	t *testing.T, op service.Operation,
+) (*Instance, string) {
+	inst, taskID := lineInstance(t, enginert.Default(), op,
+		activities.WithIncidentRetryPolicy(
+			capPolicy{backoff: time.Hour, max: 99}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	require.Eventually(t, func() bool { return inst.OpenIncidents() == 1 },
+		3*time.Second, 5*time.Millisecond)
+
+	_ = taskID
+
+	return inst, inst.IncidentViews()[0].ID
+}
+
+// TestIncidentSubmitOps drives the operator operations through the loop's
+// channel on a resident instance (T-9/T-10 at the engine level).
+func TestIncidentSubmitOps(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("resolve continues to completion", func(t *testing.T) {
+		inst, incID := residentIncident(t,
+			failingOp(t, fmt.Errorf("always")))
+
+		delivered, err := inst.SubmitIncidentOp(ctx, IncidentResolve, incID)
+		require.True(t, delivered)
+		require.NoError(t, err)
+
+		require.Eventually(t, func() bool { return inst.State() == Completed },
+			3*time.Second, 5*time.Millisecond)
+		require.Equal(t, "resolved", inst.IncidentViews()[0].State)
+	})
+
+	t.Run("drop dead-letters and parks", func(t *testing.T) {
+		inst, incID := residentIncident(t,
+			failingOp(t, fmt.Errorf("always")))
+
+		delivered, err := inst.SubmitIncidentOp(ctx, IncidentDrop, incID)
+		require.True(t, delivered)
+		require.NoError(t, err)
+
+		// the loop parks (Done closes) but the instance never completes.
+		select {
+		case <-inst.Done():
+		case <-time.After(3 * time.Second):
+			t.Fatal("the loop did not park after the drop")
+		}
+
+		require.Equal(t, Active, inst.State())
+		require.Equal(t, "dead-lettered", inst.IncidentViews()[0].State)
+		require.Zero(t, inst.OpenIncidents())
+	})
+
+	t.Run("retry-now overrides the schedule", func(t *testing.T) {
+		inst, incID := residentIncident(t, flakyOp(t, 1))
+
+		delivered, err := inst.SubmitIncidentOp(ctx, IncidentRetry, incID)
+		require.True(t, delivered)
+		require.NoError(t, err)
+
+		require.Eventually(t, func() bool { return inst.State() == Completed },
+			3*time.Second, 5*time.Millisecond)
+
+		// a parked/finished loop reports non-delivery instead of blocking.
+		delivered, err = inst.SubmitIncidentOp(ctx, IncidentRetry, incID)
+		require.False(t, delivered)
+		require.NoError(t, err)
+
+		// and a canceled caller context reports its own error.
+		cctx, cancel := context.WithCancel(ctx)
+		cancel()
+
+		_, err = inst.SubmitIncidentOp(cctx, IncidentRetry, incID)
+		require.ErrorIs(t, err, context.Canceled)
+	})
+}
+
+// TestPendingIncidentOpOnBuild covers the rebuild-riding op (SRD-079 §3.6):
+// the loop applies it before its park decision, and its verdict lands on the
+// response channel — here a named ObjectNotFound for a ghost incident.
+func TestPendingIncidentOpOnBuild(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, _ := forkedFailProcess(t, okOp(t))
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	resp := make(chan error, 1)
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
+		&recordingProducer{}, nil,
+		WithPendingIncidentOp(IncidentRetry, "ghost", resp))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	select {
+	case err := <-resp:
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "ghost")
+
+	case <-time.After(3 * time.Second):
+		t.Fatal("the pending op verdict never arrived")
+	}
+}
+
 // capPolicy retries with a tiny fixed backoff while attempt <= max — a
 // deterministic test policy.
 type capPolicy struct {

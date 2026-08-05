@@ -34,6 +34,10 @@ type InstanceHandle struct {
 	// every rebuild — closed only when the instance genuinely finishes, never
 	// when it merely releases its goroutines.
 	settled chan struct{}
+	// th is the owning engine — the incident operations route through it so
+	// an op on a PARKED instance (its loop exited on an incident park or a
+	// dehydration) can rebuild it from its checkpoint first (SRD-079 §3.6).
+	th *Thresher
 }
 
 // current returns the instance object the handle speaks for right now.
@@ -140,6 +144,54 @@ type IncidentView struct {
 	// to later sibling writes (ADR-036 §2.1).
 	Data     json.RawMessage
 	Attempts int
+}
+
+// RetryIncident re-enters the incident's failed node now, regardless of the
+// retry policy's remaining budget (ADR-036 §2.6, SRD-079 §3.6).
+func (h *InstanceHandle) RetryIncident(
+	ctx context.Context, incidentID string,
+) error {
+	return h.submitIncidentOp(ctx, instance.IncidentRetry, incidentID)
+}
+
+// ResolveIncident closes the incident as handled outside the engine: the
+// continuation proceeds from the node's outgoing flows with the scope's
+// current data, without re-executing the node — the operator asserts the
+// work's effect exists (ADR-036 §2.6).
+func (h *InstanceHandle) ResolveIncident(
+	ctx context.Context, incidentID string,
+) error {
+	return h.submitIncidentOp(ctx, instance.IncidentResolve, incidentID)
+}
+
+// DropIncident closes the incident as dead-lettered: the record is retained
+// durably as the dead letter, and the instance never completes normally past
+// it — it waits for the operator's next act, a Cancel or a compensation
+// (ADR-036 §2.5/§2.6).
+func (h *InstanceHandle) DropIncident(
+	ctx context.Context, incidentID string,
+) error {
+	return h.submitIncidentOp(ctx, instance.IncidentDrop, incidentID)
+}
+
+// submitIncidentOp delivers an operator incident operation. A parked instance
+// (its loop exited on an incident park or a dehydration) is first rebuilt from
+// its checkpoint through the engine — the op is never lost to that race.
+func (h *InstanceHandle) submitIncidentOp(
+	ctx context.Context, op instance.IncidentOp, incidentID string,
+) error {
+	delivered, err := h.current().SubmitIncidentOp(ctx, op, incidentID)
+	if err != nil || delivered {
+		return err
+	}
+
+	if h.th == nil {
+		return errs.New(
+			errs.M("incident op on a parked instance needs its engine"),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	return h.th.wakeForIncidentOp(ctx, h, op, incidentID)
 }
 
 // Incidents returns the instance's incidents, open and closed, ordered by

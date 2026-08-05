@@ -179,6 +179,14 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	// root scope — they guard the whole instance's window (SRD-052 FR-5).
 	ls.armScopeHandlers(ctx, rootNodes(inst), inst.sc.root)
 
+	// An operator op that rode a rebuild (SRD-079 §3.6) applies BEFORE the
+	// park decision: a retry/resolve spawns tracks that keep the loop alive,
+	// a drop parks again — either way the op is never lost to the re-park.
+	if req := inst.pendingIncidentOp; req != nil {
+		inst.pendingIncidentOp = nil
+		ls.handleIncidentRequest(ctx, *req)
+	}
+
 	if !ls.loopPreflight() {
 		return
 	}
@@ -242,6 +250,12 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			// stay single-writer, mirroring jobReq (SRD-050 FR-7).
 			ls.handleCallCompletion(req)
 
+		case req := <-inst.incidentReq:
+			// An operator incident operation (SRD-079 §3.6): retry-now,
+			// resolve, drop. Serviced on the loop goroutine so the incident
+			// table, the spawns and the checkpoint stay single-writer.
+			ls.handleIncidentRequest(ctx, req)
+
 		case req := <-inst.scopeReq:
 			// A looped composite's off-loop iteration decorator asking to open the
 			// child scope for a pass; serviced on the loop goroutine so OpenScope /
@@ -249,6 +263,16 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			ls.handleScopeRequest(ctx, req)
 		}
 	}
+
+	ls.exitLoop(ctx)
+}
+
+// exitLoop settles the loop's end: a dehydration or an incident park returns
+// without settling — the instance is not finishing, it is waiting — and only
+// a genuinely finished instance tears down, settles its final state and
+// writes the terminal checkpoint.
+func (ls *loopState) exitLoop(ctx context.Context) {
+	inst := ls.inst
 
 	// Dehydration exit (SRD-071 FR-2): the loop released every goroutine while
 	// idle — the instance is not finishing, it is parking. Set Dehydrated —
@@ -751,7 +775,7 @@ func (ls *loopState) loopPreflight() bool {
 		return true
 	}
 
-	if ls.inst.openIncidents() == 0 {
+	if ls.inst.openIncidents() == 0 && ls.inst.deadLetters() == 0 {
 		ls.inst.setState(Completed)
 
 		return false
@@ -767,7 +791,8 @@ func (ls *loopState) loopPreflight() bool {
 // records carry the continuations. A stopping instance settles normally — a
 // terminate overrides waiting. Reports whether the loop parked.
 func (ls *loopState) parkOnIncidents(ctx context.Context) bool {
-	if ls.stopping || ls.inst.openIncidents() == 0 {
+	if ls.stopping ||
+		(ls.inst.openIncidents() == 0 && ls.inst.deadLetters() == 0) {
 		return false
 	}
 

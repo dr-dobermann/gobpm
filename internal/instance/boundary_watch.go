@@ -535,6 +535,10 @@ func (ls *loopState) fireBoundary(ctx context.Context, ev trackEvent) {
 
 		ev.track.cancel()
 		ls.disarmBoundaries(hostID)
+
+		// an interrupting fire on an incident-holding node overtakes the
+		// incident — the model made the operator's decision (ADR-036 §2.4).
+		ls.closeIncidentsOvertaken(ctx, hostID)
 	}
 }
 
