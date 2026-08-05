@@ -188,7 +188,9 @@ func TestMidFlowEventRegistrationFailureFailsTrack(t *testing.T) {
 		}
 
 		for _, tr := range *snap {
-			if tr.inState(TrackFailed) {
+			// revised by SRD-079 FR-1: the registration failure now ends
+			// the track in TrackIncident rather than TrackFailed.
+			if tr.inState(TrackIncident) {
 				return true
 			}
 		}

@@ -3,10 +3,12 @@ package instance
 import (
 	"context"
 	"fmt"
-	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -53,6 +55,10 @@ type loopState struct {
 	// arrives on an activity with interrupting boundaries (spawn / evMoved), torn down when it
 	// leaves, ends, or fails.
 	watchers map[string][]*boundaryWatch
+	// retryC delivers the earliest scheduled incident-retry deadline (SRD-079
+	// §3.4) — ONE Clock.After per instance, re-armed on every incident
+	// mutation; nil (blocking its select case) when nothing is scheduled.
+	retryC <-chan time.Time
 	// tasks is the loop-owned human-task registry (SRD-034): taskID → the parked
 	// UserTask track and node. Populated on evTaskWaiting (and at spawn for a task
 	// parked at construction), read by a Take/Complete taskReq, and cleared when
@@ -173,8 +179,15 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	// root scope — they guard the whole instance's window (SRD-052 FR-5).
 	ls.armScopeHandlers(ctx, rootNodes(inst), inst.sc.root)
 
-	if ls.active == 0 {
-		inst.setState(Completed)
+	// An operator op that rode a rebuild (SRD-079 §3.6) applies BEFORE the
+	// park decision: a retry/resolve spawns tracks that keep the loop alive,
+	// a drop parks again — either way the op is never lost to the re-park.
+	if req := inst.pendingIncidentOp; req != nil {
+		inst.pendingIncidentOp = nil
+		ls.handleIncidentRequest(ctx, *req)
+	}
+
+	if !ls.loopPreflight() {
 		return
 	}
 
@@ -191,28 +204,19 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	ls.maybeDehydrate(ctx)
 
 	done := ctx.Done()
-	for ls.active > 0 {
-		// A cancellation the loop can ALREADY see is recorded before any
-		// further terminal-event accounting. `select` chooses uniformly among
-		// ready cases (Go spec), so a canceled — and therefore permanently
-		// ready — done can lose every turn while evEnded drives ls.active to
-		// zero; the loop would then exit with ls.stopping false and settle
-		// Completed for an instance that was torn down (ADR-001 v.6 §7,
-		// FIX-033 §2.1). Once canceled, done is nil and this costs nothing.
-		if done != nil {
-			select {
-			case <-done:
-				done = nil
-				ls.stopAll()
-
-			default:
-			}
-		}
+	for ls.active > 0 || ls.pendingRetries() > 0 {
+		done = ls.drainCancel(done)
 
 		select {
 		case <-done:
 			done = nil
 			ls.stopAll()
+
+		case <-ls.retryC:
+			// a scheduled incident retry came due (SRD-079 §3.4): respawn,
+			// then persist the new attempt under the incident transition.
+			ls.applyDueIncidentRetries(ctx)
+			ls.maybeCheckpoint(ctx, evIncident)
 
 		case ev := <-inst.events:
 			// Lock-free attrs only (ID is immutable): this runs per event, and the
@@ -246,6 +250,12 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			// stay single-writer, mirroring jobReq (SRD-050 FR-7).
 			ls.handleCallCompletion(req)
 
+		case req := <-inst.incidentReq:
+			// An operator incident operation (SRD-079 §3.6): retry-now,
+			// resolve, drop. Serviced on the loop goroutine so the incident
+			// table, the spawns and the checkpoint stay single-writer.
+			ls.handleIncidentRequest(ctx, req)
+
 		case req := <-inst.scopeReq:
 			// A looped composite's off-loop iteration decorator asking to open the
 			// child scope for a pass; serviced on the loop goroutine so OpenScope /
@@ -253,6 +263,16 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			ls.handleScopeRequest(ctx, req)
 		}
 	}
+
+	ls.exitLoop(ctx)
+}
+
+// exitLoop settles the loop's end: a dehydration or an incident park returns
+// without settling — the instance is not finishing, it is waiting — and only
+// a genuinely finished instance tears down, settles its final state and
+// writes the terminal checkpoint.
+func (ls *loopState) exitLoop(ctx context.Context) {
+	inst := ls.inst
 
 	// Dehydration exit (SRD-071 FR-2): the loop released every goroutine while
 	// idle — the instance is not finishing, it is parking. Set Dehydrated —
@@ -265,6 +285,10 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		inst.setStateDetailed(Dehydrated, ls.dehydrationDetails())
 		ls.checkpointNow(ctx)
 
+		return
+	}
+
+	if ls.parkOnIncidents(ctx) {
 		return
 	}
 
@@ -426,6 +450,9 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		ls.position[ev.track.ID()] = ev.node
 		delete(ls.parked, ev.track.ID())
 		ls.armBoundaries(ctx, ev.track, ev.node)
+		// a retry attempt moving past its incident's node closed the
+		// incident — the retry succeeded (SRD-079 §3.4).
+		ls.closeIncidentsOnProgress(ev.track)
 
 	case evEnded:
 		// a compensation-handler track's end advances its sweep (SRD-059
@@ -712,6 +739,68 @@ func trackEndKind(t *track) trackEventKind {
 	}
 }
 
+// drainCancel records a cancellation the loop can ALREADY see, before any
+// further terminal-event accounting. `select` chooses uniformly among ready
+// cases (Go spec), so a canceled — and therefore permanently ready — done can
+// lose every turn while evEnded drives ls.active to zero; the loop would then
+// exit with ls.stopping false and settle Completed for an instance that was
+// torn down (ADR-001 v.6 §7, FIX-033 §2.1). Returns nil once canceled, so the
+// check costs nothing afterwards.
+func (ls *loopState) drainCancel(done <-chan struct{}) <-chan struct{} {
+	if done == nil {
+		return nil
+	}
+
+	select {
+	case <-done:
+		ls.stopAll()
+
+		return nil
+
+	default:
+		return done
+	}
+}
+
+// loopPreflight decides the loop's entry after the initial spawns. A restored
+// incident instance may start with no live track at all — its continuations
+// are the incident records: scheduled retries drive it into the loop, an
+// operator-waiting one parks again without settling, and only a truly empty
+// instance completes. It also arms the incident-retry timer (a restored
+// deadline may already be due). Reports whether the loop should run.
+func (ls *loopState) loopPreflight() bool {
+	ls.rearmIncidentRetryTimer()
+
+	if ls.active > 0 {
+		return true
+	}
+
+	if ls.inst.openIncidents() == 0 && ls.inst.deadLetters() == 0 {
+		ls.inst.setState(Completed)
+
+		return false
+	}
+
+	return ls.pendingRetries() > 0
+}
+
+// parkOnIncidents is the loop's incident exit (ADR-036 §2.2, SRD-079 §3.2):
+// when every remaining continuation is an open incident, the instance is not
+// finishing — it is waiting for a retry or an operator. Like the dehydration
+// exit: no settle, no handler teardown, no ledger discard; the incident
+// records carry the continuations. A stopping instance settles normally — a
+// terminate overrides waiting. Reports whether the loop parked.
+func (ls *loopState) parkOnIncidents(ctx context.Context) bool {
+	if ls.stopping ||
+		(ls.inst.openIncidents() == 0 && ls.inst.deadLetters() == 0) {
+		return false
+	}
+
+	ls.checkpointNow(ctx)
+
+	return true
+}
+
 // failFromTrack surfaces a TrackFailed track's error as an instance failure: it
 // records lastErr via Instance.fail (which also cancels the ctx so sibling tracks
 // stop) and calls stopAll so the Terminating flag is set synchronously. When this
@@ -797,20 +886,64 @@ func (ls *loopState) applyParked(ev trackEvent) {
 // the track is cleared from the loop-owned views and its boundaries disarmed.
 // Called only from apply.
 func (ls *loopState) applyFailed(ctx context.Context, ev trackEvent) {
-	if !ls.matchErrorBoundary(ctx, ev.track) &&
-		!ls.matchErrorScopeChain(ctx, ev.track) {
+	caught := ls.matchErrorBoundary(ctx, ev.track) ||
+		ls.matchErrorScopeChain(ctx, ev.track)
+
+	incident := false
+
+	if !caught {
 		ls.reportUncaught(ev.track)
-		ls.failFromTrack(ev.track)
+
+		// The failure taxonomy (ADR-036 §2.1, SRD-079 §3.2): an invariant
+		// violation denies the engine's own state; an Error End Event's
+		// uncaught throw is the model's own verdict; and a CHILD instance
+		// propagates every uncaught failure across the call boundary — to
+		// its caller the whole called process is a single task, and the
+		// incident arises only at the top-level call node. All three keep
+		// the fatal path; every other uncaught failure — technical or an
+		// activity's uncaught BpmnError — becomes a durable incident and
+		// the instance runs on.
+		if isInvariantFailure(ev.track.lastErr) ||
+			isModeledErrorEnd(ev.track) ||
+			ls.inst.parentInstanceID != "" {
+			ls.failFromTrack(ev.track)
+		} else {
+			ls.raiseIncident(ctx, ev.track)
+			incident = true
+
+			// the raise is a persist point of its own (FR-5): evFailed is
+			// not in checkpointTransitions, so the incident checkpoint is
+			// requested explicitly under its own kind.
+			ls.maybeCheckpoint(ctx, evIncident)
+		}
 	}
 
 	ls.active--
-	ls.decScope(ctx, ev.track)
+
+	// An open incident pins its scope (ADR-036 §2.2): retry re-enters against
+	// that data, so the scope must not drain while the incident holds it. The
+	// deferred release is part of the incident's close (the resolution slice).
+	if !incident {
+		ls.decScope(ctx, ev.track)
+	}
+
 	ls.flipNotParked(ev.track)
-	ls.clearPosition(ev.track)
+
+	// An incident-holding node keeps its recorded position and its armed
+	// boundaries (ADR-036 §2.4): the node was entered and did not complete, so
+	// an SLA timer must keep ticking against it and an interrupting boundary
+	// may still overtake it.
+	if !incident {
+		ls.clearPosition(ev.track)
+	}
+
 	// the same withdrawal evEnded performs, for the track that failed rather
 	// than ended: its wait is over either way (SRD-071 FR-3b).
 	ev.track.releaseHolds()
-	ls.disarmBoundaries(ev.track.ID())
+
+	if !incident {
+		ls.disarmBoundaries(ev.track.ID())
+	}
 }
 
 // applyMerged flips the tracks the surviving track absorbed at a synchronizing

@@ -7,6 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/stretchr/testify/require"
 )
@@ -57,6 +58,79 @@ func TestSnapshotAt(t *testing.T) {
 	t.Run("an uncontained path errors", func(t *testing.T) {
 		_, err := p.SnapshotAt(mustPath(t, "/elsewhere"))
 		require.Error(t, err)
+	})
+
+	t.Run("property and data object clone by their own shapes", func(t *testing.T) {
+		// Property and DataObject declare concrete Clone methods that shadow
+		// the promoted ItemAwareElement.Clone (the SRD-079 incident-snapshot
+		// gap): cloneDatum must copy both, preserving value-copy semantics.
+		prop, err := data.NewProperty("prop",
+			data.MustItemDefinition(values.NewVariable(7),
+				foundation.WithID("prop")),
+			data.ReadyDataState)
+		require.NoError(t, err)
+
+		do, err := dataobjects.New("dobj",
+			data.MustItemDefinition(values.NewVariable("d1"),
+				foundation.WithID("dobj")),
+			data.ReadyDataState)
+		require.NoError(t, err)
+
+		_, err = p.Commit(root, prop, do)
+		require.NoError(t, err)
+
+		snap, err := p.SnapshotAt(root)
+		require.NoError(t, err)
+
+		byName := map[string]data.Data{}
+		for _, d := range snap {
+			byName[d.Name()] = d
+		}
+
+		require.Contains(t, byName, "prop")
+		require.Contains(t, byName, "dobj")
+		require.Equal(t, 7, byName["prop"].Value().Get(ctx))
+		require.Equal(t, "d1", byName["dobj"].Value().Get(ctx))
+
+		// mutate the live scope: the snapshots must not see it.
+		_, err = p.Commit(root,
+			structData(t, "prop", values.NewVariable(100)))
+		require.NoError(t, err)
+		require.Equal(t, 7, byName["prop"].Value().Get(ctx),
+			"the property snapshot is a value copy")
+	})
+
+	t.Run("a failing clone reports its datum and location", func(t *testing.T) {
+		child := mustPath(t, "/proc/cl")
+		require.NoError(t, p.OpenScope(child))
+		t.Cleanup(func() { _ = p.CloseScope(child) })
+
+		for name, d := range map[string]data.Data{
+			"bad":  &failingCloneDatum{unclonableDatum{name: "bad"}},
+			"badp": &failingPropCloneDatum{unclonableDatum{name: "badp"}},
+			"badd": &failingDOCloneDatum{unclonableDatum{name: "badd"}},
+		} {
+			p.scopes[child] = map[string]data.Data{name: d}
+
+			_, err = p.SnapshotAt(child)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), `couldn't clone "`+name+`"`)
+		}
+	})
+
+	t.Run("an unwrappable clone reports the wrap failure", func(t *testing.T) {
+		child := mustPath(t, "/proc/wr")
+		require.NoError(t, p.OpenScope(child))
+		t.Cleanup(func() { _ = p.CloseScope(child) })
+
+		// the clone succeeds but the datum's reserved-character name breaks
+		// the Parameter wrap.
+		p.scopes[child]["wr.x"] = &emptyNameCloneDatum{
+			unclonableDatum{name: "wr.x"}}
+
+		_, err = p.SnapshotAt(child)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "couldn't wrap")
 	})
 
 	t.Run("an unreadable datum errors (white-box)", func(t *testing.T) {
@@ -112,6 +186,36 @@ func (d *failingCloneDatum) Clone() (*data.ItemAwareElement, error) {
 	return nil, errors.New("forged clone failure")
 }
 
+// failingPropCloneDatum errors through the Property clone shape.
+type failingPropCloneDatum struct {
+	unclonableDatum
+}
+
+func (d *failingPropCloneDatum) Clone() (*data.Property, error) {
+	return nil, errors.New("forged property clone failure")
+}
+
+// failingDOCloneDatum errors through the DataObject clone shape.
+type failingDOCloneDatum struct {
+	unclonableDatum
+}
+
+func (d *failingDOCloneDatum) Clone() (*dataobjects.DataObject, error) {
+	return nil, errors.New("forged data object clone failure")
+}
+
+// emptyNameCloneDatum clones fine but its reserved-character name breaks the
+// Parameter wrap — cloneDatum's wrap-error branch.
+type emptyNameCloneDatum struct {
+	unclonableDatum
+}
+
+func (d *emptyNameCloneDatum) Clone() (*data.ItemAwareElement, error) {
+	return data.MustItemAwareElement(
+		data.MustItemDefinition(values.NewVariable(1)),
+		data.ReadyDataState), nil
+}
+
 // TestOwnDataAndOpenPaths (SRD-070 FR-4): the checkpoint capture's
 // enumeration surface — per-scope OWN data, no walk-up duplication.
 func TestOwnDataAndOpenPaths(t *testing.T) {
@@ -160,6 +264,7 @@ func TestOwnDataAndOpenPaths(t *testing.T) {
 type brokenDatum struct{ data.Data }
 
 func (brokenDatum) Name() string { return "broken" }
+
 
 func TestOwnDataUnclonable(t *testing.T) {
 	root := mustPath(t, "/proc")

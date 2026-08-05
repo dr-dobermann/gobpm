@@ -123,6 +123,10 @@ func Restore(
 		return nil, err
 	}
 
+	if err := inst.restoreIncidents(doc); err != nil {
+		return nil, err
+	}
+
 	return inst, nil
 }
 

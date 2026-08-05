@@ -256,6 +256,21 @@ default per group enforced by the database. Any adapter proves itself
 against the published conformance suite
 (`pkg/repository/repositorytest`) — the same one `memrepo` passes.
 
+A technical failure no longer kills the instance — see
+[`examples/incident-retry/`](examples/incident-retry/): an unhandled failure
+opens an **incident** instead, a durable record carrying the cause chain, the
+attempt history and a **failure-time data snapshot** (the variables exactly as
+the failing attempt saw them), while sibling branches keep running and the
+token stays visible at the stuck node. An **incident retry policy** (per
+activity or engine-wide) re-enters the node on its own; when it exhausts —
+or by default, with no policy — the incident waits for an **operator**:
+inspect it via `Incidents()`, then `RetryIncident` (re-run the node now),
+`ResolveIncident` (continue past it — the work's effect exists), or
+`DropIncident` (a durable dead letter the process never silently completes
+past). Armed boundary timers keep ticking against the stuck node and are never
+reset by retries; incidents survive restarts through the checkpoint. The
+guide: [**docs/guides/operating/incidents.md**](docs/guides/operating/incidents.md).
+
 The same switch buys **dehydration** — see
 [`examples/dehydration/`](examples/dehydration/): an instance whose every
 live track sits on a long wait releases *all* of its goroutines, its loop
@@ -463,6 +478,7 @@ every docs-touching merge. The same pages as files, for in-repo reading:
 - [Composition](docs/guides/subprocesses/index.md) — sub-processes (nested scopes) & call activities (child-instance reuse boundary): the §13.3.4 shapes, data visibility/isolation, versioning, scope-wide interruption
 - [Interchange converters](docs/guides/extending/converters.md) — import and export BPMN 2.0 XML: the format-agnostic `convert` seam, blank-import registration, id preservation as the version key, unsupported-element feedback, semantic round-trip
 - [Persistence & recovery](docs/guides/operating/persistence.md) — instance checkpoints & restart recovery: arming with `WithRepository`, per-wait recovery semantics (overdue timers fire once), ownership leases + CAS fencing for shared stores, engine groups, the PostgreSQL adapter, stable element ids as the deployment-parity contract
+- [Incidents & retry](docs/guides/operating/incidents.md) — a technical failure becomes durable, operable state: retry policies, the operator's retry/resolve/drop, failure-time snapshots, dead letters
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstreams + milestones
 - [Conformance scope](docs/bpmn-spec/conformance.md) and [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — what's implemented vs what remains, mapped to issues
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)

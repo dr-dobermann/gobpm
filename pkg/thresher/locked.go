@@ -240,7 +240,7 @@ func (t *Thresher) handleForLocked(
 
 	t.settled[instanceID] = settled
 
-	return &InstanceHandle{settled: settled}
+	return &InstanceHandle{settled: settled, th: t}
 }
 
 // settledFor returns the per-instance-ID terminal signal, creating it if this

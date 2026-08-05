@@ -14,6 +14,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 // The activity class is the abstract super class for all concrete Activity
@@ -26,6 +27,7 @@ type activity struct {
 	properties          map[string]*data.Property
 	IoSpec              *data.InputOutputSpecification
 	dataAssociations    map[data.Direction][]*data.Association
+	incidentRetry       tasks.RetryPolicy
 	boundaryEvents      []flow.BoundaryEvent
 	startQuantity       int
 	completionQuantity  int
@@ -122,10 +124,18 @@ func (a *activity) clone() (activity, error) {
 		properties:          properties,
 		IoSpec:              a.IoSpec,
 		dataAssociations:    a.dataAssociations,
+		incidentRetry:       a.incidentRetry,
 		startQuantity:       a.startQuantity,
 		completionQuantity:  a.completionQuantity,
 		isForCompensation:   a.isForCompensation,
 	}, nil
+}
+
+// IncidentRetryPolicy returns the activity's incident retry policy — nil when
+// the activity relies on the engine-wide default or on the operator (SRD-079
+// §3.5). The instance loop reads it through a capability assertion at raise.
+func (a *activity) IncidentRetryPolicy() tasks.RetryPolicy {
+	return a.incidentRetry
 }
 
 // Roles returns list of ResourceRoles of the activity.

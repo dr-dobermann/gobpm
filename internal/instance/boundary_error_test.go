@@ -126,19 +126,24 @@ func TestErrorBoundaryCatchesByCode(t *testing.T) {
 		"the failed activity's normal path did not run")
 }
 
-// T-10: a BpmnError with no matching Error boundary falls through to the existing
-// instance-fault path, carrying the code on the instance error.
+// T-10 (revised by SRD-079 FR-2): a BpmnError with no matching Error boundary
+// is the deployment-mistake case — a wrong-code boundary — and now opens an
+// incident at the throwing activity instead of faulting the instance.
 func TestErrorBoundaryNoMatchFaults(t *testing.T) {
 	inst, _, excEndID := errorGuardedInstance(
 		t, &recordingProducer{}, raiseOp(t, "E2"), "E1") // boundary catches E1, op raises E2
 
 	runToDone(t, inst)
 
-	require.Equal(t, Terminated, inst.State(), "an uncaught error faults the instance")
+	require.Equal(t, Active, inst.State(),
+		"an uncaught activity error opens an incident, not an instance fault")
+	require.Nil(t, inst.LastErr())
+	require.Equal(t, 1, inst.openIncidents())
 
-	var be *events.BpmnError
-	require.ErrorAs(t, inst.LastErr(), &be)
-	require.Equal(t, "E2", be.Code)
+	for _, inc := range inst.incidents {
+		require.Contains(t, inc.cause, "E2")
+	}
+
 	require.False(t, reachedNode(inst, excEndID), "no exception flow runs on a no-match")
 }
 

@@ -331,12 +331,17 @@ func TestCompensateHandlerFailureFaults(t *testing.T) {
 
 	inst, _ := observeInstance(t, p)
 
-	require.Equal(t, Terminated, inst.State(),
-		"the handler's fault terminated the instance (uncaught)")
+	// revised by SRD-079 FR-2: the handler's uncaught fault opens an incident
+	// at the handler node — the operator retries the handler — instead of
+	// terminating the instance.
+	require.Equal(t, Active, inst.State(),
+		"the handler's uncaught fault opens an incident, not a termination")
+	require.Equal(t, 1, inst.OpenIncidents())
+	require.Nil(t, inst.LastErr())
 
-	var be *events.BpmnError
-	require.ErrorAs(t, inst.LastErr(), &be)
-	require.Equal(t, "CF", be.Code)
+	for _, inc := range inst.incidents {
+		require.Contains(t, inc.cause, "CF")
+	}
 }
 
 // T-5 (consume half): compensating a completed Sub-Process runs its own

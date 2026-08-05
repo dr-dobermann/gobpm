@@ -463,6 +463,25 @@ func TestWithWorkerRetryPolicyRejectsNil(t *testing.T) {
 	}
 }
 
+// TestWithIncidentRetryPolicy (SRD-079 §3.5): the engine-wide incident retry
+// policy sets, exposes through the capability accessor, and rejects nil.
+func TestWithIncidentRetryPolicy(t *testing.T) {
+	c := defaultConfig()
+
+	p := tasks.NoRetry()
+	if err := WithIncidentRetryPolicy(p)(&c); err != nil {
+		t.Fatalf("option returned an error: %v", err)
+	}
+
+	if c.IncidentRetryPolicy() != p {
+		t.Fatal("WithIncidentRetryPolicy did not override its field")
+	}
+
+	if err := WithIncidentRetryPolicy(nil)(&c); err == nil {
+		t.Fatal("a nil RetryPolicy should be rejected")
+	}
+}
+
 // TestWithWorkerTrustDefaultRejectsInvalid: an unknown engine-wide trust mode is
 // rejected.
 func TestWithWorkerTrustDefaultRejectsInvalid(t *testing.T) {

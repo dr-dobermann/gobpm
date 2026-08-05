@@ -75,6 +75,7 @@ var trackEventKindNames = [...]string{
 	evCompensate:        "compensate",
 	evTransactionCancel: "transactionCancel",
 	evDehydrated:        "dehydrated",
+	evIncident:          "incident",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -205,4 +206,8 @@ const (
 	// terminal events, but the track is RETAINED as a live record (its wait is
 	// held externally), not torn down.
 	evDehydrated
+	// evIncident: the loop turned a track failure into an incident (ADR-036,
+	// SRD-079 §3.2) — the loop's own signal, used to gate the incident-raise
+	// checkpoint (the persistence slice wires it into checkpointTransitions).
+	evIncident
 )

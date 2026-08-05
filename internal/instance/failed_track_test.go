@@ -100,9 +100,11 @@ func failingSnapshot(pname string) (*snapshot.Snapshot, error) {
 	return snapshot.New(p)
 }
 
-// TestFailedTrackFailsInstance is the FIX-008 canary: a track whose node Exec
-// errors must FAIL the instance (Terminated + LastErr surfaced), not silently
-// reach Completed with lastErr=nil.
+// TestFailedTrackFailsInstance is the FIX-008 canary, re-pinned by SRD-079
+// FR-1: a track whose node Exec errors must never let the instance silently
+// reach Completed with lastErr=nil. Under the incident contract the failure now
+// surfaces as an open incident on a still-Active instance rather than as a
+// termination.
 func TestFailedTrackFailsInstance(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -125,10 +127,12 @@ func TestFailedTrackFailsInstance(t *testing.T) {
 		t.Fatal("instance did not finish")
 	}
 
-	require.Equal(t, instance.Terminated, inst.State(),
-		"a failed track must terminate the instance, not complete it")
-	require.Error(t, inst.LastErr(),
-		"the failed track's error must be surfaced on the instance")
+	require.Equal(t, instance.Active, inst.State(),
+		"a failed track must leave the instance alive with an incident, "+
+			"never silently Completed")
+	require.Equal(t, 1, inst.OpenIncidents(),
+		"the failure must be surfaced as an open incident")
+	require.NoError(t, inst.LastErr())
 }
 
 // TestNormalCompletionUnaffected confirms the evFailed path doesn't perturb a

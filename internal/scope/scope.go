@@ -7,6 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 )
 
 // dataFinder reports whether a data.Data item matches a lookup criterion.
@@ -140,33 +141,65 @@ func (p *Scope) SnapshotAt(from DataPath) ([]data.Data, error) {
 // cloneDatum value-copies one scope datum as a named parameter — the
 // shared body of SnapshotAt and OwnData.
 func cloneDatum(op string, at DataPath, d data.Data) (data.Data, error) {
-	c, ok := d.(interface {
+	// Three clonable shapes live in a scope: a Property, a DataObject, and a
+	// plain ItemAwareElement-backed datum (a Parameter). Property and
+	// DataObject declare their own concrete Clone, which SHADOWS the promoted
+	// ItemAwareElement.Clone — a single-shape assertion misses them (the gap
+	// surfaced by the SRD-079 incident snapshot; the compensation ledger's
+	// SnapshotAt shared it silently).
+	switch c := d.(type) {
+	case interface {
+		Clone() (*data.Property, error)
+	}:
+		cp, err := c.Clone()
+		if err != nil {
+			return nil, cloneErr(op, at, d, err)
+		}
+
+		return cp, nil
+
+	case interface {
+		Clone() (*dataobjects.DataObject, error)
+	}:
+		cp, err := c.Clone()
+		if err != nil {
+			return nil, cloneErr(op, at, d, err)
+		}
+
+		return cp, nil
+
+	case interface {
 		Clone() (*data.ItemAwareElement, error)
-	})
-	if !ok {
+	}:
+		iae, err := c.Clone()
+		if err != nil {
+			return nil, cloneErr(op, at, d, err)
+		}
+
+		cp, err := data.NewParameter(d.Name(), iae)
+		if err != nil {
+			return nil, errs.New(
+				errs.M("%s: couldn't wrap %q at %q", op, d.Name(), string(at)),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+
+		return cp, nil
+
+	default:
 		return nil, errs.New(
 			errs.M("%s: datum %q at %q isn't clonable",
 				op, d.Name(), string(at)),
 			errs.C(errorClass, errs.InvalidObject))
 	}
+}
 
-	iae, err := c.Clone()
-	if err != nil {
-		return nil, errs.New(
-			errs.M("%s: couldn't clone %q at %q", op, d.Name(), string(at)),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err))
-	}
-
-	cp, err := data.NewParameter(d.Name(), iae)
-	if err != nil {
-		return nil, errs.New(
-			errs.M("%s: couldn't wrap %q at %q", op, d.Name(), string(at)),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err))
-	}
-
-	return cp, nil
+// cloneErr wraps one datum's failed clone with its location.
+func cloneErr(op string, at DataPath, d data.Data, err error) error {
+	return errs.New(
+		errs.M("%s: couldn't clone %q at %q", op, d.Name(), string(at)),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(err))
 }
 
 // OpenPaths lists every open scope path in sorted order — the

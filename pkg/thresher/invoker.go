@@ -83,14 +83,19 @@ func (t *Thresher) InvokeProcess(
 
 	t.trackInstanceLocked(inst, cancel, settled)
 
-	return &childProcess{inst: inst, version: resolved}, nil
+	return &childProcess{inst: inst, settled: settled, version: resolved}, nil
 }
 
 // childProcess is the exec.ChildProcess adapter over a launched child instance:
 // a thin, read-only projection the caller loop watches. It never exposes the
 // instance object, only the call protocol's surface.
 type childProcess struct {
-	inst    *instance.Instance
+	inst *instance.Instance
+	// settled is the engine-owned, cross-rebuild terminal signal: closed only
+	// when the child reaches Completed/Terminated, and handed to every rebuild
+	// of the same instance. The loop-exit channel is NOT terminal — it also
+	// closes on a dehydration park — so the call watcher waits on this one.
+	settled <-chan struct{}
 	version int
 }
 
@@ -100,9 +105,11 @@ func (c *childProcess) ID() string { return c.inst.ID() }
 // Version returns the resolved 1-based version the call bound.
 func (c *childProcess) Version() int { return c.version }
 
-// Done is closed when the child reaches a terminal state (the instance's
-// never-dropped terminal signal).
-func (c *childProcess) Done() <-chan struct{} { return c.inst.Done() }
+// Done is closed when the child reaches a terminal state. It is the settled
+// signal, not the loop-exit one: a child that parks (dehydration) has not
+// finished, and reporting its park as completion would resume the caller with
+// a phantom success (SRD-079 §3.2's single-task contract for calls).
+func (c *childProcess) Done() <-chan struct{} { return c.settled }
 
 // Failed reports the child's terminal fault after Done: the instance's fatal
 // error when it ended abnormally, else nil (a normal Completed run, or a plain
