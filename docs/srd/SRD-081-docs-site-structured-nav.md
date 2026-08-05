@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-05 |
 | Owner | Ruslan Gabitov |
 | Implements | — (follow-up tooling landing; revisits the navigation decision recorded in SRD-080 §4.3, which explicitly deferred a curated nav "until the auto sidebar proves inadequate in practice" — it has) |
@@ -189,7 +189,29 @@ and stays frozen; its §4.3 explicitly anticipated this follow-up).
 
 ## §10 Implementation summary
 
-*Placeholder — filled at landing.*
+Landed on `feat/docs-site-nav` in three milestones:
+
+- **M1 `a537cf7` — twin cleanup** (−10,387 lines): 32 SRD + 6 FIX Russian
+  twins deleted; 25 ADR twins `git mv`-ed to `docs/design/ru/` with the
+  out-of-group link depths bumped (`../bpmn-spec/` → `../../…`, same-dir
+  English ADR/SAD targets → `../…`); `SRD-001.md`'s link to its own deleted
+  twin became prose (mechanical dead-link fix in a frozen doc).
+- **M2 `adfe9e2` — structured sidebar + mermaid**: `mkdocs-awesome-nav==3.3.0`
+  pinned (workflow, Makefile `MKDOCS_AWESOME_NAV_VERSION` under the extended
+  `require-mkdocs` guard, pin sweep); the three `.nav.yml` files (FR-2/3/4);
+  `plugins: [search, awesome-nav]`; the `pymdownx.superfences` mermaid custom
+  fence (FR-10) rendering the 84 diagram-bearing pages.
+- **M3 `bf99f01` — convention + hygiene**: the twin rule in `CLAUDE.md` and
+  `design/index.md` (and, outside the repo, the `/sdd-fix` skill's
+  linked-docs step); README en/ru status lines version-free (FR-9);
+  CHANGELOG entry.
+
+Verification: nav order checked positionally in the built HTML for all
+three `.nav.yml` scopes; `<pre class="mermaid">` present in built pages;
+`make link-check`, `mkdocs build --strict`, and `make ci` all green. The
+`/check-srd` audit passed with a clean tally (no red, no yellow findings).
+Post-merge tail (V-6): the first redeploy shows the restructured sidebar,
+the Russian group, and rendered diagrams — owner confirms on the live site.
 
 ## Open questions
 
