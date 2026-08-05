@@ -293,6 +293,70 @@ func TestScriptTaskUnclaimedFormat(t *testing.T) {
 		"the failure must list the registered claims")
 }
 
+// TestIncidentHandleSurface (SRD-079 M2, T-5 at the public surface): a
+// technical failure surfaces on the handle — the incident view carries the
+// node, cause, state and the failure-time data snapshot, and the token stays
+// visible at the failing node in the Incident state.
+func TestIncidentHandleSurface(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	proc, err := process.New("st-incident-surface")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	lua, err := activities.NewScriptTask("calc", "text/x-lua", "return {}")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, lua, end} {
+		require.NoError(t, proc.Add(e))
+	}
+
+	link(t, start, lua)
+	link(t, lua, end)
+
+	th, err := thresher.New("test-incident-surface", thresher.WithoutBanner())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, th.Run(ctx))
+
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return h.OpenIncidents() == 1 },
+		5*time.Second, 5*time.Millisecond)
+
+	incs := h.Incidents()
+	require.Len(t, incs, 1)
+	require.Equal(t, lua.ID(), incs[0].NodeID)
+	require.Equal(t, "calc", incs[0].NodeName)
+	require.Equal(t, "open", incs[0].State)
+	require.Equal(t, 1, incs[0].Attempts)
+	require.Contains(t, incs[0].Cause, "WithScriptEngine")
+	require.False(t, incs[0].FirstAt.IsZero())
+
+	var found bool
+
+	for _, tok := range h.Tokens() {
+		if tok.NodeID == lua.ID() {
+			require.Equal(t, thresher.TokenIncident, tok.State)
+
+			found = true
+		}
+	}
+
+	require.True(t, found, "the incident token must be visible on the handle")
+}
+
 // TestScriptTaskNoEngine: the zero-config ##None default fails loud with
 // the wiring hint.
 func TestScriptTaskNoEngine(t *testing.T) {

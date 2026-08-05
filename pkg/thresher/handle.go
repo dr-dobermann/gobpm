@@ -2,6 +2,7 @@ package thresher
 
 import (
 	"context"
+	"encoding/json"
 	"sync/atomic"
 	"time"
 
@@ -121,6 +122,52 @@ func (h *InstanceHandle) OpenIncidents() int {
 	return h.current().OpenIncidents()
 }
 
+// IncidentView is one incident's read-only projection (SRD-079 §3.6): a
+// failure the model did not handle, waiting for a retry or an operator —
+// or closed (resolved / dead-lettered / overtaken), retained as the record.
+type IncidentView struct {
+	FirstAt    time.Time
+	LastAt     time.Time
+	RetryAt    time.Time // zero if no policy retry is scheduled
+	ID         string
+	NodeID     string
+	NodeName   string
+	Cause      string
+	CauseClass string
+	State      string
+	// Data is the failure-time snapshot: the variables visible from the
+	// failing node's scope at the last raise — what the attempt saw, immune
+	// to later sibling writes (ADR-036 §2.1).
+	Data     json.RawMessage
+	Attempts int
+}
+
+// Incidents returns the instance's incidents, open and closed, ordered by
+// first raise. Lock-free (copy-on-write snapshot).
+func (h *InstanceHandle) Incidents() []IncidentView {
+	src := h.current().IncidentViews()
+	out := make([]IncidentView, 0, len(src))
+
+	for i := range src {
+		v := &src[i]
+		out = append(out, IncidentView{
+			FirstAt:    v.FirstAt,
+			LastAt:     v.LastAt,
+			RetryAt:    v.RetryAt,
+			ID:         v.ID,
+			NodeID:     v.NodeID,
+			NodeName:   v.NodeName,
+			Cause:      v.Cause,
+			CauseClass: v.CauseClass,
+			State:      v.State,
+			Data:       v.Data,
+			Attempts:   v.Attempts,
+		})
+	}
+
+	return out
+}
+
 // WaitCompletion blocks until the instance reaches a terminal state (Completed
 // or Terminated) or ctx is done, returning the state observed and the fatal
 // error that stopped the instance (or ctx.Err() on timeout/cancel). It is
@@ -200,7 +247,11 @@ const (
 	TokenAlive        TokenState = "Alive"
 	TokenWaitForEvent TokenState = "WaitForEvent"
 	TokenConsumed     TokenState = "Consumed"
-	TokenInvalid      TokenState = "Invalid"
+	// TokenIncident is a token preserved at a node whose failure opened an
+	// incident (SRD-079 FR-4): visible, not consumed, until the incident
+	// closes.
+	TokenIncident TokenState = "Incident"
+	TokenInvalid  TokenState = "Invalid"
 )
 
 // TokenView is a live token position: the node a token currently sits on and
@@ -244,6 +295,9 @@ func tokenState(ts instance.TokenState) TokenState {
 
 	case instance.TokenConsumed:
 		return TokenConsumed
+
+	case instance.TokenIncident:
+		return TokenIncident
 
 	default:
 		return TokenInvalid

@@ -64,7 +64,11 @@ type Instance struct {
 	// (at the struct tail with the other int-sized fields) mirrors the OPEN
 	// count for lock-free reads off the loop.
 	incidents map[string]*incident
-	loopDone  chan struct{}
+	// incidentsSnap is the copy-on-write projection IncidentViews serves —
+	// rebuilt by the loop after every incident mutation (the tracksSnap
+	// pattern).
+	incidentsSnap atomic.Pointer[[]IncidentView]
+	loopDone      chan struct{}
 	// settled is closed when the instance reaches a TERMINAL state — and only
 	// then. loopDone closes on EVERY loop exit, dehydration included, so it
 	// cannot answer "has this instance finished?" any more (SRD-071): a

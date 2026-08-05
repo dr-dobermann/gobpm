@@ -1,10 +1,15 @@
 package instance
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -77,8 +82,71 @@ type incident struct {
 	cause      string   // rendered chain of the failing error
 	causeClass string   // errs class of the failing error, when typed
 	prev       []string // lineage of the failed track
-	attempts   int
-	state      incidentState
+	// data is the failure-time snapshot (ADR-036 §2.1): the variables visible
+	// from the incident's scope at the last raise, so the operator sees what
+	// the attempt saw, immune to later sibling writes. Refreshed per raise.
+	data     json.RawMessage
+	attempts int
+	state    incidentState
+}
+
+// IncidentView is the lock-free, read-only projection of one incident, served
+// off the loop through Instance.IncidentViews (SRD-079 §3.6).
+type IncidentView struct {
+	FirstAt    time.Time
+	LastAt     time.Time
+	RetryAt    time.Time // zero if no policy retry is scheduled
+	ID         string
+	NodeID     string
+	NodeName   string
+	Cause      string
+	CauseClass string
+	State      string
+	Data       json.RawMessage // failure-time snapshot (visible scope)
+	Attempts   int
+}
+
+// IncidentViews returns the current incident projections — open and closed.
+// Lock-free; safe off the loop goroutine.
+func (inst *Instance) IncidentViews() []IncidentView {
+	snap := inst.incidentsSnap.Load()
+	if snap == nil {
+		return nil
+	}
+
+	return *snap
+}
+
+// refreshIncidentsSnap rebuilds the copy-on-write incident projection after a
+// mutation, ordered by first raise (then id, for a deterministic tie-break).
+// Loop goroutine only — the single writer, like tracksSnap.
+func (inst *Instance) refreshIncidentsSnap() {
+	views := make([]IncidentView, 0, len(inst.incidents))
+
+	for _, inc := range inst.incidents {
+		views = append(views, IncidentView{
+			FirstAt:    inc.firstAt,
+			LastAt:     inc.lastAt,
+			ID:         inc.id,
+			NodeID:     inc.nodeID,
+			NodeName:   inc.nodeName,
+			Cause:      inc.cause,
+			CauseClass: inc.causeClass,
+			State:      inc.state.String(),
+			Data:       inc.data,
+			Attempts:   inc.attempts,
+		})
+	}
+
+	slices.SortFunc(views, func(a, b IncidentView) int {
+		if c := a.FirstAt.Compare(b.FirstAt); c != 0 {
+			return c
+		}
+
+		return strings.Compare(a.ID, b.ID)
+	})
+
+	inst.incidentsSnap.Store(&views)
 }
 
 // OpenIncidents reports the number of incidents still needing a continuation —
@@ -168,7 +236,7 @@ func isModeledErrorEnd(t *track) bool {
 // or, for a repeated failure of the same node+scope, re-arms with the new cause.
 // The raise is the failure's single handling point (ADR-022 §2.1), so the one
 // Error log record lives here. Called only from the loop goroutine.
-func (ls *loopState) raiseIncident(t *track) {
+func (ls *loopState) raiseIncident(ctx context.Context, t *track) {
 	step := t.currentStep()
 	node := step.node
 	now := ls.inst.now()
@@ -196,8 +264,10 @@ func (ls *loopState) raiseIncident(t *track) {
 	inc.attempts++
 	inc.lastAt = now
 	inc.state = incidentOpen
+	inc.data = ls.snapshotIncidentScope(ctx, t)
 
 	t.updateState(TrackIncident)
+	ls.inst.refreshIncidentsSnap()
 
 	ls.inst.Logger().Error("incident raised",
 		observability.AttrInstanceID, ls.inst.ID(),
@@ -223,4 +293,31 @@ func (ls *loopState) raiseIncident(t *track) {
 		NodeName: inc.nodeName,
 		Details:  details,
 	})
+}
+
+// snapshotIncidentScope captures the failure-time data snapshot (ADR-036
+// §2.1): value-copies of every variable visible from the failing node's scope
+// (SnapshotAt — the same walk-up surface the compensation ledger freezes),
+// encoded with the checkpoint's scope codec. A capture failure must not mask
+// the incident itself: it logs once at Warn and the incident rises without a
+// snapshot. Loop goroutine only.
+func (ls *loopState) snapshotIncidentScope(
+	ctx context.Context,
+	t *track,
+) json.RawMessage {
+	dd, err := ls.inst.sc.plane.SnapshotAt(t.scopePath)
+	if err == nil {
+		var raw json.RawMessage
+		if raw, err = checkpoint.EncodeData(
+			ctx, string(t.scopePath), dd); err == nil {
+			return raw
+		}
+	}
+
+	ls.inst.Logger().Warn("incident data snapshot failed",
+		observability.AttrInstanceID, ls.inst.ID(),
+		observability.AttrScopePath, string(t.scopePath),
+		observability.AttrError, err.Error())
+
+	return nil
 }

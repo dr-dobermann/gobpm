@@ -839,13 +839,20 @@ func (ls *loopState) applyFailed(ctx context.Context, ev trackEvent) {
 			ls.inst.parentInstanceID != "" {
 			ls.failFromTrack(ev.track)
 		} else {
-			ls.raiseIncident(ev.track)
+			ls.raiseIncident(ctx, ev.track)
 			incident = true
 		}
 	}
 
 	ls.active--
-	ls.decScope(ctx, ev.track)
+
+	// An open incident pins its scope (ADR-036 §2.2): retry re-enters against
+	// that data, so the scope must not drain while the incident holds it. The
+	// deferred release is part of the incident's close (the resolution slice).
+	if !incident {
+		ls.decScope(ctx, ev.track)
+	}
+
 	ls.flipNotParked(ev.track)
 
 	// An incident-holding node keeps its recorded position and its armed

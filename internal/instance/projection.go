@@ -29,7 +29,8 @@ func (inst *Instance) GetTokens() []Token {
 	out := make([]Token, 0, len(*snap))
 	for _, t := range *snap {
 		tok := t.Token()
-		if tok.State == TokenAlive || tok.State == TokenWaitForEvent {
+		if tok.State == TokenAlive || tok.State == TokenWaitForEvent ||
+			tok.State == TokenIncident {
 			out = append(out, tok)
 		}
 	}

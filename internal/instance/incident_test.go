@@ -23,8 +23,10 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
@@ -225,6 +227,32 @@ func TestOpenIncidentAtMatch(t *testing.T) {
 	require.Nil(t, inst.openIncidentAt("n1", "/other", ""))
 }
 
+// TestIncidentInternalEdges covers the small lock-free branches: no snapshot
+// before any incident, the open-state filter, and the TokenIncident vocabulary
+// rows.
+func TestIncidentInternalEdges(t *testing.T) {
+	inst := &Instance{incidents: map[string]*incident{}}
+	require.Nil(t, inst.IncidentViews())
+
+	inst.incidents["c"] = &incident{state: incidentResolved}
+	inst.incidents["o"] = &incident{state: incidentRetryScheduled}
+	require.Equal(t, 1, inst.openIncidents())
+
+	require.Equal(t, "Incident", TokenIncident.String())
+	require.NoError(t, TokenIncident.Validate())
+}
+
+// TestIncidentSnapshotFailurePath: a snapshot the plane cannot serve (a path
+// outside it) logs and yields nil — it never masks the incident.
+func TestIncidentSnapshotFailurePath(t *testing.T) {
+	inst, _, _ := forkedFailInstance(t, failingOp(t, fmt.Errorf("unused")))
+	ls := newLoopState(inst)
+
+	res := ls.snapshotIncidentScope(context.Background(),
+		&track{scopePath: "/elsewhere"})
+	require.Nil(t, res)
+}
+
 // T-1: an untyped technical failure raises an incident — the failing track ends
 // TrackIncident, the sibling branch completes, and the instance stays alive.
 func TestTechnicalFailureRaisesIncident(t *testing.T) {
@@ -301,6 +329,115 @@ func TestJobExhaustionRaisesIncident(t *testing.T) {
 		2*time.Second, 5*time.Millisecond)
 	require.Equal(t, Active, inst.State(),
 		"job exhaustion opens an incident, not an instance fault")
+}
+
+// T-5: while the incident is open, the token stays visible at the failing
+// node in the TokenIncident state — preserved, not consumed (FR-4) — and the
+// incident view carries the record.
+func TestIncidentTokenVisible(t *testing.T) {
+	inst, _, failID := forkedFailInstance(t, failingOp(t, fmt.Errorf("boom")))
+
+	runToLoopExit(t, inst)
+
+	var found bool
+
+	for _, tok := range inst.GetTokens() {
+		if tok.Node.ID() == failID {
+			require.Equal(t, TokenIncident, tok.State)
+
+			found = true
+		}
+	}
+
+	require.True(t, found, "the incident token must stay visible at the node")
+
+	views := inst.IncidentViews()
+	require.Len(t, views, 1)
+	require.Equal(t, failID, views[0].NodeID)
+	require.Equal(t, "open", views[0].State)
+	require.Equal(t, 1, views[0].Attempts)
+}
+
+// T-5a: the incident carries a failure-time snapshot of the variables visible
+// from the failing node's scope — the process property is in it — and the
+// incident pins its scope open (the sub-process scope survives the failure
+// that would otherwise drain it).
+func TestIncidentDataSnapshot(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("srd079-snap",
+		data.WithProperties(
+			data.MustProperty("budget",
+				data.MustItemDefinition(values.NewVariable(42),
+					foundation.WithID("budget")),
+				data.ReadyDataState)))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	sp, err := activities.NewSubProcess("body")
+	require.NoError(t, err)
+
+	sStart, err := events.NewStartEvent("s-start")
+	require.NoError(t, err)
+
+	fail, err := activities.NewServiceTask("fail-task",
+		failingOp(t, fmt.Errorf("boom")), activities.WithoutParams())
+	require.NoError(t, err)
+
+	sEnd, err := events.NewEndEvent("s-end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{sStart, fail, sEnd} {
+		require.NoError(t, sp.Add(e))
+	}
+
+	_, err = flow.Link(sStart, fail)
+	require.NoError(t, err)
+	_, err = flow.Link(fail, sEnd)
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, sp, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	_, err = flow.Link(start, sp)
+	require.NoError(t, err)
+	_, err = flow.Link(sp, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
+		&recordingProducer{}, nil)
+	require.NoError(t, err)
+
+	// The loop does NOT exit here: the SP host legitimately keeps waiting on
+	// its pinned scope, so the instance stays live with the open incident —
+	// observe through the lock-free surfaces only.
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	require.Eventually(t, func() bool { return inst.OpenIncidents() == 1 },
+		3*time.Second, 5*time.Millisecond)
+
+	views := inst.IncidentViews()
+	require.Len(t, views, 1)
+	require.Equal(t, fail.ID(), views[0].NodeID)
+	require.NotEmpty(t, views[0].Data, "the failure-time snapshot must exist")
+	require.Contains(t, string(views[0].Data), "budget",
+		"the visible process property is in the snapshot")
+
+	// scope pinning: the SP scope is still open beside the root — without
+	// the pin, the incident track's exit would have drained it.
+	require.Len(t, inst.sc.plane.OpenPaths(), 2,
+		"the incident's scope must stay open while the incident is")
 }
 
 // T-14 (raise slice): the raise emits KindFault/PhaseIncident with the action

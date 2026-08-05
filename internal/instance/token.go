@@ -22,6 +22,10 @@ const (
 	TokenWaitForEvent
 	// TokenConsumed represents a token that has been consumed
 	TokenConsumed
+	// TokenIncident represents a token preserved at a node whose failure
+	// opened an incident (SRD-079 FR-4): visible, not consumed, until the
+	// incident closes.
+	TokenIncident
 )
 
 // String returns the human-readable name of the projected token state.
@@ -36,6 +40,9 @@ func (ts TokenState) String() string {
 	case TokenConsumed:
 		return "Consumed"
 
+	case TokenIncident:
+		return "Incident"
+
 	default:
 		return "Invalid"
 	}
@@ -43,7 +50,7 @@ func (ts TokenState) String() string {
 
 // Validate checks if the TokenState is valid.
 func (ts TokenState) Validate() error {
-	if ts < TokenAlive || ts > TokenConsumed {
+	if ts < TokenAlive || ts > TokenIncident {
 		return errs.New(
 			errs.M("invalid token state: %d", ts),
 			errs.C(errorClass, errs.InvalidParameter))
@@ -105,11 +112,17 @@ func tokenStateFor(ts trackState) TokenState {
 	case TrackWaitForEvent:
 		return TokenWaitForEvent
 
-	case TrackEnded, TrackMerged, TrackCanceled, TrackFailed, TrackIncident:
+	case TrackEnded, TrackMerged, TrackCanceled, TrackFailed:
 		// Canceled maps to Consumed here; the Withdrawn case
 		// (Event-Based Gateway race loss) is wired with that gateway
 		// (gateway SRD).
 		return TokenConsumed
+
+	case TrackIncident:
+		// The preserved token (SRD-079 FR-4): the node was entered and did
+		// not complete, so while the incident is open the token stays
+		// visible at it rather than consumed.
+		return TokenIncident
 
 	default:
 		return TokenInvalid
