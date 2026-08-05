@@ -110,6 +110,11 @@ func timerProc(
 	return p
 }
 
+// recoveryGroup is the engine group the restart-recovery pairs share:
+// under solo-by-default (SRD-078 FR-2) engine-1 and engine-2 would land
+// in different groups and never see each other's records.
+const recoveryGroup = "recovery-cluster"
+
 // bootEngine builds an armed engine over the shared repo, registers the
 // process and returns the engine + its fact watch.
 func bootEngine(
@@ -122,6 +127,7 @@ func bootEngine(
 		thresher.WithoutBanner(),
 		thresher.WithoutStartupConfig(),
 		thresher.WithRepository(repo),
+		thresher.WithEngineGroup(recoveryGroup),
 		thresher.WithLeaseTTL(ttl))
 	require.NoError(t, err)
 
@@ -479,6 +485,7 @@ func TestRestartRecoveryUserTask(t *testing.T) {
 	th1, err := thresher.New("engine-1",
 		thresher.WithoutBanner(), thresher.WithoutStartupConfig(),
 		thresher.WithRepository(repo),
+		thresher.WithEngineGroup(recoveryGroup),
 		thresher.WithLeaseTTL(80*time.Millisecond),
 		thresher.WithTaskDistributor(dist1))
 	require.NoError(t, err)
@@ -513,6 +520,7 @@ func TestRestartRecoveryUserTask(t *testing.T) {
 	th2, err := thresher.New("engine-2",
 		thresher.WithoutBanner(), thresher.WithoutStartupConfig(),
 		thresher.WithRepository(repo),
+		thresher.WithEngineGroup(recoveryGroup),
 		thresher.WithTaskDistributor(dist2))
 	require.NoError(t, err)
 
@@ -557,7 +565,8 @@ func TestRecoveryUnregisteredVersion(t *testing.T) {
 	// engine-2 registers NOTHING — deployment parity broken on purpose.
 	th2, err := thresher.New("engine-2",
 		thresher.WithoutBanner(), thresher.WithoutStartupConfig(),
-		thresher.WithRepository(repo))
+		thresher.WithRepository(repo),
+		thresher.WithEngineGroup(recoveryGroup))
 	require.NoError(t, err)
 
 	fw := &factWatch{}
@@ -582,10 +591,15 @@ func TestRecoveryUnregisteredVersion(t *testing.T) {
 func TestRecoveryCorruptRecord(t *testing.T) {
 	repo := memrepo.New()
 
+	// the record predates the engine: its solo group ("engine-x") must be
+	// established before the seed lands (SRD-078 FR-1).
+	require.NoError(t,
+		repo.RegisterGroup(context.Background(), "engine-x"))
 	require.NoError(t, repo.Save(context.Background(),
 		repository.InstanceRecord{
 			ID:      "broken-1",
 			Status:  repository.StatusActive,
+			Group:   "engine-x",
 			Payload: []byte("not a checkpoint"),
 		}))
 
@@ -617,7 +631,7 @@ type flakyRepo struct {
 }
 
 func (fr *flakyRepo) ListInFlight(
-	ctx context.Context, now time.Time,
+	ctx context.Context, group string, now time.Time,
 ) ([]string, error) {
 	if fr.failList {
 		return nil, context.DeadlineExceeded
@@ -627,7 +641,7 @@ func (fr *flakyRepo) ListInFlight(
 		return []string{"ghost-1"}, nil
 	}
 
-	return fr.Repo.ListInFlight(ctx, now)
+	return fr.Repo.ListInFlight(ctx, group, now)
 }
 
 // TestRecoveryListingFaults: a failing listing degrades to a warning

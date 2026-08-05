@@ -121,6 +121,7 @@ func armedEngine(
 		thresher.WithoutStartupConfig(),
 		thresher.WithRepository(repo),
 		thresher.WithClock(clk),
+		thresher.WithEngineGroup(recoveryGroup),
 		thresher.WithLeaseTTL(ttl))
 	require.NoError(t, err)
 

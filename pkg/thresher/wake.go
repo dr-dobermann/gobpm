@@ -133,7 +133,7 @@ func (t *Thresher) rebuildAndContinue(
 		instance.WithSettledSignal(t.settledFor(instanceID)),
 		instance.WithInvoker(t),
 		instance.WithWaitHolders(t),
-		instance.WithCheckpointing(t.id, t.cfg.leaseTTL),
+		instance.WithCheckpointing(t.id, t.group, t.cfg.leaseTTL),
 		instance.WithCheckpointCursor(rec.RecVersion, rec.Lease.Incarnation),
 	}, extra...)
 
@@ -255,6 +255,16 @@ func (t *Thresher) claimForWake(
 		rec, ok, err := repo.Load(ctx, instanceID)
 		if err != nil || !ok {
 			return rec, wakeErr("the checkpoint vanished before the wake", err)
+		}
+
+		// A cross-group record is a wiring mistake, never a race —
+		// refuse loud instead of claiming another cluster's instance
+		// (SRD-078 FR-2).
+		if rec.Group != t.group {
+			return repository.InstanceRecord{},
+				wakeErr("the instance belongs to engine group "+
+					strconv.Quote(rec.Group)+", this engine runs in "+
+					strconv.Quote(t.group), nil)
 		}
 
 		rec.Lease = repository.Lease{

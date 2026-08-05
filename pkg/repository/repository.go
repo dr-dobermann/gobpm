@@ -57,10 +57,21 @@ func (l Lease) Expired(now time.Time) bool {
 // InstanceRecord is the unit a Repository persists: the opaque,
 // schema-versioned checkpoint payload (the serialization model is the
 // engine's — the storage's job is bytes), the persisted status, the CAS
-// record version and the ownership lease.
+// record version, the ownership lease and the two partition keys of
+// ADR-033 v.3 — the creator engine's group and the owning tenant.
 type InstanceRecord struct {
-	ID         string
-	Payload    []byte
+	ID      string
+	Payload []byte
+	// Group is the creator engine's group (ADR-033 §2.8) and is never
+	// empty: an ungrouped engine forms a single-engine group under its
+	// own engine id — clustering is explicit, never accidental. Stores
+	// MUST reject a record without a group.
+	Group string
+	// Tenant is the owning tenant's id (ADR-033 §2.7). Empty means the
+	// default tenant; resolution to a concrete registry entry is the
+	// store's concern, the engine stamps "" until the Multi-tenancy ADR
+	// wires real assignment.
+	Tenant     string
 	Lease      Lease
 	RecVersion int64
 	Status     Status
@@ -80,8 +91,22 @@ type Repository interface {
 	Load(ctx context.Context, id string) (InstanceRecord, bool, error)
 	// Delete removes the record for id (a no-op if it is absent).
 	Delete(ctx context.Context, id string) error
-	// ListInFlight returns the IDs of the CLAIMABLE in-flight instances:
-	// non-terminal, not suspended, and with no live lease at now — the
-	// recovery listing (ADR-033 §2.8 claim-first semantics).
-	ListInFlight(ctx context.Context, now time.Time) ([]string, error)
+	// ListInFlight returns the IDs of the CLAIMABLE in-flight instances
+	// of the given engine group: non-terminal, not suspended, and with
+	// no live lease at now — the recovery listing (ADR-033 §2.8
+	// claim-first semantics, group-scoped: an engine never lists another
+	// group's instances). An empty group MUST fail loud; an unregistered
+	// one lists empty.
+	ListInFlight(
+		ctx context.Context, group string, now time.Time,
+	) ([]string, error)
+	// RegisterGroup establishes the engine group in the store's group
+	// registry (ADR-033 §2.8), idempotently — registering an existing
+	// group is a no-op. An empty group MUST fail loud.
+	RegisterGroup(ctx context.Context, group string) error
+	// GroupExists reports whether the group is established in the
+	// registry — the membership assertion behind "join an existing
+	// group only" (a misspelled group must refuse, not silently mint a
+	// fresh partition). An empty group MUST fail loud.
+	GroupExists(ctx context.Context, group string) (bool, error)
 }

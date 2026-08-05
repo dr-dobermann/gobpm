@@ -21,7 +21,7 @@ import (
 func (t *Thresher) recoverInstances(ctx context.Context) {
 	repo := t.cfg.Repository()
 
-	ids, err := repo.ListInFlight(ctx, t.cfg.Clock().Now())
+	ids, err := repo.ListInFlight(ctx, t.group, t.cfg.Clock().Now())
 	if err != nil {
 		t.cfg.logger.Warn("recovery: couldn't list in-flight instances",
 			observability.AttrError, err.Error())
@@ -48,6 +48,15 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 
 	if !rec.Lease.Expired(now) {
 		return nil // another engine claimed it between list and load
+	}
+
+	// A cross-group record reached by id is a wiring mistake, not a
+	// race — refuse loud (SRD-078 FR-2; the listing is group-scoped, so
+	// this guards direct-id paths and misbehaving stores alike).
+	if rec.Group != t.group {
+		return recoveryErr("the instance belongs to engine group "+
+			strconv.Quote(rec.Group)+", this engine runs in "+
+			strconv.Quote(t.group), nil)
 	}
 
 	// The claim: our ownership under a HIGHER incarnation — the fencing
@@ -85,7 +94,7 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 		instance.WithSettledSignal(t.settledFor(id)),
 		instance.WithInvoker(t),
 		instance.WithWaitHolders(t),
-		instance.WithCheckpointing(t.id, t.cfg.leaseTTL),
+		instance.WithCheckpointing(t.id, t.group, t.cfg.leaseTTL),
 		instance.WithCheckpointCursor(rec.RecVersion, rec.Lease.Incarnation))
 	if err != nil {
 		return recoveryErr("the instance doesn't restore", err)
@@ -109,6 +118,41 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 			"live_tracks":               strconv.Itoa(len(doc.Tracks)),
 		},
 	})
+
+	return nil
+}
+
+// ensureGroup establishes — or, under WithExistingEngineGroup, asserts
+// — the engine's group in the repository's registry at startup
+// (SRD-078 FR-2, ADR-033 v.3 §2.8).
+func (t *Thresher) ensureGroup(ctx context.Context) error {
+	repo := t.cfg.Repository()
+
+	if !t.cfg.groupJoinOnly {
+		if err := repo.RegisterGroup(ctx, t.group); err != nil {
+			return gerrs.New(
+				gerrs.M("couldn't register engine group %q", t.group),
+				gerrs.C(errorClass, gerrs.OperationFailed),
+				gerrs.E(err))
+		}
+
+		return nil
+	}
+
+	ok, err := repo.GroupExists(ctx, t.group)
+	if err != nil {
+		return gerrs.New(
+			gerrs.M("couldn't check engine group %q", t.group),
+			gerrs.C(errorClass, gerrs.OperationFailed),
+			gerrs.E(err))
+	}
+
+	if !ok {
+		return gerrs.New(
+			gerrs.M("engine group %q isn't established in the repository"+
+				" (WithExistingEngineGroup joins existing groups only)", t.group),
+			gerrs.C(errorClass, gerrs.ObjectNotFound))
+	}
 
 	return nil
 }

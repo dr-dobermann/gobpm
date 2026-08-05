@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.2 |
-| Date | 2026-07-26 |
+| Version | v.3 |
+| Date | 2026-08-04 |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §10 (save/restore as P0: "goroutines are the execution medium, persistence is the state of record"), [ADR-001 v.6](ADR-001-execution-model.md) (the runtime whose state this makes durable), [ADR-007 v.2](ADR-007-in-memory-long-waits.md) (the in-memory long-wait model — dehydration & wake-on-trigger — whose durable half this owns) |
 | Related | [ADR-006 v.4](ADR-006-events-and-subscriptions.md) (subscriptions), [ADR-013 v.2](ADR-013-instance-observability.md) (facts vs state), [ADR-014 v.1](ADR-014-message-handling.md) / [ADR-016 v.1](ADR-016-message-correlation.md) (correlation state), [ADR-017 v.1](ADR-017-channel-based-event-processing.md) (the loop as sole state owner), [ADR-021 v.1](ADR-021-service-task-execution-model.md) (the job queue's own durability), [ADR-023 v.3](ADR-023-sub-process-and-call-activity.md) (scopes, child instances), [ADR-025 v.2](ADR-025-activity-iteration-loop-and-multi-instance.md) (iteration state), [ADR-026 v.1](ADR-026-compensation-events.md) (the completion ledger) |
@@ -238,9 +238,31 @@ facade. The rule generalizes across every storage-backed module:
   and have each create its schema — the disciplined form of "every
   module manages its own db objects"; never a core DDL framework.
 
+- **Tenancy is recorded from day one — the tenant-linkage principle.**
+  Tenants partition **data ownership**, orthogonally to §2.8's engine
+  groups (which partition work): every instance — and, through its
+  checkpoint, all its data — belongs to exactly **one tenant**, while
+  one engine MAY serve many tenants. An instance with no tenant
+  configured belongs to the **default tenant**, so single-tenant
+  embedders stay configuration-free. The default is **designated, not
+  named**: the tenant registry marks exactly one tenant per engine
+  group as the default (a flag under a uniqueness guarantee), never a
+  reserved id — a magic id could collide with an operator-chosen one.
+  Storage-backed modules keep a
+  **tenant registry** (a tenants table in their namespaced schema) that
+  instance records reference — referential integrity today, the
+  attachment point for tenant metadata tomorrow. This layer guarantees
+  only that the linkage is durable from the first schema version
+  (retrofitting a tenant column into a shipped adapter is a breaking
+  migration); tenant-scoped APIs, enforcement/isolation rules and the
+  tenant lifecycle are the future Multi-tenancy ADR's territory (§5).
+
 The skeleton itself grows only what this model needs: the `Suspended`
 status; a **record version for compare-and-set** saves (the §2.3
-split-brain guard) plus the §2.8 ownership lease; the checkpoint
+split-brain guard) plus the §2.8 ownership lease, the engine's
+**group** (§2.8 — listing is group-scoped) and the instance's
+**tenant** on the record (the engine stamps the default tenant until
+the Multi-tenancy ADR wires the real assignment); the checkpoint
 document as an opaque, schema-versioned byte payload (the
 serialization model is the engine's, the storage's job is bytes);
 listing filtered by status and ownership. History stores, inboxes and
@@ -252,6 +274,29 @@ Several engine processes MAY share one database. This layer owns the
 **correctness** of that sharing; the *distribution* of work stays
 with the Distribution & Scale ADR (§5). The model:
 
+- **Engines are partitioned into named groups.** The group is part of
+  the engine's configured identity (engine id + group name), not of the
+  storage wiring: every record an engine creates carries its group, and
+  the recovery listing and wake-on-trigger claims are **group-scoped** —
+  an engine never sees, let alone claims, another group's instances. A
+  cluster is therefore the set of engines sharing one store under one
+  group name; several clusters MAY share one database without
+  interference. An engine with no configured group forms a
+  **single-engine group under its own engine id** — clustering is
+  **explicit, never accidental**: only engines deliberately sharing a
+  group name form a cluster, and accidental co-tenancy of one database
+  is inert (no cross-claims). The engine id is therefore a stable,
+  operator-chosen identity — which it already is: it names the lease
+  owner. The zero-config posture stays configuration-free: a restarted
+  engine, keeping its id, recovers its own instances without naming a
+  group. The store keeps a **group registry** alongside the records:
+  the first engine of a group establishes it (idempotently), records
+  reference established groups only, and an engine MAY assert
+  membership in an **existing** group — a join asserted against an
+  absent group fails loud at startup, turning the typo that would
+  otherwise silently mint a fresh partition into a refusal. Deployment
+  parity (below) becomes a per-group contract — parity is owed within
+  a group, never across groups.
 - **Instance ownership is a lease.** An engine claims an instance
   before running it (at start, hydration, or wake-on-trigger): a
   per-instance lease record — owner engine id + incarnation, expiry —
@@ -333,6 +378,10 @@ and masking rules (names and counts, never payload values).
   live audit today.
 - **Cross-version instance migration** (#95) — the checkpoint pins its
   process version; migrating a pinned instance is its own workstream.
+- **Multi-tenancy** (tenant-scoped APIs, enforcement/isolation rules,
+  tenant lifecycle and how a tenant is assigned at registration/launch)
+  — a future ADR; this layer records the instance→tenant linkage
+  (§2.7) so the storage never needs a tenancy retrofit.
 - **Incident store** (#80) — failed-to-recover instances surface as
   observable failures now; a durable incident queue comes with the
   fault-tolerance epic.
@@ -346,6 +395,7 @@ finalized); then suspend/resume and the engine pause.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.3 | 2026-08-04 | Ruslan Gabitov | Two partitioning principles, motivated by the first durable Repository adapter (postgres) — partitioning must be in the port's contract before a second implementation freezes it. **Engine groups** (§2.8): the group is part of the engine's configured identity (not storage wiring); records carry their creator's group and the recovery listing / wake claims are group-scoped, so several clusters may share one database without interference; an unnamed engine forms a single-engine group under its own id — clustering is explicit opt-in, never accidental (zero-config restart recovery unchanged); deployment parity becomes a per-group contract. **Tenant linkage** (§2.7): tenants partition data ownership orthogonally to groups — one instance belongs to exactly one tenant, one engine may serve many; unspecified → the default tenant (flag-designated in the registry, exactly one per engine group — never a reserved id); storage keeps a tenant registry (tenants table) that records reference; only the durable linkage lands here — tenant-scoped APIs, enforcement and lifecycle are a future Multi-tenancy ADR (new §5 deferral). §2.7's skeleton-growth list adds the group and the tenant to the record. |
 | v.2 | 2026-07-27 | Ruslan Gabitov | Pin refresh: ADR-007 authored in full and Accepted (v.2 — the in-memory dehydration & wake-on-trigger mechanism this ADR's §2.4/§2.5 delegated to), so the §Refines and §3-grounding pins move v.1 → v.2. No content change to the durable model. |
 | v.1 (Accepted) | 2026-07-27 | Ruslan Gabitov | Accepted with the first landing slice (the accompanying checkpoint/recovery SRD): the checkpoint document, the grown Repository (CAS + lease), consistent-cut capture, restart recovery with re-enter semantics and the recorded-deadline timers — all proven live, incl. the §2.8 fencing (a zombie engine's saves rejected) and the ADR-005-style incremental plan: dehydration/wake-on-trigger and suspend/resume ride the remaining slices. One §2.8 sharpening surfaced by the landing: deployment parity covers ELEMENT IDENTITY too — recovery requires stable node ids across engines (pinned ids or a serialized model). |
 | v.1 | 2026-07-26 | Ruslan Gabitov | Initial draft — the deferred Persistence & State conception: one checkpoint document per instance (identity + pinned version, status incl. `Suspended`, scope-tree data, the track table, per-node wait descriptors, the completion ledger; armed/routing state derived at hydration, never stored; schema-versioned, loud on unserializable values); the loop's consistent-cut checkpoint at the normative lifecycle transitions with a pluggable write mode; exactly-once state / at-least-once effects (correlation dedup, job-queue reclaim, idempotent re-announce); dehydration as the durable half of ADR-007's model (one model, two residency levels); wake-on-trigger hydration = single-instance recovery, per-wait-kind semantics (overdue timers fire once, tasks re-announce, subscriptions re-register); suspend/resume as status over the same machinery, engine pause filling the reserved observability slots; the Repository grows CAS + `Suspended` + opaque schema-versioned payloads. Event sourcing, persist-everything and hydration-before-durability rejected. The storage composition rule: the Repository is the checkpoint port only — one narrow port per storage consumer, the backend handle user-owned and shared at construction (no universal Repository, no db-driver seam in core — both named rejected alternatives), namespaced schemas with per-module migrations and the optional `Migrator` capability. Cluster-safe sharing (§2.8): per-instance ownership leases with CAS fencing, claim-first wake, lease-expiry orphan recovery, loud deployment-parity refusals — safety here, work distribution deferred to the Distribution & Scale ADR. Implementation rides the accompanying SRDs. |

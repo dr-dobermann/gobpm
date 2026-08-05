@@ -147,9 +147,9 @@ func userTaskArmed(t *testing.T) (*Instance, *track, *loopState) {
 
 	s := userTaskSnapshot(t)
 
-	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
+	inst, err := New(s, scope.EmptyDataPath, cpRuntime(t),
 		mockeventproc.NewMockEventProducer(t), &failDist{},
-		WithCheckpointing("engine-A", time.Minute))
+		WithCheckpointing("engine-A", "engine-A", time.Minute))
 	require.NoError(t, err)
 	inst.tracks = map[string]*track{}
 
@@ -296,11 +296,11 @@ func TestDehydrationLoopTail(t *testing.T) {
 	s := userTaskSnapshot(t)
 	s.Version = 7 // the FR-1 pin a registration would stamp
 
-	rt := enginert.Default()
+	rt := cpRuntime(t)
 
 	inst, err := New(s, scope.EmptyDataPath, rt,
 		mockeventproc.NewMockEventProducer(t), &failDist{},
-		WithCheckpointing("engine-A", time.Minute))
+		WithCheckpointing("engine-A", "engine-A", time.Minute))
 	require.NoError(t, err)
 
 	// inject the holder predicate BEFORE Run: M2 has no engine holder yet, so
@@ -531,7 +531,7 @@ func timerTrack(
 	start, err := events.NewStartEvent("start")
 	require.NoError(t, err)
 
-	rt := enginert.Default()
+	rt := cpRuntime(t)
 	when := rt.Clock().Now().Add(in)
 
 	texpr, err := goexpr.New(nil,
@@ -565,7 +565,7 @@ func timerTrack(
 		Return(nil).Maybe()
 
 	all := append([]Option{
-		WithCheckpointing("engine-A", time.Minute),
+		WithCheckpointing("engine-A", "engine-A", time.Minute),
 		WithWaitHolders(holders),
 	}, opts...)
 
@@ -908,8 +908,8 @@ func TestWireWaitHeldWithoutHolders(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
 	inst, err := New(userTaskSnapshot(t), scope.EmptyDataPath,
-		enginert.Default(), mockeventproc.NewMockEventProducer(t), nil,
-		WithCheckpointing("engine-A", time.Minute))
+		cpRuntime(t), mockeventproc.NewMockEventProducer(t), nil,
+		WithCheckpointing("engine-A", "engine-A", time.Minute))
 	require.NoError(t, err)
 
 	require.Nil(t, inst.waitHeld,
@@ -956,8 +956,8 @@ func signalTrack(t *testing.T) (*Instance, *track, *fakeHolders) {
 	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
 		Return(nil).Maybe()
 
-	inst, err := New(s, scope.EmptyDataPath, enginert.Default(), ep, nil,
-		WithCheckpointing("engine-A", time.Minute),
+	inst, err := New(s, scope.EmptyDataPath, cpRuntime(t), ep, nil,
+		WithCheckpointing("engine-A", "engine-A", time.Minute),
 		WithWaitHolders(holders))
 	require.NoError(t, err)
 	inst.tracks = map[string]*track{}
@@ -1291,8 +1291,8 @@ func TestHoldTaskWiresRealPredicate(t *testing.T) {
 	holders := newFakeHolders()
 
 	inst, err := New(userTaskSnapshot(t), scope.EmptyDataPath,
-		enginert.Default(), mockeventproc.NewMockEventProducer(t), &failDist{},
-		WithCheckpointing("engine-A", time.Minute),
+		cpRuntime(t), mockeventproc.NewMockEventProducer(t), &failDist{},
+		WithCheckpointing("engine-A", "engine-A", time.Minute),
 		WithWaitHolders(holders))
 	require.NoError(t, err)
 	inst.tracks = map[string]*track{}

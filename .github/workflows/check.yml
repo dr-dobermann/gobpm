@@ -16,6 +16,25 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The postgres-backed tests (adapters/postgres, SRD-078 FR-10) read
+    # GOBPM_PG_TEST_DSN and skip when it is unset; the service below
+    # provides the database on every PR so the conformance/fencing/e2e
+    # paths run — and the diff-coverage gate measures them. Locally the
+    # same database comes from `make pg-up` (same DSN shape).
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: gobpm-test
+        ports:
+          - 5499:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      GOBPM_PG_TEST_DSN: postgres://postgres:gobpm-test@localhost:5499/postgres?sslmode=disable
     steps:
       # Actions pinned to a commit SHA (not a moving major tag) for a
       # reproducible supply-chain; the trailing comment names the release so
