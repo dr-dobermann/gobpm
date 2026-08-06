@@ -117,6 +117,15 @@ Event-Based gateway's losing arm) returns having withdrawn nothing, the
 subscription stays registered, and the map entry materialises afterwards —
 a leaked holder that can still wake an instance for a wait nobody is waiting on.
 
+The arm has **two** unguarded sides, which is why simply swapping the order is
+not the fix. Recording first makes the hold visible to a concurrent release,
+but that release then calls `UnregisterEvent` on a holder the hub does not know
+yet: the call fails `ObjectNotFound` (`eventhub.go:401-410`), the registration
+that follows succeeds, and the subscription is again live with no record —
+the same leak reached from the other side. The hold must therefore be recorded
+**before** the arm so a release can see it, and **confirmed still recorded**
+after the arm so a release that could not reach the hub is honoured.
+
 ### 1.5 The host's observation filter runs under the producer lock, uncontained
 
 ```go
@@ -232,10 +241,19 @@ restart is reserved exactly as one that never stopped.
 `Forget` deletes the instance's `settled` channel and any correlation
 reservation it holds, alongside the registration.
 
-#### 3.2.4 `pkg/thresher/subscription_holder.go` — record, then arm
+#### 3.2.4 `pkg/thresher/subscription_holder.go` — record, arm, confirm
 
-`HoldSubscription` writes `t.subs` first and registers on the hub second,
-removing the entry if registration fails.
+`HoldSubscription` writes `t.subs` first, registers on the hub second, and then
+re-reads the record: if it no longer names this holder, a release took it while
+the arm ran and could not withdraw it from the hub, so the hold withdraws
+itself. A refused registration removes the entry — conditionally, so a rollback
+never clobbers a record a later arm has put there. A hold withdrawn by a
+concurrent release returns **no error**: the release is authoritative, and the
+caller's wait is gone either way.
+
+`ReleaseWaits`' per-holder hub call moves into a shared `withdraw` helper, since
+the confirm path needs exactly the same "unregister, log a failure at Debug"
+behaviour — a missing waiter is an idempotent condition, not an error.
 
 #### 3.2.5 `pkg/thresher/producer.go` — the filter is host code
 
@@ -280,7 +298,8 @@ runs first wires and the other is a no-op.
 | T-2 | `TestCorrelationKeyReleasedAfterInstanceEnds` | a second message with the same key after the first instance terminated starts a NEW instance, not a silent join (§1.2) |
 | T-2a | `TestRecoveredConversationKeepsItsKey` | engine A parks a conversation and is fenced out; engine B recovers it from the checkpoint and the reservation names the recovered instance — without the rebind the key comes back free and the next message duplicates the conversation (§1.2, restart half) |
 | T-3 | `TestForgetReleasesKeyAndSettled` | after `Forget`, `seenKeys` and `settled` no longer hold the id (§1.2, §1.3) |
-| T-4 | `TestReleaseWaitsSeesHoldImmediately` | a `ReleaseWaits` racing `HoldSubscription` withdraws the hold — the hub carries no leftover subscription (§1.4) |
+| T-4 | `TestReleaseWaitsDuringArmWithdrawsTheHold` | a `ReleaseWaits` driven into the MIDDLE of `HoldSubscription` (a hub wrapper fires it from inside `RegisterEvent`) leaves neither a record nor a hub subscription — and the withdrawal is counted at the hub, so removing either half of the fix fails it (§1.4) |
+| T-4a | `TestHoldSubscriptionRollsBackOnArmFailure` | a refused arm leaves nothing recorded — the record exists only to make an ARMED hold releasable (§1.4) |
 | T-5 | `TestPanickingObservationFilterContained` | a filter that panics denies its recipient, is counted and logged once, and never reaches `Report`'s caller (§1.5) |
 | T-6 | `TestUpdateStateRejectsLifecycleJumps` | `Started` on a never-run engine is refused; `Started ↔ Paused` is admitted (§1.6) |
 | T-7 | `TestShutdownAwaitsInstanceBornDuringCancel` | an instance created in the snapshot→cancel window is awaited; the timeout error names the unsettled (§1.7) |

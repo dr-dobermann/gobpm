@@ -10,6 +10,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 
+	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
 	gerrs "github.com/dr-dobermann/gobpm/pkg/errs"
@@ -937,4 +938,135 @@ func TestTwoTimerHoldsCoexist(t *testing.T) {
 	th.timerSvc.mu.Unlock()
 
 	require.Zero(t, remaining, "a released track leaves no deadline behind")
+}
+
+// armHookHub wraps the engine's hub so a test can drive something INTO the
+// middle of an arm — the only way to pin an interleaving deterministically
+// rather than hoping a goroutine race reproduces.
+type armHookHub struct {
+	eventproc.EventHub
+
+	mu         sync.Mutex
+	onRegister func()
+	withdrawn  map[string]int // eDefID → successful withdrawals
+}
+
+// hookOnce installs a one-shot callback run at the start of the next arm.
+func (h *armHookHub) hookOnce(fn func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.onRegister = fn
+}
+
+func (h *armHookHub) takeHook() func() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	fn := h.onRegister
+	h.onRegister = nil
+
+	return fn
+}
+
+func (h *armHookHub) RegisterEvent(
+	ep eventproc.EventProcessor, eDef flow.EventDefinition,
+) error {
+	if fn := h.takeHook(); fn != nil {
+		fn()
+	}
+
+	return h.EventHub.RegisterEvent(ep, eDef)
+}
+
+func (h *armHookHub) UnregisterEvent(
+	ep eventproc.EventProcessor, eDefID string,
+) error {
+	err := h.EventHub.UnregisterEvent(ep, eDefID)
+	if err == nil {
+		h.mu.Lock()
+		h.withdrawn[eDefID]++
+		h.mu.Unlock()
+	}
+
+	return err
+}
+
+func (h *armHookHub) withdrawals(eDefID string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.withdrawn[eDefID]
+}
+
+// hookedWakeEngine is armedWakeEngine with the hub wrapped BEFORE the engine
+// starts — the field is read by the running engine, so it may not be swapped
+// under it.
+func hookedWakeEngine(
+	t *testing.T, name string,
+) (*Thresher, *armHookHub, context.CancelFunc) {
+	t.Helper()
+
+	th, err := New(name,
+		WithoutBanner(), WithoutStartupConfig(),
+		WithRepository(memrepo.New()),
+		WithClock(clocktest.New(wakeEpoch)))
+	require.NoError(t, err)
+
+	hub := &armHookHub{EventHub: th.eventHub, withdrawn: map[string]int{}}
+	th.eventHub = hub
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, th.Run(ctx))
+
+	return th, hub, cancel
+}
+
+// TestReleaseWaitsDuringArmWithdrawsTheHold is FIX-036 T-4: a ReleaseWaits
+// landing in the MIDDLE of HoldSubscription must still leave the hub clean.
+//
+// The arm is two steps — record in t.subs, register on the hub — and a release
+// can land between them from either side. Arm-then-record loses the release
+// (it scans an empty map, withdraws nothing, and the record appears after it).
+// Record-then-arm alone lets the release find the record but unregister a
+// holder the hub does not know yet. Both end with a live subscription no track
+// waits on. Only recording first AND confirming after the arm closes it.
+func TestReleaseWaitsDuringArmWithdrawsTheHold(t *testing.T) {
+	th, hub, cancel := hookedWakeEngine(t, "engine-arm-race")
+	defer cancel()
+
+	sig := wakeSignalDef(t, "sig-mid-arm")
+
+	// the release fires while the registration is in flight.
+	hub.hookOnce(func() { th.ReleaseWaits("i-1", "t-1") })
+
+	require.NoError(t, th.HoldSubscription("i-1", "t-1", sig, nil, exec.WaitNode),
+		"the release is authoritative — a withdrawn hold is not a failed one")
+
+	th.subMu.Lock()
+	require.Empty(t, th.subs, "the released track holds nothing")
+	th.subMu.Unlock()
+
+	require.Equal(t, 1, hub.withdrawals(sig.ID()),
+		"the holder must actually leave the hub, not just the map")
+}
+
+// TestHoldSubscriptionRollsBackOnArmFailure pins the rollback half: if the hub
+// refuses the registration, nothing stays recorded — the record exists only to
+// make an ARMED hold releasable.
+func TestHoldSubscriptionRollsBackOnArmFailure(t *testing.T) {
+	th, err := New("engine-hold-rollback", WithoutBanner(),
+		WithoutStartupConfig(), WithRepository(memrepo.New()))
+	require.NoError(t, err)
+
+	// The engine is never Run, so RegisterEvent refuses: the hub is not
+	// started and the arm cannot succeed.
+	err = th.HoldSubscription("i-1", "t-1", wakeSignalDef(t, "sig-x"), nil,
+		exec.WaitNode)
+	require.Error(t, err)
+
+	th.subMu.Lock()
+	defer th.subMu.Unlock()
+
+	require.Empty(t, th.subs, "a hold that never armed must not stay recorded")
 }
