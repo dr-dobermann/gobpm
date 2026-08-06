@@ -133,21 +133,57 @@ func (t *Thresher) latestStartersLocked() []*instanceStarter {
 	return all
 }
 
-// reserveKeyLocked records the correlation key nsKey as seen, returning true if
-// it was newly reserved or false if an instance already claimed it (a join, no
-// duplicate). The check-and-record is atomic so two concurrent same-key starts
+// keyInFlight is the reservation's value while its instance is being launched:
+// the key is claimed (a concurrent same-key start must not create a second
+// instance) but no instance owns it yet. bindKeyLocked replaces it with the id.
+const keyInFlight = ""
+
+// reserveKeyLocked claims the correlation key nsKey for a NEW instance,
+// returning false when the key belongs to a conversation that is still going —
+// a live instance (join, no duplicate) or a start already in flight.
+//
+// A reservation whose instance has finished is NOT such a conversation: it is
+// taken over, so a later message carrying the same business key starts a new
+// process instead of joining an instance that no longer exists (FIX-036 §1.2).
+// The check-and-record is atomic, so two concurrent same-key starts still
 // cannot both create an instance.
 func (t *Thresher) reserveKeyLocked(nsKey string) bool {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	if _, seen := t.seenKeys[nsKey]; seen {
+	if owner, seen := t.seenKeys[nsKey]; seen && t.keyOwnerLiveLocked(owner) {
 		return false
 	}
 
-	t.seenKeys[nsKey] = struct{}{}
+	t.seenKeys[nsKey] = keyInFlight
 
 	return true
+}
+
+// keyOwnerLiveLocked reports whether a reservation still names a conversation
+// nothing may duplicate: a start in flight, or a tracked instance that has not
+// reached a terminal state. An id the registry no longer knows — forgotten, or
+// lost with the engine that ran it — is not live. Caller holds m.
+func (t *Thresher) keyOwnerLiveLocked(owner string) bool {
+	if owner == keyInFlight {
+		return true
+	}
+
+	reg, tracked := t.instances[owner]
+	if !tracked {
+		return false
+	}
+
+	return !instanceTerminal(reg.inst.State())
+}
+
+// bindKeyLocked names the instance that owns a reservation, once its launch has
+// succeeded (FIX-036 §1.2).
+func (t *Thresher) bindKeyLocked(nsKey, instanceID string) {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	t.seenKeys[nsKey] = instanceID
 }
 
 // releaseKeyLocked drops a correlation-key reservation, letting a later message
@@ -157,6 +193,44 @@ func (t *Thresher) releaseKeyLocked(nsKey string) {
 	defer t.m.Unlock()
 
 	delete(t.seenKeys, nsKey)
+}
+
+// rebindKeysLocked re-establishes the correlation reservations of an instance
+// the engine has just rebuilt from its checkpoint — a cold restart recovery or
+// a wake (FIX-036 §1.2). seenKeys is in-memory bookkeeping, so without this a
+// live conversation comes back unreserved and the next message carrying its key
+// starts a DUPLICATE instance beside it. The keys are the conversation values
+// the checkpoint carries (ADR-033 §2.1's ConvKeys), which are the same values
+// the instance-starter reserved when it first created the conversation.
+func (t *Thresher) rebindKeysLocked(
+	processID, instanceID string,
+	convKeys map[string]string,
+) {
+	if len(convKeys) == 0 {
+		return
+	}
+
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	for _, v := range convKeys {
+		if v == "" {
+			continue
+		}
+
+		t.seenKeys[nsKeyFor(processID, v)] = instanceID
+	}
+}
+
+// releaseKeysOfLocked drops every reservation owned by instanceID — the
+// forgetting half of §1.2, so the map shrinks with the instances it tracks
+// rather than growing for the engine's lifetime. Caller holds m.
+func (t *Thresher) releaseKeysOfLocked(instanceID string) {
+	for nsKey, owner := range t.seenKeys {
+		if owner == instanceID {
+			delete(t.seenKeys, nsKey)
+		}
+	}
 }
 
 // latestSnapshotLocked returns the snapshot of the latest registered version of

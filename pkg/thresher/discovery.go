@@ -81,6 +81,14 @@ func (t *Thresher) Forget(ids ...string) error {
 
 	for _, id := range ids {
 		delete(t.instances, id)
+
+		// Forget everything the engine holds for the instance, not just its
+		// registration (FIX-036 §1.2/§1.3): its terminal signal and any
+		// correlation reservation it owns. Both are safe here precisely
+		// because the loop above proved the instance terminal — nothing can
+		// rebuild it and wait on a channel we dropped.
+		delete(t.settled, id)
+		t.releaseKeysOfLocked(id)
 	}
 
 	return nil

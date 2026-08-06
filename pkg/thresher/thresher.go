@@ -163,7 +163,12 @@ type Thresher struct {
 	registrations map[string][]*ProcessRegistration
 	nextVersion   map[string]int
 	instances     map[string]instanceReg
-	seenKeys      map[string]struct{}
+	// seenKeys maps a namespaced correlation key → the id of the instance that
+	// owns that conversation (keyInFlight while its launch is still running).
+	// Knowing the OWNER is what lets a repeat business key start a new
+	// conversation once the old one finished, instead of joining a ghost
+	// (FIX-036 §1.2). Guarded by m; reaped by Forget.
+	seenKeys map[string]string
 	// tasks maps a parked UserTask id → its engine-level record: where it lives,
 	// who may act on it, and who currently holds it (SRD-034, SRD-073 FR-2).
 	// Guarded by m. Populated/cleared by taskDist as tasks are announced and
@@ -296,7 +301,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		registrations: map[string][]*ProcessRegistration{},
 		nextVersion:   map[string]int{},
 		instances:     map[string]instanceReg{},
-		seenKeys:      map[string]struct{}{},
+		seenKeys:      map[string]string{},
 		tasks:         map[string]*taskRecord{},
 		keyLocks:      newKeyLockManager(),
 		waking:        map[string]bool{},
@@ -1159,9 +1164,7 @@ func (t *Thresher) resolveAndLaunch(
 		return t.launchInstanceFromEvent(ctx, s, startNode, eDef, keyName, key)
 	}
 
-	// Namespace the key by process so two processes correlating on the same
-	// value remain distinct conversations.
-	nsKey := s.ProcessID + "\x1f" + key
+	nsKey := nsKeyFor(s.ProcessID, key)
 
 	if !t.reserveKeyLocked(nsKey) {
 		t.cfg.logger.Debug("instance-starter: joined existing instance (key seen)",
@@ -1237,7 +1240,23 @@ func (t *Thresher) launchInstanceFromEvent(
 	// returns a usable handle for it instead of a nil that panics on observation.
 	t.trackInstanceLocked(inst, cancel, settled)
 
+	// Bind the correlation reservation to the instance that now owns it
+	// (FIX-036 §1.2): until this point the entry only says "a start is in
+	// flight", which is what suppresses a concurrent duplicate; from here it
+	// names the conversation, so a later message can tell a live instance
+	// (join) from a finished one (start again).
+	if keyVal != "" {
+		t.bindKeyLocked(nsKeyFor(s.ProcessID, keyVal), inst.ID())
+	}
+
 	return nil
+}
+
+// nsKeyFor namespaces a correlation value by its process, so two processes
+// correlating on the same value remain distinct conversations. The one
+// definition both the reservation and its binding use.
+func nsKeyFor(processID, key string) string {
+	return processID + "\x1f" + key
 }
 
 // StartProcess launches a new instance of the exact registered version named by

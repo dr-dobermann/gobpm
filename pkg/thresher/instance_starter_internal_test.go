@@ -20,6 +20,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/repository"
+	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -551,6 +553,78 @@ func corrStartProcess(t *testing.T, name, msgName, refName string) *process.Proc
 	return proc
 }
 
+// corrWaitProcess is corrStartProcess with a PARKING node between the start and
+// the end: the conversation stays live — and therefore recoverable from its
+// checkpoint — instead of completing the moment it starts.
+func corrWaitProcess(t *testing.T, name, msgName string) *process.Process {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	mp := goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			d, err := ds.Find(ctx, "order_in")
+			if err != nil {
+				return nil, err
+			}
+
+			return values.NewVariable(fmt.Sprint(d.Value().Get(ctx))), nil
+		})
+
+	re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(mp,
+		bpmncommon.MustMessage(msgName, data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID("order_in"))))
+	require.NoError(t, err)
+
+	prop, err := bpmncommon.NewCorrelationProperty("orderId", "string",
+		[]bpmncommon.CorrelationPropertyRetrievalExpression{*re})
+	require.NoError(t, err)
+
+	key, err := bpmncommon.NewCorrelationKey("orderKey",
+		[]bpmncommon.CorrelationProperty{*prop})
+	require.NoError(t, err)
+
+	// Every id is pinned: recovery resolves the recorded node ids against the
+	// second engine's registration (the ADR-033 §2.8 deployment-parity rule).
+	proc, err := process.New(name, foundation.WithID(name))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start",
+		events.WithMessageTrigger(events.MustMessageEventDefinition(
+			bpmncommon.MustMessage(msgName, data.MustItemDefinition(
+				values.NewVariable(""), foundation.WithID("order_in"))), nil)),
+		events.WithCorrelationKey(key),
+		foundation.WithID(name+"-start"))
+	require.NoError(t, err)
+
+	when := time.Now().Add(time.Hour)
+	tdef, err := events.NewTimerEventDefinition(
+		goexpr.Must(nil, data.MustItemDefinition(values.NewVariable(time.Time{})),
+			func(_ context.Context, _ data.Source) (data.Value, error) {
+				return values.NewVariable(when), nil
+			}), nil, nil)
+	require.NoError(t, err)
+
+	wait, err := events.NewIntermediateCatchEvent("wait", tdef,
+		foundation.WithID(name+"-wait"))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end", foundation.WithID(name+"-end"))
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, wait, end} {
+		require.NoError(t, proc.Add(e))
+	}
+
+	_, err = flow.Link(start, wait)
+	require.NoError(t, err)
+	_, err = flow.Link(wait, end)
+	require.NoError(t, err)
+
+	return proc
+}
+
 func instanceCount(th *Thresher) int {
 	th.m.Lock()
 	defer th.m.Unlock()
@@ -704,4 +778,188 @@ func TestStarterGuardHelpers(t *testing.T) {
 	end, err := events.NewEndEvent("e")
 	require.NoError(t, err)
 	require.False(t, parallelStart(end))
+}
+
+// TestCorrelationKeyReleasedAfterInstanceEnds is FIX-036 T-2: the reservation
+// belongs to a CONVERSATION, not to the key forever. While the first instance
+// lives, a repeat key joins it (no duplicate — TestCorrelationDedup's rule);
+// once it has finished, the same business key must start a NEW instance rather
+// than being answered "joined existing instance" against an instance that no
+// longer exists, which silently dropped the message.
+func TestCorrelationKeyReleasedAfterInstanceEnds(t *testing.T) {
+	broker := membroker.New()
+
+	th, err := New("corr-reuse", WithMessageBroker(broker), WithoutBanner())
+	require.NoError(t, err)
+
+	proc := corrStartProcess(t, "p-corr-reuse", "order placed", "order placed")
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	require.NoError(t, broker.Publish(ctx,
+		messaging.Envelope{Name: "order placed", Payload: "ORD-42"}))
+
+	require.Eventually(t, func() bool { return instanceCount(th) == 1 },
+		3*time.Second, 10*time.Millisecond)
+
+	// the first conversation runs to its end (the process is start → end).
+	require.Eventually(t, func() bool {
+		return len(th.Instances(InstancesCompleted)) == 1
+	}, 3*time.Second, 10*time.Millisecond, "the first instance must finish")
+
+	// the SAME key again: a finished conversation is not a conversation.
+	require.NoError(t, broker.Publish(ctx,
+		messaging.Envelope{Name: "order placed", Payload: "ORD-42"}))
+
+	require.Eventually(t, func() bool { return instanceCount(th) == 2 },
+		3*time.Second, 10*time.Millisecond,
+		"a repeat business key must start a new instance once the first ended")
+
+	// and the reservation now names the SECOND instance, not the first.
+	th.m.Lock()
+	owner := th.seenKeys[nsKeyFor(proc.ID(), "ORD-42")]
+	th.m.Unlock()
+
+	require.NotEmpty(t, owner)
+	require.NotEqual(t, keyInFlight, owner)
+}
+
+// TestForgetReleasesKeyAndSettled is FIX-036 T-3: Forget is the package's
+// reaping path and now reaps everything the engine holds for the instance —
+// its registration, its terminal signal and its correlation reservation — so
+// neither map grows for the engine's lifetime.
+func TestForgetReleasesKeyAndSettled(t *testing.T) {
+	broker := membroker.New()
+
+	th, err := New("corr-forget", WithMessageBroker(broker), WithoutBanner())
+	require.NoError(t, err)
+
+	proc := corrStartProcess(t, "p-corr-forget", "order placed", "order placed")
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	require.NoError(t, broker.Publish(ctx,
+		messaging.Envelope{Name: "order placed", Payload: "ORD-7"}))
+
+	require.Eventually(t, func() bool { return instanceCount(th) == 1 },
+		3*time.Second, 10*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		return len(th.Instances(InstancesCompleted)) == 1
+	}, 3*time.Second, 10*time.Millisecond)
+
+	ids := th.Instances(InstancesCompleted)
+	require.Len(t, ids, 1)
+
+	id := ids[0]
+
+	th.m.Lock()
+	_, hadSettled := th.settled[id]
+	th.m.Unlock()
+	require.True(t, hadSettled, "the terminal signal is minted per instance")
+
+	require.NoError(t, th.Forget(id))
+
+	th.m.Lock()
+	defer th.m.Unlock()
+
+	require.NotContains(t, th.instances, id)
+	require.NotContains(t, th.settled, id)
+	require.NotContains(t, th.seenKeys, nsKeyFor(proc.ID(), "ORD-7"))
+}
+
+// TestRecoveredConversationKeepsItsKey is FIX-036 §1.2's restart half. The
+// reservation map is in-memory, so an engine that rebuilds a live conversation
+// from its checkpoint must re-take that conversation's correlation key.
+// Without it the recovered instance is unreserved and the very next message
+// carrying its key starts a DUPLICATE conversation beside it.
+func TestRecoveredConversationKeepsItsKey(t *testing.T) {
+	repo := memrepo.New()
+	broker := membroker.New()
+
+	proc := corrWaitProcess(t, "p-corr-rec", "order placed")
+
+	// Engine A: starts the conversation, which parks on its timer and is
+	// checkpointed with its ConvKeys — then is abandoned, not shut down.
+	thA, err := New("corr-rec", WithoutBanner(), WithRepository(repo),
+		WithMessageBroker(broker), WithLeaseTTL(50*time.Millisecond))
+	require.NoError(t, err)
+
+	_, err = thA.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	require.NoError(t, thA.Run(ctxA))
+
+	require.NoError(t, broker.Publish(ctxA,
+		messaging.Envelope{Name: "order placed", Payload: "ORD-9"}))
+
+	require.Eventually(t, func() bool { return instanceCount(thA) == 1 },
+		3*time.Second, 10*time.Millisecond)
+
+	var instID string
+
+	thA.m.Lock()
+	for id := range thA.instances {
+		instID = id
+	}
+	thA.m.Unlock()
+
+	require.Eventually(t, func() bool {
+		rec, ok, lerr := repo.Load(context.Background(), instID)
+
+		return lerr == nil && ok && len(rec.Payload) > 0
+	}, 3*time.Second, 10*time.Millisecond, "the parked conversation must checkpoint")
+
+	// "Crash" engine A the way the restart-recovery tests do: fence it out
+	// with a foreign, already-expired claim so its terminal write on cancel is
+	// CAS-rejected and the record stays Active — an abandoned conversation,
+	// which is what the next engine recovers.
+	rec, ok, err := repo.Load(context.Background(), instID)
+	require.True(t, ok)
+	require.NoError(t, err)
+
+	rec.Lease = repository.Lease{
+		Owner:       "crash-sim",
+		Incarnation: rec.Lease.Incarnation + 1,
+		Expiry:      time.Now().Add(-time.Second),
+	}
+	require.NoError(t, repo.Save(context.Background(), rec))
+
+	cancelA()
+
+	time.Sleep(80 * time.Millisecond)
+
+	// Engine B recovers it. Its reservation map starts empty — the map never
+	// crosses a process boundary, which is the whole defect.
+	thB, err := New("corr-rec", WithoutBanner(), WithRepository(repo),
+		WithMessageBroker(membroker.New()))
+	require.NoError(t, err)
+
+	_, err = thB.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	ctxB, cancelB := context.WithCancel(context.Background())
+	defer cancelB()
+	require.NoError(t, thB.Run(ctxB))
+
+	require.Eventually(t, func() bool { return instanceCount(thB) == 1 },
+		3*time.Second, 10*time.Millisecond, "engine B must recover the instance")
+
+	thB.m.Lock()
+	owner, reserved := thB.seenKeys[nsKeyFor(proc.ID(), "ORD-9")]
+	thB.m.Unlock()
+
+	require.True(t, reserved,
+		"the recovered conversation must own its correlation key again")
+	require.Equal(t, instID, owner,
+		"and the reservation must name the recovered instance")
 }

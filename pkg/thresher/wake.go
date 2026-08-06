@@ -174,6 +174,10 @@ func (t *Thresher) rebuildAndContinue(
 
 	t.trackInstanceLocked(inst, cancel, t.settledFor(instanceID))
 
+	// A hydrated conversation re-takes its correlation reservation, for the
+	// same reason a recovered one does (FIX-036 §1.2).
+	t.rebindKeysLocked(doc.ProcessID, instanceID, doc.ConvKeys)
+
 	inst.Report(observability.Fact{
 		Kind:  observability.KindInstanceState,
 		Phase: observability.PhaseHydrated,

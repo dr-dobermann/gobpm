@@ -84,6 +84,14 @@ when the instance finishes. Two consequences, the second worse than the first:
 `Forget` — documented as the path so "a long-running engine doesn't accumulate
 finished instances" — does not release keys.
 
+**And the mirror image, found while fixing the above** (not in the audit): the
+map is in-memory only, so it does not survive the process. An engine that
+recovers a live conversation from its checkpoint — a cold restart
+(`recovery.go`) or a wake (`wake.go`) — brings the instance back **unreserved**,
+and the next message carrying its key starts a *duplicate* conversation beside
+it. The two halves are one defect seen from both ends: the reservation's
+lifetime is not tied to the conversation's.
+
 ### 1.3 `settled` is never deleted
 
 `settledFor` mints one terminal-signal channel per instance id and stores it
@@ -214,6 +222,11 @@ the instance holding it is no longer live (absent from `instances`, or present
 and terminal), taking the reservation over in that case. The join path keeps
 its existing semantics for a live instance.
 
+A rebuilt conversation re-takes its reservation: `recoverOne` and
+`rebuildAndContinue` bind the keys the checkpoint carries (ADR-033 §2.1's
+`ConvKeys`) to the instance they just tracked, so a conversation that crossed a
+restart is reserved exactly as one that never stopped.
+
 #### 3.2.3 `pkg/thresher/discovery.go` — `Forget` forgets everything
 
 `Forget` deletes the instance's `settled` channel and any correlation
@@ -265,6 +278,7 @@ runs first wires and the other is a no-op.
 |---|---|---|
 | T-1 | `TestEngineContextIsRaceFree` | concurrent `Run`/`Shutdown`/launch under `-race` — no race on the engine context; a `Shutdown` after a completed `Run` always cancels (§1.1) |
 | T-2 | `TestCorrelationKeyReleasedAfterInstanceEnds` | a second message with the same key after the first instance terminated starts a NEW instance, not a silent join (§1.2) |
+| T-2a | `TestRecoveredConversationKeepsItsKey` | engine A parks a conversation and is fenced out; engine B recovers it from the checkpoint and the reservation names the recovered instance — without the rebind the key comes back free and the next message duplicates the conversation (§1.2, restart half) |
 | T-3 | `TestForgetReleasesKeyAndSettled` | after `Forget`, `seenKeys` and `settled` no longer hold the id (§1.2, §1.3) |
 | T-4 | `TestReleaseWaitsSeesHoldImmediately` | a `ReleaseWaits` racing `HoldSubscription` withdraws the hold — the hub carries no leftover subscription (§1.4) |
 | T-5 | `TestPanickingObservationFilterContained` | a filter that panics denies its recipient, is counted and logged once, and never reaches `Report`'s caller (§1.5) |
