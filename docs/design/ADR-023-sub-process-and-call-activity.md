@@ -284,6 +284,22 @@ composition is by **reference**, not containment, so the execution unit is a
 - **Observability linkage**: the child instance's facts carry the parent
   linkage (caller instance id + Call Activity node id) so a trace can be
   stitched across the boundary (§6).
+- **Restart contract — the call survives a restart whole** (the standard
+  is silent on engine restarts; engine choice, governed by the
+  Persistence & State ADR's composite-fidelity rule, ADR-033 v.4 §2.10):
+  the child instance is **durable in its own right** — it checkpoints
+  under the same repository and discipline as any instance, carrying the
+  parent linkage; the caller's checkpoint records the in-flight call
+  (the awaited child instance id + the call node). Recovery restores
+  **both ends and re-links them**: the caller's parked track resumes
+  waiting on the recovered child, the child's terminal state re-enters
+  the restored caller exactly as it would a resident one, and the
+  cancel cascade above survives the restart. A restored caller whose
+  awaited child record is missing **fails its restore loudly** — the
+  call is recorded state, so silently re-launching the child (a
+  duplicated child instance) is designed out; conversely a recovered
+  child whose parent record vanished fails loudly rather than running
+  orphaned.
 
 ### 2.8 Designed-for: what rides the scope model next
 

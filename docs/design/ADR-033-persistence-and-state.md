@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.3 |
-| Date | 2026-08-04 |
+| Version | v.4 |
+| Date | 2026-08-06 |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §10 (save/restore as P0: "goroutines are the execution medium, persistence is the state of record"), [ADR-001 v.6](ADR-001-execution-model.md) (the runtime whose state this makes durable), [ADR-007 v.2](ADR-007-in-memory-long-waits.md) (the in-memory long-wait model — dehydration & wake-on-trigger — whose durable half this owns) |
 | Related | [ADR-006 v.4](ADR-006-events-and-subscriptions.md) (subscriptions), [ADR-013 v.2](ADR-013-instance-observability.md) (facts vs state), [ADR-014 v.1](ADR-014-message-handling.md) / [ADR-016 v.1](ADR-016-message-correlation.md) (correlation state), [ADR-017 v.1](ADR-017-channel-based-event-processing.md) (the loop as sole state owner), [ADR-021 v.1](ADR-021-service-task-execution-model.md) (the job queue's own durability), [ADR-023 v.3](ADR-023-sub-process-and-call-activity.md) (scopes, child instances), [ADR-025 v.2](ADR-025-activity-iteration-loop-and-multi-instance.md) (iteration state), [ADR-026 v.1](ADR-026-compensation-events.md) (the completion ledger) |
@@ -86,9 +86,19 @@ atomically per instance, containing only what cannot be re-derived:
    announced/taken state; a message/signal wait's subscription key
    and correlation keys (ADR-016's conversation key-set); an event
    gateway's armed alternatives; partially-complete iteration state
-   (ADR-025's counters and collected outputs).
+   (ADR-025's counters and collected outputs — for **both** driving
+   strategies: a sequential pass's position and collected outputs no
+   less than a parallel group's open set, §2.10).
 6. **The completion ledger** (ADR-026): entries with their ordinals
-   and data snapshots — compensability must survive a restart.
+   and data snapshots — compensability must survive a restart. When a
+   compensation throw is **resolving**, the ledger alone is not the
+   state: the document also records the **sweep position** — the
+   remaining queue and the entry being undone (§2.9) — because the
+   sweep consumes entries out of the ledger as it runs.
+7. **In-flight call linkage**: a parked Call Activity's descriptor —
+   the awaited **child instance id** and the call node. The child is
+   its own checkpoint record carrying the reverse link (parent
+   instance id + call node id); §2.10 makes the pair restorable.
 
 Everything else is **derived at hydration by re-walking the re-cloned
 graph**: armed boundaries and event-sub-processes, routing tables,
@@ -111,7 +121,11 @@ is the schema, the checkpoint is the data. The document carries a
   a data commit outside those (a standalone `DataChange`) rides the
   next transition. Mid-step state (a half-executed service call) is
   **never** checkpointed — a step is atomic between transitions, and
-  recovery re-enters the node, not the half-step.
+  recovery re-enters the node, not the half-step. Re-enter applies to
+  **steps**, not to composite constructs: a construct whose position
+  is recorded (§2.1 items 5–7) re-enters only what the recorded
+  position says remains — never the whole construct from the top
+  (§2.10).
 - **The write mode is a policy seam** with a safe default: synchronous
   write-through on terminal and wait transitions (the states that must
   never be lost), write-behind batching allowed for intermediate
@@ -339,6 +353,49 @@ would double the stream for zero information). The exact
 kinds/phases/details ride the SRDs under ADR-013 v.2's open taxonomy
 and masking rules (names and counts, never payload values).
 
+### 2.10 Composite constructs capture faithfully — child instances are durable
+
+The §2.1 document is only as good as its coverage: a construct whose
+runtime position lives outside the re-cloned graph and outside the
+document restores **wrongly by omission** — the instance returns
+looking healthy and re-executes or abandons work, which is worse than
+a refusal because nothing signals it. Hence the rule set:
+
+- **Faithful capture is the norm.** Every composite construct the
+  engine runs — a composite scope, sequential and parallel
+  multi-instance iteration, a Standard Loop, a resolving compensation
+  sweep, an in-flight Call Activity — records its position in the
+  checkpoint document (§2.1 items 5–7), and hydration rebuilds the
+  construct **at that position**: a half-complete iteration resumes at
+  its next pass with its collected outputs, a mid-sweep compensation
+  continues with the remaining queue, a composite body whose child
+  scope had drained resumes its host exactly once — restore must
+  never double-execute completed work. An early deferral posture
+  ("defer the checkpoint while a construct is in flight") was an
+  implementation stopgap, never this contract: it silently widens the
+  loss window and does not compose (a construct-dense process might
+  never find a capturable instant). It is retired; a checkpoint
+  refusal remains legitimate only for genuinely unserializable data
+  (§2.1 item 3), and it stays loud.
+- **Child instances are durable, symmetrically linked.** Every
+  instance the engine runs — root or called child — checkpoints under
+  the same repository, the same engine group and the same discipline;
+  a child is never a volatile appendage of its parent. The parent's
+  record carries the call descriptor (§2.1 item 7), the child's record
+  carries the reverse linkage, and recovery restores **both ends**:
+  the parent re-establishes its completion watch on the recovered
+  child, and the child's terminal outcome reaches the restored parent
+  exactly as it would a resident one. The cancel cascade (a caller's
+  termination terminates the child) survives the restart with the
+  re-link.
+- **A missing counterpart fails loud — a child instance is state, not
+  an effect.** The at-least-once posture (§2.3) covers *effects*; a
+  child instance is recorded state, and duplicating one is designed
+  out. A restored parent whose awaited child record does not exist —
+  or a child whose parent vanished — fails its restore loudly (the
+  per-instance recovery failure of §2.5), never silently re-launches
+  the call.
+
 ## 3. Grounding
 
 | Claim | Source |
@@ -382,9 +439,20 @@ and masking rules (names and counts, never payload values).
   tenant lifecycle and how a tenant is assigned at registration/launch)
   — a future ADR; this layer records the instance→tenant linkage
   (§2.7) so the storage never needs a tenancy retrofit.
-- **Incident store** (#80) — failed-to-recover instances surface as
-  observable failures now; a durable incident queue comes with the
-  fault-tolerance epic.
+- **Queryable incident store** (#80 → the ops-console epic) —
+  incidents are already *durable per instance*: they ride the
+  checkpoint document and recovery, with an incident-holding persisted
+  status, since the incidents landing. What remains deferred is the
+  cross-instance, queryable surface — enumerating incidents without
+  decoding every checkpoint payload, and incident visibility outliving
+  the instance record — which needs its own extraction/index design in
+  the storage adapters (per §2.7's composition rule).
+- **Ledger nesting fidelity** — a completed child scope's ledger is
+  folded into its parent's entry (ADR-026 v.1 §2.1); the checkpoint
+  flattens the fold into ordinal-ordered siblings, which preserves the
+  reverse completion order the sweep runs by (§2.10 restores
+  correctly) but loses the nesting and the display names. Cosmetic;
+  restored when a consumer needs it.
 
 **The accompanying SRDs** (smallest-first): the checkpoint document +
 save/restore + restart recovery over the Repository seam; then
@@ -395,6 +463,7 @@ finalized); then suspend/resume and the engine pause.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.4 | 2026-08-06 | Ruslan Gabitov | **Composite-construct fidelity** (new §2.10, motivated by the capture-deferral stopgap and its silent siblings): faithful capture is the norm — a composite scope, sequential/parallel multi-instance, a Standard Loop, a resolving compensation sweep and an in-flight Call Activity all record their position in the document, and hydration rebuilds each at that position (never re-executing completed work); the deferral posture is retired (refusal remains only for unserializable data, loud). **Child instances are durable and symmetrically linked**: every instance — root or called child — checkpoints under the same repository/group; the parent records the call descriptor, the child the reverse linkage; recovery restores both ends (completion watch re-established, cancel cascade survives); a missing counterpart fails the restore loud — a child instance is state, not an effect, so duplicating one is designed out. §2.1 grows: item 5 covers both iteration strategies, item 6 adds the sweep position, new item 7 the call linkage; §2.2 clarifies re-enter applies to steps, not recorded composites. New §5 deferral: ledger nesting fidelity (flattening preserves sweep order; nesting/names cosmetic); the incident-store deferral refreshed to current truth — incidents are durable per instance since the incidents landing, what stays deferred is the cross-instance queryable surface. |
 | v.3 | 2026-08-04 | Ruslan Gabitov | Two partitioning principles, motivated by the first durable Repository adapter (postgres) — partitioning must be in the port's contract before a second implementation freezes it. **Engine groups** (§2.8): the group is part of the engine's configured identity (not storage wiring); records carry their creator's group and the recovery listing / wake claims are group-scoped, so several clusters may share one database without interference; an unnamed engine forms a single-engine group under its own id — clustering is explicit opt-in, never accidental (zero-config restart recovery unchanged); deployment parity becomes a per-group contract. **Tenant linkage** (§2.7): tenants partition data ownership orthogonally to groups — one instance belongs to exactly one tenant, one engine may serve many; unspecified → the default tenant (flag-designated in the registry, exactly one per engine group — never a reserved id); storage keeps a tenant registry (tenants table) that records reference; only the durable linkage lands here — tenant-scoped APIs, enforcement and lifecycle are a future Multi-tenancy ADR (new §5 deferral). §2.7's skeleton-growth list adds the group and the tenant to the record. |
 | v.2 | 2026-07-27 | Ruslan Gabitov | Pin refresh: ADR-007 authored in full and Accepted (v.2 — the in-memory dehydration & wake-on-trigger mechanism this ADR's §2.4/§2.5 delegated to), so the §Refines and §3-grounding pins move v.1 → v.2. No content change to the durable model. |
 | v.1 (Accepted) | 2026-07-27 | Ruslan Gabitov | Accepted with the first landing slice (the accompanying checkpoint/recovery SRD): the checkpoint document, the grown Repository (CAS + lease), consistent-cut capture, restart recovery with re-enter semantics and the recorded-deadline timers — all proven live, incl. the §2.8 fencing (a zombie engine's saves rejected) and the ADR-005-style incremental plan: dehydration/wake-on-trigger and suspend/resume ride the remaining slices. One §2.8 sharpening surfaced by the landing: deployment parity covers ELEMENT IDENTITY too — recovery requires stable node ids across engines (pinned ids or a serialized model). |
