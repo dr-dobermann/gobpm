@@ -91,6 +91,40 @@ func EncodeData(
 	return raw, nil
 }
 
+// EncodeValue encodes ONE canonical value — the staged iteration
+// outputs of an own-iteration composite (SRD-082 FR-1). where names
+// the owner in error context, the EncodeData discipline.
+func EncodeValue(
+	ctx context.Context, where string, v data.Value,
+) (json.RawMessage, error) {
+	n, err := encodeValue(ctx, where, "staging", v)
+	if err != nil {
+		return nil, err
+	}
+
+	raw, err := json.Marshal(n)
+	if err != nil {
+		return nil, errs.Invariant("%s: staging encoding failed: %w", where, err)
+	}
+
+	return raw, nil
+}
+
+// DecodeValue rebuilds a value encoded by EncodeValue.
+func DecodeValue(
+	ctx context.Context, raw json.RawMessage,
+) (data.Value, error) {
+	var n node
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return nil, errs.New(
+			errs.M("staging decoding failed"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	return decodeNode(ctx, n)
+}
+
 // DecodeData rebuilds the data set encoded by EncodeData.
 func DecodeData(
 	ctx context.Context,

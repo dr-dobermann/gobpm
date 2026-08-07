@@ -59,6 +59,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/set"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
+
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 )
 
 // trackState represent the state of the whole track
@@ -214,6 +216,11 @@ type track struct {
 	// snapshot-first while Put/outputs still commit to the live scope
 	// (SRD-059 FR-4, ADR-026 §2.5). Set by the loop before spawn.
 	compFrameSeed []data.Data
+	// miSeed is a RESTORED own-iteration position (SRD-082 FR-3): the
+	// decorator resumes at the recorded pass with the recorded outputs
+	// instead of iterating from zero. Set by restore before spawn,
+	// consumed once by the runner.
+	miSeed *checkpoint.MIRecord
 	// compScopeSeed, on a compensation event-sub handler host, is the snapshot
 	// committed into the handler's fresh child scope at open (shadowing
 	// reads). Set by the loop before spawn.
@@ -1748,3 +1755,21 @@ func (t *track) advanceToArm(
 }
 
 // -----------------------------------------------------------------------------
+
+// setLoopCounter publishes the pass ordinal under the track mutex
+// (SRD-082): the decorator's runner goroutine writes it while the loop
+// reads it — the capture, the iteration mirror and the scope facts.
+func (t *track) setLoopCounter(i int) {
+	t.m.Lock()
+	t.loopCounter = i
+	t.m.Unlock()
+}
+
+// loopCounterSnap reads the ordinal under the mutex — the loop-side
+// reader half of setLoopCounter.
+func (t *track) loopCounterSnap() int {
+	t.m.RLock()
+	defer t.m.RUnlock()
+
+	return t.loopCounter
+}

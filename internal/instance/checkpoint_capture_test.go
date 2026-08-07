@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,15 +30,24 @@ import (
 var lastCondSnapshot *snapshot.Snapshot
 
 // cpSink collects reported facts for the degradation assertions.
+// Mutex-guarded: tracks report from their own goroutines while a test
+// polls has() (SRD-082's capture tests do).
 type cpSink struct {
+	mu    sync.Mutex
 	facts []observability.Fact
 }
 
 func (cs *cpSink) Report(f observability.Fact) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
 	cs.facts = append(cs.facts, f)
 }
 
 func (cs *cpSink) has(phase observability.Phase) bool {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
 	for _, f := range cs.facts {
 		if f.Kind == observability.KindInstanceState && f.Phase == phase {
 			return true

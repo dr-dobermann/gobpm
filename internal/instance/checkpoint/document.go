@@ -23,7 +23,13 @@ import (
 // 2 → 3 (SRD-079 FR-5) added the incident table — same additive rule: a
 // Schema-2 document simply carries no incidents, which is the state the
 // engine was in when it wrote one.
-const CurrentSchema = 3
+//
+// 3 → 4 (SRD-082 FR-1) added the composite position records — in-flight
+// calls, iteration positions, parallel MI open sets, resolving
+// compensation sweeps. Additive again: a Schema-3 document was only
+// ever written with no construct in flight (the retired capture guards
+// guaranteed it), so absent records mean "nothing to rebuild".
+const CurrentSchema = 4
 
 // Document is one instance's durable state (SRD-070 FR-3): identity +
 // the version pin, status, the scope table, conversation keys, the
@@ -69,6 +75,19 @@ type Document struct {
 	// closed: a dead-lettered incident's record is the durable dead letter
 	// (ADR-036 §2.5), so closing never removes it.
 	Incidents []IncidentRecord `json:"incidents,omitempty"`
+	// Calls are the in-flight Call Activities (Schema 4, SRD-082 FR-1,
+	// ADR-033 v.4 §2.1 item 7): the awaited child instance, the call
+	// node and the parked caller track. The child is its own record —
+	// this is the parent's half of the symmetric link (§2.10).
+	Calls []CallRecord `json:"calls,omitempty"`
+	// MIGroups are the parallel multi-instance open sets (Schema 4,
+	// SRD-082 FR-1): which per-instance scopes are still open, at which
+	// ordinals, with the outputs collected so far.
+	MIGroups []MIGroupRecord `json:"mi_groups,omitempty"`
+	// Sweeps are the resolving compensation throws (Schema 4, SRD-082
+	// FR-1): the remaining queue and the entry being undone — the
+	// ledger alone is not the state once a sweep has consumed from it.
+	Sweeps []SweepRecord `json:"sweeps,omitempty"`
 
 	Schema  int `json:"schema"`
 	Version int `json:"version"` // the FR-1 pin
@@ -120,21 +139,83 @@ type LedgerRecord struct {
 // re-enter semantics (SRD-070 FR-6). Ended/merged tracks are never
 // recorded — their effect lives in the committed data.
 type TrackRecord struct {
+	ID        string `json:"id"`
+	State     string `json:"state"`
+	NodeID    string `json:"node_id"`
+	ScopePath string `json:"scope_path"`
+	ScopeSeg  string `json:"scope_seg,omitempty"`
+	TaskID    string `json:"task_id,omitempty"`
+
 	// Timer is the one wait descriptor of this slice: the recorded
 	// absolute deadline overrides re-evaluation at restore (a Duration
 	// would otherwise restart — SRD-070 §4.2).
 	Timer *TimerDescriptor `json:"timer,omitempty"`
+	// MI is the sequential-iteration position (Schema 4, SRD-082 FR-1)
+	// of a host that drives its own passes — sequential MI or a
+	// Standard Loop. nil for every other track.
+	MI *MIRecord `json:"mi,omitempty"`
 
-	ID        string   `json:"id"`
-	State     string   `json:"state"`
-	NodeID    string   `json:"node_id"`
-	ScopePath string   `json:"scope_path"`
-	ScopeSeg  string   `json:"scope_seg,omitempty"`
-	TaskID    string   `json:"task_id,omitempty"`
 	Prev      []string `json:"prev,omitempty"`
 	MsgDefIDs []string `json:"msg_def_ids,omitempty"`
 
 	LoopCounter int `json:"loop_counter,omitempty"`
+}
+
+// CallRecord is one in-flight Call Activity (Schema 4, SRD-082 FR-1):
+// the parent's half of the parent↔child link (ADR-033 v.4 §2.10).
+type CallRecord struct {
+	ChildID string `json:"child_id"`
+	NodeID  string `json:"node_id"`
+	TrackID string `json:"track_id"`
+}
+
+// MIRecord is a sequential MI / Standard Loop position: passes fully
+// completed, the frozen instance count (0 for a Standard Loop, whose
+// bound is the loop condition), the outputs collected so far (a
+// canonical-codec array) and whether the completionCondition already
+// fired. Names (inputItem, outputRef, …) derive from the node and are
+// never stored.
+type MIRecord struct {
+	Staging      json.RawMessage `json:"staging,omitempty"`
+	N            int             `json:"n,omitempty"`
+	Completed    int             `json:"completed"`
+	ConditionMet bool            `json:"condition_met,omitempty"`
+}
+
+// OpenScope is one still-open per-instance scope of a parallel MI
+// group: its path (the scope's data rides the Scopes table) and its
+// 0-based instance ordinal — the one position not derivable from the
+// track table.
+type OpenScope struct {
+	Path    string `json:"path"`
+	Ordinal int    `json:"ordinal"`
+}
+
+// MIGroupRecord is a parallel multi-instance group mid-fan-out
+// (Schema 4, SRD-082 FR-1): the host, the frozen N, the open set and
+// the collected outputs. Completed instances stay completed — their
+// outputs are in Staging; terminated counts are computed at cancel
+// time and never stored.
+type MIGroupRecord struct {
+	HostTrack string          `json:"host_track"`
+	Staging   json.RawMessage `json:"staging,omitempty"`
+	Open      []OpenScope     `json:"open"`
+	N         int             `json:"n"`
+	Pending   int             `json:"pending,omitempty"`
+}
+
+// SweepRecord is a resolving compensation throw (Schema 4, SRD-082
+// FR-1): the parked thrower, the Transaction host when the sweep
+// drives an abort, the scope it collects for, the REMAINING queue in
+// run order and the entry being undone — which re-runs on restore
+// (a handler is an effect; at-least-once per ADR-033 §2.3).
+type SweepRecord struct {
+	ThrowerTrack string         `json:"thrower_track"`
+	TxHostTrack  string         `json:"tx_host_track,omitempty"`
+	ScopePath    string         `json:"scope_path"`
+	Running      *LedgerRecord  `json:"running,omitempty"`
+	Queue        []LedgerRecord `json:"queue,omitempty"`
+	Wait         bool           `json:"wait,omitempty"`
 }
 
 // BoundaryRecord is one ARMED boundary event guarding a captured track

@@ -242,7 +242,7 @@ func (inst *Instance) restoreTracks(
 	for i := range doc.Tracks {
 		rec := &doc.Tracks[i]
 
-		node, ok := inst.s.Nodes[rec.NodeID]
+		node, ok := inst.s.NodeByID(rec.NodeID)
 		if !ok {
 			return errs.New(
 				errs.M("Restore: the recorded node isn't in the pinned "+
@@ -395,6 +395,10 @@ func restoredTrack(
 		t.timerCycles = rec.Timer.CyclesLeft
 		t.timerHinted = true
 	}
+
+	// a recorded own-iteration position: the decorator resumes at the
+	// recorded pass instead of iterating from zero (SRD-082 FR-3).
+	t.miSeed = rec.MI
 
 	if err := t.checkNodeType(node, true); err != nil {
 		return nil, err

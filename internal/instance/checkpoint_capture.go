@@ -181,7 +181,12 @@ func (ls *loopState) captureDocument(
 	}
 
 	for _, t := range inst.tracks {
-		if rec, live := trackRecord(t); live {
+		rec, live, err := trackRecord(ctx, t, ls.iter[t.ID()])
+		if err != nil {
+			return nil, "encode: " + err.Error()
+		}
+
+		if live {
 			doc.Tracks = append(doc.Tracks, rec)
 		}
 	}
@@ -266,13 +271,16 @@ func ledgerRecords(
 // trackRecord captures one live track; live=false skips it. Every read
 // rides the track mutex: the capture runs on the loop goroutine while
 // the track's own goroutine may be mid-arming (writes guarded on its
-// side too).
-func trackRecord(t *track) (checkpoint.TrackRecord, bool) {
+// side too). mirror is the loop-owned iteration position of an
+// own-iteration host (SRD-082 FR-2), nil for every other track.
+func trackRecord(
+	ctx context.Context, t *track, mirror *iterMirror,
+) (checkpoint.TrackRecord, bool, error) {
 	t.m.RLock()
 	defer t.m.RUnlock()
 
 	if !liveTrackStates[t.state] {
-		return checkpoint.TrackRecord{}, false
+		return checkpoint.TrackRecord{}, false, nil
 	}
 
 	rec := checkpoint.TrackRecord{
@@ -294,7 +302,32 @@ func trackRecord(t *track) (checkpoint.TrackRecord, bool) {
 		}
 	}
 
-	return rec, true
+	// the own-iteration position (SRD-082 FR-2): the mirror exists
+	// exactly while the host's iteration is in flight (dropped on the
+	// host's end), whatever step-state the host shows between passes.
+	// The mirror is loop-owned and staging is loop-written, so both
+	// reads are loop-serialized.
+	if mirror != nil {
+		mi := &checkpoint.MIRecord{
+			N:            mirror.n,
+			Completed:    mirror.completed,
+			ConditionMet: mirror.conditionMet,
+		}
+
+		if mirror.staging != nil {
+			raw, err := checkpoint.EncodeValue(
+				ctx, "track "+t.ID(), mirror.staging)
+			if err != nil {
+				return checkpoint.TrackRecord{}, false, err
+			}
+
+			mi.Staging = raw
+		}
+
+		rec.MI = mi
+	}
+
+	return rec, true, nil
 }
 
 // persistedStatus maps the runtime lifecycle onto the repository's
