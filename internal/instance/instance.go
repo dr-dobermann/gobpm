@@ -103,6 +103,10 @@ type Instance struct {
 	// open sets the loop adopts at start (SRD-082 FR-4); nil for a fresh
 	// instance.
 	restoredGroups []checkpoint.MIGroupRecord
+	// restoredSweeps are the checkpoint-recorded resolving compensation
+	// sweeps the loop resumes at start (SRD-082 FR-6); nil for a fresh
+	// instance.
+	restoredSweeps []checkpoint.SweepRecord
 	// restoredLedgers is the checkpoint-rebuilt compensation ledger the
 	// loop adopts at start (SRD-070 FR-6); nil for a fresh instance.
 	restoredLedgers map[scope.DataPath][]*ledgerEntry

@@ -247,6 +247,11 @@ type track struct {
 	// across goroutines from the arming track.
 	held        atomic.Bool
 	timerHinted bool
+	// compWaitRestored marks a RESTORED wait-throw thrower (SRD-082
+	// FR-6): it re-parks without re-throwing — its adopted sweep is
+	// already running and will deliver the sentinel. Set at restore,
+	// before the track goroutine exists; consumed once.
+	compWaitRestored bool
 	// skipInitialArm suppresses the spawn-time boundary arming ONCE — for an
 	// incident-retry respawn, whose watches transfer from the failed attempt
 	// instead of re-arming (SRD-079 FR-6: a repeated failure must not reset

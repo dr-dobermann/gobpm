@@ -127,12 +127,19 @@ type ScopeRecord struct {
 // LedgerRecord is one compensation-ledger entry (ADR-026): the scope it
 // belongs to, its completion ordinal, the compensable activity, its
 // handler reference and the data snapshot captured at completion.
+// HandlerEventSub picks the restore-side seed mode (Schema 4, SRD-082
+// FR-6): an Event Sub-Process handler seeds its child scope, a
+// boundary handler seeds its frame inputs — a restored sweep that
+// guessed wrong would mis-seed. The names ride for observability.
 type LedgerRecord struct {
-	ScopePath  string          `json:"scope_path"`
-	ActivityID string          `json:"activity_id"`
-	HandlerID  string          `json:"handler_id,omitempty"`
-	Snapshot   json.RawMessage `json:"snapshot,omitempty"`
-	Ordinal    int             `json:"ordinal"`
+	ScopePath       string          `json:"scope_path"`
+	ActivityID      string          `json:"activity_id"`
+	ActivityName    string          `json:"activity_name,omitempty"`
+	HandlerID       string          `json:"handler_id,omitempty"`
+	HandlerName     string          `json:"handler_name,omitempty"`
+	Snapshot        json.RawMessage `json:"snapshot,omitempty"`
+	Ordinal         int             `json:"ordinal"`
+	HandlerEventSub bool            `json:"handler_event_sub,omitempty"`
 }
 
 // TrackRecord is one LIVE track: enough to respawn it at its node with

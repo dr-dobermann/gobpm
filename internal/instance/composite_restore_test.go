@@ -39,6 +39,22 @@ import (
 // lands at a deterministic position, and a restored catch re-evaluates
 // at re-arming (the recovery contract) against the reopened gate.
 
+// laxEP is an event producer stub tolerating the full register /
+// unregister / propagate traffic of a running instance.
+func laxEP(t *testing.T) *mockeventproc.MockEventProducer {
+	t.Helper()
+
+	ep := mockeventproc.NewMockEventProducer(t)
+	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+	ep.EXPECT().UnregisterEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+	ep.EXPECT().PropagateEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+
+	return ep
+}
+
 // gatedCond is a conditional definition true iff gate > floor(lc),
 // where lc is the bound loopCounter (0 when none is in scope).
 func gatedCond(
@@ -142,9 +158,7 @@ func captureAt(
 	t.Helper()
 
 	rt := cpRuntime(t)
-	ep := mockeventproc.NewMockEventProducer(t)
-	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
-		Return(nil).Maybe()
+	ep := laxEP(t)
 
 	inst, err := New(s, scope.EmptyDataPath, rt, ep, nil,
 		WithCheckpointing("engine-A", "engine-A", time.Minute))
@@ -208,9 +222,7 @@ func restoreToDone(
 ) *Instance {
 	t.Helper()
 
-	ep := mockeventproc.NewMockEventProducer(t)
-	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
-		Return(nil).Maybe()
+	ep := laxEP(t)
 
 	restored, err := Restore(doc, s, scope.EmptyDataPath,
 		cpRuntime(t), ep, nil, nil)
@@ -408,9 +420,7 @@ func TestSchemaThreeDocumentRestores(t *testing.T) {
 
 	s2 := condSnapshotFor(t, back)
 
-	ep := mockeventproc.NewMockEventProducer(t)
-	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
-		Return(nil).Maybe()
+	ep := laxEP(t)
 
 	restored, err := Restore(back, s2, scope.EmptyDataPath,
 		cpRuntime(t), ep, nil, nil)
@@ -586,9 +596,7 @@ func TestRestoredScopeWithoutHostFailsLoud(t *testing.T) {
 
 	doc.Tracks = tracks
 
-	ep := mockeventproc.NewMockEventProducer(t)
-	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
-		Return(nil).Maybe()
+	ep := laxEP(t)
 
 	restored, err := Restore(doc, s, scope.EmptyDataPath,
 		cpRuntime(t), ep, nil, nil)
@@ -639,9 +647,7 @@ func TestIncidentPinHoldsRestoredScope(t *testing.T) {
 		Attempts:  1,
 	})
 
-	ep := mockeventproc.NewMockEventProducer(t)
-	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
-		Return(nil).Maybe()
+	ep := laxEP(t)
 
 	restored, err := Restore(doc, s, scope.EmptyDataPath,
 		cpRuntime(t), ep, nil, nil)
@@ -720,9 +726,7 @@ func restoreExpectFault(
 ) {
 	t.Helper()
 
-	ep := mockeventproc.NewMockEventProducer(t)
-	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
-		Return(nil).Maybe()
+	ep := laxEP(t)
 
 	restored, err := Restore(doc, s, scope.EmptyDataPath,
 		cpRuntime(t), ep, nil, nil)
@@ -857,9 +861,7 @@ func TestCaptureDefersOnUncodableStaging(t *testing.T) {
 
 	rt := cpRuntime(t)
 	sink := &cpSink{}
-	ep := mockeventproc.NewMockEventProducer(t)
-	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
-		Return(nil).Maybe()
+	ep := laxEP(t)
 
 	inst, err := New(s, scope.EmptyDataPath, rt.WithReporter(sink), ep, nil,
 		WithCheckpointing("engine-A", "engine-A", time.Minute))
@@ -1020,9 +1022,7 @@ func restoredLoopState(
 ) (*Instance, *loopState, []*track) {
 	t.Helper()
 
-	ep := mockeventproc.NewMockEventProducer(t)
-	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
-		Return(nil).Maybe()
+	ep := laxEP(t)
 
 	restored, err := Restore(doc, s, scope.EmptyDataPath,
 		cpRuntime(t), ep, nil, nil)
@@ -1215,9 +1215,7 @@ func TestParallelCaptureDefersOnUncodableStaging(t *testing.T) {
 
 	rt := cpRuntime(t)
 	sink := &cpSink{}
-	ep := mockeventproc.NewMockEventProducer(t)
-	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
-		Return(nil).Maybe()
+	ep := laxEP(t)
 
 	inst, err := New(s, scope.EmptyDataPath, rt.WithReporter(sink), ep, nil,
 		WithCheckpointing("engine-A", "engine-A", time.Minute))
@@ -1231,4 +1229,278 @@ func TestParallelCaptureDefersOnUncodableStaging(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return sink.has(observability.PhaseCheckpointDeferred)
 	}, 3*time.Second, 5*time.Millisecond)
+}
+
+// blockingCompHandler is an isForCompensation ServiceTask whose op
+// counts its runs and blocks until gate closes (or ctx dies) — the
+// mid-sweep park the T-6 captures rely on.
+func blockingCompHandler(
+	t *testing.T, name string, runs *atomic.Int32, gate chan struct{},
+) *activities.ServiceTask {
+	t.Helper()
+
+	op, err := gooper.New(name+"-op",
+		func(ctx context.Context, _ service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			runs.Add(1)
+
+			select {
+			case <-gate:
+				return nil, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		})
+	require.NoError(t, err)
+
+	st, err := activities.NewServiceTask(name, op,
+		activities.WithoutParams(), activities.WithCompensation())
+	require.NoError(t, err)
+
+	return st
+}
+
+// countCompHandler is an isForCompensation ServiceTask that only
+// counts its runs.
+func countCompHandler(
+	t *testing.T, name string, runs *atomic.Int32,
+) *activities.ServiceTask {
+	t.Helper()
+
+	op, err := gooper.New(name+"-op",
+		func(_ context.Context, _ service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			runs.Add(1)
+
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	st, err := activities.NewServiceTask(name, op,
+		activities.WithoutParams(), activities.WithCompensation())
+	require.NoError(t, err)
+
+	return st
+}
+
+// sweepProcess builds start → A → B → C → throw(scope-wide, wait) →
+// end with per-task compensation handlers, and snapshots it once.
+func sweepProcess(
+	t *testing.T, key string,
+	undoA, undoB, undoC *activities.ServiceTask,
+) *snapshot.Snapshot {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New(key)
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	var hit atomic.Int32
+
+	a := hitTask(t, key+"-A", &hit, "", 0)
+	b := hitTask(t, key+"-B", &hit, "", 0)
+	c := hitTask(t, key+"-C", &hit, "", 0)
+
+	throw := compThrow(t, "throw", nil, true)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	nodes := []flow.Element{start, a, b, c, throw, end}
+	nodes = append(nodes, guardWith(t, a, undoA)...)
+	nodes = append(nodes, guardWith(t, b, undoB)...)
+	nodes = append(nodes, guardWith(t, c, undoC)...)
+
+	for _, e := range nodes {
+		require.NoError(t, p.Add(e))
+	}
+
+	linkAll(t,
+		[2]flow.Element{start, a},
+		[2]flow.Element{a, b},
+		[2]flow.Element{b, c},
+		[2]flow.Element{c, throw},
+		[2]flow.Element{throw, end})
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	return s
+}
+
+// TestSweepRestoresMidRun is T-6's core: captured with undoC done,
+// undoB RUNNING and undoA queued, the restored sweep re-runs undoB
+// (at-least-once), runs undoA in order, resumes the thrower and
+// completes — no handler lost, none run twice except the running one.
+func TestSweepRestoresMidRun(t *testing.T) {
+	var aRuns, bRuns, cRuns atomic.Int32
+
+	gate := make(chan struct{})
+
+	undoA := countCompHandler(t, "undoA", &aRuns)
+	undoB := blockingCompHandler(t, "undoB", &bRuns, gate)
+	undoC := countCompHandler(t, "undoC", &cRuns)
+
+	s := sweepProcess(t, "cr-sweep", undoA, undoB, undoC)
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		return len(d.Sweeps) == 1 && d.Sweeps[0].Running != nil &&
+			d.Sweeps[0].Running.ActivityName == "cr-sweep-B" &&
+			len(d.Sweeps[0].Queue) == 1
+	})
+
+	rec := d0(doc)
+	require.True(t, rec.Wait)
+	require.NotEmpty(t, rec.ThrowerTrack)
+	require.Equal(t, "cr-sweep-A", rec.Queue[0].ActivityName,
+		"the remaining queue keeps reverse completion order")
+	require.EqualValues(t, 1, cRuns.Load())
+	require.EqualValues(t, 1, bRuns.Load(), "undoB started and blocked")
+	require.EqualValues(t, 0, aRuns.Load())
+
+	close(gate) // the re-run will flow through
+
+	sink := &cpSink{}
+	ep := laxEP(t)
+
+	restored, err := Restore(doc, s, scope.EmptyDataPath,
+		cpRuntime(t).WithReporter(sink), ep, nil, nil)
+	require.NoError(t, err)
+
+	rctx, rcancel := context.WithCancel(context.Background())
+	t.Cleanup(rcancel)
+
+	require.NoError(t, restored.Run(rctx))
+
+	select {
+	case <-restored.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the restored instance did not finish")
+	}
+
+	require.Equal(t, Completed, restored.State())
+	require.False(t, sink.has(observability.PhaseUnresolved),
+		"the restored thrower must NOT re-throw into the consumed ledger")
+
+	require.EqualValues(t, 2, bRuns.Load(),
+		"the RUNNING handler re-runs — an effect, at-least-once")
+	require.EqualValues(t, 1, aRuns.Load(),
+		"the queued handler runs exactly once, after the re-run")
+	require.EqualValues(t, 1, cRuns.Load(),
+		"the already-compensated handler never re-runs")
+}
+
+// d0 returns the document's single sweep record.
+func d0(doc *checkpoint.Document) *checkpoint.SweepRecord {
+	return &doc.Sweeps[0]
+}
+
+// TestSweepRestoreRefusesMissingThrower: a sweep naming a thrower the
+// track table does not carry refuses the restore loud.
+func TestSweepRestoreRefusesMissingThrower(t *testing.T) {
+	var aRuns, bRuns, cRuns atomic.Int32
+
+	gate := make(chan struct{})
+
+	undoA := countCompHandler(t, "undoA2", &aRuns)
+	undoB := blockingCompHandler(t, "undoB2", &bRuns, gate)
+	undoC := countCompHandler(t, "undoC2", &cRuns)
+
+	s := sweepProcess(t, "cr-sweepgone", undoA, undoB, undoC)
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		return len(d.Sweeps) == 1 && d.Sweeps[0].Running != nil
+	})
+
+	doc.Sweeps[0].ThrowerTrack = "gone"
+
+	close(gate)
+	restoreExpectFault(t, doc, s)
+}
+
+// TestTransactionAbortSweepRestores: a Transaction abort captured
+// mid-compensation resumes after the restore — the re-run drains the
+// sweep, finalizeTransaction tears the residuals down and control
+// leaves through the Cancel boundary (SRD-082 FR-6, SRD-061 FR-5).
+func TestTransactionAbortSweepRestores(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	var reserved, cancelled, undoRuns atomic.Int32
+
+	gate := make(chan struct{})
+
+	tx, err := activities.NewSubProcess("book",
+		activities.WithTransaction())
+	require.NoError(t, err)
+
+	sStart, err := events.NewStartEvent("s-start")
+	require.NoError(t, err)
+
+	reserve := hitTask(t, "reserve", &reserved, "", 0)
+
+	cancEd, err := events.NewCancelEventDefinition()
+	require.NoError(t, err)
+
+	cancelEnd, err := events.NewEndEvent("cancel",
+		events.WithCancelTrigger(cancEd))
+	require.NoError(t, err)
+
+	undo := blockingCompHandler(t, "undoReserve", &undoRuns, gate)
+
+	nodes := []flow.Element{sStart, reserve, cancelEnd}
+	nodes = append(nodes, guardWith(t, reserve, undo)...)
+
+	for _, e := range nodes {
+		require.NoError(t, tx.Add(e))
+	}
+
+	linkAll(t,
+		[2]flow.Element{sStart, reserve},
+		[2]flow.Element{reserve, cancelEnd})
+
+	cb, cancelledTask := addCancelBoundary(t, tx, &cancelled)
+
+	p, err := process.New("cr-txsweep")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+	cxEnd, err := events.NewEndEvent("cx-end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{
+		start, tx, cb, cancelledTask, end, cxEnd,
+	} {
+		require.NoError(t, p.Add(e))
+	}
+
+	linkAll(t,
+		[2]flow.Element{start, tx},
+		[2]flow.Element{tx, end},
+		[2]flow.Element{cb, cancelledTask},
+		[2]flow.Element{cancelledTask, cxEnd})
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		return len(d.Sweeps) == 1 && d.Sweeps[0].TxHostTrack != ""
+	})
+
+	require.EqualValues(t, 1, undoRuns.Load(), "the undo started and blocked")
+
+	close(gate)
+	restored := restoreToDone(t, doc, s)
+
+	require.EqualValues(t, 2, undoRuns.Load(), "the running undo re-runs")
+	require.EqualValues(t, 1, cancelled.Load(),
+		"control leaves through the Cancel boundary after the restore")
+
+	_ = restored
 }

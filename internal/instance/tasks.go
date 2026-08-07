@@ -400,12 +400,20 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 	// evCompensate (SRD-059 FR-5; construction never emits).
 	if tw, ok := node.(interface{ CompensationWaitRef() (string, bool) }); ok {
 		if ref, wait := tw.CompensationWaitRef(); wait {
-			ls.applyCompensate(ctx, trackEvent{
-				track:    t,
-				node:     node,
-				compRef:  ref,
-				compWait: true,
-			})
+			// a RESTORED thrower re-parks WITHOUT re-throwing (SRD-082
+			// FR-6): its adopted sweep is already running and delivers
+			// the sentinel — a re-throw would sweep the already-consumed
+			// ledger and resume the thrower early.
+			if t.compWaitRestored {
+				t.compWaitRestored = false
+			} else {
+				ls.applyCompensate(ctx, trackEvent{
+					track:    t,
+					node:     node,
+					compRef:  ref,
+					compWait: true,
+				})
+			}
 		}
 	}
 

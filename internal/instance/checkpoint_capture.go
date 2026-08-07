@@ -136,14 +136,12 @@ func (ls *loopState) captureDocument(
 ) (*checkpoint.Document, string) {
 	inst := ls.inst
 
-	// The remaining capture-deferral guards (SRD-070 FR-4's stopgap),
-	// retiring one per SRD-082 milestone as each construct's position
-	// becomes part of the document: parallel MI groups capture since M2.
-	switch {
-	case len(ls.calls) > 0:
+	// The last capture-deferral guard (SRD-070 FR-4's stopgap), retiring
+	// one per SRD-082 milestone as each construct's position becomes
+	// part of the document: parallel MI groups capture since M2, sweeps
+	// since M3.
+	if len(ls.calls) > 0 {
 		return nil, "a Call Activity is in flight"
-	case len(ls.sweeps) > 0:
-		return nil, "a compensation sweep is in flight"
 	}
 
 	doc := &checkpoint.Document{
@@ -183,6 +181,13 @@ func (ls *loopState) captureDocument(
 	}
 
 	for _, t := range inst.tracks {
+		// a sweep handler's track is fully represented by its
+		// SweepRecord.Running — restoring it as a plain track TOO would
+		// run the handler twice (SRD-082 FR-6).
+		if _, isHandler := ls.sweeps[t.ID()]; isHandler {
+			continue
+		}
+
 		rec, live, err := trackRecord(ctx, t, ls.iter[t.ID()])
 		if err != nil {
 			return nil, "encode: " + err.Error()
@@ -199,6 +204,13 @@ func (ls *loopState) captureDocument(
 	}
 
 	doc.MIGroups = groups
+
+	sweeps, encErr := ls.sweepRecords(ctx)
+	if encErr != "" {
+		return nil, encErr
+	}
+
+	doc.Sweeps = sweeps
 	doc.Boundaries = ls.boundaryRecords()
 	doc.Incidents = inst.incidentRecords()
 
@@ -303,18 +315,12 @@ func ledgerRecords(
 	out := make([]checkpoint.LedgerRecord, 0, len(entries))
 
 	for _, e := range entries {
-		snap, err := checkpoint.EncodeData(ctx, path, e.snapshot)
+		rec, err := ledgerRecordOf(ctx, path, e)
 		if err != nil {
 			return nil, err
 		}
 
-		out = append(out, checkpoint.LedgerRecord{
-			ScopePath:  path,
-			ActivityID: e.activityID,
-			HandlerID:  e.handlerID,
-			Snapshot:   snap,
-			Ordinal:    e.ordinal,
-		})
+		out = append(out, rec)
 
 		folded, err := ledgerRecords(ctx, path, e.folded)
 		if err != nil {
@@ -325,6 +331,82 @@ func ledgerRecords(
 	}
 
 	return out, nil
+}
+
+// ledgerRecordOf encodes ONE ledger entry (folded children not
+// included — the sweep queue is 1:1 entry→handler run, SRD-082 FR-6).
+func ledgerRecordOf(
+	ctx context.Context, path string, e *ledgerEntry,
+) (checkpoint.LedgerRecord, error) {
+	snap, err := checkpoint.EncodeData(ctx, path, e.snapshot)
+	if err != nil {
+		return checkpoint.LedgerRecord{}, err
+	}
+
+	return checkpoint.LedgerRecord{
+		ScopePath:       path,
+		ActivityID:      e.activityID,
+		ActivityName:    e.activityName,
+		HandlerID:       e.handlerID,
+		HandlerName:     e.handlerName,
+		Snapshot:        snap,
+		Ordinal:         e.ordinal,
+		HandlerEventSub: e.handlerEventSub,
+	}, nil
+}
+
+// sweepRecords captures the resolving compensation sweeps (SRD-082
+// FR-6): one record per live handler run — the parked thrower (or the
+// Transaction host), the remaining queue in run order, and the entry
+// being undone, which RE-RUNS on restore (a handler is an effect;
+// at-least-once per ADR-033 §2.3). Everything read is loop-owned.
+func (ls *loopState) sweepRecords(
+	ctx context.Context,
+) ([]checkpoint.SweepRecord, string) {
+	if len(ls.sweeps) == 0 {
+		return nil, ""
+	}
+
+	out := make([]checkpoint.SweepRecord, 0, len(ls.sweeps))
+
+	for _, run := range ls.sweeps {
+		rec := checkpoint.SweepRecord{
+			ScopePath: string(run.sweep.path),
+			Wait:      run.sweep.wait,
+		}
+
+		if run.sweep.thrower != nil {
+			rec.ThrowerTrack = run.sweep.thrower.ID()
+		}
+
+		if run.sweep.txHost != nil {
+			rec.TxHostTrack = run.sweep.txHost.ID()
+		}
+
+		running, err := ledgerRecordOf(ctx, rec.ScopePath, run.entry)
+		if err != nil {
+			return nil, "encode: " + err.Error()
+		}
+
+		rec.Running = &running
+
+		for _, e := range run.sweep.queue {
+			qr, err := ledgerRecordOf(ctx, rec.ScopePath, e)
+			if err != nil {
+				return nil, "encode: " + err.Error()
+			}
+
+			rec.Queue = append(rec.Queue, qr)
+		}
+
+		out = append(out, rec)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ScopePath < out[j].ScopePath
+	})
+
+	return out, ""
 }
 
 // trackRecord captures one live track; live=false skips it. Every read

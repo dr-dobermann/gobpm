@@ -280,23 +280,28 @@ func TestCaptureArms(t *testing.T) {
 		return inst, newLoopState(inst), sink
 	}
 
-	t.Run("the remaining guards defer; a parallel group captures",
+	t.Run("the last guard defers; groups and sweeps capture",
 		func(t *testing.T) {
 			inst, ls, _ := newArmedInstance(t)
+			host := inst.tracks[firstTrackID(inst)]
 
-			// the miGroups guard retired with SRD-082 M2 — a live group
-			// is recorded, not deferred (an empty one records nothing).
-			ls.miGroups["g"] = &miGroup{host: inst.tracks[firstTrackID(inst)]}
+			// the miGroups guard retired with SRD-082 M2, the sweeps
+			// guard with M3 — both are recorded now, not deferred.
+			ls.miGroups["g"] = &miGroup{host: host}
+			ls.sweeps["s"] = &sweepRun{
+				sweep: &compSweep{path: inst.sc.root, thrower: host,
+					wait: true},
+				entry: &ledgerEntry{activityID: "a-1", ordinal: 0},
+			}
 			doc, reason := ls.captureDocument(context.Background())
 			require.Empty(t, reason)
 			require.Len(t, doc.MIGroups, 1)
+			require.Len(t, doc.Sweeps, 1)
+			require.Equal(t, host.ID(), doc.Sweeps[0].ThrowerTrack)
+			require.NotNil(t, doc.Sweeps[0].Running)
 
 			delete(ls.miGroups, "g")
-			ls.sweeps["s"] = nil
-			_, reason = ls.captureDocument(context.Background())
-			require.Contains(t, reason, "compensation sweep")
-
-			ls.sweeps = map[string]*sweepRun{}
+			delete(ls.sweeps, "s")
 			ls.calls["c"] = nil
 			_, reason = ls.captureDocument(context.Background())
 			require.Contains(t, reason, "Call Activity")

@@ -184,6 +184,27 @@ func (inst *Instance) adoptRestored(ls *loopState, initial []*track) bool {
 	return true
 }
 
+// spawnInitial spawns the initial tracks and then resumes the restored
+// compensation sweeps (SRD-082 FR-6) — after the spawns, so the
+// handler tracks count into their scopes' drain accounting like live
+// ones. False means the sweep adoption failed loud and terminal.
+func (inst *Instance) spawnInitial(
+	ctx context.Context, ls *loopState, initial []*track,
+) bool {
+	for _, t := range initial {
+		ls.spawn(ctx, t)
+	}
+
+	if err := ls.adoptRestoredSweeps(ctx); err != nil {
+		inst.fail(err)
+		inst.setState(Terminated)
+
+		return false
+	}
+
+	return true
+}
+
 // loop is the single owner of the Instance's lifecycle state (the tracks
 // registry and the run state). Tracks never mutate that state directly — they
 // emit events here, applied in order in this one goroutine, so no lock guards
@@ -199,8 +220,8 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		return
 	}
 
-	for _, t := range initial {
-		ls.spawn(ctx, t)
+	if !inst.spawnInitial(ctx, ls, initial) {
+		return
 	}
 
 	// arm the process's top-level Event Sub-Process handlers at the instance
