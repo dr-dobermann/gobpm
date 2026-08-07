@@ -465,7 +465,7 @@ Prior art: [FIX-035](FIX-035-observer-silence-and-attribute-vocabulary.md)
 | M5 | `9f9298c` | §1.6, §1.7 — `UpdateState`'s transition rule; `Shutdown` drains what it started (§3.2.7, §3.2.8) |
 | M6 | `8799afb` | §1.8 — starter wiring is idempotent per registration (§3.2.9) |
 | M7 | `d247464` | the branches the fix added, covered; four duplicated guards folded into one; `TestRestartRecoveryBoundaryDeadline` hardened |
-| M8 | _this commit_ | the three findings of the independent pre-merge review (§8.2) |
+| M8 | `786176d` | the three findings of the independent pre-merge review (§8.2) |
 
 ### 8.2 Findings the implementation added to the design
 
