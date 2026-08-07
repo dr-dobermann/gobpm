@@ -265,7 +265,6 @@ type brokenDatum struct{ data.Data }
 
 func (brokenDatum) Name() string { return "broken" }
 
-
 func TestOwnDataUnclonable(t *testing.T) {
 	root := mustPath(t, "/proc")
 
