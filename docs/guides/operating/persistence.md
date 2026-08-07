@@ -279,15 +279,43 @@ the cause clears. A second engine claiming a
 lapsed-lease dehydrated instance is multi-node coordination — a later
 slice.
 
+## Composite constructs restore at their position
+
+Every composite construct records its position in the checkpoint and
+restores **at that position** (ADR-033 v.4 §2.10) — nothing completed
+ever re-executes, and no construct defers the capture:
+
+- A **composite scope** mid-body: the drained scope resumes its host
+  exactly once.
+- **Sequential MI / Standard Loop**: the iteration resumes at the
+  recorded pass with its collected outputs; a fired
+  `completionCondition` is honored.
+- **Parallel MI**: exactly the still-open instances re-open at their
+  recorded ordinals; completed outputs (and the holes of canceled
+  slots) survive.
+- A **resolving compensation sweep**: the remaining queue resumes in
+  reverse completion order; the handler that was RUNNING re-runs (a
+  handler is an effect — at-least-once over its immutable snapshot);
+  the wait-throw resumes only after the drain.
+- An **in-flight Call Activity**: the child is a durable instance of
+  its own, symmetrically linked — recovery restores both ends and
+  re-links them, whether the child is recovered, still awaiting
+  recovery, or finished while the engine was down. A missing
+  counterpart fails the restore loud on either side; a recovered
+  caller never launches a duplicate child.
+
+`CheckpointDeferred` now signals only a real failure (an unserializable
+payload, a failed save) — still loud, never a silent skip.
+
 ## Current limits (the next slices)
 
-An instance with an in-flight **Call Activity**, **parallel
-multi-instance group** or **compensation sweep** defers its checkpoint
-(the `CheckpointDeferred` fact at Warn) and runs on volatile state until
-the next capturable transition — execution is never blocked, and the
-degradation is operator-visible. Full-fidelity capture of those
-constructs and the operator suspend/resume surface are the following
-ADR-033 slices.
+The operator **suspend/resume** surface is the remaining ADR-033
+slice. Two documented corners: in a **multi-engine group**, recovery
+may claim a caller and its called child on different engines — each
+recovers correctly, but the cross-engine re-link is future work (keep
+call pairs on one engine, or in one solo group, until it lands); and
+**Ad-Hoc sub-process routing state** is not yet part of the document
+(its own follow-up).
 
 ## See also
 

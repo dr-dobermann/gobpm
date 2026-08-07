@@ -216,6 +216,16 @@ Behavior worth knowing:
   machinery, driven by a Cancel rather than a manual throw. See
   [Transaction Sub-Process](../subprocesses/transaction.md).
 
+## Restarts
+
+A **resolving sweep survives the checkpoint**: restored mid-run, the
+remaining queue continues in reverse completion order, the handler
+that was RUNNING re-runs (a handler is an effect — at-least-once, and
+well-defined because it reads an immutable snapshot), the
+already-compensated entries never re-run, and a wait-for-completion
+thrower resumes only once the sweep drains.
+
+
 ## See also
 
 - Examples: `examples/compensation-events/`
