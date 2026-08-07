@@ -6,6 +6,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
@@ -320,6 +321,55 @@ func (t *Thresher) unsettledIDsLocked(settled map[string]struct{}) []string {
 	sort.Strings(ids)
 
 	return ids
+}
+
+// forgetLocked validates and removes the listed terminal instances, returning
+// the retained context-cancels of the ones it removed so the CALLER can invoke
+// them outside t.m — the same shape every other helper here follows.
+//
+// All-or-nothing: every id is validated first (known AND terminal); on any
+// unknown or still-live id nothing is removed and an error naming it comes back.
+func (t *Thresher) forgetLocked(
+	ids []string,
+) ([]context.CancelFunc, error) {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	for _, id := range ids {
+		reg, ok := t.instances[id]
+		if !ok {
+			return nil, errs.New(
+				errs.M("unknown instance %q", id),
+				errs.C(errorClass, errs.ObjectNotFound))
+		}
+
+		if st := reg.inst.State(); !instanceTerminal(st) {
+			return nil, errs.New(
+				errs.M("instance %q is still live (%s); cancel it before forgetting",
+					id, st.String()),
+				errs.C(errorClass, errs.InvalidState))
+		}
+	}
+
+	stops := make([]context.CancelFunc, 0, len(ids))
+
+	for _, id := range ids {
+		if reg := t.instances[id]; reg.stop != nil {
+			stops = append(stops, reg.stop)
+		}
+
+		delete(t.instances, id)
+
+		// Forget everything the engine holds for the instance, not just its
+		// registration (FIX-036 §1.2/§1.3): its terminal signal and any
+		// correlation reservation it owns. Both are safe here precisely
+		// because the loop above proved the instance terminal — nothing can
+		// rebuild it and wait on a channel we dropped.
+		delete(t.settled, id)
+		t.releaseKeysOfLocked(id)
+	}
+
+	return stops, nil
 }
 
 // latestSnapshotLocked returns the snapshot of the latest registered version of

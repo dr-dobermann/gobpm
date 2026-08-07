@@ -360,6 +360,7 @@ promotes.
 | T-7 | `TestShutdownAwaitsInstanceBornDuringCancel` | an instance created in the snapshot→cancel window is awaited; the timeout error names the unsettled (§1.7) |
 | T-8 | `TestStartersWiredExactlyOnce` | a registration racing `Run` yields exactly one hub registration per starter — counted at the hub, so a second arm fails it (§1.8) |
 | T-8a | `TestFailedSweepReleasesItsClaims` | a sweep that wired nothing claims nothing, so `Run`'s rollback stays retryable (§1.8) |
+| T-9 | `TestForgetCancelsInstanceContext` | `Forget` releases the instance's retained context-cancel, not only its registration — the reaping path stops leaking a `cancelCtx` per reaped instance (§8.2) |
 
 ### 4.2 Gate
 
@@ -464,6 +465,7 @@ Prior art: [FIX-035](FIX-035-observer-silence-and-attribute-vocabulary.md)
 | M5 | `9f9298c` | §1.6, §1.7 — `UpdateState`'s transition rule; `Shutdown` drains what it started (§3.2.7, §3.2.8) |
 | M6 | `8799afb` | §1.8 — starter wiring is idempotent per registration (§3.2.9) |
 | M7 | `d247464` | the branches the fix added, covered; four duplicated guards folded into one; `TestRestartRecoveryBoundaryDeadline` hardened |
+| M8 | _this commit_ | the three findings of the independent pre-merge review (§8.2) |
 
 ### 8.2 Findings the implementation added to the design
 
@@ -488,6 +490,47 @@ re-derive:
   starts cleanly with no auto-start at all, strictly worse than the double-wiring
   the flag exists to prevent. `TestRunRollsBackWhenStarterRegistrationFails`
   caught it.
+
+**And three the self-review chain could not have found.** After `/check-srd`
+passed at 0 🔴 / 0 🟡 and the gate was green, the branch diff was reviewed by an
+**external agent** (Antigravity / `agy`, `gemini-3.1-pro-high`) across three
+lenses, doc-blind. Every lens returned exactly one note; all three verified as
+real, and all three are fixed in M8:
+
+- **`instanceReg.stop` was never called — anywhere.** Every launch path derives
+  the instance's context from the engine's with `context.WithCancel` and retains
+  the cancel; three separate comments describe it as "retained for later
+  teardown (engine stop / instance cleanup)", and no teardown ever used it. The
+  child therefore stayed attached to the engine context's children for the
+  engine's whole lifetime, and `Forget` — whose doc comment says it exists "so a
+  long-running engine doesn't accumulate finished instances" — reaped the
+  registration, the terminal signal and the reservation while leaving the
+  context behind. `Shutdown` masked it by cancelling the parent, so the leak was
+  bounded only by engine lifetime, which for a server is unbounded. `Forget` now
+  collects the retained cancels under `t.m` and invokes them after the unlock
+  (the `…Locked` convention), pinned by `TestForgetCancelsInstanceContext`.
+- **`Fact` is shared, and §3.2.6 did not say so.** `Fact.Details` is a
+  `map[string]string` — a reference. A redactor or filter that edits it in
+  place, the allocation-free reflex, corrupts the event for the log echo and
+  every later observer; for a *per-recipient* filter that is precisely
+  backwards. M4 documented what those hooks owe the engine and missed this one;
+  both doc comments now state that `ev` is read-only and that a modification
+  must be returned as a copy. No defensive copy in the engine: that would be a
+  per-event allocation on the hot path, which is the cost ADR-022 v.2 §2.4's
+  hot-path corollary exists to avoid.
+- **T-1 could pass for the shape it exists to catch.** `Run` is non-blocking, so
+  without a start barrier the writer goroutine could finish before the runtime
+  scheduled a single reader — and the race detector only reports accesses that
+  actually overlap. Since the engine pair is now atomic the detector has nothing
+  to say either way; the test's entire value is as a canary for someone
+  reverting to plain fields, and that value needed the overlap it did not
+  guarantee. All nine goroutines now block on one channel and fire together.
+
+The point is not the three findings but their shape: none is a doc-vs-code
+mismatch, so `/check-srd` was not built to see them, and none is a house-rule
+violation, so `/check-style` was not either. Both are the author checking the
+author. This is why the independent review became a step of its own
+(`/pr-review`, `/sdd-fix` step 14a) rather than a one-off.
 
 ### 8.3 Gate
 

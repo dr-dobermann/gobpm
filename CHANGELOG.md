@@ -180,6 +180,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     child — was abandoned. It now re-reads the registry until a pass adds
     nothing, and a timeout names the instances that did not settle instead of
     reporting only that something did not finish.
+  - **`Forget` leaked a context per instance it reaped.** Every launch path
+    derives the instance's context from the engine's and retains the cancel, but
+    nothing ever called it — so the child stayed attached to the engine context
+    for the engine's whole lifetime, and the one method whose stated purpose is
+    "so a long-running engine doesn't accumulate finished instances" released
+    everything about an instance except its context.
   - **A process registered while the engine was starting could be wired twice.**
     `RegisterProcess` and `Run`'s startup sweep both wire the latest version's
     instance-starters and are not mutually exclusive, so one message could spawn

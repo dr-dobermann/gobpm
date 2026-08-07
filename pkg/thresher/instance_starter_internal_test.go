@@ -3,6 +3,7 @@ package thresher
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -841,6 +842,58 @@ func TestCorrelationKeyReleasedAfterInstanceEnds(t *testing.T) {
 // reaping path and now reaps everything the engine holds for the instance —
 // its registration, its terminal signal and its correlation reservation — so
 // neither map grows for the engine's lifetime.
+// TestForgetCancelsInstanceContext is FIX-036 M8 (found by the independent
+// pre-merge review, §8.2): every launch path derives the instance's context
+// from the engine's and retains the cancel in instanceReg.stop. Nothing in the
+// package ever called it — three comments claimed it was "retained for later
+// teardown" and no teardown used it — so each launched instance left a
+// cancelCtx attached to the engine context's children for the engine's whole
+// lifetime. Forget is the reaping path, and reaping the registration while
+// leaving the context behind is exactly the accumulation it exists to prevent.
+func TestForgetCancelsInstanceContext(t *testing.T) {
+	broker := membroker.New()
+
+	th, err := New("corr-forget-ctx", WithMessageBroker(broker), WithoutBanner())
+	require.NoError(t, err)
+
+	proc := corrStartProcess(t, "p-forget-ctx", "order placed", "order placed")
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	require.NoError(t, broker.Publish(ctx,
+		messaging.Envelope{Name: "order placed", Payload: "ORD-CTX"}))
+
+	require.Eventually(t, func() bool {
+		return len(th.Instances(InstancesCompleted)) == 1
+	}, 3*time.Second, 10*time.Millisecond, "the instance must finish")
+
+	id := th.Instances(InstancesCompleted)[0]
+
+	// Wrap the retained cancel so the test can see whether Forget invokes it.
+	var cancelled atomic.Bool
+
+	th.m.Lock()
+	reg := th.instances[id]
+	inner := reg.stop
+	require.NotNil(t, inner, "the launch retained a cancel")
+
+	reg.stop = func() {
+		cancelled.Store(true)
+		inner()
+	}
+	th.instances[id] = reg
+	th.m.Unlock()
+
+	require.NoError(t, th.Forget(id))
+
+	require.True(t, cancelled.Load(),
+		"Forget must release the instance's context, not only its registration")
+}
+
 func TestForgetReleasesKeyAndSettled(t *testing.T) {
 	broker := membroker.New()
 

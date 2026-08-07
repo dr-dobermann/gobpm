@@ -222,10 +222,21 @@ func TestEngineContextIsRaceFree(t *testing.T) {
 
 	// One writer (Run) against many readers — the shape the race detector
 	// needs to see. Readers use the same accessor every launch path uses.
+	//
+	// The barrier is load-bearing: Run is NON-blocking, so without one the
+	// writer goroutine could finish before the runtime schedules a single
+	// reader, and the detector only reports accesses that actually overlap.
+	// The test would then pass for the racy shape it exists to catch — its
+	// whole value is as a canary for someone reverting the atomic pair back
+	// to plain fields.
+	start := make(chan struct{})
+
 	wg.Add(1)
 
 	go func() {
 		defer wg.Done()
+
+		<-start
 
 		_ = th.Run(context.Background())
 	}()
@@ -236,6 +247,8 @@ func TestEngineContextIsRaceFree(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
+			<-start
+
 			for range 50 {
 				if ctx, ok := th.engineContext(); ok {
 					_ = ctx.Err()
@@ -243,6 +256,8 @@ func TestEngineContextIsRaceFree(t *testing.T) {
 			}
 		}()
 	}
+
+	close(start) // fire all nine together
 
 	wg.Wait()
 
