@@ -106,3 +106,71 @@ func TestReserveReleaseKeyLocked(t *testing.T) {
 	th.releaseKeyLocked("k")
 	require.True(t, th.reserveKeyLocked("k"))
 }
+
+// TestWiringClaimIsExclusive pins the claim handshake directly (FIX-036 §1.8).
+// Its losing side — a second claim on an already-wired version — only happens
+// when RegisterProcess and Run's sweep reach the same registration, which is a
+// race no test can schedule; the primitive that decides it is pinned here
+// instead, and T-8 pins the behaviour it produces.
+func TestWiringClaimIsExclusive(t *testing.T) {
+	th, err := New("claim", WithoutBanner(), WithoutStartupConfig())
+	require.NoError(t, err)
+
+	reg := &ProcessRegistration{key: "k", id: "r1", version: 1}
+
+	require.True(t, th.claimWiringLocked(reg), "the first claim wins")
+	require.False(t, th.claimWiringLocked(reg),
+		"a second claim finds the wiring already owned")
+
+	th.releaseWiringLocked(reg)
+	require.True(t, th.claimWiringLocked(reg),
+		"a released claim can be taken again — promote-on-removal depends on it")
+
+	// the sweep skips a version already claimed, and claims one that is not.
+	th.registrations["k"] = []*ProcessRegistration{reg}
+	require.Empty(t, th.claimLatestRegistrationsLocked(),
+		"the sweep leaves an already-wired version alone")
+
+	th.setLatestWiredLocked("k", false)
+	require.Len(t, th.claimLatestRegistrationsLocked(), 1)
+
+	// an unknown key is a no-op, not a panic.
+	th.setLatestWiredLocked("absent", true)
+}
+
+// TestReservationIgnoresAnUntrackedOwner covers the takeover rule's other
+// branch (FIX-036 §1.2): a reservation naming an id the registry no longer
+// knows — forgotten, or lost with the engine that ran it — is not a live
+// conversation, so the key is free.
+func TestReservationIgnoresAnUntrackedOwner(t *testing.T) {
+	th, err := New("ghost", WithoutBanner(), WithoutStartupConfig())
+	require.NoError(t, err)
+
+	th.m.Lock()
+	th.seenKeys["p\x1fORD-1"] = "an-instance-this-engine-never-heard-of"
+	th.m.Unlock()
+
+	require.True(t, th.reserveKeyLocked("p\x1fORD-1"),
+		"a reservation whose owner is gone must not block a new conversation")
+}
+
+// TestRebindSkipsEmptyKeyValues: a checkpoint may carry a declared conversation
+// key that was never derived (ADR-033 §2.1 records the map, not only the
+// populated entries). An empty value identifies no conversation, so rebinding
+// it would reserve the namespaced key "" for the instance and swallow the next
+// unkeyed start.
+func TestRebindSkipsEmptyKeyValues(t *testing.T) {
+	th, err := New("rebind", WithoutBanner(), WithoutStartupConfig())
+	require.NoError(t, err)
+
+	th.rebindKeysLocked("p", "i-1", map[string]string{
+		"orderKey": "",
+		"caseKey":  "C-9",
+	})
+
+	th.m.Lock()
+	defer th.m.Unlock()
+
+	require.Equal(t, map[string]string{nsKeyFor("p", "C-9"): "i-1"}, th.seenKeys,
+		"only the derived key is reserved")
+}

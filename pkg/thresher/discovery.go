@@ -2,7 +2,6 @@ package thresher
 
 import (
 	"github.com/dr-dobermann/gobpm/internal/instance"
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 )
 
 // InstanceFilter selects which tracked instances Instances returns (SRD-019).
@@ -60,27 +59,19 @@ func (t *Thresher) Instances(filter InstanceFilter) []string {
 // unknown or still-live id none are removed and an error naming it is returned.
 // Forget(Instances(InstancesCompleted)...) sweeps all finished instances.
 func (t *Thresher) Forget(ids ...string) error {
-	t.m.Lock()
-	defer t.m.Unlock()
-
-	for _, id := range ids {
-		reg, ok := t.instances[id]
-		if !ok {
-			return errs.New(
-				errs.M("unknown instance %q", id),
-				errs.C(errorClass, errs.ObjectNotFound))
-		}
-
-		if st := reg.inst.State(); !instanceTerminal(st) {
-			return errs.New(
-				errs.M("instance %q is still live (%s); cancel it before forgetting",
-					id, st.String()),
-				errs.C(errorClass, errs.InvalidState))
-		}
+	stops, err := t.forgetLocked(ids)
+	if err != nil {
+		return err
 	}
 
-	for _, id := range ids {
-		delete(t.instances, id)
+	// Release each instance's context OUTSIDE t.m. Every launch path derives
+	// the instance's context from the engine's and retains the cancel here, so
+	// until it is called the child stays attached to the engine context's
+	// children — for the engine's whole lifetime. Forget is the reaping path;
+	// reaping the registration and leaving the context behind is exactly the
+	// accumulation this method exists to prevent (FIX-036 §8.2).
+	for _, stop := range stops {
+		stop()
 	}
 
 	return nil

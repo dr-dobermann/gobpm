@@ -92,15 +92,57 @@ func (t *Thresher) HoldSubscription(
 		convKeys:    append([]string{}, convKeys...),
 	}
 
+	// The arm is not atomic, so a ReleaseWaits for this track — an interrupting
+	// boundary, an Event-Based gateway's losing arm — can land in the middle of
+	// it. Recording first makes the hold VISIBLE to that release; confirming
+	// afterwards makes it EFFECTIVE. Neither half suffices alone (FIX-036
+	// §1.4): arm-then-record leaves a release scanning an empty map while the
+	// holder is already live on the hub, and record-then-arm alone leaves the
+	// release unregistering a holder the hub does not know yet — both end with
+	// a subscription registered forever, able to wake an instance for a wait
+	// nobody is waiting on.
+	key := subKey{instanceID, trackID, eDef.ID()}
+
+	t.subMu.Lock()
+	t.subs[key] = h
+	t.subMu.Unlock()
+
 	if err := t.RegisterEvent(h, eDef); err != nil {
+		t.dropHold(key, h)
+
 		return err
 	}
 
-	t.subMu.Lock()
-	t.subs[subKey{instanceID, trackID, eDef.ID()}] = h
-	t.subMu.Unlock()
+	// The confirm: if the record is no longer ours, a release took it while the
+	// arm ran and its own withdrawal could not reach the hub. Withdraw here —
+	// the release is authoritative, so this is a success, not a failed hold.
+	if !t.holdStillRecorded(key, h) {
+		t.withdraw(instanceID, trackID, h)
+	}
 
 	return nil
+}
+
+// holdStillRecorded reports whether key still names h — false once a
+// ReleaseWaits has withdrawn the track's holds.
+func (t *Thresher) holdStillRecorded(key subKey, h *subHolder) bool {
+	t.subMu.Lock()
+	defer t.subMu.Unlock()
+
+	cur, ok := t.subs[key]
+
+	return ok && cur == h
+}
+
+// dropHold removes key iff it still names h, so a rollback never clobbers a
+// record some other arm has since put there.
+func (t *Thresher) dropHold(key subKey, h *subHolder) {
+	t.subMu.Lock()
+	defer t.subMu.Unlock()
+
+	if cur, ok := t.subs[key]; ok && cur == h {
+		delete(t.subs, key)
+	}
 }
 
 // ReleaseWaits implements exec.WaitHolders: withdraw EVERY hold taken for a
@@ -128,11 +170,18 @@ func (t *Thresher) ReleaseWaits(instanceID, trackID string) {
 	// unregister outside the lock: the hub is an independent subsystem and must
 	// never be touched under an engine lock (the FIX-002 RC2 rule).
 	for _, h := range dropped {
-		if err := t.UnregisterEvent(h, h.eDef.ID()); err != nil {
-			t.cfg.logger.Debug("releasing a held subscription",
-				observability.AttrInstanceID, instanceID, observability.AttrTrackID, trackID,
-				observability.AttrEventDefinitionID, h.eDef.ID(), observability.AttrError, err.Error())
-		}
+		t.withdraw(instanceID, trackID, h)
+	}
+}
+
+// withdraw takes one holder off the hub. A failure is a Debug fact, never an
+// error: the waiter may already be gone (a fired timer self-removes), and there
+// is nothing a caller could do with it.
+func (t *Thresher) withdraw(instanceID, trackID string, h *subHolder) {
+	if err := t.UnregisterEvent(h, h.eDef.ID()); err != nil {
+		t.cfg.logger.Debug("releasing a held subscription",
+			observability.AttrInstanceID, instanceID, observability.AttrTrackID, trackID,
+			observability.AttrEventDefinitionID, h.eDef.ID(), observability.AttrError, err.Error())
 	}
 }
 

@@ -46,17 +46,21 @@ func TestThresher_StateManagement(t *testing.T) {
 		require.Equal(t, thresher.NotStarted, th.State())
 	})
 
-	t.Run("update state success", func(t *testing.T) {
+	// A never-run engine refuses BOTH: Started belongs to Run's CAS ladder, and
+	// Paused is only reachable from Started. This subtest used to assert the
+	// opposite — it drove the engine to Started by hand, which is exactly the
+	// defect FIX-036 §1.6 closes, since RegisterEvent's `State() != Started`
+	// guard would then admit registrations to a hub that was never started.
+	// The legitimate pause/resume pair is covered by "run and pause workflow".
+	t.Run("update state refuses a lifecycle jump", func(t *testing.T) {
 		th, err := thresher.New("test-thresher")
 		require.NoError(t, err)
 
-		err = th.UpdateState(thresher.Started)
-		require.NoError(t, err)
-		require.Equal(t, thresher.Started, th.State())
+		require.Error(t, th.UpdateState(thresher.Started))
+		require.Equal(t, thresher.NotStarted, th.State())
 
-		err = th.UpdateState(thresher.Paused)
-		require.NoError(t, err)
-		require.Equal(t, thresher.Paused, th.State())
+		require.Error(t, th.UpdateState(thresher.Paused))
+		require.Equal(t, thresher.NotStarted, th.State())
 	})
 
 	t.Run("update state with invalid state", func(t *testing.T) {

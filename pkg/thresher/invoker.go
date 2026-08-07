@@ -72,8 +72,12 @@ func (t *Thresher) InvokeProcess(
 
 	// The child owns this context for its lifetime; cancel is retained in
 	// instanceReg.stop for teardown. It must NOT be deferred — Run is
-	// non-blocking (launchInstance's rationale).
-	ctx, cancel := context.WithCancel(t.ctx)
+	// non-blocking (launchInstance's rationale). The engine pair is loaded
+	// atomically (FIX-036 §1.1).
+	ctx, cancel, err := t.instanceContext("InvokeProcess")
+	if err != nil {
+		return nil, err
+	}
 	if err = inst.Run(ctx); err != nil {
 		cancel()
 

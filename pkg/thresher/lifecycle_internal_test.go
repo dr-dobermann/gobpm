@@ -3,11 +3,18 @@ package thresher
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -200,4 +207,262 @@ func TestRunRollsBackOnHubStartFailure(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "couldn't start eventHub")
 	require.Equal(t, NotStarted, th.State())
+}
+
+// TestEngineContextIsRaceFree is FIX-036 T-1: the engine context is published
+// and read as one atomic pair, so a Run racing a Shutdown (and the launch
+// paths reading between them) carries no data race — the defect was a field
+// written unlocked by Run and read under m by Shutdown, which is a race
+// however well the reader locks.
+func TestEngineContextIsRaceFree(t *testing.T) {
+	th, err := New("lc-engine-ctx", WithoutBanner())
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+
+	// One writer (Run) against many readers — the shape the race detector
+	// needs to see. Readers use the same accessor every launch path uses.
+	//
+	// The barrier is load-bearing: Run is NON-blocking, so without one the
+	// writer goroutine could finish before the runtime schedules a single
+	// reader, and the detector only reports accesses that actually overlap.
+	// The test would then pass for the racy shape it exists to catch — its
+	// whole value is as a canary for someone reverting the atomic pair back
+	// to plain fields.
+	start := make(chan struct{})
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		<-start
+
+		_ = th.Run(context.Background())
+	}()
+
+	for range 8 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			<-start
+
+			for range 50 {
+				if ctx, ok := th.engineContext(); ok {
+					_ = ctx.Err()
+				}
+			}
+		}()
+	}
+
+	close(start) // fire all nine together
+
+	wg.Wait()
+
+	// A Shutdown after a completed Run must cancel what Run published —
+	// the failure mode of the racy read was a nil cancel that tore down
+	// nothing while reporting Stopped.
+	ec := th.engine.Load()
+	require.NotNil(t, ec, "Run must publish the engine pair")
+
+	require.NoError(t, th.Shutdown(context.Background()))
+	require.Error(t, ec.ctx.Err(), "Shutdown must cancel the published context")
+}
+
+// TestEngineContextRefusedBeforeRun is FIX-036 T-1's sibling: before Run there
+// is no engine lifetime to hang work on, so the accessor says so and the launch
+// paths turn that into a classified error instead of dereferencing nil.
+func TestEngineContextRefusedBeforeRun(t *testing.T) {
+	th, err := New("lc-engine-ctx-unrun")
+	require.NoError(t, err)
+
+	_, ok := th.engineContext()
+	require.False(t, ok)
+
+	err = th.errEngineNotRunning("probe")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "isn't running")
+
+	// Every launch path derives its instance context through one helper, so
+	// the refusal is pinned once: a launch on an engine that never ran returns
+	// a classified error naming the caller instead of dereferencing the absent
+	// pair. The other three callers (InvokeProcess, launchInstanceFromEvent,
+	// recovery) are all gated on a started engine long before they get here.
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+
+	proc := blockingTaskProcess(t, "p-unrun", entered, release)
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	snap := th.latestSnapshotLocked(proc.ID())
+	require.NotNil(t, snap)
+
+	_, err = th.launchInstance(snap)
+	require.ErrorContains(t, err, "launchInstance")
+	require.ErrorContains(t, err, "isn't running")
+
+	_, _, err = th.instanceContext("probe-op")
+	require.ErrorContains(t, err, "probe-op")
+}
+
+// TestUpdateStateRejectsLifecycleJumps is FIX-036 T-6: UpdateState is the
+// OPERATOR's door (pause/resume), not a second way into the lifecycle ladder
+// Run and Shutdown claim with a CAS. It used to accept any legal enum member,
+// so a host could store Started on an engine that never ran — after which
+// RegisterEvent's `State() != Started` guard admitted registrations to a hub
+// that was never started.
+func TestUpdateStateRejectsLifecycleJumps(t *testing.T) {
+	th, err := New("engine-transitions", WithoutBanner(), WithoutStartupConfig())
+	require.NoError(t, err)
+
+	require.Equal(t, NotStarted, th.State())
+
+	for _, ns := range []State{Started, Starting, Stopping, Stopped, Paused} {
+		require.Error(t, th.UpdateState(ns),
+			"a never-run engine may not be moved to %q by hand", ns)
+		require.Equal(t, NotStarted, th.State(),
+			"a refused transition leaves the state untouched")
+	}
+
+	// an out-of-range value is still refused by the enum check, ahead of the
+	// transition rule.
+	require.Error(t, th.UpdateState(State(200)))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	// the operator pair, both ways.
+	require.NoError(t, th.UpdateState(Paused))
+	require.Equal(t, Paused, th.State())
+	require.NoError(t, th.UpdateState(Started))
+	require.Equal(t, Started, th.State())
+
+	// but not the lifecycle transitions, even from a legal running state.
+	for _, ns := range []State{Stopped, Stopping, Starting, NotStarted} {
+		require.Error(t, th.UpdateState(ns))
+		require.Equal(t, Started, th.State())
+	}
+}
+
+// blockingTaskProcess builds start → service task → end, where the task
+// signals that it has been ENTERED and then blocks until release is closed —
+// ignoring its context on purpose, so the instance cannot settle on its own.
+func blockingTaskProcess(
+	t *testing.T, name string, entered chan<- struct{}, release <-chan struct{},
+) *process.Process {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	op, err := gooper.New(name,
+		func(_ context.Context, _ service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			close(entered)
+			<-release
+
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	st, err := activities.NewServiceTask(name, op, activities.WithoutParams())
+	require.NoError(t, err)
+
+	proc, err := process.New(name)
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, st, end} {
+		require.NoError(t, proc.Add(e))
+	}
+
+	_, err = flow.Link(start, st)
+	require.NoError(t, err)
+	_, err = flow.Link(st, end)
+	require.NoError(t, err)
+
+	return proc
+}
+
+// TestShutdownAwaitsInstanceBornDuringCancel is FIX-036 T-7: Shutdown used to
+// snapshot the instance registry BEFORE cancelling the engine context and then
+// await only that snapshot, so an instance born in the window between the two —
+// an event-triggered start the hub was already dispatching, a Call Activity
+// child its parent was already creating — was left running.
+//
+// The window is reproduced exactly rather than approximately: the engine's own
+// published context/cancel pair is replaced with one whose cancel launches an
+// instance first. That is the seam Shutdown reads, so the birth lands precisely
+// between the snapshot and the cancel.
+func TestShutdownAwaitsInstanceBornDuringCancel(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+
+	th, err := New("engine-shutdown-window",
+		WithoutBanner(), WithoutStartupConfig())
+	require.NoError(t, err)
+
+	proc := blockingTaskProcess(t, "p-block", entered, release)
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	ec := th.engine.Load()
+	require.NotNil(t, ec)
+
+	var bornID string
+
+	th.engine.Store(&engineCtx{ctx: ec.ctx, cancel: func() {
+		h, lerr := th.launchInstance(th.latestSnapshotLocked(proc.ID()))
+		if lerr == nil {
+			bornID = h.ID()
+			<-entered // it is inside the blocking task, so it cannot settle
+		}
+
+		ec.cancel()
+	}})
+
+	sctx, scancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer scancel()
+
+	err = th.Shutdown(sctx)
+
+	require.Error(t, err,
+		"an instance born in the cancel window must still be awaited")
+	require.ErrorContains(t, err, "1 instance(s) settled")
+	require.ErrorContains(t, err, bornID,
+		"the timeout names what did not settle")
+}
+
+// TestUnmappedEngineStateReportsNothing pins reportEngineState's no-phase early
+// return. A state with no observable phase — NotStarted, which Run's rollback
+// stores — reports nothing; a mapped one reports. This used to be driven
+// through UpdateState(NotStarted), which the transition rule now refuses
+// (FIX-036 §1.6), so it is pinned at the reporter instead of through a door
+// that no longer opens.
+func TestUnmappedEngineStateReportsNothing(t *testing.T) {
+	th, err := New("engine-unmapped", WithoutBanner(), WithoutStartupConfig())
+	require.NoError(t, err)
+
+	o := &recObserver{}
+	sub := th.Observe(o)
+
+	th.reportEngineState(NotStarted)
+	th.reportEngineState(Invalid)
+	th.reportEngineState(Paused)
+
+	sub.Cancel()
+
+	require.Equal(t, 1, o.count(), "only the mapped state reports")
 }

@@ -152,13 +152,23 @@ type instanceReg struct {
 //     per-key lock, never under m). State() never takes a per-key lock, so it
 //     adds no RC2 vector.
 type Thresher struct {
-	ctx           context.Context
-	engineCancel  context.CancelFunc
+	// engine holds the engine's own context and its cancel as ONE immutable
+	// pair, published atomically by Run and loaded by every user (FIX-036
+	// §1.1). It is deliberately NOT guarded by m — like state, and for the
+	// same reason: the launch paths read it while m may be held elsewhere,
+	// and a mutex taken on only one side of a shared write is not
+	// synchronization at all, which is what this replaces.
+	engine        atomic.Pointer[engineCtx]
 	eventHub      eventproc.EventHub
 	registrations map[string][]*ProcessRegistration
 	nextVersion   map[string]int
 	instances     map[string]instanceReg
-	seenKeys      map[string]struct{}
+	// seenKeys maps a namespaced correlation key → the id of the instance that
+	// owns that conversation (keyInFlight while its launch is still running).
+	// Knowing the OWNER is what lets a repeat business key start a new
+	// conversation once the old one finished, instead of joining a ghost
+	// (FIX-036 §1.2). Guarded by m; reaped by Forget.
+	seenKeys map[string]string
 	// tasks maps a parked UserTask id → its engine-level record: where it lives,
 	// who may act on it, and who currently holds it (SRD-034, SRD-073 FR-2).
 	// Guarded by m. Populated/cleared by taskDist as tasks are announced and
@@ -291,7 +301,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		registrations: map[string][]*ProcessRegistration{},
 		nextVersion:   map[string]int{},
 		instances:     map[string]instanceReg{},
-		seenKeys:      map[string]struct{}{},
+		seenKeys:      map[string]string{},
 		tasks:         map[string]*taskRecord{},
 		keyLocks:      newKeyLockManager(),
 		waking:        map[string]bool{},
@@ -443,6 +453,56 @@ func (t *Thresher) logStartupConfig() {
 	}
 }
 
+// engineCtx is the engine's derived context and the cancel that ends it — one
+// immutable value so a reader can never see a context from one Run paired with
+// the cancel of another (FIX-036 §1.1). Replaced wholesale on every Run.
+type engineCtx struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+// engineContext returns the context every instance is launched under. ok is
+// false before the first Run — the engine has no lifetime to hang work on yet,
+// and callers turn that into a classified error instead of dereferencing nil.
+func (t *Thresher) engineContext() (context.Context, bool) {
+	ec := t.engine.Load()
+	if ec == nil {
+		return nil, false
+	}
+
+	return ec.ctx, true
+}
+
+// instanceContext derives the context an instance owns for its lifetime, from
+// the engine's own. Every launch path needs exactly this — the engine pair,
+// checked, then a cancel the caller retains in instanceReg.stop — so it lives
+// in one place rather than four copies of the same guard, three of which no
+// caller can reach (InvokeProcess and launchInstanceFromEvent are both gated on
+// a started engine long before they get here).
+//
+// The cancel MUST NOT be deferred by the caller: inst.Run is non-blocking, so a
+// deferred cancel would terminate the instance the moment the launch returns.
+func (t *Thresher) instanceContext(
+	op string,
+) (context.Context, context.CancelFunc, error) {
+	engCtx, running := t.engineContext()
+	if !running {
+		return nil, nil, t.errEngineNotRunning(op)
+	}
+
+	ctx, cancel := context.WithCancel(engCtx)
+
+	return ctx, cancel, nil
+}
+
+// errEngineNotRunning is the classified refusal for work that needs the engine
+// context before Run established one.
+func (t *Thresher) errEngineNotRunning(op string) error {
+	return errs.New(
+		errs.M("%s: the thresher isn't running (state %q)", op, t.State()),
+		errs.C(errorClass, errs.InvalidState))
+}
+
 // State returns current state of the Threasher. It is lock-free (atomic load),
 // so it is safe to call while t.m is held — the property that removes the
 // FIX-002 RC2 re-entrant self-deadlock.
@@ -461,10 +521,57 @@ func (t *Thresher) UpdateState(ns State) error {
 			errs.E(err))
 	}
 
-	t.state.Store(uint32(ns))
+	// Claim the transition with a CAS, for the same reason Run and Shutdown
+	// claim theirs: between reading the current state and writing the new one, a
+	// concurrent Shutdown may have moved the engine on, and a plain Store would
+	// resurrect the state it left behind.
+	//
+	// A lost CAS re-reads and re-judges rather than failing. The question this
+	// method answers is "may the engine go there from where it IS", so the
+	// answer must be computed from where it is now — if a concurrent Shutdown
+	// moved it to Stopping, the retry refuses with that state named, which is
+	// the useful error; if another operator merely resumed it, pausing it again
+	// is a legitimate request that has no reason to fail.
+	for {
+		cur := t.State()
+		if !operatorTransitions[stateChange{from: cur, to: ns}] {
+			return errs.New(
+				errs.M("couldn't move the Thresher from %q to %q: UpdateState"+
+					" admits only the operator transitions (Started↔Paused);"+
+					" starting and stopping belong to Run and Shutdown",
+					cur.String(), ns.String()),
+				errs.C(errorClass, errs.InvalidState))
+		}
+
+		if t.state.CompareAndSwap(uint32(cur), uint32(ns)) {
+			break
+		}
+	}
+
 	t.reportEngineState(ns)
 
 	return nil
+}
+
+// stateChange is one from→to pair of the engine lifecycle.
+type stateChange struct {
+	from State
+	to   State
+}
+
+// operatorTransitions are the ONLY changes UpdateState admits: pausing a
+// running engine and resuming a paused one (FIX-036 §1.6).
+//
+// Everything else belongs to the CAS ladder in Run and Shutdown. The method
+// used to accept any legal enum MEMBER, which is a different question from
+// whether the engine may go there from where it is: storing Started on an
+// engine that never ran opened RegisterEvent's `State() != Started` guard onto
+// a hub that was never started. Paused is a real operator state — Shutdown
+// accepts it as a live one — so the defect was the absence of a transition
+// rule, not the existence of the method.
+var operatorTransitions = map[stateChange]bool{
+	{from: Started, to: Paused}: true,
+	{from: Paused, to: Started}: true,
 }
 
 // enginePhase maps a Thresher state to its observable phase (SRD-041 §3.4). A
@@ -532,8 +639,17 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// their ctx still propagates here.
 	// engineCancel is stored on the Thresher and called by Shutdown (and both Run
 	// rollbacks) — the engine context lives for the engine's lifetime (SRD-019).
-	t.ctx, t.engineCancel = context.WithCancel(ctx)
-	runCtx := t.ctx
+	// Published as one immutable pair (FIX-036 §1.1); the rollbacks below use
+	// the local `ec` rather than re-loading, so a retry that has already
+	// replaced the pair can never cancel the newer engine.
+	//nolint:gosec // G118: the cancel is retained in the engine pair below and
+	// called by Shutdown and by every Run rollback — it outlives this scope by
+	// design, which is what an engine-lifetime context means.
+	engCtx, engCancel := context.WithCancel(ctx)
+	ec := &engineCtx{ctx: engCtx, cancel: engCancel}
+	t.engine.Store(ec)
+
+	runCtx := ec.ctx
 
 	// Synchronously initialize the EventHub so that any subsequent
 	// RegisterEvent / UnregisterEvent / PropagateEvent call sees a fully
@@ -542,11 +658,11 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// FIX-001 for the race this replaces (previously the hub was spun up
 	// in a goroutine guarded only by a 1ms sleep, which is not a memory
 	// barrier under the Go memory model).
-	if err := t.eventHub.Start(t.ctx); err != nil {
+	if err := t.eventHub.Start(runCtx); err != nil {
 		// The start failed: cancel the engine context we just derived (it is
 		// otherwise abandoned — a retry Run reassigns t.ctx/engineCancel) and roll
 		// the claim back to NotStarted so a retry stays possible.
-		t.engineCancel()
+		ec.cancel()
 		t.state.Store(uint32(NotStarted))
 
 		return errs.New(
@@ -584,7 +700,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 		// engine context is canceled to stop the live hub goroutine and the
 		// state returns to NotStarted. registerStarters is all-or-nothing
 		// (FIX-013 §1.3), so no partial subscriptions linger to unwind here.
-		t.engineCancel()
+		ec.cancel()
 		t.state.Store(uint32(NotStarted))
 
 		return errs.New(
@@ -601,7 +717,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 	if t.cfg.repoSet {
 		if m, ok := t.cfg.Repository().(renv.Migrator); ok {
 			if err := m.Migrate(runCtx); err != nil {
-				t.engineCancel()
+				ec.cancel()
 				t.state.Store(uint32(NotStarted))
 
 				return errs.New(
@@ -619,7 +735,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// Repository: a volatile engine writes no records.
 	if t.cfg.repoSet {
 		if err := t.ensureGroup(runCtx); err != nil {
-			t.engineCancel()
+			ec.cancel()
 			t.state.Store(uint32(NotStarted))
 
 			return err
@@ -698,14 +814,13 @@ func (t *Thresher) Shutdown(ctx context.Context) error {
 		t.reportEngineState(Stopped)
 	}()
 
-	t.m.Lock()
-	regs := make([]instanceReg, 0, len(t.instances))
-	for _, r := range t.instances {
-		regs = append(regs, r)
+	// The engine pair is atomic, never guarded by m (FIX-036 §1.1): loading it
+	// here — outside the registry lock — is both correct and the only way to
+	// read what Run published without racing it.
+	var cancel context.CancelFunc
+	if ec := t.engine.Load(); ec != nil {
+		cancel = ec.cancel
 	}
-
-	cancel := t.engineCancel
-	t.m.Unlock()
 
 	// Cancel the engine context: every instance (launched under t.ctx) observes
 	// it and walks to Terminated; the hub Run unblocks.
@@ -713,20 +828,68 @@ func (t *Thresher) Shutdown(ctx context.Context) error {
 		cancel()
 	}
 
-	// Settle each running instance, bounded by ctx.
-	for _, r := range regs {
-		select {
-		case <-r.inst.Done():
-		case <-ctx.Done():
-			return errs.New(
-				errs.M("thresher shutdown timed out before instances settled"),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(ctx.Err()))
-		}
+	if err := t.drainInstances(ctx); err != nil {
+		return err
 	}
 
 	// Drain the event machinery: stop waiters and wait for their goroutines.
 	return t.eventHub.Shutdown(ctx)
+}
+
+// drainInstances awaits every instance the engine tracks, bounded by ctx.
+//
+// It RE-SNAPSHOTS after each pass (FIX-036 §1.7). A single snapshot taken
+// before the cancel misses every instance born in the window between the two —
+// an event-triggered start the hub was already dispatching, a Call Activity
+// child its parent was already creating — and Shutdown would return leaving
+// them running. Births stop once the cancel above propagates, so a pass that
+// adds nothing new is the fixed point that ends the loop.
+func (t *Thresher) drainInstances(ctx context.Context) error {
+	settled := map[string]struct{}{}
+
+	for {
+		pending := t.pendingInstancesLocked(settled)
+		if len(pending) == 0 {
+			return nil
+		}
+
+		for _, r := range pending {
+			select {
+			case <-r.inst.Done():
+				settled[r.inst.ID()] = struct{}{}
+
+			case <-ctx.Done():
+				return t.errShutdownTimeout(ctx, settled)
+			}
+		}
+	}
+}
+
+// errShutdownTimeout builds the timeout refusal, NAMING the instances that did
+// not settle so an operator can find them rather than being told only that
+// something did not finish.
+//
+// The deferred publish still marks the engine Stopped: its context is canceled
+// and its hub is being torn down, so it must go on rejecting new work — the
+// state is right even though the stop was not clean. What would be wrong is
+// letting that read as a NORMAL stop, so the abandonment is stated in the
+// operator log too, not only in the returned error.
+func (t *Thresher) errShutdownTimeout(
+	ctx context.Context, settled map[string]struct{},
+) error {
+	unsettled := t.unsettledIDsLocked(settled)
+
+	t.cfg.logger.Warn(
+		"thresher shutdown timed out; marking it stopped with instances"+
+			" still running",
+		observability.AttrInstanceID, strings.Join(unsettled, ","),
+		observability.AttrError, ctx.Err().Error())
+
+	return errs.New(
+		errs.M("thresher shutdown timed out before %d instance(s) settled: %s",
+			len(unsettled), strings.Join(unsettled, ", ")),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(ctx.Err()))
 }
 
 // ------------------ EventProducer interface ----------------------------------
@@ -885,17 +1048,31 @@ func (t *Thresher) RegisterProcess(
 	// holding the engine lock across an engine-subsystem call is the deadlock
 	// class FIX-002 RC2 warns about. Before Run the hub isn't started yet, so
 	// registration is deferred to Run (registerAllStarters wires latest-only).
-	if t.State() == Started {
+	//
+	// The claim makes this path and Run's sweep idempotent against each other:
+	// Run publishes Started before it sweeps, so a registration landing between
+	// the two is visible to both, and without the claim both would wire it
+	// (FIX-036 §1.8).
+	if t.State() == Started && t.claimWiringLocked(reg) {
 		// Latest-supersedes (ADR-019 §2.5): the new version takes over auto-start,
 		// so the previous latest's starters stop firing. A superseded version only
 		// finishes its already-running instances.
 		if prevLatest != nil {
 			if err := t.unregisterStarters(prevLatest.starters); err != nil {
+				t.releaseWiringLocked(reg)
+
 				return nil, err
 			}
+
+			t.releaseWiringLocked(prevLatest)
 		}
 
 		if err := t.registerStarters(starters); err != nil {
+			// registerStarters is all-or-nothing (FIX-013 §1.3), so nothing of
+			// this version reached the hub: give the claim back rather than
+			// leave a version marked wired that is not.
+			t.releaseWiringLocked(reg)
+
 			return nil, err
 		}
 	}
@@ -960,10 +1137,17 @@ func (t *Thresher) UnregisterVersion(reg *ProcessRegistration) error {
 			return err
 		}
 
+		t.setLatestWiredLocked(reg.key, false)
+
 		// promote the now-newest remaining version to live auto-start (empty for
 		// a manual-start version or when the key had a single version).
 		if len(promote) > 0 {
-			return t.registerStarters(promote)
+			if err := t.registerStarters(promote); err != nil {
+				return err
+			}
+
+			// the promoted version now owns the live starter set.
+			t.setLatestWiredLocked(reg.key, true)
 		}
 	}
 
@@ -1086,7 +1270,27 @@ func (t *Thresher) unregisterStarters(starters []*instanceStarter) error {
 // version of every process registered before Run (only the latest auto-starts —
 // latest-supersedes; the hub accepts registrations once Started).
 func (t *Thresher) registerAllStarters() error {
-	return t.registerStarters(t.latestStartersLocked())
+	claimed := t.claimLatestRegistrationsLocked()
+
+	var starters []*instanceStarter
+	for _, reg := range claimed {
+		starters = append(starters, reg.starters...)
+	}
+
+	if err := t.registerStarters(starters); err != nil {
+		// Give every claim back. registerStarters is all-or-nothing (FIX-013
+		// §1.3) and Run rolls the whole start back, so leaving these versions
+		// marked wired would make the RETRY wire nothing — an engine that
+		// starts cleanly with no auto-start at all, which is worse than the
+		// double-wiring the claim exists to prevent.
+		for _, reg := range claimed {
+			t.releaseWiringLocked(reg)
+		}
+
+		return err
+	}
+
+	return nil
 }
 
 // resolveAndLaunch performs the create-or-route-or-join decision per correlation
@@ -1111,9 +1315,7 @@ func (t *Thresher) resolveAndLaunch(
 		return t.launchInstanceFromEvent(ctx, s, startNode, eDef, keyName, key)
 	}
 
-	// Namespace the key by process so two processes correlating on the same
-	// value remain distinct conversations.
-	nsKey := s.ProcessID + "\x1f" + key
+	nsKey := nsKeyFor(s.ProcessID, key)
 
 	if !t.reserveKeyLocked(nsKey) {
 		t.cfg.logger.Debug("instance-starter: joined existing instance (key seen)",
@@ -1167,8 +1369,12 @@ func (t *Thresher) launchInstanceFromEvent(
 
 	// The instance owns this context for its whole lifetime; cancel is retained
 	// in instanceReg.stop for later teardown (see launchInstance for why it is
-	// not deferred).
-	ctx, cancel := context.WithCancel(t.ctx)
+	// not deferred). The engine pair is loaded atomically (FIX-036 §1.1).
+	ctx, cancel, err := t.instanceContext("launchInstanceFromEvent")
+	if err != nil {
+		return err
+	}
+
 	if err := inst.Run(ctx); err != nil {
 		cancel()
 
@@ -1184,7 +1390,23 @@ func (t *Thresher) launchInstanceFromEvent(
 	// returns a usable handle for it instead of a nil that panics on observation.
 	t.trackInstanceLocked(inst, cancel, settled)
 
+	// Bind the correlation reservation to the instance that now owns it
+	// (FIX-036 §1.2): until this point the entry only says "a start is in
+	// flight", which is what suppresses a concurrent duplicate; from here it
+	// names the conversation, so a later message can tell a live instance
+	// (join) from a finished one (start again).
+	if keyVal != "" {
+		t.bindKeyLocked(nsKeyFor(s.ProcessID, keyVal), inst.ID())
+	}
+
 	return nil
+}
+
+// nsKeyFor namespaces a correlation value by its process, so two processes
+// correlating on the same value remain distinct conversations. The one
+// definition both the reservation and its binding use.
+func nsKeyFor(processID, key string) string {
+	return processID + "\x1f" + key
 }
 
 // StartProcess launches a new instance of the exact registered version named by
@@ -1343,7 +1565,12 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error)
 	// in instanceReg.stop for later teardown (engine stop / instance cleanup).
 	// It must NOT be deferred here — inst.Run is non-blocking, so a deferred
 	// cancel would terminate the instance the moment launchInstance returns.
-	ctx, cancel := context.WithCancel(t.ctx)
+	// The engine pair is loaded atomically (FIX-036 §1.1).
+	ctx, cancel, err := t.instanceContext("launchInstance")
+	if err != nil {
+		return nil, err
+	}
+
 	if err = inst.Run(ctx); err != nil {
 		cancel()
 

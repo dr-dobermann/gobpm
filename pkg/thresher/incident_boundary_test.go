@@ -204,4 +204,3 @@ func TestInterruptingBoundaryOvertakesIncident(t *testing.T) {
 	require.Equal(t, "overtaken", incs[0].State)
 	require.Zero(t, h.OpenIncidents())
 }
-

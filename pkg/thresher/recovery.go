@@ -100,7 +100,10 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 		return recoveryErr("the instance doesn't restore", err)
 	}
 
-	runCtx, cancel := context.WithCancel(t.ctx)
+	runCtx, cancel, err := t.instanceContext("recovery")
+	if err != nil {
+		return recoveryErr("the engine context is gone", err)
+	}
 	if err := inst.Run(runCtx); err != nil {
 		cancel()
 
@@ -108,6 +111,12 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 	}
 
 	t.trackInstanceLocked(inst, cancel, t.settledFor(id))
+
+	// A recovered conversation re-takes its correlation reservation (FIX-036
+	// §1.2): the reservation map does not survive the process, so without this
+	// the next message carrying this instance's key would start a duplicate
+	// beside the one just recovered.
+	t.rebindKeysLocked(doc.ProcessID, id, doc.ConvKeys)
 
 	inst.Report(observability.Fact{
 		Kind:  observability.KindInstanceState,

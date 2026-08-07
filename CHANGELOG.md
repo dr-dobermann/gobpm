@@ -118,6 +118,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`Thresher.UpdateState` now validates the TRANSITION, not just the value**
+  (FIX-036). It accepted any legal `State` member and stored it, so a host could
+  put a never-run engine into `Started` — after which `RegisterEvent`'s
+  `State() != Started` guard admitted registrations to a hub that was never
+  started. It now admits only the operator transitions, `Started ↔ Paused`, and
+  refuses anything else with a classified `InvalidState` error naming both
+  states; starting and stopping remain the compare-and-swap ladder's alone, in
+  `Run` and `Shutdown`. A lost race re-reads and re-judges rather than failing,
+  so a concurrent pause/resume is not spuriously rejected while a concurrent
+  `Shutdown` is reported with the state it actually left behind. **Callers that
+  used `UpdateState` to start an engine must call `Run`**; the pause/resume use
+  is unaffected.
+
 - **Timer construction errors now name the rule they broke.** The three
   rejections — attributes that are mutually exclusive, a recurrence missing its
   interval, and nothing set at all — previously shared one message
@@ -128,6 +141,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The engine's lifecycle bookkeeping: a data race, reservations with no
+  owner, and host code with no containment** (FIX-036 — the remediation of an
+  external audit of `pkg/thresher`; eight defects, one shape: bookkeeping
+  maintained by convention rather than by machinery).
+  - **A repeat business key could never start a process again.** An
+    event-started instance reserved its correlation key and nothing released it
+    when the instance finished, so a later message carrying that key was
+    answered "joined existing instance" and **silently dropped** — there was no
+    instance to join. Order `ORD-42` handled today meant `ORD-42` could never
+    start a process again, and the map grew for the engine's lifetime. A
+    reservation now records *whose* it is and is taken over once that
+    conversation is gone. Its mirror image is fixed with it: a conversation
+    recovered from a checkpoint — a cold restart or a wake — used to come back
+    **unreserved**, so the next message carrying its key started a duplicate
+    beside it.
+  - **The engine context was written without synchronization.** `Run` assigned
+    the context and its cancel with no lock while `Shutdown` read them under
+    one, which is a data race, not synchronization — a `Shutdown` could cancel
+    nothing and still report `Stopped`. Both are now published as one immutable
+    pair through an `atomic.Pointer`, and a launch on an engine that never ran
+    is a classified error rather than a nil-context panic.
+  - **A held subscription could outlive its own release.** The hub registration
+    and the release-path record were written in two unguarded steps, so a
+    `ReleaseWaits` racing the arm — an interrupting boundary, an Event-Based
+    gateway's losing arm — withdrew nothing and left a subscription registered
+    forever, able to wake an instance for a wait nobody was waiting on.
+  - **A panic in the host's observability policy killed a business process.**
+    `ObservationFilter.FilterObservation` and `LogRedactor.RedactLog` are host
+    code called on the reporting goroutine — an instance's execution loop — with
+    no recover around either. Both are now contained and **fall closed** (the
+    recipient is denied, the record suppressed), counted, and logged once at
+    `Warn`. Both interfaces now also state the obligations they always relied
+    on: cheap, non-blocking, no call back into the engine.
+  - **`Shutdown` left instances running.** It snapshotted the instance registry
+    *before* cancelling the engine context and awaited only that snapshot, so an
+    instance born in the window — an event-triggered start, a Call Activity
+    child — was abandoned. It now re-reads the registry until a pass adds
+    nothing, and a timeout names the instances that did not settle instead of
+    reporting only that something did not finish.
+  - **`Forget` leaked a context per instance it reaped.** Every launch path
+    derives the instance's context from the engine's and retains the cancel, but
+    nothing ever called it — so the child stayed attached to the engine context
+    for the engine's whole lifetime, and the one method whose stated purpose is
+    "so a long-running engine doesn't accumulate finished instances" released
+    everything about an instance except its context.
+  - **A process registered while the engine was starting could be wired twice.**
+    `RegisterProcess` and `Run`'s startup sweep both wire the latest version's
+    instance-starters and are not mutually exclusive, so one message could spawn
+    two instances. Wiring is now claimed per registration.
 - **Scope snapshots rejected Properties and DataObjects.** `SnapshotAt`'s
   value-copy (the compensation ledger's and now the incident snapshot's
   machinery) asserted one `Clone` shape, but `Property` and `DataObject`

@@ -637,7 +637,7 @@ func TestIncidentRetryInternalEdges(t *testing.T) {
 
 	t.Run("a past deadline arms an immediate fire", func(t *testing.T) {
 		inst.incidents["past"] = &incident{id: "past",
-			state: incidentRetryScheduled,
+			state:   incidentRetryScheduled,
 			retryAt: inst.now().Add(-time.Minute)}
 		ls.rearmIncidentRetryTimer()
 		require.NotNil(t, ls.retryC)

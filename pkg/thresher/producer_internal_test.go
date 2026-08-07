@@ -1,6 +1,7 @@
 package thresher
 
 import (
+	"strings"
 	"sync"
 	"testing"
 
@@ -34,19 +35,46 @@ func (r *recLogger) count() int {
 	return len(r.msgs)
 }
 
+// countWith returns how many recorded records contain sub — used to separate
+// one specific record from the ordinary echo traffic sharing the logger.
+func (r *recLogger) countWith(sub string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	n := 0
+
+	for _, m := range r.msgs {
+		if strings.Contains(m, sub) {
+			n++
+		}
+	}
+
+	return n
+}
+
 // capAuthz is an allow-all authorizer that also carries the two optional
 // visibility capabilities, letting one double drive both channels.
 type capAuthz struct {
 	auth.AuthorizationProvider
 	suppressLog bool
 	denyObserve bool
+	panicLog    bool
+	panicObs    bool
 }
 
 func (a capAuthz) RedactLog(ev observability.Fact) (observability.Fact, bool) {
+	if a.panicLog {
+		panic("the host's redactor is broken")
+	}
+
 	return ev, !a.suppressLog
 }
 
 func (a capAuthz) FilterObservation(_ any, ev observability.Fact) (observability.Fact, bool) {
+	if a.panicObs {
+		panic("the host's filter is broken")
+	}
+
 	return ev, !a.denyObserve
 }
 
@@ -189,3 +217,66 @@ func TestProducerDropsWhenBufferFull(t *testing.T) {
 type blockingRecObserver struct{ release chan struct{} }
 
 func (b *blockingRecObserver) OnFact(observability.Fact) { <-b.release }
+
+// TestPanickingObservationFilterContained is FIX-036 T-5: the ObservationFilter
+// is host code called on the REPORTER's goroutine — an instance's execution
+// loop — so a panic in it used to propagate out of Report and kill the run of a
+// process for a fault in the host's policy. It is now contained: the recipient
+// is denied (a policy that failed to run has not permitted anything), the panic
+// is counted, and it is logged once at Warn rather than per event.
+func TestPanickingObservationFilterContained(t *testing.T) {
+	log := &recLogger{}
+	p := newProducer(log, capAuthz{
+		AuthorizationProvider: allowall.New(),
+		panicObs:              true,
+	})
+
+	o := &recObserver{}
+	sub := p.subscribe(o)
+
+	require.NotPanics(t, func() {
+		p.Report(lifecycleEvent())
+		p.Report(lifecycleEvent())
+	}, "a broken filter must not reach Report's caller")
+
+	sub.Cancel()
+
+	require.Zero(t, o.count(),
+		"a filter that failed to run denies its recipient")
+	require.Zero(t, sub.Dropped(),
+		"a contained panic is a policy denial, not a buffer drop")
+	require.Equal(t, uint64(2), p.filterPanicked.Load(),
+		"every panic is counted")
+	require.Equal(t, 1, log.countWith("WARN:observation filter panicked"),
+		"the Warn is one per engine, not one per event")
+	require.Equal(t, 1, log.countWith("DEBUG:observation filter panicked"),
+		"later panics stay at Debug — the hot path carries no Warn")
+}
+
+// TestPanickingLogRedactorContained is T-5's other half: RedactLog is the same
+// kind of host code on the same goroutine. A panic suppresses the record — a
+// redactor exists to keep detail OUT of the log, so its failure must not be
+// read as permission to echo the event unredacted — and the observer stream,
+// which the redactor has no say over, is unaffected.
+func TestPanickingLogRedactorContained(t *testing.T) {
+	log := &recLogger{}
+	p := newProducer(log, capAuthz{
+		AuthorizationProvider: allowall.New(),
+		panicLog:              true,
+	})
+
+	o := &recObserver{}
+	sub := p.subscribe(o)
+
+	require.NotPanics(t, func() { p.Report(lifecycleEvent()) },
+		"a broken redactor must not reach Report's caller")
+
+	sub.Cancel()
+
+	require.Equal(t, uint64(1), p.redactorPanicked.Load())
+	require.Equal(t, 1, log.countWith("WARN:log redactor panicked"))
+	require.Equal(t, 1, log.count(),
+		"only the Warn — the unredacted record is suppressed, not echoed")
+	require.Equal(t, 1, o.count(),
+		"the observer stream is not the redactor's to deny")
+}

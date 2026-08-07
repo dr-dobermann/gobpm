@@ -1,6 +1,8 @@
 package thresher
 
 import (
+	"fmt"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 
@@ -20,6 +22,10 @@ type producer struct {
 	subs     map[uint64]*engineSub
 	mu       sync.Mutex
 	nextID   uint64
+	// panics contained in the two host-supplied hooks, counted separately so
+	// each gets its own one-shot Warn (FIX-036 §1.5).
+	redactorPanicked atomic.Uint64
+	filterPanicked   atomic.Uint64
 }
 
 // engineSub is one engine-scope observer registration: its buffered channel, the
@@ -66,7 +72,7 @@ func (p *producer) Report(ev observability.Fact) {
 // Echo itself skips the stream-only kinds and picks the level.
 func (p *producer) echo(ev observability.Fact) {
 	if p.redactor != nil {
-		redacted, ok := p.redactor.RedactLog(ev)
+		redacted, ok := p.redact(ev)
 		if !ok {
 			return
 		}
@@ -75,6 +81,96 @@ func (p *producer) echo(ev observability.Fact) {
 	}
 
 	observability.Echo(p.log, ev)
+}
+
+// redact applies the host's LogRedactor under containment. A panicking redactor
+// SUPPRESSES the record: a redactor exists to keep detail out of the log, so
+// its failure must fall closed rather than echo an unredacted event.
+func (p *producer) redact(
+	ev observability.Fact,
+) (observability.Fact, bool) {
+	out, ok, r, stack := callHostHook(
+		func() (observability.Fact, bool) { return p.redactor.RedactLog(ev) },
+		p.redactorPanicked.Load() == 0)
+	if r != nil {
+		p.reportHookPanic("log redactor", &p.redactorPanicked, r, stack)
+
+		return ev, false
+	}
+
+	return out, ok
+}
+
+// filtered applies the host's ObservationFilter for one recipient under
+// containment. A panicking filter DENIES that recipient, for the same reason a
+// panicking redactor suppresses: a policy that failed to run must not be
+// treated as having permitted anything.
+func (p *producer) filtered(
+	obs Observer, ev observability.Fact,
+) (observability.Fact, bool) {
+	out, ok, r, stack := callHostHook(
+		func() (observability.Fact, bool) {
+			return p.filter.FilterObservation(obs, ev)
+		},
+		p.filterPanicked.Load() == 0)
+	if r != nil {
+		p.reportHookPanic("observation filter", &p.filterPanicked, r, stack)
+
+		return ev, false
+	}
+
+	return out, ok
+}
+
+// callHostHook runs one host-supplied observability hook under panic
+// containment. Both hooks are AuthorizationProvider methods called on the
+// REPORTER's goroutine — an instance's loop — so an escaping panic there would
+// take down the run of a process for a fault in the host's policy code. A
+// broken policy must degrade its own event and nothing else.
+//
+// It mirrors deliver's shape: the recovered value and, for the first panic
+// only, its stack come back to the caller, which owns counting and logging.
+func callHostHook[T any](
+	hook func() (T, bool), wantStack bool,
+) (out T, ok bool, recovered any, stack []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			recovered = r
+			ok = false
+
+			if wantStack {
+				stack = debug.Stack()
+			}
+		}
+	}()
+
+	out, ok = hook()
+
+	return out, ok, nil, nil
+}
+
+// reportHookPanic counts and logs one contained host-hook panic, bounded the
+// way an observer panic is (ADR-022 v.2 §2.4): the FIRST one Warns with a
+// stack — degraded but continuing, never Error, since no engine state was
+// affected — and every one after it is a Debug, because the hot-path corollary
+// forbids a per-event record above Debug.
+func (p *producer) reportHookPanic(
+	hook string, counter *atomic.Uint64, r any, stack []byte,
+) {
+	// the identity pair, plus the stack pair the Warn branch appends.
+	args := make([]any, 0, 4)
+	args = append(args, observability.AttrError, fmt.Sprint(r))
+
+	// Add, not Load: two reporters can panic concurrently, and exactly one of
+	// them must own the Warn.
+	if counter.Add(1) != 1 {
+		p.log.Debug(hook+" panicked", args...)
+
+		return
+	}
+
+	p.log.Warn(hook+" panicked; its events are degraded until it is fixed",
+		append(args, "stack", string(stack))...)
 }
 
 // fanout delivers ev to every engine-scope observer, applying the
@@ -88,7 +184,7 @@ func (p *producer) fanout(ev observability.Fact) {
 	for _, s := range p.subs {
 		out := ev
 		if p.filter != nil {
-			filtered, ok := p.filter.FilterObservation(s.obs, ev)
+			filtered, ok := p.filtered(s.obs, ev)
 			if !ok {
 				continue // policy-denied — not a counted drop
 			}

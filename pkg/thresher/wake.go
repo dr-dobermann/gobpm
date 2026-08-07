@@ -111,7 +111,12 @@ func (t *Thresher) rebuildAndContinue(
 	pending *instance.PendingTrigger,
 	extra ...instance.Option,
 ) error {
-	ctx := t.ctx
+	// One atomic load serves the whole wake: the claim, the rebuild and the
+	// run all belong to the same engine incarnation (FIX-036 §1.1).
+	ctx, running := t.engineContext()
+	if !running {
+		return t.errEngineNotRunning("rebuildAndContinue")
+	}
 
 	rec, err := t.claimForWake(ctx, instanceID)
 	if err != nil {
@@ -143,7 +148,7 @@ func (t *Thresher) rebuildAndContinue(
 		return wakeErr("the instance doesn't rebuild", err)
 	}
 
-	runCtx, cancel := context.WithCancel(t.ctx)
+	runCtx, cancel := context.WithCancel(ctx)
 	if err := inst.Run(runCtx); err != nil {
 		cancel()
 
@@ -168,6 +173,10 @@ func (t *Thresher) rebuildAndContinue(
 	}
 
 	t.trackInstanceLocked(inst, cancel, t.settledFor(instanceID))
+
+	// A hydrated conversation re-takes its correlation reservation, for the
+	// same reason a recovered one does (FIX-036 §1.2).
+	t.rebindKeysLocked(doc.ProcessID, instanceID, doc.ConvKeys)
 
 	inst.Report(observability.Fact{
 		Kind:  observability.KindInstanceState,

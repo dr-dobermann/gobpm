@@ -2,9 +2,11 @@ package thresher
 
 import (
 	"context"
+	"sort"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
@@ -116,38 +118,123 @@ func (t *Thresher) removeKeyLocked(
 	return liveStarters, true
 }
 
-// latestStartersLocked collects the instance-starters of the latest version of
-// every registered key — the set Run wires onto the hub at startup (only the
-// latest auto-starts; latest-supersedes).
-func (t *Thresher) latestStartersLocked() []*instanceStarter {
+// claimLatestRegistrationsLocked claims the hub wiring of the latest version of
+// every registered key — the set Run wires at startup (only the latest
+// auto-starts; latest-supersedes) — and returns the registrations it claimed,
+// so a caller that fails can give every one of them back.
+//
+// The claim is what makes the two wiring paths idempotent against each other
+// (FIX-036 §1.8). Run publishes Started before it sweeps, so a RegisterProcess
+// that lands in between sees a started engine and wires its own starters, while
+// the sweep still finds that version in the registry and would wire them a
+// second time. Whichever arrives first claims; the other skips that key.
+func (t *Thresher) claimLatestRegistrationsLocked() []*ProcessRegistration {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	var all []*instanceStarter
+	var claimed []*ProcessRegistration
+
 	for _, regs := range t.registrations {
-		if n := len(regs); n > 0 {
-			all = append(all, regs[n-1].starters...)
+		n := len(regs)
+		if n == 0 || regs[n-1].wired {
+			continue
 		}
+
+		regs[n-1].wired = true
+
+		claimed = append(claimed, regs[n-1])
 	}
 
-	return all
+	return claimed
 }
 
-// reserveKeyLocked records the correlation key nsKey as seen, returning true if
-// it was newly reserved or false if an instance already claimed it (a join, no
-// duplicate). The check-and-record is atomic so two concurrent same-key starts
+// claimWiringLocked claims the hub wiring of reg's starters, returning false if
+// they are already claimed — the RegisterProcess half of the same handshake.
+func (t *Thresher) claimWiringLocked(reg *ProcessRegistration) bool {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	if reg.wired {
+		return false
+	}
+
+	reg.wired = true
+
+	return true
+}
+
+// releaseWiringLocked records that reg's starters have left the hub, so a later
+// promotion — or a retry after a failed registration — can wire them again.
+func (t *Thresher) releaseWiringLocked(reg *ProcessRegistration) {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	reg.wired = false
+}
+
+// setLatestWiredLocked records whether key's latest registration owns the live
+// starter set. It is how promote-on-removal claims the wiring for the version
+// it just promoted, whose registration the remover does not hold.
+func (t *Thresher) setLatestWiredLocked(key string, wired bool) {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	if regs := t.registrations[key]; len(regs) > 0 {
+		regs[len(regs)-1].wired = wired
+	}
+}
+
+// keyInFlight is the reservation's value while its instance is being launched:
+// the key is claimed (a concurrent same-key start must not create a second
+// instance) but no instance owns it yet. bindKeyLocked replaces it with the id.
+const keyInFlight = ""
+
+// reserveKeyLocked claims the correlation key nsKey for a NEW instance,
+// returning false when the key belongs to a conversation that is still going —
+// a live instance (join, no duplicate) or a start already in flight.
+//
+// A reservation whose instance has finished is NOT such a conversation: it is
+// taken over, so a later message carrying the same business key starts a new
+// process instead of joining an instance that no longer exists (FIX-036 §1.2).
+// The check-and-record is atomic, so two concurrent same-key starts still
 // cannot both create an instance.
 func (t *Thresher) reserveKeyLocked(nsKey string) bool {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	if _, seen := t.seenKeys[nsKey]; seen {
+	if owner, seen := t.seenKeys[nsKey]; seen && t.keyOwnerLiveLocked(owner) {
 		return false
 	}
 
-	t.seenKeys[nsKey] = struct{}{}
+	t.seenKeys[nsKey] = keyInFlight
 
 	return true
+}
+
+// keyOwnerLiveLocked reports whether a reservation still names a conversation
+// nothing may duplicate: a start in flight, or a tracked instance that has not
+// reached a terminal state. An id the registry no longer knows — forgotten, or
+// lost with the engine that ran it — is not live. Caller holds m.
+func (t *Thresher) keyOwnerLiveLocked(owner string) bool {
+	if owner == keyInFlight {
+		return true
+	}
+
+	reg, tracked := t.instances[owner]
+	if !tracked {
+		return false
+	}
+
+	return !instanceTerminal(reg.inst.State())
+}
+
+// bindKeyLocked names the instance that owns a reservation, once its launch has
+// succeeded (FIX-036 §1.2).
+func (t *Thresher) bindKeyLocked(nsKey, instanceID string) {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	t.seenKeys[nsKey] = instanceID
 }
 
 // releaseKeyLocked drops a correlation-key reservation, letting a later message
@@ -157,6 +244,132 @@ func (t *Thresher) releaseKeyLocked(nsKey string) {
 	defer t.m.Unlock()
 
 	delete(t.seenKeys, nsKey)
+}
+
+// rebindKeysLocked re-establishes the correlation reservations of an instance
+// the engine has just rebuilt from its checkpoint — a cold restart recovery or
+// a wake (FIX-036 §1.2). seenKeys is in-memory bookkeeping, so without this a
+// live conversation comes back unreserved and the next message carrying its key
+// starts a DUPLICATE instance beside it. The keys are the conversation values
+// the checkpoint carries (ADR-033 §2.1's ConvKeys), which are the same values
+// the instance-starter reserved when it first created the conversation.
+func (t *Thresher) rebindKeysLocked(
+	processID, instanceID string,
+	convKeys map[string]string,
+) {
+	if len(convKeys) == 0 {
+		return
+	}
+
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	for _, v := range convKeys {
+		if v == "" {
+			continue
+		}
+
+		t.seenKeys[nsKeyFor(processID, v)] = instanceID
+	}
+}
+
+// releaseKeysOfLocked drops every reservation owned by instanceID — the
+// forgetting half of §1.2, so the map shrinks with the instances it tracks
+// rather than growing for the engine's lifetime. Caller holds m.
+func (t *Thresher) releaseKeysOfLocked(instanceID string) {
+	for nsKey, owner := range t.seenKeys {
+		if owner == instanceID {
+			delete(t.seenKeys, nsKey)
+		}
+	}
+}
+
+// pendingInstancesLocked returns the tracked instances whose ids are NOT in
+// settled — the work one Shutdown drain pass still has to await. A fresh call
+// picks up anything born since the previous pass (FIX-036 §1.7).
+func (t *Thresher) pendingInstancesLocked(
+	settled map[string]struct{},
+) []instanceReg {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	pending := make([]instanceReg, 0, len(t.instances))
+
+	for id, r := range t.instances {
+		if _, done := settled[id]; !done {
+			pending = append(pending, r)
+		}
+	}
+
+	return pending
+}
+
+// unsettledIDsLocked names the tracked instances that never settled, sorted so
+// a timeout error reads the same way twice.
+func (t *Thresher) unsettledIDsLocked(settled map[string]struct{}) []string {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	ids := make([]string, 0, len(t.instances))
+
+	for id := range t.instances {
+		if _, done := settled[id]; !done {
+			ids = append(ids, id)
+		}
+	}
+
+	sort.Strings(ids)
+
+	return ids
+}
+
+// forgetLocked validates and removes the listed terminal instances, returning
+// the retained context-cancels of the ones it removed so the CALLER can invoke
+// them outside t.m — the same shape every other helper here follows.
+//
+// All-or-nothing: every id is validated first (known AND terminal); on any
+// unknown or still-live id nothing is removed and an error naming it comes back.
+func (t *Thresher) forgetLocked(
+	ids []string,
+) ([]context.CancelFunc, error) {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	for _, id := range ids {
+		reg, ok := t.instances[id]
+		if !ok {
+			return nil, errs.New(
+				errs.M("unknown instance %q", id),
+				errs.C(errorClass, errs.ObjectNotFound))
+		}
+
+		if st := reg.inst.State(); !instanceTerminal(st) {
+			return nil, errs.New(
+				errs.M("instance %q is still live (%s); cancel it before forgetting",
+					id, st.String()),
+				errs.C(errorClass, errs.InvalidState))
+		}
+	}
+
+	stops := make([]context.CancelFunc, 0, len(ids))
+
+	for _, id := range ids {
+		if reg := t.instances[id]; reg.stop != nil {
+			stops = append(stops, reg.stop)
+		}
+
+		delete(t.instances, id)
+
+		// Forget everything the engine holds for the instance, not just its
+		// registration (FIX-036 §1.2/§1.3): its terminal signal and any
+		// correlation reservation it owns. Both are safe here precisely
+		// because the loop above proved the instance terminal — nothing can
+		// rebuild it and wait on a channel we dropped.
+		delete(t.settled, id)
+		t.releaseKeysOfLocked(id)
+	}
+
+	return stops, nil
 }
 
 // latestSnapshotLocked returns the snapshot of the latest registered version of

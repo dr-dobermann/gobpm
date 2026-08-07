@@ -2,6 +2,7 @@ package thresher
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 
+	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
 	gerrs "github.com/dr-dobermann/gobpm/pkg/errs"
@@ -937,4 +939,260 @@ func TestTwoTimerHoldsCoexist(t *testing.T) {
 	th.timerSvc.mu.Unlock()
 
 	require.Zero(t, remaining, "a released track leaves no deadline behind")
+}
+
+// armHookHub wraps the engine's hub so a test can drive something INTO the
+// middle of an arm — the only way to pin an interleaving deterministically
+// rather than hoping a goroutine race reproduces.
+type armHookHub struct {
+	eventproc.EventHub
+
+	mu         sync.Mutex
+	onRegister func()
+	withdrawn  map[string]int // eDefID → successful withdrawals
+	registered int            // total successful arms
+	armErr     error          // when set, every persistent arm fails with it
+}
+
+// hookOnce installs a one-shot callback run at the start of the next arm.
+func (h *armHookHub) hookOnce(fn func()) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.onRegister = fn
+}
+
+func (h *armHookHub) takeHook() func() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	fn := h.onRegister
+	h.onRegister = nil
+
+	return fn
+}
+
+func (h *armHookHub) RegisterEvent(
+	ep eventproc.EventProcessor, eDef flow.EventDefinition,
+) error {
+	if fn := h.takeHook(); fn != nil {
+		fn()
+	}
+
+	return h.EventHub.RegisterEvent(ep, eDef)
+}
+
+// RegisterPersistentEvent counts the arms of the instance-STARTER path, which
+// is the one T-8 watches: a starter subscription is persistent by nature.
+// failArms makes every later starter arm fail, so a test can break the hub
+// under a RUNNING engine without racing the eventHub field.
+func (h *armHookHub) failArms(err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.armErr = err
+}
+
+func (h *armHookHub) RegisterPersistentEvent(
+	ep eventproc.EventProcessor, eDef flow.EventDefinition,
+) error {
+	h.mu.Lock()
+	armErr := h.armErr
+	h.mu.Unlock()
+
+	if armErr != nil {
+		return armErr
+	}
+
+	err := h.EventHub.RegisterPersistentEvent(ep, eDef)
+	if err == nil {
+		h.mu.Lock()
+		h.registered++
+		h.mu.Unlock()
+	}
+
+	return err
+}
+
+func (h *armHookHub) arms() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.registered
+}
+
+func (h *armHookHub) UnregisterEvent(
+	ep eventproc.EventProcessor, eDefID string,
+) error {
+	err := h.EventHub.UnregisterEvent(ep, eDefID)
+	if err == nil {
+		h.mu.Lock()
+		h.withdrawn[eDefID]++
+		h.mu.Unlock()
+	}
+
+	return err
+}
+
+func (h *armHookHub) withdrawals(eDefID string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.withdrawn[eDefID]
+}
+
+// hookedWakeEngine is armedWakeEngine with the hub wrapped BEFORE the engine
+// starts — the field is read by the running engine, so it may not be swapped
+// under it.
+func hookedWakeEngine(
+	t *testing.T, name string,
+) (*Thresher, *armHookHub, context.CancelFunc) {
+	t.Helper()
+
+	th, err := New(name,
+		WithoutBanner(), WithoutStartupConfig(),
+		WithRepository(memrepo.New()),
+		WithClock(clocktest.New(wakeEpoch)))
+	require.NoError(t, err)
+
+	hub := &armHookHub{EventHub: th.eventHub, withdrawn: map[string]int{}}
+	th.eventHub = hub
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, th.Run(ctx))
+
+	return th, hub, cancel
+}
+
+// TestReleaseWaitsDuringArmWithdrawsTheHold is FIX-036 T-4: a ReleaseWaits
+// landing in the MIDDLE of HoldSubscription must still leave the hub clean.
+//
+// The arm is two steps — record in t.subs, register on the hub — and a release
+// can land between them from either side. Arm-then-record loses the release
+// (it scans an empty map, withdraws nothing, and the record appears after it).
+// Record-then-arm alone lets the release find the record but unregister a
+// holder the hub does not know yet. Both end with a live subscription no track
+// waits on. Only recording first AND confirming after the arm closes it.
+func TestReleaseWaitsDuringArmWithdrawsTheHold(t *testing.T) {
+	th, hub, cancel := hookedWakeEngine(t, "engine-arm-race")
+	defer cancel()
+
+	sig := wakeSignalDef(t, "sig-mid-arm")
+
+	// the release fires while the registration is in flight.
+	hub.hookOnce(func() { th.ReleaseWaits("i-1", "t-1") })
+
+	require.NoError(t, th.HoldSubscription("i-1", "t-1", sig, nil, exec.WaitNode),
+		"the release is authoritative — a withdrawn hold is not a failed one")
+
+	th.subMu.Lock()
+	require.Empty(t, th.subs, "the released track holds nothing")
+	th.subMu.Unlock()
+
+	require.Equal(t, 1, hub.withdrawals(sig.ID()),
+		"the holder must actually leave the hub, not just the map")
+}
+
+// TestHoldSubscriptionRollsBackOnArmFailure pins the rollback half: if the hub
+// refuses the registration, nothing stays recorded — the record exists only to
+// make an ARMED hold releasable.
+func TestHoldSubscriptionRollsBackOnArmFailure(t *testing.T) {
+	th, err := New("engine-hold-rollback", WithoutBanner(),
+		WithoutStartupConfig(), WithRepository(memrepo.New()))
+	require.NoError(t, err)
+
+	// The engine is never Run, so RegisterEvent refuses: the hub is not
+	// started and the arm cannot succeed.
+	err = th.HoldSubscription("i-1", "t-1", wakeSignalDef(t, "sig-x"), nil,
+		exec.WaitNode)
+	require.Error(t, err)
+
+	th.subMu.Lock()
+	defer th.subMu.Unlock()
+
+	require.Empty(t, th.subs, "a hold that never armed must not stay recorded")
+}
+
+// TestStartersWiredExactlyOnce is FIX-036 T-8: a process registered while the
+// engine is running must reach the hub ONCE, no matter which of the two wiring
+// paths gets to it.
+//
+// RegisterProcess wires under the per-key lock when it sees a started engine;
+// Run's sweep wires the latest version of every key without that lock. Run
+// publishes Started BEFORE it sweeps, so a registration landing between the two
+// is visible to both, and both used to wire it — leaving two live subscriptions
+// on one event definition, so a single message spawned two instances.
+//
+// The interleaving is driven directly rather than raced: calling the sweep
+// after a live RegisterProcess is exactly the state that race produces, and the
+// sweep is idempotent by construction now.
+func TestStartersWiredExactlyOnce(t *testing.T) {
+	th, hub, cancel := hookedWakeEngine(t, "engine-wire-once")
+	defer cancel()
+
+	before := hub.arms()
+
+	_, err := th.RegisterProcess(msgStartProcess(t, "p-wire", "order placed"))
+	require.NoError(t, err)
+
+	wired := hub.arms() - before
+	require.Equal(t, 1, wired, "a live registration wires its starter itself")
+
+	require.NoError(t, th.registerAllStarters(),
+		"the sweep must succeed, having nothing left to do")
+	require.Equal(t, before+wired, hub.arms(),
+		"the sweep must not wire what RegisterProcess already wired")
+}
+
+// TestFailedSweepReleasesItsClaims pins the other half of the claim: a sweep
+// that cannot wire must hand every claim back. Run rolls the whole start back
+// on that failure, so a claim kept across it would make the RETRY find every
+// version already marked wired — an engine that starts cleanly with no
+// auto-start at all, which is worse than the double-wiring being prevented.
+func TestFailedSweepReleasesItsClaims(t *testing.T) {
+	th, err := New("engine-sweep-rollback", WithoutBanner(), WithoutStartupConfig())
+	require.NoError(t, err)
+
+	th.registrations["k"] = []*ProcessRegistration{
+		{key: "k", id: "r1", version: 1, starters: []*instanceStarter{
+			mkStarter(t, "x"),
+		}},
+	}
+	th.eventHub = regFailHub{regErr: errors.New("subscribe boom")}
+
+	require.Error(t, th.registerAllStarters())
+
+	th.m.Lock()
+	require.False(t, th.registrations["k"][0].wired,
+		"a sweep that wired nothing must claim nothing")
+	th.m.Unlock()
+}
+
+// TestPromoteFailureSurfaces covers promote-on-removal's error path: removing
+// the latest version tears its starters off the hub and promotes the previous
+// one, and if THAT arm fails the caller must hear about it rather than be told
+// the unregister succeeded. The claim bookkeeping must not have moved either —
+// the promoted version is not wired, so a later attempt can still wire it.
+func TestPromoteFailureSurfaces(t *testing.T) {
+	th, hub, cancel := hookedWakeEngine(t, "engine-promote-fail")
+	defer cancel()
+
+	proc := msgStartProcess(t, "p-promote", "order placed")
+
+	_, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	v2, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	hub.failArms(errors.New("arm boom"))
+
+	require.ErrorContains(t, th.UnregisterVersion(v2), "arm boom",
+		"a failed promotion is the caller's error, not a silent half-removal")
+
+	th.m.Lock()
+	defer th.m.Unlock()
+
+	require.False(t, th.registrations[proc.ID()][0].wired,
+		"the version that could not be armed is not marked wired")
 }
