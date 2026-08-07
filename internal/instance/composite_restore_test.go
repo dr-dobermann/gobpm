@@ -17,6 +17,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
@@ -1503,4 +1504,201 @@ func TestTransactionAbortSweepRestores(t *testing.T) {
 		"control leaves through the Cancel boundary after the restore")
 
 	_ = restored
+}
+
+// simpleCallerSnap builds start → the-call("callee-key") → end and
+// snapshots it once (the same snapshot serves capture and restore).
+func simpleCallerSnap(t *testing.T, key string) *snapshot.Snapshot {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New(key, foundation.WithID(key))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	ca, err := activities.NewCallActivity("the-call", key+"-callee")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, ca, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, ca)
+	link(t, ca, end)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	return s
+}
+
+// capturedCallDoc runs an armed caller against a never-finishing fake
+// child and captures the document carrying the in-flight call.
+func capturedCallDoc(
+	t *testing.T, key string,
+) (*checkpoint.Document, *snapshot.Snapshot) {
+	t.Helper()
+
+	s := simpleCallerSnap(t, key)
+	inv := &fakeInvoker{child: newFakeChild(key+"-child", 1)}
+
+	rt := cpRuntime(t)
+	ep := laxEP(t)
+
+	inst, err := New(s, scope.EmptyDataPath, rt, ep, nil,
+		WithCheckpointing("engine-A", "engine-A", time.Minute),
+		WithInvoker(inv))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	require.NoError(t, inst.Run(ctx))
+
+	var doc *checkpoint.Document
+
+	require.Eventually(t, func() bool {
+		rec, ok, _ := rt.Repository().Load(context.Background(), inst.ID())
+		if !ok {
+			return false
+		}
+
+		d, err := checkpoint.Unmarshal(rec.Payload)
+		if err != nil || len(d.Calls) != 1 {
+			return false
+		}
+
+		doc = d
+
+		return true
+	}, 3*time.Second, 5*time.Millisecond,
+		"the in-flight call must reach the document")
+
+	cancel()
+
+	return doc, s
+}
+
+// TestCallRestoreReLinks (SRD-082 FR-7, the instance half): the
+// restored caller re-parks and re-links through the reattach seam —
+// never re-invoking — and resumes when the re-attached child settles.
+func TestCallRestoreReLinks(t *testing.T) {
+	doc, s := capturedCallDoc(t, "cr-relink")
+
+	require.Equal(t, "cr-relink-child", doc.Calls[0].ChildID)
+
+	child2 := newFakeChild("cr-relink-child", 1)
+	inv2 := &fakeInvoker{child: newFakeChild("never", 1)}
+
+	var reattached atomic.Int32
+
+	restored, err := Restore(doc, s, scope.EmptyDataPath,
+		cpRuntime(t), laxEP(t), nil, nil,
+		WithInvoker(inv2),
+		WithCallReattacher(func(id string) (exec.ChildProcess, error) {
+			reattached.Add(1)
+			require.Equal(t, "cr-relink-child", id)
+
+			return child2, nil
+		}))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	require.NoError(t, restored.Run(ctx))
+
+	child2.finish() // the re-attached child completes
+
+	select {
+	case <-restored.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the restored caller did not resume")
+	}
+
+	require.Equal(t, Completed, restored.State())
+	require.EqualValues(t, 1, reattached.Load(), "one re-link, no more")
+
+	inv2.mu.Lock()
+	calls := inv2.calls
+	inv2.mu.Unlock()
+	require.Zero(t, calls, "the restored caller must never re-invoke")
+}
+
+// TestCallRestoreRefusals: a recorded call the restore cannot re-link
+// fails loud and terminal (SRD-082 FR-7, NFR-2).
+func TestCallRestoreRefusals(t *testing.T) {
+	run := func(t *testing.T, doc *checkpoint.Document,
+		s *snapshot.Snapshot, opts ...Option) {
+		t.Helper()
+
+		restored, err := Restore(doc, s, scope.EmptyDataPath,
+			cpRuntime(t), laxEP(t), nil, nil, opts...)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
+		require.NoError(t, restored.Run(ctx))
+
+		require.Eventually(t, func() bool {
+			return restored.State() == Terminated
+		}, 3*time.Second, 5*time.Millisecond,
+			"the failed re-link must land loud and terminal")
+	}
+
+	reattacher := func(_ string) (exec.ChildProcess, error) {
+		return newFakeChild("any", 1), nil
+	}
+
+	t.Run("no reattach seam wired", func(t *testing.T) {
+		doc, s := capturedCallDoc(t, "cr-noseam")
+		run(t, doc, s) // no WithCallReattacher
+	})
+
+	t.Run("the reattach errors", func(t *testing.T) {
+		doc, s := capturedCallDoc(t, "cr-reerr")
+		run(t, doc, s, WithCallReattacher(
+			func(string) (exec.ChildProcess, error) {
+				return nil, errs.New(errs.M("gone"),
+					errs.C(errorClass, errs.ObjectNotFound))
+			}))
+	})
+
+	t.Run("the caller track is missing", func(t *testing.T) {
+		doc, s := capturedCallDoc(t, "cr-notrack")
+		doc.Calls[0].TrackID = "gone"
+		run(t, doc, s, WithCallReattacher(reattacher))
+	})
+
+	t.Run("the caller track is at another node", func(t *testing.T) {
+		doc, s := capturedCallDoc(t, "cr-badnode")
+		doc.Calls[0].NodeID = "other"
+		run(t, doc, s, WithCallReattacher(reattacher))
+	})
+}
+
+// TestChildLinkageAccessors: the instance exposes its call linkage —
+// the discovery separation's substrate (SRD-082 FR-7).
+func TestChildLinkageAccessors(t *testing.T) {
+	s := simpleCallerSnap(t, "cr-access")
+
+	root, err := New(s, scope.EmptyDataPath, cpRuntime(t), laxEP(t), nil)
+	require.NoError(t, err)
+	require.Empty(t, root.ParentID())
+	require.Empty(t, root.CallNodeID())
+	require.Equal(t, s.Version, root.Version())
+
+	child, err := NewChild(s, cpRuntime(t), laxEP(t), nil,
+		&fakeInvoker{child: newFakeChild("x", 1)}, nil,
+		"parent-1", "call-node-1")
+	require.NoError(t, err)
+	require.Equal(t, "parent-1", child.ParentID())
+	require.Equal(t, "call-node-1", child.CallNodeID())
 }

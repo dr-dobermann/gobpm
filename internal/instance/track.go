@@ -252,6 +252,10 @@ type track struct {
 	// already running and will deliver the sentinel. Set at restore,
 	// before the track goroutine exists; consumed once.
 	compWaitRestored bool
+	// callRestored marks a RESTORED Call Activity caller (SRD-082
+	// FR-7): it re-parks without re-invoking — the adoption re-links to
+	// the recorded child. Same lifecycle as compWaitRestored.
+	callRestored bool
 	// skipInitialArm suppresses the spawn-time boundary arming ONCE — for an
 	// incident-retry respawn, whose watches transfer from the failed attempt
 	// instead of re-arming (SRD-079 FR-6: a repeated failure must not reset

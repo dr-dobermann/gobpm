@@ -20,6 +20,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
@@ -216,16 +217,27 @@ func TestCheckpointDeferGuard(t *testing.T) {
 		WithCheckpointing("engine-A", "engine-A", time.Minute))
 	require.NoError(t, err)
 
+	// no construct guards remain (SRD-082 FR-8, M4): an in-flight call
+	// is RECORDED — deferral means only a real encode/save failure.
 	ls := newLoopState(inst)
-	ls.calls["busy"] = nil // a Call Activity in flight
+	tr := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		steps:       []*stepInfo{{node: findNode(t, s, "cond-catch")}},
+	}
+	ls.calls["busy"] = &callEntry{track: tr, node: tr.currentStep().node}
 
 	ls.checkpointNow(context.Background())
 
-	require.True(t, sink.has(observability.PhaseCheckpointDeferred),
-		"the degradation must be operator-visible")
+	require.False(t, sink.has(observability.PhaseCheckpointDeferred),
+		"an in-flight call captures — the deferral posture is retired")
 
-	_, ok, _ := rt.Repository().Load(context.Background(), inst.ID())
-	require.False(t, ok, "no torn document may be written")
+	rec, ok, _ := rt.Repository().Load(context.Background(), inst.ID())
+	require.True(t, ok, "the document is written")
+
+	d, err := checkpoint.Unmarshal(rec.Payload)
+	require.NoError(t, err)
+	require.Len(t, d.Calls, 1)
+	require.Equal(t, "busy", d.Calls[0].ChildID)
 }
 
 // TestCheckpointDisabledByDefault: without the option the instance
@@ -280,18 +292,21 @@ func TestCaptureArms(t *testing.T) {
 		return inst, newLoopState(inst), sink
 	}
 
-	t.Run("the last guard defers; groups and sweeps capture",
+	t.Run("no construct defers; every position is recorded",
 		func(t *testing.T) {
 			inst, ls, _ := newArmedInstance(t)
 			host := inst.tracks[firstTrackID(inst)]
 
-			// the miGroups guard retired with SRD-082 M2, the sweeps
-			// guard with M3 — both are recorded now, not deferred.
+			// every guard retired (SRD-082 FR-8): groups in M2, sweeps
+			// in M3, calls in M4 — all recorded now, never deferred.
 			ls.miGroups["g"] = &miGroup{host: host}
 			ls.sweeps["s"] = &sweepRun{
 				sweep: &compSweep{path: inst.sc.root, thrower: host,
 					wait: true},
 				entry: &ledgerEntry{activityID: "a-1", ordinal: 0},
+			}
+			ls.calls["c"] = &callEntry{
+				track: host, node: host.currentStep().node,
 			}
 			doc, reason := ls.captureDocument(context.Background())
 			require.Empty(t, reason)
@@ -299,12 +314,8 @@ func TestCaptureArms(t *testing.T) {
 			require.Len(t, doc.Sweeps, 1)
 			require.Equal(t, host.ID(), doc.Sweeps[0].ThrowerTrack)
 			require.NotNil(t, doc.Sweeps[0].Running)
-
-			delete(ls.miGroups, "g")
-			delete(ls.sweeps, "s")
-			ls.calls["c"] = nil
-			_, reason = ls.captureDocument(context.Background())
-			require.Contains(t, reason, "Call Activity")
+			require.Len(t, doc.Calls, 1)
+			require.Equal(t, "c", doc.Calls[0].ChildID)
 		})
 
 	t.Run("ledger entries flatten with their folded children",

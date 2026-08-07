@@ -16,6 +16,14 @@ const (
 	// InstancesCompleted returns the terminal instances (Completed/Terminated) —
 	// the ones Forget can release.
 	InstancesCompleted
+	// InstancesRoots returns only the ROOT instances — the ones a host
+	// lists as "processes" (SRD-082 FR-7). Call Activity children are
+	// reachable through their parent (InstanceHandle.ParentID).
+	InstancesRoots
+	// InstancesChildren returns only the Call Activity children —
+	// instances launched by a caller's InvokeProcess. (Multi-Instance
+	// iterations are scopes inside ONE instance and never appear here.)
+	InstancesChildren
 )
 
 // instanceTerminal reports whether an instance lifecycle state is terminal.
@@ -34,6 +42,7 @@ func (t *Thresher) Instances(filter InstanceFilter) []string {
 
 	for id, reg := range t.instances {
 		terminal := instanceTerminal(reg.inst.State())
+		child := reg.inst.ParentID() != ""
 
 		switch filter {
 		case InstancesRunning:
@@ -43,6 +52,16 @@ func (t *Thresher) Instances(filter InstanceFilter) []string {
 
 		case InstancesCompleted:
 			if !terminal {
+				continue
+			}
+
+		case InstancesRoots:
+			if child {
+				continue
+			}
+
+		case InstancesChildren:
+			if !child {
 				continue
 			}
 		}

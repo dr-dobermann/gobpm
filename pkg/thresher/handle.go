@@ -355,3 +355,25 @@ func tokenState(ts instance.TokenState) TokenState {
 		return TokenInvalid
 	}
 }
+
+// ParentID returns the caller instance's id when this instance is a
+// Call Activity child, "" for a root instance (SRD-082 FR-7 — the
+// discovery separation: a host lists roots and reaches children
+// through their parent).
+func (h *InstanceHandle) ParentID() string {
+	if inst := h.inst.Load(); inst != nil {
+		return inst.ParentID()
+	}
+
+	return ""
+}
+
+// CallNodeID returns the caller's Call Activity node id for a child,
+// "" for a root instance.
+func (h *InstanceHandle) CallNodeID() string {
+	if inst := h.inst.Load(); inst != nil {
+		return inst.CallNodeID()
+	}
+
+	return ""
+}

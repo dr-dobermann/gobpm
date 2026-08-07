@@ -162,16 +162,23 @@ func newLoopState(inst *Instance) *loopState {
 }
 
 // adoptRestored applies the checkpoint-rebuilt state the loop adopts at
-// start: the compensation ledger (SRD-070 FR-6) and the derived
-// composite scope entries (SRD-082 FR-5 — BEFORE the spawns count
-// tracks into them). False means the adoption failed loud and the loop
-// must not start.
-func (inst *Instance) adoptRestored(ls *loopState, initial []*track) bool {
+// start: the compensation ledger (SRD-070 FR-6), the derived composite
+// scope entries (SRD-082 FR-5 — BEFORE the spawns count tracks into
+// them) and the re-linked in-flight calls (FR-7). False means the
+// adoption failed loud and the loop must not start.
+func (inst *Instance) adoptRestored(
+	ctx context.Context, ls *loopState, initial []*track,
+) bool {
 	if inst.restoredLedgers != nil {
 		ls.ledgers = inst.restoredLedgers
 	}
 
-	if err := ls.adoptRestoredScopes(initial); err != nil {
+	err := ls.adoptRestoredScopes(initial)
+	if err == nil {
+		err = ls.adoptRestoredCalls(ctx)
+	}
+
+	if err != nil {
 		// fail() is phase-only; the loop is exiting without running, so
 		// the lifecycle must land terminal too — a stuck Active instance
 		// would look healthy forever (SRD-082 NFR-2).
@@ -216,7 +223,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 	// A restored instance adopts its checkpoint-rebuilt state; a fresh
 	// one adopts nothing and proceeds.
-	if !inst.adoptRestored(ls, initial) {
+	if !inst.adoptRestored(ctx, ls, initial) {
 		return
 	}
 

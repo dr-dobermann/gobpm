@@ -79,6 +79,22 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 		return recoveryErr("the checkpoint doesn't decode", err)
 	}
 
+	// a recovered CHILD whose caller record vanished fails loud — a
+	// call is recorded state on both ends, and a child must never run
+	// orphaned (ADR-033 v.4 §2.10, SRD-082 FR-7).
+	if doc.ParentID != "" {
+		_, ok, perr := repo.Load(ctx, doc.ParentID)
+		if perr != nil {
+			return recoveryErr("the caller record isn't readable", perr)
+		}
+
+		if !ok {
+			return recoveryErr("the caller record "+
+				strconv.Quote(doc.ParentID)+" is gone — a child never "+
+				"runs orphaned", nil)
+		}
+	}
+
 	s := t.snapshotForVersionLocked(doc.ProcessID, doc.Version)
 	if s == nil {
 		return recoveryErr("the pinned process version isn't registered "+
@@ -93,6 +109,7 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 		nil,
 		instance.WithSettledSignal(t.settledFor(id)),
 		instance.WithInvoker(t),
+		instance.WithCallReattacher(t.reattachChild),
 		instance.WithWaitHolders(t),
 		instance.WithCheckpointing(t.id, t.group, t.cfg.leaseTTL),
 		instance.WithCheckpointCursor(rec.RecVersion, rec.Lease.Incarnation))

@@ -2,12 +2,16 @@ package thresher
 
 import (
 	"context"
+	"strings"
+
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/repository"
 )
 
 // InvokeProcess launches a registered process as a CHILD instance on behalf of a
@@ -62,9 +66,14 @@ func (t *Thresher) InvokeProcess(
 	// defensive wrap (the launchInstance pattern).
 	settled := make(chan struct{})
 
+	// the child receives the SAME engine-supplied option set as every
+	// other launch path (SRD-082 FR-7): with a configured repository it
+	// checkpoints under this engine's lease and carries the parent
+	// linkage in its own record — a durable instance in its own right,
+	// re-linkable after a restart.
 	inst, err := instance.NewChild(s, &t.cfg, t, t.taskDist, t,
 		call.Inputs, call.ParentInstanceID, call.CallNodeID,
-		instance.WithSettledSignal(settled))
+		t.instanceOptions(settled)...)
 	if err != nil {
 		return nil, errs.New(errs.M("InvokeProcess: child build failed"),
 			errs.C(errorClass, errs.BulidingFailed), errs.E(err))
@@ -151,7 +160,199 @@ func (c *childProcess) Outputs(names []string) ([]data.Data, error) {
 func (c *childProcess) Terminate() { c.inst.Cancel() }
 
 // Interface implementation checks.
+// reattachChild re-finds a recorded child instance after a restart
+// (SRD-082 FR-7, the instance.CallReattacher seam). Three shapes:
+// resident (already recovered / never left) — a live handle; a
+// TERMINAL repository record (the child finished while the engine was
+// down) — an already-settled handle built from the record; an
+// in-flight record — a lazy handle over the engine's settled registry,
+// resolved when recovery claims the child. No record at all is loud:
+// a recorded call names recorded state (ADR-033 v.4 §2.10).
+func (t *Thresher) reattachChild(childID string) (exec.ChildProcess, error) {
+	if inst, err := t.instanceByID(childID); err == nil {
+		return &childProcess{
+			inst:    inst,
+			settled: t.settledFor(childID),
+			version: inst.Version(),
+		}, nil
+	}
+
+	if !t.cfg.repoSet {
+		return nil, errs.New(
+			errs.M("no repository to re-find child instance %q in", childID),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	rec, ok, err := t.cfg.Repository().Load(t.ctx, childID)
+	if err != nil {
+		return nil, err
+	}
+
+	if !ok {
+		return nil, errs.New(
+			errs.M("child instance %q has no repository record — a "+
+				"recorded call names recorded state", childID),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	if rec.Status.IsTerminal() {
+		return newSettledChild(childID, rec)
+	}
+
+	// in flight: recovery claims it in this same group sweep and closes
+	// the registry channel. (A multi-engine group may split the pair —
+	// the other engine's claim then resolves the child there; the
+	// re-link across engines is future work, documented in the SRD.)
+	return &lazyChild{thr: t, id: childID,
+		settled: t.settledFor(childID)}, nil
+}
+
+// lazyChild is a re-attached, not-yet-resident child: Done comes from
+// the engine's settled registry (mint-on-demand — recovery order
+// between parent and child is irrelevant); the outcome and outputs
+// resolve against the registry once the child settles.
+type lazyChild struct {
+	thr     *Thresher
+	settled chan struct{}
+	id      string
+}
+
+func (c *lazyChild) ID() string { return c.id }
+
+func (c *lazyChild) Done() <-chan struct{} { return c.settled }
+
+func (c *lazyChild) Version() int {
+	if inst, err := c.thr.instanceByID(c.id); err == nil {
+		return inst.Version()
+	}
+
+	return 0
+}
+
+func (c *lazyChild) Failed() error {
+	if inst, err := c.thr.instanceByID(c.id); err == nil {
+		return inst.LastErr()
+	}
+
+	return errs.New(
+		errs.M("re-attached child %q settled but isn't tracked", c.id),
+		errs.C(errorClass, errs.InvalidState))
+}
+
+func (c *lazyChild) Outputs(names []string) ([]data.Data, error) {
+	inst, err := c.thr.instanceByID(c.id)
+	if err != nil {
+		return nil, errs.New(
+			errs.M("re-attached child %q settled but isn't tracked", c.id),
+			errs.C(errorClass, errs.InvalidState),
+			errs.E(err))
+	}
+
+	return (&childProcess{inst: inst}).Outputs(names)
+}
+
+func (c *lazyChild) Terminate() {
+	if inst, err := c.thr.instanceByID(c.id); err == nil {
+		inst.Cancel()
+	}
+}
+
+// settledChild is a child that finished while the engine was down: its
+// terminal repository record is the whole truth — Done is already
+// closed, the outcome maps from the status, the outputs decode from
+// the final checkpoint's root scope.
+type settledChild struct {
+	outputs map[string]data.Data
+	failure error
+	settled chan struct{}
+	id      string
+	version int
+}
+
+// newSettledChild builds the handle from the terminal record.
+func newSettledChild(
+	id string, rec repository.InstanceRecord,
+) (exec.ChildProcess, error) {
+	doc, err := checkpoint.Unmarshal(rec.Payload)
+	if err != nil {
+		return nil, errs.New(
+			errs.M("terminal child %q: its checkpoint doesn't decode", id),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	c := &settledChild{
+		outputs: map[string]data.Data{},
+		id:      id,
+		version: doc.Version,
+		settled: make(chan struct{}),
+	}
+	close(c.settled)
+
+	if rec.Status != repository.StatusCompleted {
+		c.failure = errs.New(
+			errs.M("called process instance %q ended %q while the engine "+
+				"was down", id, doc.Status),
+			errs.C(errorClass, errs.OperationFailed))
+
+		return c, nil
+	}
+
+	// the child's outputs live in its final root-scope data (the
+	// single-segment path).
+	for _, sc := range doc.Scopes {
+		if strings.Count(sc.Path, "/") != 1 || len(sc.Data) == 0 {
+			continue
+		}
+
+		dd, err := checkpoint.DecodeData(context.Background(), sc.Data)
+		if err != nil {
+			return nil, errs.New(
+				errs.M("terminal child %q: its root data doesn't decode",
+					id),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+
+		for _, d := range dd {
+			c.outputs[d.Name()] = d
+		}
+	}
+
+	return c, nil
+}
+
+func (c *settledChild) ID() string { return c.id }
+
+func (c *settledChild) Version() int { return c.version }
+
+func (c *settledChild) Done() <-chan struct{} { return c.settled }
+
+func (c *settledChild) Failed() error { return c.failure }
+
+func (c *settledChild) Outputs(names []string) ([]data.Data, error) {
+	out := make([]data.Data, 0, len(names))
+
+	for _, name := range names {
+		d, ok := c.outputs[name]
+		if !ok {
+			return nil, errs.New(
+				errs.M("terminal child %q has no declared output %q",
+					c.id, name),
+				errs.C(errorClass, errs.ObjectNotFound))
+		}
+
+		out = append(out, d)
+	}
+
+	return out, nil
+}
+
+func (c *settledChild) Terminate() {} // already terminal
+
 var (
 	_ exec.ProcessInvoker = (*Thresher)(nil)
 	_ exec.ChildProcess   = (*childProcess)(nil)
+	_ exec.ChildProcess   = (*lazyChild)(nil)
+	_ exec.ChildProcess   = (*settledChild)(nil)
 )

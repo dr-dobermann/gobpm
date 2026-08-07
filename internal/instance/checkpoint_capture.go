@@ -41,6 +41,12 @@ var checkpointTransitions = map[trackEventKind]bool{
 	evTaskWaiting: true,
 	evJobWaiting:  true,
 	evScopeOpen:   true,
+	// a Call Activity park is a persist point since the call is
+	// recorded (SRD-082 FR-7, M4): the parent's document must carry the
+	// in-flight call the moment the child exists — a crash between the
+	// launch and the next transition would otherwise restore a parent
+	// that re-invokes.
+	evCallWaiting: true,
 	// an incident raise is a persist point (SRD-079 FR-5): an incident that
 	// vanished with the process would be no incident at all.
 	evIncident: true,
@@ -136,13 +142,10 @@ func (ls *loopState) captureDocument(
 ) (*checkpoint.Document, string) {
 	inst := ls.inst
 
-	// The last capture-deferral guard (SRD-070 FR-4's stopgap), retiring
-	// one per SRD-082 milestone as each construct's position becomes
-	// part of the document: parallel MI groups capture since M2, sweeps
-	// since M3.
-	if len(ls.calls) > 0 {
-		return nil, "a Call Activity is in flight"
-	}
+	// No capture-deferral guards remain (SRD-082 FR-8): every composite
+	// construct records its position — groups since M2, sweeps since
+	// M3, in-flight calls since M4. Deferral now means only a real
+	// encode/save failure, still loud.
 
 	doc := &checkpoint.Document{
 		InstanceID:  inst.ID(),
@@ -211,6 +214,7 @@ func (ls *loopState) captureDocument(
 	}
 
 	doc.Sweeps = sweeps
+	doc.Calls = ls.callRecords()
 	doc.Boundaries = ls.boundaryRecords()
 	doc.Incidents = inst.incidentRecords()
 
@@ -353,6 +357,32 @@ func ledgerRecordOf(
 		Ordinal:         e.ordinal,
 		HandlerEventSub: e.handlerEventSub,
 	}, nil
+}
+
+// callRecords captures the in-flight Call Activities (SRD-082 FR-7):
+// the parent's half of the symmetric link — the awaited child, the
+// call node and the parked caller track. The child instance is its own
+// record; ls.calls is loop-owned, so the read is a consistent cut.
+func (ls *loopState) callRecords() []checkpoint.CallRecord {
+	if len(ls.calls) == 0 {
+		return nil
+	}
+
+	out := make([]checkpoint.CallRecord, 0, len(ls.calls))
+
+	for id, entry := range ls.calls {
+		out = append(out, checkpoint.CallRecord{
+			ChildID: id,
+			NodeID:  entry.node.ID(),
+			TrackID: entry.track.ID(),
+		})
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ChildID < out[j].ChildID
+	})
+
+	return out
 }
 
 // sweepRecords captures the resolving compensation sweeps (SRD-082

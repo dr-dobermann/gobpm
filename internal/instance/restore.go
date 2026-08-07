@@ -123,10 +123,21 @@ func Restore(
 		return nil, err
 	}
 
-	// the parallel open sets and the resolving sweeps ride to the loop's
-	// adoption (SRD-082 FR-4/FR-6) — both substrates are loop-owned.
+	// the parallel open sets, the resolving sweeps and the in-flight
+	// calls ride to the loop's adoption (SRD-082 FR-4/FR-6/FR-7) — the
+	// substrates are loop-owned.
 	inst.restoredGroups = doc.MIGroups
 	inst.restoredSweeps = doc.Sweeps
+	inst.restoredCalls = doc.Calls
+
+	// a recorded caller re-PARKS instead of re-invoking its child — the
+	// adoption re-links to the recorded child; a second InvokeProcess
+	// would duplicate the child instance (SRD-082 FR-7).
+	for i := range doc.Calls {
+		if tr, ok := inst.tracks[doc.Calls[i].TrackID]; ok {
+			tr.callRestored = true
+		}
+	}
 
 	// a recorded wait-throw thrower re-PARKS instead of re-entering its
 	// throw node — a second evCompensate would double-compensate
