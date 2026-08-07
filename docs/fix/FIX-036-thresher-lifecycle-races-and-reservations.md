@@ -1,7 +1,7 @@
 # FIX-036 — the engine's lifecycle bookkeeping: unsynchronized state, reservations that are never released, and foreign code under a lock
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft.
+**Status:** Accepted.
 **Date:** 2026-08-05.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/thresher-audit` — the remediation of an external audit of `pkg/thresher` (2026-08-05).
@@ -75,7 +75,7 @@ The reservation is released **only when the launch fails**. Nothing releases it
 when the instance finishes. Two consequences, the second worse than the first:
 
 - `seenKeys` grows for the engine's lifetime — one entry per correlation value
-  ever seen, against ADR-002 §4.2's bounded-defaults principle;
+  ever seen, against ADR-002 v.2 §4.2's bounded-defaults principle;
 - once that instance is gone, a later message carrying the same business key is
   answered `"joined existing instance (key seen)"` and **silently dropped** —
   there is no instance to join. Order `ORD-42` handled today means order
@@ -120,7 +120,7 @@ a leaked holder that can still wake an instance for a wait nobody is waiting on.
 The arm has **two** unguarded sides, which is why simply swapping the order is
 not the fix. Recording first makes the hold visible to a concurrent release,
 but that release then calls `UnregisterEvent` on a holder the hub does not know
-yet: the call fails `ObjectNotFound` (`eventhub.go:401-410`), the registration
+yet: the call fails `ObjectNotFound` (`eventhub.go:401-409`), the registration
 that follows succeeds, and the subscription is again live with no record —
 the same leak reached from the other side. The hold must therefore be recorded
 **before** the arm so a release can see it, and **confirmed still recorded**
@@ -221,7 +221,7 @@ same rule.
 | # | Decision | Alternatives | Chosen |
 |---|---|---|---|
 | 1 | §1.1 the engine context | (a) take `t.m` for every read and the write — puts the engine lock on the hot launch path and invites the RC2 lock-ordering hazard the package forbids; (b) an `atomic.Pointer` to an immutable `{ctx, cancel}` pair — lock-free reads, single writer, and the same shape `state` already uses | **(b)** |
-| 2 | §1.2 the key reservation | (a) release in `Forget` only — still wrong for an engine that never calls it; (b) a watcher goroutine per reservation — a goroutine per conversation, the cost ADR-007 exists to avoid; (c) record `nsKey → instanceID` and re-take the reservation when the recorded instance is unknown or terminal — self-healing, O(1), no goroutine | **(c)** + release in `Forget` so the map also shrinks |
+| 2 | §1.2 the key reservation | (a) release in `Forget` only — still wrong for an engine that never calls it; (b) a watcher goroutine per reservation — a goroutine per conversation, the cost ADR-007 v.2.1 exists to avoid; (c) record `nsKey → instanceID` and re-take the reservation when the recorded instance is unknown or terminal — self-healing, O(1), no goroutine | **(c)** + release in `Forget` so the map also shrinks |
 | 3 | §1.4 the hold ordering | (a) hold `subMu` across `RegisterEvent` — an engine lock across a subsystem call, the forbidden shape; (b) record in `t.subs` first and roll the entry back if registration fails — the release path can then always see it, and the hub's `UnregisterEvent` is already idempotent for an unknown definition (`eventhub.go:401-409`) | **(b)** |
 | 4 | §1.5 the filter | (a) snapshot subscribers, unlock, then filter and send — breaks the documented fence that lets `unsubscribe` close a channel with no in-flight send, and buys nothing the contract cannot state; (b) contain the filter call the way `deliver` contains an observer, and make the cheapness the lock demands an explicit term of the `ObservationFilter` contract | **(b)** — the panic is the defect and is fixed; the serialization is a **property of a lock-fenced fan-out, decided here as a contract obligation on the host**, exactly as the observer stream already requires a fast, non-blocking observer. Lifting the fence (epoch counter or send-side refcount) would change the observation contract itself — an ADR question, and one nothing has asked: no measurement shows a filter cost worth redesigning for |
 | 5 | §1.6 `UpdateState` | (a) remove the method — breaks a public API and a real feature (`Paused`); (b) validate the *transition*, not just the value | **(b)** |
@@ -247,7 +247,7 @@ and terminal), taking the reservation over in that case. The join path keeps
 its existing semantics for a live instance.
 
 A rebuilt conversation re-takes its reservation: `recoverOne` and
-`rebuildAndContinue` bind the keys the checkpoint carries (ADR-033 §2.1's
+`rebuildAndContinue` bind the keys the checkpoint carries (ADR-033 v.3 §2.1's
 `ConvKeys`) to the instance they just tracked, so a conversation that crossed a
 restart is reserved exactly as one that never stopped.
 
@@ -275,7 +275,7 @@ behaviour — a missing waiter is an idempotent condition, not an error.
 `FilterObservation` and `RedactLog` are both wrapped in the containment
 `deliver` provides, through one shared `callHostHook` helper: the panic is
 recovered, counted per hook, and logged once at Warn with a stack (Debug
-thereafter, since ADR-022 v.1 §2.4 forbids a per-event record above it).
+thereafter, since ADR-022 v.2 §2.4 forbids a per-event record above it).
 
 Both **fall closed**. A panicking filter denies its recipient; a panicking
 redactor suppresses the log record. The alternative — treating a failed hook as
@@ -411,11 +411,25 @@ lines (`COVER_MIN`).
   (`TestCorrelationKeyReleasedAfterInstanceEnds`, T-2), which waits for the
   completion instead of racing it.
 
-  This is the only pre-existing test whose behaviour this landing changes, and
-  it is worth saying why it is a re-pin and not a weakening: joining a finished
-  instance cannot deliver the message anywhere — no receiver is parked on it —
-  so the old reservation did not preserve the join rule, it discarded the
-  business message that the rule exists to route.
+  This is the only pre-existing test whose asserted CONTRACT this landing
+  changes, and it is worth saying why it is a re-pin and not a weakening:
+  joining a finished instance cannot deliver the message anywhere — no receiver
+  is parked on it — so the old reservation did not preserve the join rule, it
+  discarded the business message that the rule exists to route.
+- **`TestRestartRecoveryBoundaryDeadline` is hardened, not re-pinned.** It
+  asserts exactly what it did before — a recovered boundary fires at its
+  RECORDED deadline rather than a re-evaluated one — but it failed once in a
+  full parallel `go test ./...` sweep and never in isolation. Engine-1 is
+  abandoned by lease rather than stopped, so it keeps running with its own timer
+  armed: if the crash-and-recover sequence did not finish inside the 700 ms
+  deadline, engine-1 fired the boundary and completed the instance, leaving
+  engine-2 nothing in flight to recover. The deadline widens to 2.5 s, which
+  costs nothing in assertion strength because an overdue restored deadline fires
+  immediately (`TestRestartRecoveryOverdueTimer` pins that) — the test proves
+  the same thing whether the deadline is still ahead or already behind at
+  recovery time. Its crash gate also now waits for the checkpoint to carry the
+  armed BOUNDARY rather than only `StatusActive`, the same race
+  `waitParkedRecord` closes for the track's own wait.
 
 ## 7 Related
 
@@ -437,7 +451,60 @@ Prior art: [FIX-035](FIX-035-observer-silence-and-attribute-vocabulary.md)
 
 ## 8 Implementation summary
 
-_To be filled after the milestones land._
+### 8.1 Milestones
+
+| # | Commit | Scope |
+|---|---|---|
+| — | `acd305b` | this document |
+| M1 | `0fd8592` | §1.1 — the engine context becomes an `atomic.Pointer` to an immutable `{ctx, cancel}` pair (§3.2.1) |
+| M2 | `455aedb` | §1.2, §1.3 — the reservation records its owner and self-heals; `recoverOne`/`rebuildAndContinue` rebind a recovered conversation's keys; `Forget` reaps `settled` and the reservations (§3.2.2, §3.2.3) |
+| M3 | `aa8acc4` | §1.4 — `HoldSubscription` records, arms, then confirms (§3.2.4) |
+| M4 | `0a768c0` | §1.5 — both host hooks contained and their obligations stated; `TestCorrelationDedup` re-pinned (§3.2.5, §3.2.6) |
+| — | `87a4b10` | `gofmt` on three test files the lint scope never saw |
+| M5 | `9f9298c` | §1.6, §1.7 — `UpdateState`'s transition rule; `Shutdown` drains what it started (§3.2.7, §3.2.8) |
+| M6 | `8799afb` | §1.8 — starter wiring is idempotent per registration (§3.2.9) |
+| M7 | `d247464` | the branches the fix added, covered; four duplicated guards folded into one; `TestRestartRecoveryBoundaryDeadline` hardened |
+
+### 8.2 Findings the implementation added to the design
+
+Three things the doc did not foresee, each recorded where it belongs and
+repeated here because they are the parts a later reader is most likely to
+re-derive:
+
+- **§1.4 has two sides, not one.** The prescription — "record, then arm" — closes
+  the window the audit named and opens its mirror: a release landing between the
+  record and the arm unregisters a holder the hub does not know yet, the arm
+  then succeeds, and the subscription is live with no record. Recording first is
+  necessary but not sufficient; the arm must also *confirm* it still owns the
+  record. Writing T-4 is what surfaced this — the doc-as-written version fails it
+  on "the holder must actually leave the hub, not just the map".
+- **§1.5's defect has two entry points.** `LogRedactor` is the same interface
+  family, asserted off the same authorizer, called on the same goroutine, with
+  the same missing recover. It is repaired with the filter rather than left for a
+  second pass.
+- **§1.8's flag needs a release, not just a claim.** `registerStarters` is
+  all-or-nothing and `Run` rolls the whole start back when it fails, so a claim
+  kept across that rollback makes the retry wire *nothing* — an engine that
+  starts cleanly with no auto-start at all, strictly worse than the double-wiring
+  the flag exists to prevent. `TestRunRollsBackWhenStarterRegistrationFails`
+  caught it.
+
+### 8.3 Gate
+
+`make ci` green end to end at `d247464`, verified by its own completion markers
+rather than an exit code:
+
+- `diff-coverage: 100.0% of 298 changed coverable lines (min 95%) — PASS`
+- `No vulnerabilities found.` on every module
+- `consumer-smoke … ✓`, `linkcheck: every relative link resolves`, mock-check
+  regenerated clean, `tidy` across all example modules, every example run
+- no `*** [<target>] Error N` anywhere in the log
+
+The lines that remain uncovered are the three `if err != nil` propagations at
+`instanceContext`'s gated call sites (`InvokeProcess`, `launchInstanceFromEvent`,
+recovery), which no caller can reach because all three refuse on a non-started
+engine long before they get there. The guard itself is pinned by
+`TestEngineContextRefusedBeforeRun`.
 
 ## 9 Open questions
 

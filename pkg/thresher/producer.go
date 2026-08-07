@@ -150,7 +150,7 @@ func callHostHook[T any](
 }
 
 // reportHookPanic counts and logs one contained host-hook panic, bounded the
-// way an observer panic is (ADR-022 v.1 §2.4): the FIRST one Warns with a
+// way an observer panic is (ADR-022 v.2 §2.4): the FIRST one Warns with a
 // stack — degraded but continuing, never Error, since no engine state was
 // affected — and every one after it is a Debug, because the hot-path corollary
 // forbids a per-event record above Debug.
