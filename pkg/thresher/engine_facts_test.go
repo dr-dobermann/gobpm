@@ -102,11 +102,16 @@ func TestEngineStatePausedAndSupersede(t *testing.T) {
 
 	// Paused is set via UpdateState (no code drives it yet — the reserved-but-
 	// reachable path); done last so it doesn't perturb the registry above.
+	// The engine must be RUNNING first: pausing is an operator transition out
+	// of Started, and UpdateState no longer lets a host jump the lifecycle
+	// ladder to reach it (FIX-036 §1.6). The no-phase early return that the
+	// removed UpdateState(NotStarted) line used to exercise is no longer
+	// reachable through the public API and is pinned directly instead, by
+	// TestUnmappedEngineStateReportsNothing.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
 	require.NoError(t, th.UpdateState(thresher.Paused))
-
-	// An unmapped state (NotStarted) reports nothing — exercises the
-	// no-phase early return.
-	require.NoError(t, th.UpdateState(thresher.NotStarted))
 
 	sub.Cancel() // drains the buffered facts so the asserts see them
 

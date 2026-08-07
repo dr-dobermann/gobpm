@@ -2,6 +2,7 @@ package thresher
 
 import (
 	"context"
+	"sort"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
@@ -231,6 +232,45 @@ func (t *Thresher) releaseKeysOfLocked(instanceID string) {
 			delete(t.seenKeys, nsKey)
 		}
 	}
+}
+
+// pendingInstancesLocked returns the tracked instances whose ids are NOT in
+// settled — the work one Shutdown drain pass still has to await. A fresh call
+// picks up anything born since the previous pass (FIX-036 §1.7).
+func (t *Thresher) pendingInstancesLocked(
+	settled map[string]struct{},
+) []instanceReg {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	pending := make([]instanceReg, 0, len(t.instances))
+
+	for id, r := range t.instances {
+		if _, done := settled[id]; !done {
+			pending = append(pending, r)
+		}
+	}
+
+	return pending
+}
+
+// unsettledIDsLocked names the tracked instances that never settled, sorted so
+// a timeout error reads the same way twice.
+func (t *Thresher) unsettledIDsLocked(settled map[string]struct{}) []string {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	ids := make([]string, 0, len(t.instances))
+
+	for id := range t.instances {
+		if _, done := settled[id]; !done {
+			ids = append(ids, id)
+		}
+	}
+
+	sort.Strings(ids)
+
+	return ids
 }
 
 // latestSnapshotLocked returns the snapshot of the latest registered version of

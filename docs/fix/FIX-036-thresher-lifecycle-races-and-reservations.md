@@ -302,8 +302,21 @@ lifecycle transitions stay the CAS ladder's alone.
 
 #### 3.2.8 `pkg/thresher/thresher.go` — `Shutdown` drains what it started
 
-After the cancel, the instance set is re-snapshotted and awaited until no new
-ids appear; the timeout error names the instances that did not settle.
+The snapshot moves BELOW the cancel and becomes a loop: `drainInstances`
+re-reads the registry after each pass and awaits whatever is new, ending at the
+fixed point where a pass adds nothing. Births stop once the cancel propagates,
+so the loop terminates; `ctx` bounds it regardless. The timeout error names the
+instances that did not settle, sorted, so it reads the same way twice.
+
+On §1.7's second half — the deferred publish marking `Stopped` even on the
+timeout path — the state **stays** `Stopped`. The engine's context is cancelled
+and its hub is being torn down, so it must go on rejecting new work; leaving it
+`Stopping` would make it neither usable nor shut down, and `Shutdown`'s own
+idempotence rule (`case Stopping: return nil`) would then refuse the retry. What
+was wrong is not the state but letting an abandoned shutdown read as a clean
+one, so the timeout additionally logs a `Warn` naming the instances left
+running. The returned error and the operator log now say the same thing, and
+neither claims the stop was orderly.
 
 #### 3.2.9 `pkg/thresher/thresher.go` — starter wiring is idempotent
 
@@ -351,6 +364,21 @@ lines (`COVER_MIN`).
 - `UpdateState` becomes stricter: a host that today sets an arbitrary state
   gets a classified error. This is the point of the fix, but it is a
   behavioural change to a public method and is called out in the CHANGELOG.
+  Three existing tests drove it in ways the rule now refuses, and each is
+  re-pinned rather than relaxed:
+  - `TestThresher_StateManagement/update state success` asserted that a
+    never-run engine could be moved to `Started` by hand — it encoded §1.6's
+    defect as the expected behaviour, so it now asserts the refusal. The
+    legitimate pause/resume pair keeps its coverage in the same file's
+    `run and pause workflow`, which runs the engine first.
+  - `TestEngineStatePausedAndSupersede` reached `Paused` from `NotStarted`
+    purely to emit the fact; it now runs the engine first, which is what
+    pausing means.
+  - The same test's `UpdateState(NotStarted)` line existed to exercise
+    `reportEngineState`'s no-phase early return. That state is no longer
+    reachable through the public API, so the early return is pinned directly by
+    `TestUnmappedEngineStateReportsNothing` — moved to the reporter rather than
+    dropped, since the Run rollback still reaches it internally.
 - `Shutdown` may now wait marginally longer — it awaits instances it previously
   abandoned — bounded by the caller's context exactly as before.
 - **`TestCorrelationDedup` is re-pinned to a live conversation.** It asserted

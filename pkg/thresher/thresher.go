@@ -499,10 +499,52 @@ func (t *Thresher) UpdateState(ns State) error {
 			errs.E(err))
 	}
 
-	t.state.Store(uint32(ns))
+	cur := t.State()
+	if !operatorTransitions[stateChange{from: cur, to: ns}] {
+		return errs.New(
+			errs.M("couldn't move the Thresher from %q to %q: UpdateState"+
+				" admits only the operator transitions (Started↔Paused);"+
+				" starting and stopping belong to Run and Shutdown",
+				cur.String(), ns.String()),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	// CAS, not Store, for the same reason Run and Shutdown claim their
+	// transitions with one: between the read above and the write, a concurrent
+	// Shutdown may have moved the engine on, and a plain Store would resurrect
+	// the state it left behind.
+	if !t.state.CompareAndSwap(uint32(cur), uint32(ns)) {
+		return errs.New(
+			errs.M("couldn't move the Thresher from %q to %q: its state"+
+				" changed concurrently (now %q)",
+				cur.String(), ns.String(), t.State().String()),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
 	t.reportEngineState(ns)
 
 	return nil
+}
+
+// stateChange is one from→to pair of the engine lifecycle.
+type stateChange struct {
+	from State
+	to   State
+}
+
+// operatorTransitions are the ONLY changes UpdateState admits: pausing a
+// running engine and resuming a paused one (FIX-036 §1.6).
+//
+// Everything else belongs to the CAS ladder in Run and Shutdown. The method
+// used to accept any legal enum MEMBER, which is a different question from
+// whether the engine may go there from where it is: storing Started on an
+// engine that never ran opened RegisterEvent's `State() != Started` guard onto
+// a hub that was never started. Paused is a real operator state — Shutdown
+// accepts it as a live one — so the defect was the absence of a transition
+// rule, not the existence of the method.
+var operatorTransitions = map[stateChange]bool{
+	{from: Started, to: Paused}: true,
+	{from: Paused, to: Started}: true,
 }
 
 // enginePhase maps a Thresher state to its observable phase (SRD-041 §3.4). A
@@ -745,13 +787,6 @@ func (t *Thresher) Shutdown(ctx context.Context) error {
 		t.reportEngineState(Stopped)
 	}()
 
-	t.m.Lock()
-	regs := make([]instanceReg, 0, len(t.instances))
-	for _, r := range t.instances {
-		regs = append(regs, r)
-	}
-	t.m.Unlock()
-
 	// The engine pair is atomic, never guarded by m (FIX-036 §1.1): loading it
 	// here — outside the registry lock — is both correct and the only way to
 	// read what Run published without racing it.
@@ -766,20 +801,68 @@ func (t *Thresher) Shutdown(ctx context.Context) error {
 		cancel()
 	}
 
-	// Settle each running instance, bounded by ctx.
-	for _, r := range regs {
-		select {
-		case <-r.inst.Done():
-		case <-ctx.Done():
-			return errs.New(
-				errs.M("thresher shutdown timed out before instances settled"),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(ctx.Err()))
-		}
+	if err := t.drainInstances(ctx); err != nil {
+		return err
 	}
 
 	// Drain the event machinery: stop waiters and wait for their goroutines.
 	return t.eventHub.Shutdown(ctx)
+}
+
+// drainInstances awaits every instance the engine tracks, bounded by ctx.
+//
+// It RE-SNAPSHOTS after each pass (FIX-036 §1.7). A single snapshot taken
+// before the cancel misses every instance born in the window between the two —
+// an event-triggered start the hub was already dispatching, a Call Activity
+// child its parent was already creating — and Shutdown would return leaving
+// them running. Births stop once the cancel above propagates, so a pass that
+// adds nothing new is the fixed point that ends the loop.
+func (t *Thresher) drainInstances(ctx context.Context) error {
+	settled := map[string]struct{}{}
+
+	for {
+		pending := t.pendingInstancesLocked(settled)
+		if len(pending) == 0 {
+			return nil
+		}
+
+		for _, r := range pending {
+			select {
+			case <-r.inst.Done():
+				settled[r.inst.ID()] = struct{}{}
+
+			case <-ctx.Done():
+				return t.errShutdownTimeout(ctx, settled)
+			}
+		}
+	}
+}
+
+// errShutdownTimeout builds the timeout refusal, NAMING the instances that did
+// not settle so an operator can find them rather than being told only that
+// something did not finish.
+//
+// The deferred publish still marks the engine Stopped: its context is canceled
+// and its hub is being torn down, so it must go on rejecting new work — the
+// state is right even though the stop was not clean. What would be wrong is
+// letting that read as a NORMAL stop, so the abandonment is stated in the
+// operator log too, not only in the returned error.
+func (t *Thresher) errShutdownTimeout(
+	ctx context.Context, settled map[string]struct{},
+) error {
+	unsettled := t.unsettledIDsLocked(settled)
+
+	t.cfg.logger.Warn(
+		"thresher shutdown timed out; marking it stopped with instances"+
+			" still running",
+		observability.AttrInstanceID, strings.Join(unsettled, ","),
+		observability.AttrError, ctx.Err().Error())
+
+	return errs.New(
+		errs.M("thresher shutdown timed out before %d instance(s) settled: %s",
+			len(unsettled), strings.Join(unsettled, ", ")),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(ctx.Err()))
 }
 
 // ------------------ EventProducer interface ----------------------------------
