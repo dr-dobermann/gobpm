@@ -172,10 +172,23 @@ siblings, which land here too ("no pre-existing errors").
   a recovered child whose `ParentID` record is absent → fails loud,
   never runs orphaned. The cancel cascade (`cleanupCall`,
   `calls.go:249-257`) works on the re-linked pair unchanged.
-- **FR-8 — the capture guards retire; the dehydration guard stays,
-  re-justified.** `captureDocument`'s three-construct switch is
-  removed — capture always writes (deferral remains only for the
-  encode/save error paths, still loud). The dehydration gate
+  **Discovery separates roots from called children**: today
+  `Thresher.Instances(filter)` (`pkg/thresher/discovery.go:30`,
+  SRD-019) lists both indistinguishably. The registry records the
+  parent linkage; `Instances` gains `InstancesRoots` /
+  `InstancesChildren` filters (existing filters keep their meaning),
+  and the `InstanceHandle` exposes `ParentID()`/`CallNodeID()` — a
+  host listing "processes" shows roots only, with children reachable
+  through their parent. (Multi-Instance iterations are scopes inside
+  ONE instance and never appear in this registry — the separation
+  concerns Call Activity children only.)
+- **FR-8 — the capture guards retire per milestone; the dehydration
+  guard stays, re-justified.** `captureDocument`'s three-construct
+  switch retires one case per milestone, exactly when the construct's
+  position becomes part of the document — the guard exists precisely
+  while the construct is uncapturable (parallel MI in M2, the sweep in
+  M3, the call in M4). After M4 capture always writes (deferral
+  remains only for the encode/save error paths, still loud). The dehydration gate
   (`loop.go:1131-1134`) **keeps refusing** while these constructs are
   in flight, for the true reason now recorded in its comment: an
   in-flight construct is *active work* (a running child, a running
@@ -325,7 +338,7 @@ re-executed pass 1; no second child was launched.
 | T-4 | sequential MI / Standard Loop position (`internal/instance`) | FR-2/FR-3: capture mid-pass-k; restore resumes at pass k with staging intact; fired condition honored |
 | T-5 | parallel MI open set (`internal/instance`) | FR-2/FR-4: capture with j of n open; restore re-opens exactly the open ordinals; completed outputs preserved |
 | T-6 | sweep capture/restore + window (`internal/instance`) | FR-6: mid-sweep restore resumes the queue in order (Running re-runs); no capture instant loses consumed entries |
-| T-7 | durable child + re-link (`pkg/thresher`) | FR-7: kill mid-call → both records exist; recovery re-links; child completes → parent resumes; no duplicate child |
+| T-7 | durable child + re-link (`pkg/thresher`) | FR-7: kill mid-call → both records exist; recovery re-links; child completes → parent resumes; no duplicate child; `InstancesRoots`/`InstancesChildren` separate the registry and the handle exposes the linkage |
 | T-8 | missing-counterpart refusals (`pkg/thresher`) | FR-7: child record deleted → parent restore fails loud; parent record deleted → child fails loud; engine starts regardless |
 | T-9 | guard retirement (`internal/instance`) | FR-8: capture succeeds with each construct in flight; dehydration still refuses with the new reason |
 | T-10 | e2e kill-and-resume, MI+call composite (`pkg/thresher`) | the §3 worked trace end-to-end |
@@ -335,11 +348,13 @@ re-executed pass 1; no second child was launched.
 - **M1 — schema 4 + the silent-sibling fixes.** FR-1, FR-5, FR-2/FR-3
   (sequential); T-1/T-2/T-3/T-4.
   `feat(instance): schema-4 position records; composite scopes and sequential iteration restore at position (SRD-082 M1)`.
-- **M2 — parallel MI.** FR-4; T-5.
+- **M2 — parallel MI.** FR-4 (incl. its guard's retirement and the
+  codec's explicit nil kind — a pre-sized staging carries holes); T-5.
   `feat(instance): parallel multi-instance groups capture and restore their open set (SRD-082 M2)`.
 - **M3 — the compensation sweep.** FR-6; T-6.
   `feat(instance): a resolving compensation sweep survives the checkpoint (SRD-082 M3)`.
-- **M4 — durable children + guard retirement.** FR-7, FR-8; T-7/T-8/T-9.
+- **M4 — durable children + the last guard's retirement.** FR-7, FR-8;
+  T-7/T-8/T-9.
   `feat(thresher): Call Activity children are durable and re-linked; the capture deferral retires (SRD-082 M4)`.
 - **M5 — the proof + docs.** T-10; guides
   (`operating/persistence.md` "Current limits" rewritten,

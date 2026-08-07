@@ -371,6 +371,12 @@ func seedStaging(
 	}
 
 	for i, el := range col.GetAll(ctx) {
+		// a recorded hole (a parallel slot not yet filled, or canceled):
+		// the pre-sized slot is already nil — skip, SetAt refuses nil.
+		if el == nil {
+			continue
+		}
+
 		// the codec wraps scalars in canonical values; the live staging
 		// holds RAW elements (captureSequentialOutput stores Get's
 		// result) — unwrap, so the published output stays uniform.

@@ -221,6 +221,10 @@ type track struct {
 	// instead of iterating from zero. Set by restore before spawn,
 	// consumed once by the runner.
 	miSeed *checkpoint.MIRecord
+	// miParallelSeed is the parallel counterpart (SRD-082 FR-4): the
+	// runner re-attaches to its restored group instead of fanning out.
+	// Set by the loop's adoption BEFORE the spawns, consumed once.
+	miParallelSeed *miParallelSeed
 	// compScopeSeed, on a compensation event-sub handler host, is the snapshot
 	// committed into the handler's fresh child scope at open (shadowing
 	// reads). Set by the loop before spawn.

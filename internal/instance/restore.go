@@ -123,6 +123,10 @@ func Restore(
 		return nil, err
 	}
 
+	// the parallel open sets ride to the loop's adoption (SRD-082 FR-4)
+	// — the group substrate is loop-owned, so the loop rebuilds it.
+	inst.restoredGroups = doc.MIGroups
+
 	if err := inst.restoreIncidents(doc); err != nil {
 		return nil, err
 	}

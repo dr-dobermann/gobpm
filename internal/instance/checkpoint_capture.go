@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"time"
 
@@ -135,11 +136,12 @@ func (ls *loopState) captureDocument(
 ) (*checkpoint.Document, string) {
 	inst := ls.inst
 
+	// The remaining capture-deferral guards (SRD-070 FR-4's stopgap),
+	// retiring one per SRD-082 milestone as each construct's position
+	// becomes part of the document: parallel MI groups capture since M2.
 	switch {
 	case len(ls.calls) > 0:
 		return nil, "a Call Activity is in flight"
-	case len(ls.miGroups) > 0:
-		return nil, "a parallel multi-instance group is in flight"
 	case len(ls.sweeps) > 0:
 		return nil, "a compensation sweep is in flight"
 	}
@@ -191,10 +193,67 @@ func (ls *loopState) captureDocument(
 		}
 	}
 
+	groups, encErr := ls.miGroupRecords(ctx)
+	if encErr != "" {
+		return nil, encErr
+	}
+
+	doc.MIGroups = groups
 	doc.Boundaries = ls.boundaryRecords()
 	doc.Incidents = inst.incidentRecords()
 
 	return doc, ""
+}
+
+// miGroupRecords captures the parallel Multi-Instance open sets
+// (SRD-082 FR-4). Everything read — the group registry, the open map,
+// the staging the loop itself writes — is loop-owned, so the capture
+// is a consistent cut by construction. Open sets sort by ordinal for a
+// deterministic document.
+func (ls *loopState) miGroupRecords(
+	ctx context.Context,
+) ([]checkpoint.MIGroupRecord, string) {
+	if len(ls.miGroups) == 0 {
+		return nil, ""
+	}
+
+	out := make([]checkpoint.MIGroupRecord, 0, len(ls.miGroups))
+
+	for _, grp := range ls.miGroups {
+		rec := checkpoint.MIGroupRecord{
+			HostTrack: grp.host.ID(),
+			N:         grp.n,
+			Pending:   grp.pending,
+			Open:      make([]checkpoint.OpenScope, 0, len(grp.open)),
+		}
+
+		for p, ord := range grp.open {
+			rec.Open = append(rec.Open,
+				checkpoint.OpenScope{Path: string(p), Ordinal: ord})
+		}
+
+		sort.Slice(rec.Open, func(i, j int) bool {
+			return rec.Open[i].Ordinal < rec.Open[j].Ordinal
+		})
+
+		if grp.staging != nil {
+			raw, err := checkpoint.EncodeValue(
+				ctx, "mi group "+grp.host.ID(), grp.staging)
+			if err != nil {
+				return nil, "encode: " + err.Error()
+			}
+
+			rec.Staging = raw
+		}
+
+		out = append(out, rec)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].HostTrack < out[j].HostTrack
+	})
+
+	return out, ""
 }
 
 // boundaryRecords captures the boundary events armed over the live tracks

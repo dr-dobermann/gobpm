@@ -280,20 +280,26 @@ func TestCaptureArms(t *testing.T) {
 		return inst, newLoopState(inst), sink
 	}
 
-	t.Run("MI and sweep guards defer",
+	t.Run("the remaining guards defer; a parallel group captures",
 		func(t *testing.T) {
 			inst, ls, _ := newArmedInstance(t)
 
-			ls.miGroups["g"] = nil
-			_, reason := ls.captureDocument(context.Background())
-			require.Contains(t, reason, "multi-instance")
+			// the miGroups guard retired with SRD-082 M2 — a live group
+			// is recorded, not deferred (an empty one records nothing).
+			ls.miGroups["g"] = &miGroup{host: inst.tracks[firstTrackID(inst)]}
+			doc, reason := ls.captureDocument(context.Background())
+			require.Empty(t, reason)
+			require.Len(t, doc.MIGroups, 1)
 
 			delete(ls.miGroups, "g")
 			ls.sweeps["s"] = nil
 			_, reason = ls.captureDocument(context.Background())
 			require.Contains(t, reason, "compensation sweep")
 
-			_ = inst
+			ls.sweeps = map[string]*sweepRun{}
+			ls.calls["c"] = nil
+			_, reason = ls.captureDocument(context.Background())
+			require.Contains(t, reason, "Call Activity")
 		})
 
 	t.Run("ledger entries flatten with their folded children",
@@ -771,4 +777,14 @@ func TestRestoreKeysAndLedgerEncodeArms(t *testing.T) {
 			_, reason := ls.captureDocument(context.Background())
 			require.Contains(t, reason, "ledger encode:")
 		})
+}
+
+// firstTrackID returns any track id of the instance (the armed-capture
+// tests need a host for a synthetic group).
+func firstTrackID(inst *Instance) string {
+	for id := range inst.tracks {
+		return id
+	}
+
+	return ""
 }

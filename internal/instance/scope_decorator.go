@@ -36,6 +36,11 @@ const (
 	// completionCondition fired (SRD-082 FR-2) — the one decorator
 	// decision the loop cannot observe from the open/drain protocol.
 	scopeNote
+	// scopeReAttach is a RESTORED parallel runner re-joining its adopted
+	// group (SRD-082 FR-4): the loop lifts the entries' awaitAttach
+	// holds — the roundtrip is the fence — and completes any drains
+	// that arrived early.
+	scopeReAttach
 )
 
 // scopeRequest is a looped composite's off-loop iteration decorator asking the
@@ -132,6 +137,8 @@ func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 		}
 
 		req.reply <- scopeReply{}
+	case scopeReAttach:
+		ls.handleReAttach(ctx, req)
 	default:
 		ls.handleScopeOpen(ctx, req)
 	}

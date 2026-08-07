@@ -50,6 +50,11 @@ const (
 	kindRecord = "record"
 	kindMap    = "map"
 	kindTime   = "time"
+	// kindNil is an explicit hole: a parallel Multi-Instance stages into
+	// a slice PRE-SIZED to N, so unfilled and canceled slots are nil —
+	// in the staging record and in the published output alike (SRD-082
+	// FR-4; before it, one nil poisoned every later checkpoint).
+	kindNil = "nil"
 )
 
 // EncodeData encodes one scope's committed data set. The scopePath
@@ -263,6 +268,10 @@ func encodeArray(
 func encodeAny(
 	ctx context.Context, scopePath, name string, x any,
 ) (node, error) {
+	if x == nil {
+		return node{Kind: kindNil}, nil
+	}
+
 	if v, ok := x.(data.Value); ok {
 		return encodeValue(ctx, scopePath, name, v)
 	}

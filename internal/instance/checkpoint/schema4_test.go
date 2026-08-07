@@ -112,3 +112,29 @@ func TestEncodeValueRefusesUncodable(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "isn't checkpoint-codable")
 }
+
+// TestEncodeDecodeValueWithHoles: a pre-sized parallel staging carries
+// nil slots — the codec's explicit nil kind round-trips them (before
+// it, one nil poisoned every later checkpoint of the instance).
+func TestEncodeDecodeValueWithHoles(t *testing.T) {
+	ctx := t.Context()
+
+	raw, err := EncodeValue(ctx, "test",
+		values.NewArray[any]("filled", nil, nil))
+	require.NoError(t, err)
+
+	back, err := DecodeValue(ctx, raw)
+	require.NoError(t, err)
+
+	col, ok := back.(data.Collection)
+	require.True(t, ok)
+
+	all := col.GetAll(ctx)
+	require.Len(t, all, 3)
+	require.Nil(t, all[1])
+	require.Nil(t, all[2])
+
+	v, isVal := all[0].(data.Value)
+	require.True(t, isVal)
+	require.Equal(t, "filled", v.Get(ctx))
+}

@@ -35,6 +35,14 @@ type miGroup struct {
 	pending    int
 }
 
+// miParallelSeed is a RESTORED parallel position (SRD-082 FR-4): the
+// frozen N and the drains the capture had already absorbed. The seeded
+// runner re-attaches to its adopted group instead of fanning out.
+type miParallelSeed struct {
+	n         int
+	completed int
+}
+
 // runMIParallel drives a parallel Multi-Instance composite from the host's own
 // runner goroutine — the off-loop iteration decorator (SRD-056.A, ADR-025 v.2
 // §2.12), the fan-out-then-await-all sibling of runMISequential. It resolves N once
@@ -50,7 +58,7 @@ type miGroup struct {
 func (t *track) runMIParallel(
 	ctx context.Context, step *stepInfo, mi multiInstance,
 ) ([]*flow.SequenceFlow, error) {
-	n, col, err := miIterator{mi: mi}.resolveActivation(ctx, t, step.node)
+	n, first, err := t.parallelActivation(ctx, step, mi)
 	if err != nil {
 		return nil, err
 	}
@@ -61,15 +69,7 @@ func (t *track) runMIParallel(
 		return t.executeNode(ctx, step)
 	}
 
-	// ask the loop to open all N instance scopes and build the group barrier; it
-	// marks the host waiting before replying, so the first drain dispatches.
-	if _, err := t.instance.scopeRoundtrip(ctx, scopeRequest{
-		op: scopeFanOut, host: t, node: step.node, n: n, col: col,
-	}); err != nil {
-		return nil, err
-	}
-
-	for completed := 0; ; {
+	for completed := first; ; {
 		if err := t.awaitScopeDrained(ctx); err != nil {
 			return nil, err
 		}
@@ -87,6 +87,85 @@ func (t *track) runMIParallel(
 	}
 
 	return t.executeNode(ctx, step)
+}
+
+// parallelActivation resolves the fan-out — or, for a RESTORED host,
+// re-attaches to the adopted group (SRD-082 FR-4): the frozen N is the
+// record's, the fan-out is skipped (the open scopes and their tracks
+// restored independently), and the barrier resumes at the drains the
+// capture had absorbed. The re-attach roundtrip is the fence that
+// makes the host state loop-readable and releases any early drains.
+func (t *track) parallelActivation(
+	ctx context.Context, step *stepInfo, mi multiInstance,
+) (int, int, error) {
+	if seed := t.miParallelSeed; seed != nil {
+		t.miParallelSeed = nil
+
+		if _, err := t.instance.scopeRoundtrip(ctx, scopeRequest{
+			op: scopeReAttach, host: t, node: step.node,
+		}); err != nil {
+			return 0, 0, err
+		}
+
+		return seed.n, seed.completed, nil
+	}
+
+	n, col, err := miIterator{mi: mi}.resolveActivation(ctx, t, step.node)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if n <= 0 {
+		return n, 0, nil
+	}
+
+	// ask the loop to open all N instance scopes and build the group barrier; it
+	// marks the host waiting before replying, so the first drain dispatches.
+	if _, err := t.instance.scopeRoundtrip(ctx, scopeRequest{
+		op: scopeFanOut, host: t, node: step.node, n: n, col: col,
+	}); err != nil {
+		return 0, 0, err
+	}
+
+	return n, 0, nil
+}
+
+// handleReAttach lifts a restored group's awaitAttach holds and
+// completes the drains that arrived before the runner re-joined
+// (SRD-082 FR-4). The host is re-marked waiting; the first completed
+// drain dispatches, the rest queue through the re-arm handshake. Runs
+// on the loop goroutine.
+func (ls *loopState) handleReAttach(ctx context.Context, req scopeRequest) {
+	grp, ok := ls.miGroups[req.host.ID()]
+	if !ok {
+		req.reply <- scopeReply{err: errs.New(
+			errs.M("re-attach for %q, which has no restored group",
+				req.host.ID()),
+			errs.C(errorClass, errs.InvalidState))}
+
+		return
+	}
+
+	ls.waiting[req.host.ID()] = struct{}{}
+
+	pending := make([]scope.DataPath, 0, len(grp.open))
+
+	for p := range grp.open {
+		entry := ls.scopes[p]
+		entry.awaitAttach = false
+
+		if entry.drainPending {
+			entry.drainPending = false
+
+			pending = append(pending, p)
+		}
+	}
+
+	req.reply <- scopeReply{}
+
+	for _, p := range pending {
+		ls.completeScope(ctx, p, ls.scopes[p])
+	}
 }
 
 // parallelBarrierStep processes one delivered instance drain of a parallel

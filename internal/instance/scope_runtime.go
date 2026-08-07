@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"slices"
 	"strconv"
 
@@ -354,15 +355,26 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 		return nil // a bare test instance carries no scope plane
 	}
 
+	// the parallel groups first (SRD-082 FR-4): their instance scopes
+	// carry per-ordinal segments the generic host derivation below
+	// cannot resolve — the group record is what identifies them.
+	if err := ls.adoptRestoredGroups(initial); err != nil {
+		return err
+	}
+
 	for _, path := range ls.inst.sc.plane.OpenPaths() {
 		if path == ls.inst.sc.root {
 			continue
 		}
 
+		if _, ok := ls.scopes[path]; ok {
+			continue // a group instance scope, adopted above
+		}
+
+		// an open non-root path always has a parent — a DropTail failure
+		// is the wired-itself-wrong class, not an input error.
 		parent, err := path.DropTail()
 		if err != nil {
-			// an open non-root path always has a parent — this is the
-			// wired-itself-wrong class, not an input error.
 			return errs.Invariant(
 				"restored scope %q has no parent path: %v", string(path), err)
 		}
@@ -392,6 +404,103 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 			awaitAttach: drivesOwnIteration(node),
 		}
 		ls.waiting[host.ID()] = struct{}{}
+	}
+
+	return nil
+}
+
+// adoptRestoredGroups rebuilds the parallel Multi-Instance barriers
+// from the recorded open sets (SRD-082 FR-4): the loop-owned miGroup,
+// one awaitAttach scope entry per still-open instance (their drains
+// hold for the runner's re-attach), the decoded staging, and the
+// host's seed — the runner then re-attaches instead of fanning out.
+func (ls *loopState) adoptRestoredGroups(initial []*track) error {
+	for i := range ls.inst.restoredGroups {
+		rec := &ls.inst.restoredGroups[i]
+
+		host := trackByID(initial, rec.HostTrack)
+		if host == nil {
+			return errs.New(
+				errs.M("restored MI group names host track %q, which the "+
+					"track table does not carry", rec.HostTrack),
+				errs.C(errorClass, errs.InvalidState))
+		}
+
+		node := host.steps[len(host.steps)-1].node
+
+		mi := multiInstanceOf(node)
+		if mi == nil {
+			return errs.New(
+				errs.M("restored MI group host %q is not a Multi-Instance "+
+					"node", node.ID()),
+				errs.C(errorClass, errs.InvalidState))
+		}
+
+		grp := &miGroup{
+			host:       host,
+			node:       node,
+			open:       make(map[scope.DataPath]int, len(rec.Open)),
+			inputItem:  mi.InputDataItem(),
+			outputRef:  mi.LoopDataOutputRef(),
+			outputItem: mi.OutputDataItem(),
+			n:          rec.N,
+		}
+
+		if grp.outputRef != "" {
+			grp.staging = values.NewArray[any](make([]any, rec.N)...)
+
+			if rec.Staging != nil {
+				if err := seedStaging(context.Background(), grp.staging,
+					rec.Staging); err != nil {
+					return err
+				}
+			}
+		}
+
+		open := ls.inst.sc.plane.OpenPaths()
+
+		for _, o := range rec.Open {
+			path := scope.DataPath(o.Path)
+
+			if !slices.Contains(open, path) {
+				return errs.New(
+					errs.M("restored MI group open scope %q is not in the "+
+						"document's scope table", o.Path),
+					errs.C(errorClass, errs.InvalidState))
+			}
+
+			ls.scopes[path] = &scopeEntry{
+				host:        host,
+				group:       grp,
+				node:        node,
+				parent:      host.scopePath,
+				ordinal:     o.Ordinal,
+				awaitAttach: true,
+			}
+			grp.open[path] = o.Ordinal
+		}
+
+		ls.miGroups[host.ID()] = grp
+		ls.waiting[host.ID()] = struct{}{}
+
+		// the drains already absorbed by the capture (closed scopes,
+		// staged outputs) seed the runner's delivered count; recorded
+		// pending folds in — those drains completed before the crash.
+		host.miParallelSeed = &miParallelSeed{
+			n:         rec.N,
+			completed: rec.N - len(rec.Open),
+		}
+	}
+
+	return nil
+}
+
+// trackByID finds a restored track by its recorded id.
+func trackByID(initial []*track, id string) *track {
+	for _, t := range initial {
+		if t.ID() == id {
+			return t
+		}
 	}
 
 	return nil

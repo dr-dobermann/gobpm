@@ -186,6 +186,11 @@ func captureAt(
 			for _, sc := range last.Scopes {
 				t.Logf("last doc scope: %s", sc.Path)
 			}
+
+			for _, g := range last.MIGroups {
+				t.Logf("last doc group: host=%s n=%d open=%v",
+					g.HostTrack, g.N, g.Open)
+			}
 		}
 
 		t.Fatal("the wanted checkpoint never appeared")
@@ -869,4 +874,361 @@ func TestCaptureDefersOnUncodableStaging(t *testing.T) {
 		return sink.has(observability.PhaseCheckpointDeferred)
 	}, 3*time.Second, 5*time.Millisecond,
 		"the uncodable staging must defer the capture loudly")
+}
+
+// parallelCapturedDoc runs a 3-instance parallel MI to "one completed,
+// two parked" and captures that document.
+func parallelCapturedDoc(
+	t *testing.T, key string, withOutput bool,
+) (*checkpoint.Document, *snapshot.Snapshot, *atomic.Int32, *atomic.Int32) {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	var count, gate atomic.Int32
+
+	gate.Store(1) // instance 0's catch fires at arming; 1 and 2 park
+
+	opts := []activities.MultiInstanceOption{
+		activities.WithInputCollection("items", "item"),
+	}
+	if withOutput {
+		opts = append(opts, activities.WithOutputCollection("outs", "res"))
+	}
+
+	mi, err := activities.NewMultiInstance(opts...)
+	require.NoError(t, err)
+
+	items := data.MustProperty("items",
+		data.MustItemDefinition(values.NewArray("a", "b", "c"),
+			foundation.WithID("items")),
+		data.ReadyDataState)
+
+	op, err := gooper.New(key+"-op",
+		func(ctx context.Context, r service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			count.Add(1)
+
+			if !withOutput {
+				return nil, nil
+			}
+
+			d, err := r.GetData("item")
+			if err != nil {
+				return nil, err
+			}
+
+			v, _ := d.Value().Get(ctx).(string)
+
+			return data.MustItemDefinition(
+				values.NewVariable("R:"+v), foundation.WithID("res")), nil
+		})
+	require.NoError(t, err)
+
+	s := gatedBodyProcess(t, key, op, &gate, mi, items)
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		return len(d.MIGroups) == 1 && len(d.MIGroups[0].Open) == 2
+	})
+
+	return doc, s, &count, &gate
+}
+
+// TestParallelMIRestoresOpenSet is T-5: the restored group re-opens
+// exactly the still-open ordinals over their restored data, the
+// completed instance's staged output survives, nothing re-executes,
+// and the assembled output is complete and uniform.
+func TestParallelMIRestoresOpenSet(t *testing.T) {
+	doc, s, count, gate := parallelCapturedDoc(t, "cr-par", true)
+
+	require.Equal(t, int32(3), count.Load(),
+		"every instance ran its work before the crash (parallel)")
+
+	rec := doc.MIGroups[0]
+	require.Equal(t, 3, rec.N)
+	require.NotEmpty(t, rec.Staging)
+	require.Equal(t,
+		[]checkpoint.OpenScope{
+			{Path: rec.Open[0].Path, Ordinal: 1},
+			{Path: rec.Open[1].Path, Ordinal: 2},
+		}, rec.Open, "the open set records ordinals 1 and 2, sorted")
+
+	gate.Store(3)
+	restored := restoreToDone(t, doc, s)
+
+	require.Equal(t, int32(3), count.Load(),
+		"no instance body re-executes after the restore")
+
+	d, err := restored.sc.plane.GetData(restored.sc.root, "outs")
+	require.NoError(t, err)
+
+	col, _ := d.Value().(data.Collection)
+	require.Equal(t, []any{"R:a", "R:b", "R:c"},
+		col.GetAll(context.Background()),
+		"the assembled output: the restored slot uniform with live ones")
+}
+
+// TestParallelMIRestoresWithoutOutput: a no-output group (nil staging)
+// restores and completes the same way.
+func TestParallelMIRestoresWithoutOutput(t *testing.T) {
+	doc, s, count, gate := parallelCapturedDoc(t, "cr-parnoout", false)
+
+	require.Empty(t, doc.MIGroups[0].Staging)
+
+	gate.Store(3)
+	restoreToDone(t, doc, s)
+
+	require.Equal(t, int32(3), count.Load())
+}
+
+// TestParallelMIRestoreRefusals: a group record the document cannot
+// honor refuses loud (SRD-082 FR-4, NFR-2).
+func TestParallelMIRestoreRefusals(t *testing.T) {
+	t.Run("garbage group staging", func(t *testing.T) {
+		doc, s, _, gate := parallelCapturedDoc(t, "cr-parbadstage", true)
+
+		doc.MIGroups[0].Staging = json.RawMessage(`{broken`)
+
+		gate.Store(3)
+		restoreExpectFault(t, doc, s)
+	})
+
+	t.Run("a host track the table does not carry", func(t *testing.T) {
+		doc, s, _, gate := parallelCapturedDoc(t, "cr-parnohost", true)
+
+		doc.MIGroups[0].HostTrack = "gone"
+
+		gate.Store(3)
+		restoreExpectFault(t, doc, s)
+	})
+
+	t.Run("an open scope missing from the scope table", func(t *testing.T) {
+		doc, s, _, gate := parallelCapturedDoc(t, "cr-parnoscope", true)
+
+		doc.MIGroups[0].Open[0].Path += "-phantom"
+
+		gate.Store(3)
+		restoreExpectFault(t, doc, s)
+	})
+}
+
+// restoredLoopState restores doc WITHOUT running it and hands back the
+// loop state with the adoption applied — the deterministic way to
+// exercise the drain-before-attach orders the scheduler rarely shows.
+func restoredLoopState(
+	t *testing.T, doc *checkpoint.Document, s *snapshot.Snapshot,
+) (*Instance, *loopState, []*track) {
+	t.Helper()
+
+	ep := mockeventproc.NewMockEventProducer(t)
+	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+
+	restored, err := Restore(doc, s, scope.EmptyDataPath,
+		cpRuntime(t), ep, nil, nil)
+	require.NoError(t, err)
+
+	initial := make([]*track, 0, len(restored.tracks))
+	for _, tr := range restored.tracks {
+		initial = append(initial, tr)
+	}
+
+	ls := newLoopState(restored)
+	require.NoError(t, ls.adoptRestoredScopes(initial))
+
+	return restored, ls, initial
+}
+
+// TestDrainBeforeReAttachSerial: a restored serial scope that drains
+// before its runner re-attaches HOLDS the completion; the re-attach
+// roundtrip releases it (SRD-082 FR-3 — the miState fence).
+func TestDrainBeforeReAttachSerial(t *testing.T) {
+	var count, gate atomic.Int32
+
+	s := gatedBodyProcess(t, "cr-hold", countOp(t, &count), &gate, nil)
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		return openScope(d) && len(d.Tracks) == 2
+	})
+
+	restored, ls, initial := restoredLoopState(t, doc, s)
+
+	var child scope.DataPath
+
+	for p := range ls.scopes {
+		child = p
+	}
+
+	entry := ls.scopes[child]
+	entry.awaitAttach = true // the own-iteration posture, forced
+	entry.active = 1
+
+	// the inner track drains BEFORE the runner re-attached: held.
+	inner := initial[0]
+	if inner == entry.host {
+		inner = initial[1]
+	}
+
+	ls.decScope(context.Background(), inner)
+	require.True(t, entry.drainPending, "the drain must hold for the fence")
+
+	if _, open := ls.scopes[child]; !open {
+		t.Fatal("the scope must not complete before the re-attach")
+	}
+
+	// the runner re-attaches: the reply fences, the held drain completes.
+	req := scopeRequest{
+		op: scopeOpen, host: entry.host, node: entry.node,
+		reply: make(chan scopeReply, 1),
+	}
+	ls.handleScopeOpen(context.Background(), req)
+
+	r := <-req.reply
+	require.NoError(t, r.err)
+
+	_, open := ls.scopes[child]
+	require.False(t, open, "the held drain completes on re-attach")
+
+	_ = restored
+}
+
+// TestDrainBeforeReAttachParallel: the parallel counterpart — held
+// instance drains complete on the group's scopeReAttach; a re-attach
+// without a restored group refuses loud.
+func TestDrainBeforeReAttachParallel(t *testing.T) {
+	doc, s, _, _ := parallelCapturedDoc(t, "cr-parhold", true)
+
+	restored, ls, initial := restoredLoopState(t, doc, s)
+
+	grp := ls.miGroups[doc.MIGroups[0].HostTrack]
+	require.NotNil(t, grp)
+
+	// pick one open instance scope and drain its parked catch track
+	// before the runner re-attaches.
+	var path scope.DataPath
+
+	for p := range grp.open {
+		path = p
+
+		break
+	}
+
+	entry := ls.scopes[path]
+	entry.active = 1
+
+	var inner *track
+
+	for _, tr := range initial {
+		if tr.scopePath == path {
+			inner = tr
+
+			break
+		}
+	}
+
+	require.NotNil(t, inner)
+
+	ls.decScope(context.Background(), inner)
+	require.True(t, entry.drainPending)
+
+	req := scopeRequest{
+		op: scopeReAttach, host: grp.host, node: grp.node,
+		reply: make(chan scopeReply, 1),
+	}
+	ls.handleReAttach(context.Background(), req)
+
+	r := <-req.reply
+	require.NoError(t, r.err)
+
+	_, open := ls.scopes[path]
+	require.False(t, open, "the held instance drain completes on re-attach")
+
+	// a re-attach naming a host with no restored group refuses loud.
+	orphan := scopeRequest{
+		op: scopeReAttach, host: inner, node: grp.node,
+		reply: make(chan scopeReply, 1),
+	}
+	ls.handleReAttach(context.Background(), orphan)
+
+	require.Error(t, (<-orphan.reply).err)
+
+	_ = restored
+}
+
+// TestGroupRecordOnNonMIHost: a group record naming a host whose node
+// is not a Multi-Instance refuses the restore loud.
+func TestGroupRecordOnNonMIHost(t *testing.T) {
+	var count, gate atomic.Int32
+
+	s := gatedBodyProcess(t, "cr-notmi", countOp(t, &count), &gate, nil)
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		return openScope(d) && len(d.Tracks) == 2
+	})
+
+	var hostID string
+
+	for _, tr := range doc.Tracks {
+		if tr.NodeID == "cr-notmi-body" {
+			hostID = tr.ID
+		}
+	}
+
+	doc.MIGroups = append(doc.MIGroups, checkpoint.MIGroupRecord{
+		HostTrack: hostID, N: 2,
+	})
+
+	gate.Store(1)
+	restoreExpectFault(t, doc, s)
+}
+
+// TestParallelCaptureDefersOnUncodableStaging: an unserializable
+// element in a GROUP's staging defers the capture loudly, exactly as
+// the sequential one does.
+func TestParallelCaptureDefersOnUncodableStaging(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	var gate atomic.Int32
+
+	gate.Store(1) // instance 0 completes, staging one chan; 1 and 2 park
+
+	mi, err := activities.NewMultiInstance(
+		activities.WithInputCollection("items", "item"),
+		activities.WithOutputCollection("outs", "res"))
+	require.NoError(t, err)
+
+	items := data.MustProperty("items",
+		data.MustItemDefinition(values.NewArray("a", "b", "c"),
+			foundation.WithID("items")),
+		data.ReadyDataState)
+
+	op, err := gooper.New("cr-parhot-op",
+		func(_ context.Context, _ service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			return data.MustItemDefinition(
+				values.NewVariable(make(chan int)),
+				foundation.WithID("res")), nil
+		})
+	require.NoError(t, err)
+
+	s := gatedBodyProcess(t, "cr-parhot", op, &gate, mi, items)
+
+	rt := cpRuntime(t)
+	sink := &cpSink{}
+	ep := mockeventproc.NewMockEventProducer(t)
+	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+
+	inst, err := New(s, scope.EmptyDataPath, rt.WithReporter(sink), ep, nil,
+		WithCheckpointing("engine-A", "engine-A", time.Minute))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	require.NoError(t, inst.Run(ctx))
+
+	require.Eventually(t, func() bool {
+		return sink.has(observability.PhaseCheckpointDeferred)
+	}, 3*time.Second, 5*time.Millisecond)
 }

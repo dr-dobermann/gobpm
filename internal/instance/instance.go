@@ -99,6 +99,10 @@ type Instance struct {
 	// set, New wires this to read each track's `held` flag (set at arm time when
 	// a holder accepted the wait). Tests may inject their own predicate.
 	waitHeld func(*track) bool
+	// restoredGroups are the checkpoint-recorded parallel Multi-Instance
+	// open sets the loop adopts at start (SRD-082 FR-4); nil for a fresh
+	// instance.
+	restoredGroups []checkpoint.MIGroupRecord
 	// restoredLedgers is the checkpoint-rebuilt compensation ledger the
 	// loop adopts at start (SRD-070 FR-6); nil for a fresh instance.
 	restoredLedgers map[scope.DataPath][]*ledgerEntry
