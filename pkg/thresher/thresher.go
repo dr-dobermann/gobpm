@@ -1021,17 +1021,31 @@ func (t *Thresher) RegisterProcess(
 	// holding the engine lock across an engine-subsystem call is the deadlock
 	// class FIX-002 RC2 warns about. Before Run the hub isn't started yet, so
 	// registration is deferred to Run (registerAllStarters wires latest-only).
-	if t.State() == Started {
+	//
+	// The claim makes this path and Run's sweep idempotent against each other:
+	// Run publishes Started before it sweeps, so a registration landing between
+	// the two is visible to both, and without the claim both would wire it
+	// (FIX-036 §1.8).
+	if t.State() == Started && t.claimWiringLocked(reg) {
 		// Latest-supersedes (ADR-019 §2.5): the new version takes over auto-start,
 		// so the previous latest's starters stop firing. A superseded version only
 		// finishes its already-running instances.
 		if prevLatest != nil {
 			if err := t.unregisterStarters(prevLatest.starters); err != nil {
+				t.releaseWiringLocked(reg)
+
 				return nil, err
 			}
+
+			t.releaseWiringLocked(prevLatest)
 		}
 
 		if err := t.registerStarters(starters); err != nil {
+			// registerStarters is all-or-nothing (FIX-013 §1.3), so nothing of
+			// this version reached the hub: give the claim back rather than
+			// leave a version marked wired that is not.
+			t.releaseWiringLocked(reg)
+
 			return nil, err
 		}
 	}
@@ -1096,10 +1110,17 @@ func (t *Thresher) UnregisterVersion(reg *ProcessRegistration) error {
 			return err
 		}
 
+		t.setLatestWiredLocked(reg.key, false)
+
 		// promote the now-newest remaining version to live auto-start (empty for
 		// a manual-start version or when the key had a single version).
 		if len(promote) > 0 {
-			return t.registerStarters(promote)
+			if err := t.registerStarters(promote); err != nil {
+				return err
+			}
+
+			// the promoted version now owns the live starter set.
+			t.setLatestWiredLocked(reg.key, true)
 		}
 	}
 
@@ -1222,7 +1243,27 @@ func (t *Thresher) unregisterStarters(starters []*instanceStarter) error {
 // version of every process registered before Run (only the latest auto-starts —
 // latest-supersedes; the hub accepts registrations once Started).
 func (t *Thresher) registerAllStarters() error {
-	return t.registerStarters(t.latestStartersLocked())
+	claimed := t.claimLatestRegistrationsLocked()
+
+	var starters []*instanceStarter
+	for _, reg := range claimed {
+		starters = append(starters, reg.starters...)
+	}
+
+	if err := t.registerStarters(starters); err != nil {
+		// Give every claim back. registerStarters is all-or-nothing (FIX-013
+		// §1.3) and Run rolls the whole start back, so leaving these versions
+		// marked wired would make the RETRY wire nothing — an engine that
+		// starts cleanly with no auto-start at all, which is worse than the
+		// double-wiring the claim exists to prevent.
+		for _, reg := range claimed {
+			t.releaseWiringLocked(reg)
+		}
+
+		return err
+	}
+
+	return nil
 }
 
 // resolveAndLaunch performs the create-or-route-or-join decision per correlation

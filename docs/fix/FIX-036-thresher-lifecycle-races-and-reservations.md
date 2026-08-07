@@ -320,9 +320,27 @@ neither claims the stop was orderly.
 
 #### 3.2.9 `pkg/thresher/thresher.go` — starter wiring is idempotent
 
-`instanceReg`/the version record gains a `startersWired` flag set under `t.m`;
-both `RegisterProcess` and `registerAllStarters` check-and-set it, so whichever
-runs first wires and the other is a no-op.
+`ProcessRegistration` gains a `wired` flag guarded by `t.m`; both
+`RegisterProcess` and `registerAllStarters` check-and-set it, so whichever runs
+first wires and the other is a no-op.
+
+Only the double-wiring interleaving is reachable, and it is worth saying why the
+opposite one is not: `Run` stores `Started` *before* it sweeps, so a
+`RegisterProcess` whose state read returns not-started is ordered before that
+store, hence before the sweep's registry read — its version is therefore always
+visible to the sweep. The two paths can both wire; they cannot both skip.
+
+**A claim must be released whenever it does not result in a live subscription.**
+`registerStarters` is all-or-nothing (FIX-013 §1.3), so a failed call leaves
+nothing on the hub, and `Run` rolls the whole start back on one — a claim kept
+across that rollback would make the RETRY find every version already marked
+wired and wire nothing, starting a clean engine with no auto-start at all. That
+is a worse failure than the double-wiring the flag exists to prevent, and
+`TestRunRollsBackWhenStarterRegistrationFails` catches it. The claim is
+therefore handed back on every failure path, and the flag tracks the hub in both
+directions: `RegisterProcess` releases the superseded version's claim as it tears
+its starters down, and promote-on-removal takes the claim for the version it
+promotes.
 
 ## 4 Verification
 
@@ -340,7 +358,8 @@ runs first wires and the other is a no-op.
 | T-5a | `TestPanickingLogRedactorContained` | a redactor that panics suppresses the record rather than echoing it unredacted, and leaves the observer stream — which is not the redactor's to deny — untouched (§1.5) |
 | T-6 | `TestUpdateStateRejectsLifecycleJumps` | `Started` on a never-run engine is refused; `Started ↔ Paused` is admitted (§1.6) |
 | T-7 | `TestShutdownAwaitsInstanceBornDuringCancel` | an instance created in the snapshot→cancel window is awaited; the timeout error names the unsettled (§1.7) |
-| T-8 | `TestStartersWiredExactlyOnce` | a registration racing `Run` yields exactly one hub registration per starter (§1.8) |
+| T-8 | `TestStartersWiredExactlyOnce` | a registration racing `Run` yields exactly one hub registration per starter — counted at the hub, so a second arm fails it (§1.8) |
+| T-8a | `TestFailedSweepReleasesItsClaims` | a sweep that wired nothing claims nothing, so `Run`'s rollback stays retryable (§1.8) |
 
 ### 4.2 Gate
 

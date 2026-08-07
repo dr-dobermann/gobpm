@@ -117,21 +117,70 @@ func (t *Thresher) removeKeyLocked(
 	return liveStarters, true
 }
 
-// latestStartersLocked collects the instance-starters of the latest version of
-// every registered key — the set Run wires onto the hub at startup (only the
-// latest auto-starts; latest-supersedes).
-func (t *Thresher) latestStartersLocked() []*instanceStarter {
+// claimLatestRegistrationsLocked claims the hub wiring of the latest version of
+// every registered key — the set Run wires at startup (only the latest
+// auto-starts; latest-supersedes) — and returns the registrations it claimed,
+// so a caller that fails can give every one of them back.
+//
+// The claim is what makes the two wiring paths idempotent against each other
+// (FIX-036 §1.8). Run publishes Started before it sweeps, so a RegisterProcess
+// that lands in between sees a started engine and wires its own starters, while
+// the sweep still finds that version in the registry and would wire them a
+// second time. Whichever arrives first claims; the other skips that key.
+func (t *Thresher) claimLatestRegistrationsLocked() []*ProcessRegistration {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	var all []*instanceStarter
+	var claimed []*ProcessRegistration
+
 	for _, regs := range t.registrations {
-		if n := len(regs); n > 0 {
-			all = append(all, regs[n-1].starters...)
+		n := len(regs)
+		if n == 0 || regs[n-1].wired {
+			continue
 		}
+
+		regs[n-1].wired = true
+
+		claimed = append(claimed, regs[n-1])
 	}
 
-	return all
+	return claimed
+}
+
+// claimWiringLocked claims the hub wiring of reg's starters, returning false if
+// they are already claimed — the RegisterProcess half of the same handshake.
+func (t *Thresher) claimWiringLocked(reg *ProcessRegistration) bool {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	if reg.wired {
+		return false
+	}
+
+	reg.wired = true
+
+	return true
+}
+
+// releaseWiringLocked records that reg's starters have left the hub, so a later
+// promotion — or a retry after a failed registration — can wire them again.
+func (t *Thresher) releaseWiringLocked(reg *ProcessRegistration) {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	reg.wired = false
+}
+
+// setLatestWiredLocked records whether key's latest registration owns the live
+// starter set. It is how promote-on-removal claims the wiring for the version
+// it just promoted, whose registration the remover does not hold.
+func (t *Thresher) setLatestWiredLocked(key string, wired bool) {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	if regs := t.registrations[key]; len(regs) > 0 {
+		regs[len(regs)-1].wired = wired
+	}
 }
 
 // keyInFlight is the reservation's value while its instance is being launched:

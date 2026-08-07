@@ -2,6 +2,7 @@ package thresher
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -949,6 +950,7 @@ type armHookHub struct {
 	mu         sync.Mutex
 	onRegister func()
 	withdrawn  map[string]int // eDefID → successful withdrawals
+	registered int            // total successful arms
 }
 
 // hookOnce installs a one-shot callback run at the start of the next arm.
@@ -977,6 +979,28 @@ func (h *armHookHub) RegisterEvent(
 	}
 
 	return h.EventHub.RegisterEvent(ep, eDef)
+}
+
+// RegisterPersistentEvent counts the arms of the instance-STARTER path, which
+// is the one T-8 watches: a starter subscription is persistent by nature.
+func (h *armHookHub) RegisterPersistentEvent(
+	ep eventproc.EventProcessor, eDef flow.EventDefinition,
+) error {
+	err := h.EventHub.RegisterPersistentEvent(ep, eDef)
+	if err == nil {
+		h.mu.Lock()
+		h.registered++
+		h.mu.Unlock()
+	}
+
+	return err
+}
+
+func (h *armHookHub) arms() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.registered
 }
 
 func (h *armHookHub) UnregisterEvent(
@@ -1069,4 +1093,59 @@ func TestHoldSubscriptionRollsBackOnArmFailure(t *testing.T) {
 	defer th.subMu.Unlock()
 
 	require.Empty(t, th.subs, "a hold that never armed must not stay recorded")
+}
+
+// TestStartersWiredExactlyOnce is FIX-036 T-8: a process registered while the
+// engine is running must reach the hub ONCE, no matter which of the two wiring
+// paths gets to it.
+//
+// RegisterProcess wires under the per-key lock when it sees a started engine;
+// Run's sweep wires the latest version of every key without that lock. Run
+// publishes Started BEFORE it sweeps, so a registration landing between the two
+// is visible to both, and both used to wire it — leaving two live subscriptions
+// on one event definition, so a single message spawned two instances.
+//
+// The interleaving is driven directly rather than raced: calling the sweep
+// after a live RegisterProcess is exactly the state that race produces, and the
+// sweep is idempotent by construction now.
+func TestStartersWiredExactlyOnce(t *testing.T) {
+	th, hub, cancel := hookedWakeEngine(t, "engine-wire-once")
+	defer cancel()
+
+	before := hub.arms()
+
+	_, err := th.RegisterProcess(msgStartProcess(t, "p-wire", "order placed"))
+	require.NoError(t, err)
+
+	wired := hub.arms() - before
+	require.Equal(t, 1, wired, "a live registration wires its starter itself")
+
+	require.NoError(t, th.registerAllStarters(),
+		"the sweep must succeed, having nothing left to do")
+	require.Equal(t, before+wired, hub.arms(),
+		"the sweep must not wire what RegisterProcess already wired")
+}
+
+// TestFailedSweepReleasesItsClaims pins the other half of the claim: a sweep
+// that cannot wire must hand every claim back. Run rolls the whole start back
+// on that failure, so a claim kept across it would make the RETRY find every
+// version already marked wired — an engine that starts cleanly with no
+// auto-start at all, which is worse than the double-wiring being prevented.
+func TestFailedSweepReleasesItsClaims(t *testing.T) {
+	th, err := New("engine-sweep-rollback", WithoutBanner(), WithoutStartupConfig())
+	require.NoError(t, err)
+
+	th.registrations["k"] = []*ProcessRegistration{
+		{key: "k", id: "r1", version: 1, starters: []*instanceStarter{
+			mkStarter(t, "x"),
+		}},
+	}
+	th.eventHub = regFailHub{regErr: errors.New("subscribe boom")}
+
+	require.Error(t, th.registerAllStarters())
+
+	th.m.Lock()
+	require.False(t, th.registrations["k"][0].wired,
+		"a sweep that wired nothing must claim nothing")
+	th.m.Unlock()
 }

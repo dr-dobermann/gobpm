@@ -14,6 +14,11 @@ type ProcessRegistration struct {
 	starters []*instanceStarter // auto-start starters of this version (nil in manual mode)
 	version  int                // 1-based, increments per key in registration order
 	manual   bool               // registered WithManualStart
+	// wired records whether this version's starters are currently on the hub.
+	// Guarded by Thresher.m. Two paths wire starters — RegisterProcess and
+	// Run's one-time sweep — and they are not mutually exclusive, so the flag
+	// is what lets whichever arrives first claim the work (FIX-036 §1.8).
+	wired bool
 }
 
 // Key returns the versioning key — the process id shared by every version of
