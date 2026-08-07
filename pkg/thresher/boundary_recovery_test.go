@@ -96,9 +96,16 @@ func TestRestartRecoveryBoundaryDeadline(t *testing.T) {
 	dist1 := &annCollector{}
 	dist2 := &annCollector{}
 
-	// far enough out that the instance parks and checkpoints first, near
-	// enough that a RESTORED deadline lands inside the test.
-	deadline := time.Now().Add(700 * time.Millisecond)
+	// Far enough out that engine-1 cannot fire the boundary — and complete the
+	// instance, leaving engine-2 nothing in flight to recover — before the
+	// crash-and-recover sequence finishes. Engine-1 is abandoned by lease, not
+	// stopped, so it keeps running and its own timer stays armed; at 700ms this
+	// test lost that race about once in a full parallel `go test ./...` sweep.
+	// The margin costs nothing in assertion strength: an overdue RESTORED
+	// deadline fires immediately (TestRestartRecoveryOverdueTimer pins that),
+	// so the test proves the same thing whether the deadline is still ahead at
+	// recovery time or already behind.
+	deadline := time.Now().Add(2500 * time.Millisecond)
 
 	var esc1, esc2 atomic.Bool
 
@@ -115,13 +122,22 @@ func TestRestartRecoveryBoundaryDeadline(t *testing.T) {
 		2*time.Second, 5*time.Millisecond,
 		"the guarded task must park and be announced")
 
-	// the park checkpoint must exist before the crash — it is what carries
-	// the boundary's recorded deadline.
+	// The park checkpoint must carry the ARMED BOUNDARY before the crash — it
+	// is what holds the recorded deadline. Gating on Status alone raced the
+	// checkpoint that adds the boundary, and the assertions below would then
+	// fail on a record that was merely young (the same gap waitParkedRecord
+	// closes for the track's own wait).
 	require.Eventually(t, func() bool {
 		rec, ok, _ := repo.Load(context.Background(), instID)
+		if !ok || rec.Status != repository.StatusActive {
+			return false
+		}
 
-		return ok && rec.Status == repository.StatusActive
-	}, 2*time.Second, 5*time.Millisecond)
+		d, uerr := checkpoint.Unmarshal(rec.Payload)
+
+		return uerr == nil && len(d.Boundaries) > 0 && d.Boundaries[0].Timer != nil
+	}, 2*time.Second, 5*time.Millisecond,
+		"the park checkpoint must record the armed boundary")
 
 	rec, ok, err := repo.Load(context.Background(), instID)
 	require.NoError(t, err)
@@ -147,7 +163,7 @@ func TestRestartRecoveryBoundaryDeadline(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return esc2.Load()
-	}, 3*time.Second, 5*time.Millisecond,
+	}, 6*time.Second, 5*time.Millisecond,
 		"the recovered boundary must fire at its RECORDED deadline — a "+
 			"re-evaluated one would have restarted the escalation clock")
 }

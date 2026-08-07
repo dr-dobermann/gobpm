@@ -269,6 +269,28 @@ func TestEngineContextRefusedBeforeRun(t *testing.T) {
 	err = th.errEngineNotRunning("probe")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "isn't running")
+
+	// Every launch path derives its instance context through one helper, so
+	// the refusal is pinned once: a launch on an engine that never ran returns
+	// a classified error naming the caller instead of dereferencing the absent
+	// pair. The other three callers (InvokeProcess, launchInstanceFromEvent,
+	// recovery) are all gated on a started engine long before they get here.
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+
+	proc := blockingTaskProcess(t, "p-unrun", entered, release)
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	snap := th.latestSnapshotLocked(proc.ID())
+	require.NotNil(t, snap)
+
+	_, err = th.launchInstance(snap)
+	require.ErrorContains(t, err, "launchInstance")
+	require.ErrorContains(t, err, "isn't running")
+
+	_, _, err = th.instanceContext("probe-op")
+	require.ErrorContains(t, err, "probe-op")
 }
 
 // TestUpdateStateRejectsLifecycleJumps is FIX-036 T-6: UpdateState is the

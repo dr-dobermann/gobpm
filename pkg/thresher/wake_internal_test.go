@@ -951,6 +951,7 @@ type armHookHub struct {
 	onRegister func()
 	withdrawn  map[string]int // eDefID → successful withdrawals
 	registered int            // total successful arms
+	armErr     error          // when set, every persistent arm fails with it
 }
 
 // hookOnce installs a one-shot callback run at the start of the next arm.
@@ -983,9 +984,26 @@ func (h *armHookHub) RegisterEvent(
 
 // RegisterPersistentEvent counts the arms of the instance-STARTER path, which
 // is the one T-8 watches: a starter subscription is persistent by nature.
+// failArms makes every later starter arm fail, so a test can break the hub
+// under a RUNNING engine without racing the eventHub field.
+func (h *armHookHub) failArms(err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.armErr = err
+}
+
 func (h *armHookHub) RegisterPersistentEvent(
 	ep eventproc.EventProcessor, eDef flow.EventDefinition,
 ) error {
+	h.mu.Lock()
+	armErr := h.armErr
+	h.mu.Unlock()
+
+	if armErr != nil {
+		return armErr
+	}
+
 	err := h.EventHub.RegisterPersistentEvent(ep, eDef)
 	if err == nil {
 		h.mu.Lock()
@@ -1148,4 +1166,33 @@ func TestFailedSweepReleasesItsClaims(t *testing.T) {
 	require.False(t, th.registrations["k"][0].wired,
 		"a sweep that wired nothing must claim nothing")
 	th.m.Unlock()
+}
+
+// TestPromoteFailureSurfaces covers promote-on-removal's error path: removing
+// the latest version tears its starters off the hub and promotes the previous
+// one, and if THAT arm fails the caller must hear about it rather than be told
+// the unregister succeeded. The claim bookkeeping must not have moved either —
+// the promoted version is not wired, so a later attempt can still wire it.
+func TestPromoteFailureSurfaces(t *testing.T) {
+	th, hub, cancel := hookedWakeEngine(t, "engine-promote-fail")
+	defer cancel()
+
+	proc := msgStartProcess(t, "p-promote", "order placed")
+
+	_, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	v2, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	hub.failArms(errors.New("arm boom"))
+
+	require.ErrorContains(t, th.UnregisterVersion(v2), "arm boom",
+		"a failed promotion is the caller's error, not a silent half-removal")
+
+	th.m.Lock()
+	defer th.m.Unlock()
+
+	require.False(t, th.registrations[proc.ID()][0].wired,
+		"the version that could not be armed is not marked wired")
 }

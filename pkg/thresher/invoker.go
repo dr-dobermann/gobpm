@@ -74,12 +74,10 @@ func (t *Thresher) InvokeProcess(
 	// instanceReg.stop for teardown. It must NOT be deferred — Run is
 	// non-blocking (launchInstance's rationale). The engine pair is loaded
 	// atomically (FIX-036 §1.1).
-	engCtx, running := t.engineContext()
-	if !running {
-		return nil, t.errEngineNotRunning("InvokeProcess")
+	ctx, cancel, err := t.instanceContext("InvokeProcess")
+	if err != nil {
+		return nil, err
 	}
-
-	ctx, cancel := context.WithCancel(engCtx)
 	if err = inst.Run(ctx); err != nil {
 		cancel()
 

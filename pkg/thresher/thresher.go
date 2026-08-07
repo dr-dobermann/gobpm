@@ -473,6 +473,28 @@ func (t *Thresher) engineContext() (context.Context, bool) {
 	return ec.ctx, true
 }
 
+// instanceContext derives the context an instance owns for its lifetime, from
+// the engine's own. Every launch path needs exactly this — the engine pair,
+// checked, then a cancel the caller retains in instanceReg.stop — so it lives
+// in one place rather than four copies of the same guard, three of which no
+// caller can reach (InvokeProcess and launchInstanceFromEvent are both gated on
+// a started engine long before they get here).
+//
+// The cancel MUST NOT be deferred by the caller: inst.Run is non-blocking, so a
+// deferred cancel would terminate the instance the moment the launch returns.
+func (t *Thresher) instanceContext(
+	op string,
+) (context.Context, context.CancelFunc, error) {
+	engCtx, running := t.engineContext()
+	if !running {
+		return nil, nil, t.errEngineNotRunning(op)
+	}
+
+	ctx, cancel := context.WithCancel(engCtx)
+
+	return ctx, cancel, nil
+}
+
 // errEngineNotRunning is the classified refusal for work that needs the engine
 // context before Run established one.
 func (t *Thresher) errEngineNotRunning(op string) error {
@@ -499,26 +521,31 @@ func (t *Thresher) UpdateState(ns State) error {
 			errs.E(err))
 	}
 
-	cur := t.State()
-	if !operatorTransitions[stateChange{from: cur, to: ns}] {
-		return errs.New(
-			errs.M("couldn't move the Thresher from %q to %q: UpdateState"+
-				" admits only the operator transitions (Started↔Paused);"+
-				" starting and stopping belong to Run and Shutdown",
-				cur.String(), ns.String()),
-			errs.C(errorClass, errs.InvalidState))
-	}
+	// Claim the transition with a CAS, for the same reason Run and Shutdown
+	// claim theirs: between reading the current state and writing the new one, a
+	// concurrent Shutdown may have moved the engine on, and a plain Store would
+	// resurrect the state it left behind.
+	//
+	// A lost CAS re-reads and re-judges rather than failing. The question this
+	// method answers is "may the engine go there from where it IS", so the
+	// answer must be computed from where it is now — if a concurrent Shutdown
+	// moved it to Stopping, the retry refuses with that state named, which is
+	// the useful error; if another operator merely resumed it, pausing it again
+	// is a legitimate request that has no reason to fail.
+	for {
+		cur := t.State()
+		if !operatorTransitions[stateChange{from: cur, to: ns}] {
+			return errs.New(
+				errs.M("couldn't move the Thresher from %q to %q: UpdateState"+
+					" admits only the operator transitions (Started↔Paused);"+
+					" starting and stopping belong to Run and Shutdown",
+					cur.String(), ns.String()),
+				errs.C(errorClass, errs.InvalidState))
+		}
 
-	// CAS, not Store, for the same reason Run and Shutdown claim their
-	// transitions with one: between the read above and the write, a concurrent
-	// Shutdown may have moved the engine on, and a plain Store would resurrect
-	// the state it left behind.
-	if !t.state.CompareAndSwap(uint32(cur), uint32(ns)) {
-		return errs.New(
-			errs.M("couldn't move the Thresher from %q to %q: its state"+
-				" changed concurrently (now %q)",
-				cur.String(), ns.String(), t.State().String()),
-			errs.C(errorClass, errs.InvalidState))
+		if t.state.CompareAndSwap(uint32(cur), uint32(ns)) {
+			break
+		}
 	}
 
 	t.reportEngineState(ns)
@@ -1343,12 +1370,11 @@ func (t *Thresher) launchInstanceFromEvent(
 	// The instance owns this context for its whole lifetime; cancel is retained
 	// in instanceReg.stop for later teardown (see launchInstance for why it is
 	// not deferred). The engine pair is loaded atomically (FIX-036 §1.1).
-	engCtx, ok := t.engineContext()
-	if !ok {
-		return t.errEngineNotRunning("launchInstanceFromEvent")
+	ctx, cancel, err := t.instanceContext("launchInstanceFromEvent")
+	if err != nil {
+		return err
 	}
 
-	ctx, cancel := context.WithCancel(engCtx)
 	if err := inst.Run(ctx); err != nil {
 		cancel()
 
@@ -1540,12 +1566,11 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error)
 	// It must NOT be deferred here — inst.Run is non-blocking, so a deferred
 	// cancel would terminate the instance the moment launchInstance returns.
 	// The engine pair is loaded atomically (FIX-036 §1.1).
-	engCtx, ok := t.engineContext()
-	if !ok {
-		return nil, t.errEngineNotRunning("launchInstance")
+	ctx, cancel, err := t.instanceContext("launchInstance")
+	if err != nil {
+		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(engCtx)
 	if err = inst.Run(ctx); err != nil {
 		cancel()
 

@@ -100,12 +100,10 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 		return recoveryErr("the instance doesn't restore", err)
 	}
 
-	engCtx, running := t.engineContext()
-	if !running {
-		return recoveryErr("the engine context is gone", nil)
+	runCtx, cancel, err := t.instanceContext("recovery")
+	if err != nil {
+		return recoveryErr("the engine context is gone", err)
 	}
-
-	runCtx, cancel := context.WithCancel(engCtx)
 	if err := inst.Run(runCtx); err != nil {
 		cancel()
 
