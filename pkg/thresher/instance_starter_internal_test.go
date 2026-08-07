@@ -635,13 +635,22 @@ func instanceCount(th *Thresher) int {
 // TestCorrelationDedup is ADR-016 v.1 §2.3 / SRD-015 V6: messages with distinct
 // derived keys spawn distinct instances; a repeat of a seen key joins the
 // existing instance (no duplicate).
+//
+// The conversations must be LIVE for that to be the question under test, so
+// this uses the PARKING process rather than the start→end one. With a process
+// that completes the moment it starts, the repeat key raced its own instance's
+// end: joining won only when the message beat the completion, and once a
+// finished conversation stopped reserving its key (FIX-036 §1.2) the repeat
+// legitimately started a third instance instead — a real contract, wrongly
+// reached, which showed up as an intermittent failure of this test rather than
+// of the one that owns it (TestCorrelationKeyReleasedAfterInstanceEnds).
 func TestCorrelationDedup(t *testing.T) {
 	broker := membroker.New()
 
 	th, err := New("corr", WithMessageBroker(broker))
 	require.NoError(t, err)
 
-	proc := corrStartProcess(t, "p-corr", "order placed", "order placed")
+	proc := corrWaitProcess(t, "p-corr", "order placed")
 	_, err = th.RegisterProcess(proc)
 	require.NoError(t, err)
 

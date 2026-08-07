@@ -145,6 +145,21 @@ filter therefore propagates out of `Report` into **its caller** — which is an
 instance's loop goroutine — and a merely slow filter serializes every `Report`
 in the engine behind one host call.
 
+`LogRedactor` — the producer's *other* host-supplied hook — has exactly the
+same shape and the same gap:
+
+```go
+// producer.go:67-75
+if p.redactor != nil {
+    redacted, ok := p.redactor.RedactLog(ev)
+```
+
+It is the same interface family (`visibility.go:9`), asserted off the same
+authorizer, called on the same reporting goroutine, with no recover either. It
+is repaired with the filter rather than left for a second pass: they are one
+defect reached through two entry points, and containing only the one the audit
+happened to name would leave the identical crash reachable through the other.
+
 ### 1.6 `UpdateState` bypasses the lifecycle ladder it exists beside
 
 `Run` claims its transition with a CAS (`:520`), `Shutdown` likewise (`:680`).
@@ -255,21 +270,29 @@ caller's wait is gone either way.
 the confirm path needs exactly the same "unregister, log a failure at Debug"
 behaviour — a missing waiter is an idempotent condition, not an error.
 
-#### 3.2.5 `pkg/thresher/producer.go` — the filter is host code
+#### 3.2.5 `pkg/thresher/producer.go` — the two hooks are host code
 
-The `FilterObservation` call is wrapped in the same containment `deliver`
-provides: a panic is recovered, counted and logged once, and the event is
-treated as denied for that recipient rather than propagating into the engine.
+`FilterObservation` and `RedactLog` are both wrapped in the containment
+`deliver` provides, through one shared `callHostHook` helper: the panic is
+recovered, counted per hook, and logged once at Warn with a stack (Debug
+thereafter, since ADR-022 v.1 §2.4 forbids a per-event record above it).
 
-#### 3.2.6 `pkg/observability/visibility.go` — the filter's obligations, stated
+Both **fall closed**. A panicking filter denies its recipient; a panicking
+redactor suppresses the log record. The alternative — treating a failed hook as
+pass-through — would make a crash in the host's policy code the one condition
+under which the engine emits what that policy exists to withhold, which is the
+worst possible moment to fail open.
 
-`ObservationFilter`'s doc comment gains the two terms the implementation has
-always relied on and never wrote down: the filter is called **on the
-reporter's goroutine, under the producer's dispatch lock**, so it must be
-cheap and must not block; and a panic is contained (the event is treated as
-denied for that recipient) rather than propagated. This is the same contract
-`Observer` carries, and stating it is what turns §1.5's remaining
-serialization from an unexamined hazard into a declared cost.
+#### 3.2.6 `pkg/observability/visibility.go` — the hooks' obligations, stated
+
+Both interfaces' doc comments gain the terms the implementation has always
+relied on and never wrote down: each hook is called **on the reporter's
+goroutine** — and the filter additionally **under the producer's dispatch
+lock**, once per registered observer — so it must be cheap and must not block
+or call back into the engine; and a panic is contained, falling closed, rather
+than propagated. This is the same contract `Observer` carries, and stating it
+is what turns §1.5's remaining serialization from an unexamined hazard into a
+declared cost.
 
 #### 3.2.7 `pkg/thresher/thresher.go` — `UpdateState` validates the transition
 
@@ -300,7 +323,8 @@ runs first wires and the other is a no-op.
 | T-3 | `TestForgetReleasesKeyAndSettled` | after `Forget`, `seenKeys` and `settled` no longer hold the id (§1.2, §1.3) |
 | T-4 | `TestReleaseWaitsDuringArmWithdrawsTheHold` | a `ReleaseWaits` driven into the MIDDLE of `HoldSubscription` (a hub wrapper fires it from inside `RegisterEvent`) leaves neither a record nor a hub subscription — and the withdrawal is counted at the hub, so removing either half of the fix fails it (§1.4) |
 | T-4a | `TestHoldSubscriptionRollsBackOnArmFailure` | a refused arm leaves nothing recorded — the record exists only to make an ARMED hold releasable (§1.4) |
-| T-5 | `TestPanickingObservationFilterContained` | a filter that panics denies its recipient, is counted and logged once, and never reaches `Report`'s caller (§1.5) |
+| T-5 | `TestPanickingObservationFilterContained` | a filter that panics denies its recipient, is counted, is logged once at Warn and at Debug thereafter, and never reaches `Report`'s caller (§1.5) |
+| T-5a | `TestPanickingLogRedactorContained` | a redactor that panics suppresses the record rather than echoing it unredacted, and leaves the observer stream — which is not the redactor's to deny — untouched (§1.5) |
 | T-6 | `TestUpdateStateRejectsLifecycleJumps` | `Started` on a never-run engine is refused; `Started ↔ Paused` is admitted (§1.6) |
 | T-7 | `TestShutdownAwaitsInstanceBornDuringCancel` | an instance created in the snapshot→cancel window is awaited; the timeout error names the unsettled (§1.7) |
 | T-8 | `TestStartersWiredExactlyOnce` | a registration racing `Run` yields exactly one hub registration per starter (§1.8) |
@@ -329,6 +353,22 @@ lines (`COVER_MIN`).
   behavioural change to a public method and is called out in the CHANGELOG.
 - `Shutdown` may now wait marginally longer — it awaits instances it previously
   abandoned — bounded by the caller's context exactly as before.
+- **`TestCorrelationDedup` is re-pinned to a live conversation.** It asserted
+  ADR-016 v.1 §2.3's join rule using the start→end process, so its "existing
+  instance" completed the moment it was created; §1.2's release then let the
+  repeat key legitimately start a third instance whenever the message lost the
+  race against that completion, and the test failed roughly one run in six.
+  The join rule is unchanged and still pinned — the test now uses the parking
+  process, which is what makes the existing instance *joinable* at all. The
+  finished-conversation half is owned by its own test
+  (`TestCorrelationKeyReleasedAfterInstanceEnds`, T-2), which waits for the
+  completion instead of racing it.
+
+  This is the only pre-existing test whose behaviour this landing changes, and
+  it is worth saying why it is a re-pin and not a weakening: joining a finished
+  instance cannot deliver the message anywhere — no receiver is parked on it —
+  so the old reservation did not preserve the join rule, it discarded the
+  business message that the rule exists to route.
 
 ## 7 Related
 
