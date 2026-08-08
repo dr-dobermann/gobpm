@@ -153,7 +153,7 @@ The layer-crossing methods you call most:
 | `StartProcess(reg) (*InstanceHandle, error)` | snapshot → instance (pinned version) |
 | `StartLatest(key)` / `StartVersion(key, n)` | snapshot → instance (by key) |
 | `Run(ctx)` / `Shutdown(ctx)` | engine lifecycle |
-| `Instance(id)` / `Instances(filter)` | inspect the live-instance registry |
+| `Instance(id)` / `Instances(query)` | inspect the live-instance registry |
 
 The engine also exposes the extension seams (`WithExpressionEngine`,
 `WithWorkerDispatcher`, `WithTaskDistributor`, …) — see the

@@ -164,9 +164,11 @@ caller re-parks without re-invoking (never a duplicate child), and the
 child's terminal outcome reaches the restored caller exactly as it
 would a resident one, even when the child finished while the engine
 was down. A missing record on either side fails the restore loudly.
-The engine's discovery keeps the two apart: `Instances(InstancesRoots)`
-lists callers as processes, children come through
-`InstanceHandle.ParentID()`.
+The engine's discovery keeps the two apart:
+`Instances(InstanceQuery{Kind: KindRoots})` lists callers as
+processes, and `Instances(InstanceQuery{ParentID: id})` lists one
+caller's children directly — each handle answers `ParentID()`,
+`CallNodeID()` and `ProcessID()`.
 
 
 ## See also

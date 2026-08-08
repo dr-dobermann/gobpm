@@ -176,8 +176,21 @@ h, ok := engine.Instance(instanceID)
 ```
 
 `Thresher.Instance` returns the same read-only `*InstanceHandle` (and `false` if
-no such instance is known). `Thresher.Instances(filter)` lists instance ids by an
-`InstanceFilter` (`InstancesAll` and the running/terminal filters). These are the
+no such instance is known). `Thresher.Instances(q InstanceQuery)` lists instance
+ids by a compositional query: the axes AND together — `Kind` (roots vs Call
+Activity children), `Stage` (running vs settled), `ProcessID` and `ParentID` —
+and the zero value `InstanceQuery{}` lists everything. "The running children of
+instance X" is one call:
+
+```go
+ids, err := engine.Instances(thresher.InstanceQuery{
+    Stage:    thresher.StageRunning,
+    ParentID: parent.ID(),
+})
+```
+
+An out-of-range axis value refuses with an error; a contradictory query
+(`KindRoots` with a `ParentID`) is an honest empty set. These are the
 discovery accessors — starting and registering processes live on the
 [Starting instances](starting-instances.md) page.
 

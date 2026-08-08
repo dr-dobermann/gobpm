@@ -115,7 +115,7 @@ Starting and discovery have more entry points:
 | `StartProcess(reg) (*InstanceHandle, error)` | launch the exact version named by a `*ProcessRegistration` (nil rejected). |
 | `Registrations(key) []*ProcessRegistration` | the registered versions of a key, ascending (gaps possible after removals). |
 | `Instance(id) (*InstanceHandle, bool)` | the read-only handle of a tracked instance, or `false`. |
-| `Instances(filter) []string` | ids of tracked instances (`InstancesAll` / `InstancesRunning` / `InstancesCompleted`). |
+| `Instances(q InstanceQuery) ([]string, error)` | ids of tracked instances; the query's axes AND together — `Kind` (roots/children), `Stage` (running/settled), `ProcessID`, `ParentID` — and the zero value lists everything. |
 | `Forget(ids…) error` | release terminal instances from tracking (all-or-nothing; still-live id rejected). |
 | `Observe(o) *Subscription` | subscribe to the engine-wide observation stream. |
 | `State() State` | the engine's current lifecycle state (lock-free). |

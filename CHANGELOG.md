@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: instance discovery queries compose** (SRD-084, closes
+  #306). `Thresher.Instances` now takes an `InstanceQuery` — four
+  ANDed axes (`Kind`, `Stage`, `ProcessID`, `ParentID`; the zero value
+  lists everything) — and returns `([]string, error)`; the single-axis
+  `InstanceFilter` enum and its five constants are removed. Migration:
+  `InstancesAll` → `InstanceQuery{}`, `InstancesRunning/Completed` →
+  `InstanceQuery{Stage: StageRunning/StageSettled}`,
+  `InstancesRoots/Children` → `InstanceQuery{Kind: KindRoots/
+  KindChildren}`. An out-of-range axis value now refuses instead of
+  silently listing everything, and handles gain `ProcessID()`.
+
 ### Added
 
 - **Ad-Hoc Sub-Process checkpoint fidelity** (SRD-083, closes #307).

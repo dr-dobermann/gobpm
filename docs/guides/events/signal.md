@@ -173,7 +173,7 @@ engine.PropagateEvent(ctx, def) // one broadcast instantiates every listener
 
 Every registered process that starts on that name gets its own instance.
 Because signal-born instances have no start handle, discover them via
-`engine.Instances(…)` / `engine.Instance(id)` to await completion. Running
+`engine.Instances(InstanceQuery{…})` / `engine.Instance(id)` to await completion. Running
 `examples/signal-start/`:
 
 ```
