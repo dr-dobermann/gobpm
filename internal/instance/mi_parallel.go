@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"sort"
 	"strconv"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
@@ -160,6 +161,14 @@ func (ls *loopState) handleReAttach(ctx context.Context, req scopeRequest) {
 			pending = append(pending, p)
 		}
 	}
+
+	// ordinal order, not map order: live completions of "simultaneous"
+	// drains carry no defined order, but a RESTORE should be
+	// reproducible — the ledger the completions append to feeds the
+	// reverse-order compensation sweep (independent-review note C2).
+	sort.Slice(pending, func(i, j int) bool {
+		return grp.open[pending[i]] < grp.open[pending[j]]
+	})
 
 	req.reply <- scopeReply{}
 

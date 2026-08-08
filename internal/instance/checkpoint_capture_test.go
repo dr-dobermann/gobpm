@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -43,6 +44,23 @@ func (cs *cpSink) Report(f observability.Fact) {
 	defer cs.mu.Unlock()
 
 	cs.facts = append(cs.facts, f)
+}
+
+// hasDeferralReason reports a CheckpointDeferred fact whose reason
+// carries the given substring (independent-review note T3 — a
+// deferral for an unrelated cause must not satisfy a deferral test).
+func (cs *cpSink) hasDeferralReason(sub string) bool {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	for _, f := range cs.facts {
+		if f.Phase == observability.PhaseCheckpointDeferred &&
+			strings.Contains(f.Details["reason"], sub) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (cs *cpSink) has(phase observability.Phase) bool {

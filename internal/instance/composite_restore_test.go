@@ -614,6 +614,8 @@ func TestRestoredScopeWithoutHostFailsLoud(t *testing.T) {
 		return restored.State() == Terminated
 	}, 3*time.Second, 5*time.Millisecond,
 		"the adoption must fail the instance loud, never run it wrong")
+	require.ErrorContains(t, restored.LastErr(), "has no host track",
+		"the refusal must fail for the EXPECTED reason (review note T1)")
 }
 
 // TestIncidentPinHoldsRestoredScope: a restored open incident inside a
@@ -666,6 +668,21 @@ func TestIncidentPinHoldsRestoredScope(t *testing.T) {
 		return restored.State() == Completed
 	}, 400*time.Millisecond, 20*time.Millisecond,
 		"an open incident's pin must survive the restore")
+
+	// timing-independent anchors (review note T2): after the window the
+	// instance still runs Active and the incident is still open — a
+	// broken pin fails these regardless of scheduler load.
+	require.Equal(t, Active, restored.State())
+
+	open := false
+
+	for _, inc := range restored.IncidentViews() {
+		if inc.State == "open" {
+			open = true
+		}
+	}
+
+	require.True(t, open, "the restored incident must still be open")
 }
 
 // TestSeedStagingRefusals: the staging seed refuses garbage and a
@@ -720,10 +737,12 @@ func TestRestoredScopeHostSegOverride(t *testing.T) {
 }
 
 // restoreExpectFault restores doc and runs it, requiring the instance
-// to finish NOT Completed — the loud-refusal shape of a restored
-// document the seeded decorator cannot honor (SRD-082 NFR-2).
+// to finish NOT Completed AND to carry the expected cause — an
+// unrelated fault must not satisfy a refusal test
+// (independent-review note T1).
 func restoreExpectFault(
 	t *testing.T, doc *checkpoint.Document, s *snapshot.Snapshot,
+	cause string,
 ) {
 	t.Helper()
 
@@ -745,6 +764,30 @@ func restoreExpectFault(
 	}
 
 	require.NotEqual(t, Completed, restored.State())
+
+	if cause == "" {
+		return
+	}
+
+	// the refusal surfaces in one of two loud shapes: an ADOPTION
+	// failure lands terminal with the error on the instance, a
+	// DECORATOR seed refusal faults its track and raises a durable
+	// incident (the SRD-079 fault model). Either way the EXPECTED
+	// cause must be there — an unrelated fault must not pass.
+	if err := restored.LastErr(); err != nil {
+		require.ErrorContains(t, err, cause,
+			"the refusal must fail for the EXPECTED reason")
+
+		return
+	}
+
+	for _, iv := range restored.IncidentViews() {
+		if iv.State == "open" && strings.Contains(iv.Cause, cause) {
+			return
+		}
+	}
+
+	t.Fatalf("no terminal error and no open incident carries %q", cause)
 }
 
 // TestSequentialMIRestoreRefusals: a restored position the live data
@@ -757,7 +800,7 @@ func TestSequentialMIRestoreRefusals(t *testing.T) {
 		hostMI(doc, "cr-mibadn").N = 5 // the collection holds 3
 
 		gate.Store(5)
-		restoreExpectFault(t, doc, s)
+		restoreExpectFault(t, doc, s, "the recorded activation froze")
 	})
 
 	t.Run("garbage staging", func(t *testing.T) {
@@ -766,7 +809,7 @@ func TestSequentialMIRestoreRefusals(t *testing.T) {
 		hostMI(doc, "cr-mibadstage").Staging = json.RawMessage(`{broken`)
 
 		gate.Store(3)
-		restoreExpectFault(t, doc, s)
+		restoreExpectFault(t, doc, s, "staging decoding failed")
 	})
 
 	t.Run("an erroring re-evaluated condition", func(t *testing.T) {
@@ -790,7 +833,7 @@ func TestSequentialMIRestoreRefusals(t *testing.T) {
 		trimToCompletedPasses(doc, "cr-miboom")
 
 		gate.Store(3)
-		restoreExpectFault(t, doc, s)
+		restoreExpectFault(t, doc, s, "cond boom")
 	})
 }
 
@@ -874,9 +917,9 @@ func TestCaptureDefersOnUncodableStaging(t *testing.T) {
 	require.NoError(t, inst.Run(ctx))
 
 	require.Eventually(t, func() bool {
-		return sink.has(observability.PhaseCheckpointDeferred)
+		return sink.hasDeferralReason("encode:")
 	}, 3*time.Second, 5*time.Millisecond,
-		"the uncodable staging must defer the capture loudly")
+		"the deferral must carry the ENCODE reason (review note T3)")
 }
 
 // parallelCapturedDoc runs a 3-instance parallel MI to "one completed,
@@ -993,7 +1036,7 @@ func TestParallelMIRestoreRefusals(t *testing.T) {
 		doc.MIGroups[0].Staging = json.RawMessage(`{broken`)
 
 		gate.Store(3)
-		restoreExpectFault(t, doc, s)
+		restoreExpectFault(t, doc, s, "staging decoding failed")
 	})
 
 	t.Run("a host track the table does not carry", func(t *testing.T) {
@@ -1002,7 +1045,8 @@ func TestParallelMIRestoreRefusals(t *testing.T) {
 		doc.MIGroups[0].HostTrack = "gone"
 
 		gate.Store(3)
-		restoreExpectFault(t, doc, s)
+		restoreExpectFault(t, doc, s,
+			"the track table does not carry")
 	})
 
 	t.Run("an open scope missing from the scope table", func(t *testing.T) {
@@ -1011,7 +1055,8 @@ func TestParallelMIRestoreRefusals(t *testing.T) {
 		doc.MIGroups[0].Open[0].Path += "-phantom"
 
 		gate.Store(3)
-		restoreExpectFault(t, doc, s)
+		restoreExpectFault(t, doc, s,
+			"is not in the document's scope table")
 	})
 }
 
@@ -1180,7 +1225,7 @@ func TestGroupRecordOnNonMIHost(t *testing.T) {
 	})
 
 	gate.Store(1)
-	restoreExpectFault(t, doc, s)
+	restoreExpectFault(t, doc, s, "is not a Multi-Instance node")
 }
 
 // TestParallelCaptureDefersOnUncodableStaging: an unserializable
@@ -1228,8 +1273,9 @@ func TestParallelCaptureDefersOnUncodableStaging(t *testing.T) {
 	require.NoError(t, inst.Run(ctx))
 
 	require.Eventually(t, func() bool {
-		return sink.has(observability.PhaseCheckpointDeferred)
-	}, 3*time.Second, 5*time.Millisecond)
+		return sink.hasDeferralReason("encode:")
+	}, 3*time.Second, 5*time.Millisecond,
+		"the deferral must carry the ENCODE reason (review note T3)")
 }
 
 // blockingCompHandler is an isForCompensation ServiceTask whose op
@@ -1420,7 +1466,7 @@ func TestSweepRestoreRefusesMissingThrower(t *testing.T) {
 	doc.Sweeps[0].ThrowerTrack = "gone"
 
 	close(gate)
-	restoreExpectFault(t, doc, s)
+	restoreExpectFault(t, doc, s, "the track table does not carry")
 }
 
 // TestTransactionAbortSweepRestores: a Transaction abort captured
@@ -1635,7 +1681,7 @@ func TestCallRestoreReLinks(t *testing.T) {
 // fails loud and terminal (SRD-082 FR-7, NFR-2).
 func TestCallRestoreRefusals(t *testing.T) {
 	run := func(t *testing.T, doc *checkpoint.Document,
-		s *snapshot.Snapshot, opts ...Option) {
+		s *snapshot.Snapshot, cause string, opts ...Option) {
 		t.Helper()
 
 		restored, err := Restore(doc, s, scope.EmptyDataPath,
@@ -1651,6 +1697,8 @@ func TestCallRestoreRefusals(t *testing.T) {
 			return restored.State() == Terminated
 		}, 3*time.Second, 5*time.Millisecond,
 			"the failed re-link must land loud and terminal")
+		require.ErrorContains(t, restored.LastErr(), cause,
+			"the refusal must fail for the EXPECTED reason")
 	}
 
 	reattacher := func(_ string) (exec.ChildProcess, error) {
@@ -1659,12 +1707,12 @@ func TestCallRestoreRefusals(t *testing.T) {
 
 	t.Run("no reattach seam wired", func(t *testing.T) {
 		doc, s := capturedCallDoc(t, "cr-noseam")
-		run(t, doc, s) // no WithCallReattacher
+		run(t, doc, s, "no call re-attach seam") // no WithCallReattacher
 	})
 
 	t.Run("the reattach errors", func(t *testing.T) {
 		doc, s := capturedCallDoc(t, "cr-reerr")
-		run(t, doc, s, WithCallReattacher(
+		run(t, doc, s, "didn't re-attach", WithCallReattacher(
 			func(string) (exec.ChildProcess, error) {
 				return nil, errs.New(errs.M("gone"),
 					errs.C(errorClass, errs.ObjectNotFound))
@@ -1674,13 +1722,15 @@ func TestCallRestoreRefusals(t *testing.T) {
 	t.Run("the caller track is missing", func(t *testing.T) {
 		doc, s := capturedCallDoc(t, "cr-notrack")
 		doc.Calls[0].TrackID = "gone"
-		run(t, doc, s, WithCallReattacher(reattacher))
+		run(t, doc, s, "the track table does not carry",
+			WithCallReattacher(reattacher))
 	})
 
 	t.Run("the caller track is at another node", func(t *testing.T) {
 		doc, s := capturedCallDoc(t, "cr-badnode")
 		doc.Calls[0].NodeID = "other"
-		run(t, doc, s, WithCallReattacher(reattacher))
+		run(t, doc, s, "the caller track is at node",
+			WithCallReattacher(reattacher))
 	})
 }
 
