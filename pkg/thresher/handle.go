@@ -3,12 +3,14 @@ package thresher
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // ErrNotImplemented marks a control operation that is part of the stable handle
@@ -42,8 +44,76 @@ type InstanceHandle struct {
 	// captured at adopt so a handle answers correctly even before or
 	// after the instance object itself is reachable (SRD-082 FR-7,
 	// independent-review note A3).
+	// observers are the handle's own observer registrations. They live HERE,
+	// not on the instance object, because the object is replaced on every
+	// rebuild: registering on h.current() alone meant a host observer stopped
+	// receiving facts after the first dehydration, silently, while its
+	// Subscription still reported itself live (FIX-038 §1.8). The handle owns
+	// identity across rebuilds (SRD-071), so it owns these too.
+	observers  map[uint64]*handleObserver
 	parentID   string
 	callNodeID string
+	nextObs    uint64
+	obsMu      sync.Mutex
+}
+
+// cancelParkSeam runs inside Cancel between the state check and the direct
+// cancel — the window an instance can park in, and the reason the state is
+// re-read afterwards. It is nil in production and exists because that window
+// cannot otherwise be aimed at: a test that merely races the two hits it by
+// luck, which is indistinguishable from a test that cannot fail.
+var cancelParkSeam func()
+
+// cancelRouteAttempts bounds Cancel's re-read of the instance's state. Each
+// pass either cancels a live instance or routes a parked one; the bound only
+// matters if the instance keeps parking between the two, which other traffic
+// can cause but cannot sustain.
+const cancelRouteAttempts = 3
+
+// handleObserver is one registration the handle re-attaches after a rebuild:
+// the fan-out closure is stable, the deregistration is not — it belongs to
+// whichever instance object the closure is currently registered on.
+type handleObserver struct {
+	fanout func(observability.Fact)
+	cancel func()
+	// on is the instance object this registration currently sits on. Without
+	// it a re-attach cannot tell "not yet moved" from "already moved": an
+	// Observe landing between adopt and reattachObservers registers on the NEW
+	// object, and re-registering it there delivered every fact twice while
+	// overwriting the cancel of the first registration, which could then never
+	// be removed.
+	on *instance.Instance
+}
+
+// reattachObservers re-registers the handle's observers on the instance it now
+// speaks for. Call it AFTER the engine lock is released: AddObserver takes the
+// instance's own observer lock, and the engine does not hold t.m across another
+// component's lock (the rule locked.go states).
+//
+// It is idempotent per instance object: a registration already sitting on this
+// one is left alone, and one sitting on the previous object is canceled there
+// before it moves.
+func (h *InstanceHandle) reattachObservers() {
+	inst := h.current()
+	if inst == nil {
+		return
+	}
+
+	h.obsMu.Lock()
+	defer h.obsMu.Unlock()
+
+	for _, ho := range h.observers {
+		if ho.on == inst {
+			continue
+		}
+
+		if ho.cancel != nil {
+			ho.cancel()
+		}
+
+		ho.cancel = inst.AddObserver(ho.fanout)
+		ho.on = inst
+	}
 }
 
 // current returns the instance object the handle speaks for right now.
@@ -257,7 +327,41 @@ func (h *InstanceHandle) WaitCompletion(
 // second call, or Cancel of an already-terminal instance, returns the terminal
 // state at once.
 func (h *InstanceHandle) Cancel(ctx context.Context) (InstanceState, error) {
-	h.current().Cancel()
+	// A DEHYDRATED instance has no loop to observe a context cancellation, so
+	// canceling here canceled a context nobody was reading: the request was
+	// lost and the next wake resumed the instance as if it had never been made
+	// (FIX-038 §1.10). It rides a rebuild instead, like an incident operation.
+	//
+	// The check and the cancel are NOT atomic, and the gap is the same defect
+	// again: an instance that parks between them takes the direct cancel to a
+	// loop that has already exited. So the state is re-read after canceling
+	// and the parked case routed — bounded, because an instance woken and
+	// re-parked by other traffic must not spin here.
+	// A handle always speaks for an instance — every constructor adopts one —
+	// so current() is not nil-guarded here, exactly as State() and Data() are
+	// not: a guard would only defer the same nil to WaitCompletion below.
+	for range cancelRouteAttempts {
+		inst := h.current()
+
+		if inst.State() == instance.Dehydrated && h.th != nil {
+			if err := h.th.cancelParked(ctx, h); err != nil {
+				return h.State(), err
+			}
+
+			return h.WaitCompletion(ctx)
+		}
+
+		if cancelParkSeam != nil {
+			cancelParkSeam()
+		}
+
+		inst.Cancel()
+
+		// It parked while that cancel was in flight, so nothing observed it.
+		if h.current().State() != instance.Dehydrated || h.th == nil {
+			break
+		}
+	}
 
 	return h.WaitCompletion(ctx)
 }

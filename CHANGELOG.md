@@ -200,6 +200,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     overtaken by the arm — leaving a deadline that later woke the instance for a
     track that no longer existed.
 
+- **Engine locks held across host calls, and requests that were silently lost**
+  (FIX-038 — the second `/audit-package` sweep, over `internal/eventproc`,
+  `internal/scope`, `pkg/thresher` and `internal/instance`). Sixteen defects
+  sharing two shapes: an engine-wide lock held while foreign code runs under it,
+  and an operation that reports success while nothing happened.
+  - **One slow host call stalled the whole engine.** The event hub built and
+    *started* a waiter while holding its single registry lock — and a message
+    waiter's start subscribes to the host's broker, which may be remote and may
+    block. Every registration, unregistration and lookup in the engine queued
+    behind one host call. The same shape held the engine's registry lock across
+    an embedder's `Actor.Groups()` during task authorization, and the scope
+    plane's lock across the host's runtime-variable supplier. All three now run
+    the foreign call unlocked.
+  - **A failed process registration bricked its key.** Registering a new version
+    withdraws the previous version's starters first; when the new arm then
+    failed, the call returned with *neither* on the hub and the failed version
+    still recorded as latest — so every later registration for that key tried to
+    withdraw starters that were never armed, failed too, and the key was dead
+    for the engine's lifetime. A failed registration now restores the previous
+    version exactly, and reports it if that restore also fails.
+  - **A transient store error abandoned an instance at startup.** Recovery read
+    *every* failure to claim a record as "another engine got there first" and
+    returned success, so a connection reset silently left an in-flight instance
+    unrecovered and unlogged. Only a compare-and-set conflict means that now.
+  - **Cancelling a dehydrated instance did nothing.** `Cancel` cancelled the
+    instance's context, but a parked instance has no loop reading it: the
+    request vanished, the next wake resumed the instance as if it had never been
+    made, and the caller blocked until its deadline. A cancel now rides the
+    rebuild, as an incident operation does, and the fresh loop tears the
+    instance down before deciding whether to park again.
+  - **A host's observer went quiet after the first rebuild.** `Observe`
+    registered on the instance *object*, which every rebuild replaces, while its
+    `Subscription` still reported itself live. Observers now belong to the
+    handle, whose identity outlives the object — and an operator's incident
+    retry re-attaches them too.
+  - **An operator request after shutdown reported success.** The engine pointer
+    is never cleared, so the "not running" guard could not fire: a cancel or an
+    incident operation rebuilt the instance, watched the fresh loop tear back
+    down on the dead engine context, and returned `nil`. Both entry points now
+    refuse.
+  - **A concurrent register could orphan itself against an unregister**, and a
+    scope snapshot taken during a commit could tear. Both are now taken under a
+    single acquisition.
+  - **A cancel could still be lost, and an observer could be told twice.** The
+    routing that fixes the parked-instance cancel read the state and then
+    cancelled, so an instance parking between those two steps lost the request
+    exactly as before; the state is now re-read. And a subscription taken while
+    the engine was rebuilding an instance was registered twice on the new
+    object, so the host received every fact twice from a subscription it could
+    only cancel once. Both were found by an independent pre-merge review, on
+    code whose gate was already green.
+  - **`GetDataByID` became deterministic, not stricter.** An ItemDefinition is a
+    *type*, so two variables of one type share its id and Go's map iteration
+    returned a different one per run. Resolution is now nearest scope, then
+    lowest name: a model that worked by luck now works reliably, and one that
+    was picking the wrong variable does so consistently — which is what makes it
+    findable.
+
 - **The engine's lifecycle bookkeeping: a data race, reservations with no
   owner, and host code with no containment** (FIX-036 — the remediation of an
   external audit of `pkg/thresher`; eight defects, one shape: bookkeeping

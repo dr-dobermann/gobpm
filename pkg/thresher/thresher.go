@@ -1064,7 +1064,10 @@ func (t *Thresher) RegisterProcess(
 		// finishes its already-running instances.
 		if prevLatest != nil {
 			if err := t.unregisterStarters(prevLatest.starters); err != nil {
+				// The previous version is still live on the hub; only the
+				// half-made registration has to go.
 				t.releaseWiringLocked(reg)
+				t.removeVersionLocked(reg)
 
 				return nil, err
 			}
@@ -1073,12 +1076,7 @@ func (t *Thresher) RegisterProcess(
 		}
 
 		if err := t.registerStarters(starters); err != nil {
-			// registerStarters is all-or-nothing (FIX-013 §1.3), so nothing of
-			// this version reached the hub: give the claim back rather than
-			// leave a version marked wired that is not.
-			t.releaseWiringLocked(reg)
-
-			return nil, err
+			return nil, t.rollbackRegistration(reg, prevLatest, err)
 		}
 	}
 
@@ -1089,6 +1087,48 @@ func (t *Thresher) RegisterProcess(
 		})
 
 	return reg, nil
+}
+
+// rollbackRegistration returns a key to its pre-call state after
+// registerStarters failed, and it is the difference between a failed
+// registration and a DEAD key (FIX-038 §1.5).
+//
+// By this point the previous version's starters have already been withdrawn to
+// make way for the new ones, and the new ones did not go on. Returning here
+// left the key with no live starters at all — nothing auto-starts — and with
+// the failed version sitting as `latest`, so every later RegisterProcess for
+// that key tried to unregister starters that were never registered, got
+// ObjectNotFound, and failed. The key was permanently unusable.
+//
+// So: drop the version just appended, and put the previous latest back on the
+// hub. The version counter deliberately stays advanced — a failed version
+// number is not reused.
+func (t *Thresher) rollbackRegistration(
+	reg, prevLatest *ProcessRegistration, cause error,
+) error {
+	// registerStarters is all-or-nothing (FIX-013 §1.3), so nothing of this
+	// version reached the hub: only the bookkeeping needs undoing.
+	t.releaseWiringLocked(reg)
+	t.removeVersionLocked(reg)
+
+	if prevLatest == nil {
+		return cause
+	}
+
+	if err := t.registerStarters(prevLatest.starters); err != nil {
+		// A rollback failure JOINS the cause rather than replacing it
+		// (ADR-022 v.2 §2.2): the caller needs to know both that the
+		// registration failed and that the key is now without auto-start.
+		return errors.Join(cause, errs.New(
+			errs.M("couldn't restore the previous starters of %q after a"+
+				" failed registration — the key has no auto-start", reg.key),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err)))
+	}
+
+	t.setLatestWiredLocked(reg.key, true)
+
+	return cause
 }
 
 // UnregisterVersion removes ONE registered version — the one named by reg — by
@@ -1393,8 +1433,9 @@ func (t *Thresher) launchInstanceFromEvent(
 	// An event-born instance is tracked with its read-only handle just like a
 	// StartProcess one, so the SRD-019 discovery API (Instances -> Instance(id))
 	// returns a usable handle for it instead of a nil that panics on observation.
-	_, displaced := t.trackInstanceLocked(inst, cancel, settled)
+	h, displaced := t.trackInstanceLocked(inst, cancel, settled)
 	stopDisplaced(displaced)
+	h.reattachObservers()
 
 	// Bind the correlation reservation to the instance that now owns it
 	// (FIX-036 §1.2): until this point the entry only says "a start is in
@@ -1590,6 +1631,7 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error)
 
 	h, displaced := t.trackInstanceLocked(inst, cancel, settled)
 	stopDisplaced(displaced)
+	h.reattachObservers()
 
 	return h, nil
 }

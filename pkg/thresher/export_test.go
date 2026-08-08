@@ -16,3 +16,9 @@ func SignalCatchers(th *Thresher, name string) int {
 
 	return h.SignalCatchers(name)
 }
+
+// SetCancelParkSeam installs the function Cancel runs between its state check
+// and the direct cancel — the window an instance can park in. The dehydration
+// harness that can produce a parked instance lives in thresher_test, and the
+// window it aims at is here; this is the bridge. Pass nil to clear it.
+func SetCancelParkSeam(f func()) { cancelParkSeam = f }

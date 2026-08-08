@@ -3,6 +3,7 @@ package thresher
 import (
 	"context"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -426,7 +427,7 @@ func TestRunRegisterStartersError(t *testing.T) {
 func TestRegisterProcessSupersedeHubErrors(t *testing.T) {
 	proc := msgStartProcess(t, "p-sup-err", "order placed")
 
-	seedV1 := func(t *testing.T, th *Thresher) string {
+	seedV1 := func(t *testing.T, th *Thresher) *ProcessRegistration {
 		t.Helper()
 
 		s1, err := snapshot.New(proc)
@@ -442,7 +443,7 @@ func TestRegisterProcessSupersedeHubErrors(t *testing.T) {
 		th.m.Unlock()
 		th.state.Store(uint32(Started))
 
-		return s1.ProcessID
+		return v1
 	}
 
 	t.Run("teardown of the superseded version errors", func(t *testing.T) {
@@ -462,7 +463,12 @@ func TestRegisterProcessSupersedeHubErrors(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("re-register of the new version errors", func(t *testing.T) {
+	// A failed re-register now ROLLS BACK (FIX-038 §1.5): the superseded
+	// version's starters go back on the hub, so the hub sees a SECOND
+	// RegisterPersistentEvent — the restore. This subtest previously expected
+	// exactly one, which pinned the behaviour that left the key with no live
+	// starters at all and bricked it for every later registration.
+	t.Run("re-register of the new version errors, and rolls back", func(t *testing.T) {
 		th, err := New("sup-rereg")
 		require.NoError(t, err)
 
@@ -471,16 +477,37 @@ func TestRegisterProcessSupersedeHubErrors(t *testing.T) {
 			UnregisterEvent(mock.Anything, mock.Anything).
 			Return(nil).
 			Once()
+		// the new version's arm fails …
 		mh.EXPECT().
 			RegisterPersistentEvent(mock.Anything, mock.Anything).
 			Return(fmt.Errorf("hub register rejected")).
 			Once()
 		th.eventHub = mh
 
-		seedV1(t, th)
+		v1 := seedV1(t, th)
+		require.Len(t, v1.starters, 1)
+
+		// … and V1'S starter goes back on — matched by identity, because
+		// `mock.Anything` here would accept the FAILED version's starter just
+		// as happily, leaving the key serving a version that never landed.
+		mh.EXPECT().
+			RegisterPersistentEvent(
+				mock.MatchedBy(func(ep eventproc.EventProcessor) bool {
+					return ep.ID() == v1.starters[0].ID()
+				}),
+				mock.Anything).
+			Return(nil).
+			Once()
 
 		_, err = th.RegisterProcess(proc) // teardown ok, re-register fails
 		require.Error(t, err)
+
+		th.m.Lock()
+		regs := th.registrations[proc.ID()]
+		th.m.Unlock()
+
+		require.Len(t, regs, 1,
+			"the failed version is removed, leaving the previous one latest")
 	})
 }
 
