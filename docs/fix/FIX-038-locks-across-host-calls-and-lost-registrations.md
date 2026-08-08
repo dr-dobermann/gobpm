@@ -368,7 +368,15 @@ before moving it (§1.14). `publishWaiter` reports the waiter that serves the
 processor (§1.15). `remapUnstopped` puts back a waiter whose `Stop` failed, but
 only if the key is still free — a registration that installed its own waiter in
 the meantime owns the definition, and overwriting it would strand THAT one
-(§1.16).
+(§1.16). A signal waiter goes back into the name index too: it is reached by
+NAME, so restoring it to the registry alone would leave it mapped, alive and
+invisible to every broadcast.
+
+`Cancel` does **not** nil-guard `current()`. A handle always speaks for an
+instance — every constructor adopts one — and `State()` and `Data()` do not
+guard it either, so a guard here would only defer the same nil to
+`WaitCompletion` two lines later. It was written, found uncovered by the gate,
+and removed rather than given a test for a branch that panics downstream.
 
 ## 4 Verification
 
@@ -408,7 +416,7 @@ The independent review's findings (§1.13–§1.16):
 | T-19 | `TestCancelRacingTheParkStillLands` | a cancel whose check saw a live instance still terminates it when the park lands in the window — driven through the seam, not raced for (§1.13) |
 | T-20 | `TestReattachIsIdempotentPerObject` | one fact, one delivery: a re-attach onto the object an observer already sits on does not register it twice (§1.14) |
 | T-21 | `TestLostRegistrationReportsTheServingWaiter` | the registration fact names the winner, never the discarded waiter (§1.15) |
-| T-22 | `TestUnstoppableWaiterStaysMapped` | a waiter whose `Stop` fails is still mapped, and is the same waiter (§1.16) |
+| T-22 | `TestUnstoppableWaiterStaysMapped`, `TestUnstoppableSignalWaiterRejoinsTheNameIndex`, `TestUnstoppableWaiterYieldsToAReplacement` | a waiter whose `Stop` fails is still mapped and still in the name index — but never over a waiter that claimed the definition meanwhile (§1.16) |
 
 ### 4.2 Gate
 

@@ -499,6 +499,7 @@ type faultyWaiter struct {
 	id      string
 	addErr  error
 	stopErr error
+	onStop  func() // runs inside Stop, before it reports its failure
 	stops   atomic.Int32
 }
 
@@ -520,6 +521,10 @@ func (w *faultyWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 
 func (w *faultyWaiter) Stop() error {
 	w.stops.Add(1)
+
+	if w.onStop != nil {
+		w.onStop()
+	}
 
 	_ = w.countingWaiter.Stop()
 
@@ -738,4 +743,109 @@ func TestUnstoppableWaiterStaysMapped(t *testing.T) {
 		"the waiter is still alive, so it must still be reachable")
 	require.Equal(t, eventproc.EventWaiter(w), got,
 		"and it is the same waiter, not a replacement")
+}
+
+// internalSignalDef builds a signal definition inside the package's own test
+// binary — the eventhub_test helper of the same shape is in the external test
+// package and cannot be reached from here.
+func internalSignalDef(t *testing.T, name string) *events.SignalEventDefinition {
+	t.Helper()
+
+	sig, err := events.NewSignal(name, nil)
+	require.NoError(t, err)
+
+	def, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+
+	return def
+}
+
+// TestUnstoppableSignalWaiterRejoinsTheNameIndex: restoring a stranded waiter
+// has to restore it EVERYWHERE it was registered. A signal waiter is reached by
+// NAME through signalIdx, not only by definition id, so putting it back in the
+// registry alone would leave it invisible to every broadcast — mapped, alive,
+// and unreachable.
+func TestUnstoppableSignalWaiterRejoinsTheNameIndex(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	def := internalSignalDef(t, "GO")
+
+	w := &faultyWaiter{
+		countingWaiter: newCountingWaiter(def),
+		stopErr:        errors.New("the waiter will not stop"),
+	}
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().ID().Return("ep-signal-unstoppable").Maybe()
+
+	require.NoError(t, w.AddEventProcessor(ep))
+	require.NoError(t, w.Service(context.Background()))
+
+	hub.m.Lock()
+	hub.waiters[def.ID()] = w
+	hub.signalIdx["GO"] = []eventproc.EventWaiter{w}
+	hub.m.Unlock()
+
+	require.Error(t, hub.UnregisterEvent(ep, def.ID()))
+
+	hub.m.Lock()
+	_, mapped := hub.waiters[def.ID()]
+	idx := hub.signalIdx["GO"]
+	hub.m.Unlock()
+
+	require.True(t, mapped, "the waiter is back in the registry")
+	require.Contains(t, idx, eventproc.EventWaiter(w),
+		"and back in the name index, or no broadcast could ever reach it")
+}
+
+// TestUnstoppableWaiterYieldsToAReplacement: the restore must NOT overwrite a
+// waiter that a concurrent registration installed while the failing Stop ran.
+// That waiter owns the definition now; putting the stranded one back over it
+// would strand THAT one instead — the same defect with the victims swapped.
+func TestUnstoppableWaiterYieldsToAReplacement(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	def, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	replacement := &faultyWaiter{
+		countingWaiter: newCountingWaiter(def),
+		id:             "replacement-waiter",
+	}
+
+	// the failing Stop installs the replacement, standing in for a
+	// registration that landed while the unregistration was outside the lock.
+	doomed := &faultyWaiter{
+		countingWaiter: newCountingWaiter(def),
+		id:             "doomed-waiter",
+		stopErr:        errors.New("the waiter will not stop"),
+		onStop: func() {
+			hub.m.Lock()
+			hub.waiters[def.ID()] = replacement
+			hub.m.Unlock()
+		},
+	}
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().ID().Return("ep-yield").Maybe()
+
+	require.NoError(t, doomed.AddEventProcessor(ep))
+	require.NoError(t, doomed.Service(context.Background()))
+
+	hub.m.Lock()
+	hub.waiters[def.ID()] = doomed
+	hub.m.Unlock()
+
+	require.Error(t, hub.UnregisterEvent(ep, def.ID()))
+
+	hub.m.Lock()
+	got := hub.waiters[def.ID()]
+	hub.m.Unlock()
+
+	require.Equal(t, eventproc.EventWaiter(replacement), got,
+		"the definition keeps the waiter that claimed it, not the stranded one")
 }

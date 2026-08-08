@@ -337,11 +337,11 @@ func (h *InstanceHandle) Cancel(ctx context.Context) (InstanceState, error) {
 	// loop that has already exited. So the state is re-read after canceling
 	// and the parked case routed — bounded, because an instance woken and
 	// re-parked by other traffic must not spin here.
+	// A handle always speaks for an instance — every constructor adopts one —
+	// so current() is not nil-guarded here, exactly as State() and Data() are
+	// not: a guard would only defer the same nil to WaitCompletion below.
 	for range cancelRouteAttempts {
 		inst := h.current()
-		if inst == nil {
-			break
-		}
 
 		if inst.State() == instance.Dehydrated && h.th != nil {
 			if err := h.th.cancelParked(ctx, h); err != nil {
@@ -358,8 +358,7 @@ func (h *InstanceHandle) Cancel(ctx context.Context) (InstanceState, error) {
 		inst.Cancel()
 
 		// It parked while that cancel was in flight, so nothing observed it.
-		cur := h.current()
-		if cur == nil || cur.State() != instance.Dehydrated || h.th == nil {
+		if h.current().State() != instance.Dehydrated || h.th == nil {
 			break
 		}
 	}
