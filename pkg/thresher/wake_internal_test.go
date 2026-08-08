@@ -57,13 +57,28 @@ func TestWakeSingleFlightLatch(t *testing.T) {
 	th, err := New("engine-latch", WithoutBanner(), WithoutStartupConfig())
 	require.NoError(t, err)
 
-	require.True(t, th.claimWake("i-1"), "the first wake claims")
-	require.False(t, th.claimWake("i-1"),
-		"a concurrent wake is refused — it delivers into the resident loop")
-	require.True(t, th.claimWake("i-2"), "a different instance is unaffected")
+	_, claimed := th.claimWake("i-1")
+	require.True(t, claimed, "the first wake claims")
+
+	done, claimed := th.claimWake("i-1")
+	require.False(t, claimed, "a concurrent wake is refused")
+	require.NotNil(t, done,
+		"a refused claim hands back the channel to wait on — the loser must be "+
+			"able to retry its own payload (FIX-037 §1.1)")
+
+	_, claimed = th.claimWake("i-2")
+	require.True(t, claimed, "a different instance is unaffected")
 
 	th.releaseWake("i-1")
-	require.True(t, th.claimWake("i-1"), "the latch clears on release")
+
+	select {
+	case <-done:
+	default:
+		t.Fatal("releaseWake must close the channel losers wait on")
+	}
+
+	_, claimed = th.claimWake("i-1")
+	require.True(t, claimed, "the latch clears on release")
 }
 
 // TestWakeFailureIsLoud: a wake for an instance whose checkpoint is missing
@@ -329,20 +344,48 @@ func TestWakeUnknownInstanceIsLoud(t *testing.T) {
 	require.Error(t, err, "a wake with no checkpoint is an error, not a panic")
 }
 
-// TestWakeSingleFlightRefusesSecond: with a wake already latched, a second
-// trigger for the same instance is a no-op (it will ride the resident loop).
-func TestWakeSingleFlightRefusesSecond(t *testing.T) {
+// TestWakeSingleFlightWaitsThenRetries is FIX-037 T-1: with a wake already
+// latched, a second trigger must WAIT for it and then retry its own delivery.
+//
+// This test previously asserted the opposite — that the second trigger is "a
+// no-op (it will ride the resident loop)" — which was §1.1's defect written
+// down as the contract. The in-flight wake carries its own PendingTrigger and
+// cannot deliver this one, so returning nil dropped the event while telling the
+// hub and the timer service it had been delivered.
+func TestWakeSingleFlightWaitsThenRetries(t *testing.T) {
 	th, cancel := armedWakeEngine(t, "engine-latched")
 	defer cancel()
 
-	require.True(t, th.claimWake("i-1"))
+	_, claimed := th.claimWake("i-1")
+	require.True(t, claimed)
 
-	err := th.wakeInstance("i-1", &instance.PendingTrigger{
-		TrackID: "t-1", EDef: wakeSignalDef(t, "latched-sig")})
-	require.NoError(t, err,
-		"a second concurrent trigger defers to the in-flight wake")
+	returned := make(chan error, 1)
+
+	go func() {
+		returned <- th.wakeInstance("i-1", &instance.PendingTrigger{
+			TrackID: "t-1", EDef: wakeSignalDef(t, "latched-sig")})
+	}()
+
+	// It must still be waiting: dropping the trigger would show up here as an
+	// immediate return.
+	select {
+	case <-returned:
+		t.Fatal("the second trigger returned instead of awaiting the in-flight wake")
+	case <-time.After(150 * time.Millisecond):
+	}
 
 	th.releaseWake("i-1")
+
+	select {
+	case err := <-returned:
+		// The retry runs; "i-1" has no checkpoint here, so it reports rather
+		// than claiming success. Loud is the point — silence is what hid it.
+		require.Error(t, err,
+			"the retried trigger reports its failure instead of vanishing")
+
+	case <-time.After(3 * time.Second):
+		t.Fatal("the waiter was not released")
+	}
 }
 
 // TestClaimForWakeExhausts: a repository whose CAS never succeeds exhausts the
@@ -759,18 +802,37 @@ func TestWakeOutcomeLabels(t *testing.T) {
 		TrackID: "t-1"}))
 }
 
-// TestHydrateForTaskDefersToAnInFlightWake: with a wake already latched for an
-// instance, a task action does not start a second rebuild — it lets the
-// in-flight one finish and replays against the result (§4.6).
-func TestHydrateForTaskDefersToAnInFlightWake(t *testing.T) {
+// TestHydrateForTaskWaitsForAnInFlightWake is FIX-037 T-2: a task action that
+// loses the wake latch must WAIT for the in-flight rebuild rather than return.
+//
+// It previously asserted that returning immediately was correct ("deferred to,
+// not duplicated"). It was not: residentForTask's contract says the instance it
+// hands back "was built already pinned", and this path neither rebuilt nor
+// pinned — so onTaskInstance unpinned a pin the call never took (§1.2).
+func TestHydrateForTaskWaitsForAnInFlightWake(t *testing.T) {
 	th, cancel := armedWakeEngine(t, "engine-taskwake")
 	defer cancel()
 
-	require.True(t, th.claimWake("i-1"))
-	defer th.releaseWake("i-1")
+	_, claimed := th.claimWake("i-1")
+	require.True(t, claimed)
 
-	require.NoError(t, th.hydrateForTask("i-1"),
-		"a concurrent wake is deferred to, not duplicated")
+	returned := make(chan error, 1)
+
+	go func() { returned <- th.hydrateForTask("i-1") }()
+
+	select {
+	case <-returned:
+		t.Fatal("the task action returned without rebuilding or pinning")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	th.releaseWake("i-1")
+
+	select {
+	case <-returned: // it proceeds; the outcome depends on the absent record
+	case <-time.After(3 * time.Second):
+		t.Fatal("the task action was not released")
+	}
 }
 
 // TestRebuildRefusesABrokenRecord: a checkpoint whose recorded node is not in
@@ -1241,4 +1303,51 @@ func TestReleaseWaitsDuringHoldTimerRefusesTheArm(t *testing.T) {
 
 	require.Empty(t, ts.holds, "a refused arm registers no deadline")
 	require.Empty(t, ts.arming, "a refused arm leaves no in-flight marker")
+}
+
+// TestIncidentOpTakesTheWakeLatch is FIX-037 T-3: wakeForIncidentOp used to
+// call rebuildAndContinue directly — the only rebuild path that never claimed.
+//
+// The repository CAS does not compensate: claimForWake RETRIES a lost CAS
+// rather than failing (wake.go), so two concurrent rebuilds both succeed at
+// successive incarnations. The in-process latch is the only thing preventing
+// two live loops over one instance, so an operator's RetryIncident racing a
+// timer wake started a second execution loop over the same state (§1.3).
+func TestIncidentOpTakesTheWakeLatch(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-incident-latch")
+	defer cancel()
+
+	proc := noneStartProcess(t, "p-incident-latch")
+	_, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	_, claimed := th.claimWake(h.ID())
+	require.True(t, claimed, "a wake is in flight for this instance")
+
+	returned := make(chan error, 1)
+
+	ctx, opCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer opCancel()
+
+	go func() {
+		returned <- th.wakeForIncidentOp(ctx, h, instance.IncidentRetry, "inc-1")
+	}()
+
+	// It must wait for the in-flight wake rather than rebuilding beside it.
+	select {
+	case <-returned:
+		t.Fatal("the incident op rebuilt without taking the wake latch")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	th.releaseWake(h.ID())
+
+	select {
+	case <-returned: // proceeds; the outcome depends on the instance state
+	case <-time.After(3 * time.Second):
+		t.Fatal("the incident op was not released")
+	}
 }

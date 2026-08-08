@@ -85,6 +85,15 @@ func (t *Thresher) hydrateFromTimer(
 func (t *Thresher) wakeInstance(
 	instanceID string, pending *instance.PendingTrigger,
 ) error {
+	return t.wakeInstanceAttempt(instanceID, pending, 0)
+}
+
+// wakeInstanceAttempt is wakeInstance's body, carrying the attempt count so a
+// caller that lost the latch can wait for the in-flight wake and retry its own
+// delivery a BOUNDED number of times.
+func (t *Thresher) wakeInstanceAttempt(
+	instanceID string, pending *instance.PendingTrigger, attempt int,
+) error {
 	// Still resident? Deliver into the live loop (today's path, reached through
 	// the holder instead of a hub waiter). The instance may release its
 	// goroutines between this check and the delivery, so the delivery itself
@@ -103,14 +112,33 @@ func (t *Thresher) wakeInstance(
 		}
 	}
 
-	if !t.claimWake(instanceID) {
-		// another wake is already hydrating this instance — it will deliver
-		// the trigger into the soon-resident loop; nothing to do here (§4.6).
-		return nil
-	}
-	defer t.releaseWake(instanceID)
+	done, claimed := t.claimWake(instanceID)
+	if claimed {
+		defer t.releaseWake(instanceID)
 
-	return t.rebuildAndContinue(instanceID, pending)
+		return t.rebuildAndContinue(instanceID, pending)
+	}
+
+	// Another wake is rebuilding the instance. It carries ITS OWN trigger and
+	// cannot deliver this one, so returning here would drop the event and
+	// report success to a caller that treats nil as delivered — the hub
+	// reports nothing, the timer service surrenders the deadline (FIX-037
+	// §1.1). Wait for that wake, then retry this trigger from the top: the
+	// instance is resident by then, so the delivery above takes it.
+	if !t.awaitWake(done) {
+		return wakeErr("the engine stopped while awaiting an in-flight wake", nil)
+	}
+
+	// Bounded, so a storm of concurrent wakes cannot recurse without end.
+	// Exhausting the attempts is LOUD: the trigger could not be delivered, and
+	// silence is exactly what made the original defect invisible.
+	if attempt+1 >= wakeDeliverAttempts {
+		return wakeErr("the trigger could not be delivered after "+
+			strconv.Itoa(wakeDeliverAttempts)+" attempts — the instance kept "+
+			"being rebuilt by concurrent wakes", nil)
+	}
+
+	return t.wakeInstanceAttempt(instanceID, pending, attempt+1)
 }
 
 // rebuildAndContinue rebuilds a dehydrated instance from its checkpoint and
@@ -256,6 +284,13 @@ func wakeTriggerLabel(pending *instance.PendingTrigger) string {
 // dehydration write; more would mean something else is fighting for the record.
 const wakeClaimAttempts = 3
 
+// wakeDeliverAttempts bounds how many times a trigger that lost the wake latch
+// waits for the in-flight rebuild and re-tries its own delivery (FIX-037 §1.1).
+// Each round costs one rebuild's wait, and a third failure means something is
+// re-parking the instance as fast as it wakes — a condition to report, not to
+// keep retrying.
+const wakeDeliverAttempts = 3
+
 // claimForWake takes ownership of a dehydrated instance's record so it can be
 // rebuilt: load it, re-claim it under a HIGHER incarnation (the fencing token
 // every later save carries, ADR-033 §2.8), and return the claimed record with
@@ -312,26 +347,58 @@ func (t *Thresher) claimForWake(
 		wakeErr("couldn't claim the record for the wake", lastErr)
 }
 
-// claimWake latches an instance's wake, returning false when one is already in
-// flight (single-flight, SRD-071 §4.6).
-func (t *Thresher) claimWake(instanceID string) bool {
+// claimWake latches an instance's wake (single-flight, SRD-071 §4.6).
+//
+// The winner gets ok=true and MUST releaseWake when it is done. A loser gets
+// ok=false and a channel closed when the in-flight wake finishes — it waits on
+// that and then retries its OWN path, because the latch only says the instance
+// is being rebuilt by someone else. It says nothing about the caller's payload,
+// and every caller has one: a pending trigger, a residency pin, an operator's
+// incident operation. Treating a refusal as "my work is done too" is what lost
+// them (FIX-037 §1.1-1.3).
+func (t *Thresher) claimWake(instanceID string) (<-chan struct{}, bool) {
 	t.wakeMu.Lock()
 	defer t.wakeMu.Unlock()
 
-	if t.waking[instanceID] {
+	if done, inFlight := t.waking[instanceID]; inFlight {
+		return done, false
+	}
+
+	t.waking[instanceID] = make(chan struct{})
+
+	return nil, true
+}
+
+// awaitWake blocks until the in-flight wake signaled by done completes, or the
+// engine stops. It reports whether the wake finished — a false means the engine
+// is going away and the caller must not retry.
+func (t *Thresher) awaitWake(done <-chan struct{}) bool {
+	engCtx, running := t.engineContext()
+	if !running {
 		return false
 	}
 
-	t.waking[instanceID] = true
+	select {
+	case <-done:
+		return true
 
-	return true
+	case <-engCtx.Done():
+		return false
+	}
 }
 
 // releaseWake clears an instance's wake latch.
 func (t *Thresher) releaseWake(instanceID string) {
 	t.wakeMu.Lock()
+	done := t.waking[instanceID]
 	delete(t.waking, instanceID)
 	t.wakeMu.Unlock()
+
+	// Closing releases every caller that lost the claim and is waiting to
+	// retry its own path.
+	if done != nil {
+		close(done)
+	}
 }
 
 // wakeErr builds one classified wake error.
