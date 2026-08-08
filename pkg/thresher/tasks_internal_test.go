@@ -270,3 +270,80 @@ func TestTaskVanishesBetweenThePhases(t *testing.T) {
 		require.ErrorContains(t, ownErr, "task-1")
 	})
 }
+
+// TestReattachIsIdempotentPerObject is the independent review's finding A2. An
+// Observe landing between adopt and reattachObservers registers on the NEW
+// instance object; reattachObservers then re-registered the same fan-out on
+// that same object, so every fact arrived TWICE and the first registration's
+// cancel was overwritten — it could never be removed.
+//
+// The window is driven directly: register the observer after the adopt, then
+// re-attach, which is exactly the interleaving.
+func TestReattachIsIdempotentPerObject(t *testing.T) {
+	th, err := New("reattach-idempotent", WithoutBanner(), WithoutStartupConfig())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	proc := noneStartProcess(t, "p-reattach-idem")
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	inst, err := th.instanceByID(h.ID())
+	require.NoError(t, err)
+
+	// Count only the marked fact: the instance emits its own lifecycle facts
+	// throughout, and they would drown the one delivery this measures.
+	obs := &markedObserver{mark: "reattach-probe"}
+
+	sub := h.Observe(obs)
+	defer sub.Cancel()
+
+	// the rebuild's second half, with the Observe already landed on this object
+	h.reattachObservers()
+
+	inst.Report(observability.Fact{
+		Kind:   observability.KindInstanceState,
+		NodeID: obs.mark,
+	})
+
+	require.Eventually(t, func() bool { return obs.count() > 0 },
+		2*time.Second, 10*time.Millisecond, "the observer receives the fact")
+
+	// One fact, one delivery. A duplicated registration makes it two.
+	require.Never(t, func() bool { return obs.count() > 1 },
+		300*time.Millisecond, 30*time.Millisecond,
+		"a re-attach onto the object the observer already sits on must not"+
+			" register it twice")
+}
+
+// markedObserver counts only the facts carrying its mark in NodeID, so a test
+// can measure ONE delivery against an instance that is emitting its own facts.
+type markedObserver struct {
+	mark string
+
+	mu   sync.Mutex
+	seen int
+}
+
+func (o *markedObserver) OnFact(f observability.Fact) {
+	if f.NodeID != o.mark {
+		return
+	}
+
+	o.mu.Lock()
+	o.seen++
+	o.mu.Unlock()
+}
+
+func (o *markedObserver) count() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	return o.seen
+}

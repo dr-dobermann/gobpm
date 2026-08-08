@@ -120,10 +120,18 @@ func TestCancelReachesADehydratedInstance(t *testing.T) {
 		"the instance is terminated, not left parked")
 
 	// And it stays cancelled: advancing past the timer must not resurrect it.
+	// The assertion is on the engine's OWN statement that it woke something —
+	// a hydration fact — rather than on a downstream side effect, so the
+	// window only has to cover the wake the mock clock triggers at once.
+	hydrations := fw.count(observability.KindInstanceState,
+		observability.PhaseHydrated)
+
 	clk.Advance(3 * time.Hour)
 
-	require.Never(t, func() bool { return hit.Load() },
-		500*time.Millisecond, 50*time.Millisecond,
+	require.Never(t, func() bool {
+		return fw.count(observability.KindInstanceState,
+			observability.PhaseHydrated) > hydrations || hit.Load()
+	}, 200*time.Millisecond, 20*time.Millisecond,
 		"a cancelled instance must not be woken by its own timer")
 }
 
@@ -161,4 +169,73 @@ func TestCancelOnAParkedInstanceReportsAStoppedEngine(t *testing.T) {
 	_, err = h.Cancel(ctx)
 	require.Error(t, err,
 		"a cancel that cannot reach the instance must not report success")
+}
+
+// TestCancelRacingTheParkStillLands is the independent review's finding A1.
+// Cancel checks whether the instance is dehydrated and then cancels it, and
+// those two steps are not atomic: an instance that parks in between takes the
+// direct cancel to a loop that has already exited — §1.10's defect reappearing
+// inside the guard that fixes it.
+//
+// The window is AIMED at, not raced for. A first attempt merely issued the
+// cancel while the park was in flight and passed with the fix reverted — it hit
+// the window by luck, which is indistinguishable from a test that cannot fail
+// (the same weakness the review found in T-3). The seam makes it deterministic:
+// Cancel's check sees a live instance, the seam then waits for the park to
+// complete, and only then does the direct cancel run — against a loop that is
+// certainly gone.
+func TestCancelRacingTheParkStillLands(t *testing.T) {
+	repo := memrepo.New()
+	deadline := dehydrationEpoch.Add(2 * time.Hour)
+
+	var hit atomic.Bool
+
+	p := longTimerProc(t, "cancel-race", deadline, &hit)
+
+	th, fw, clk, stop := bootDehydrationEngine(t, "engine-CR", repo, p)
+	defer stop()
+
+	h, err := th.StartLatest(p.ID())
+	require.NoError(t, err)
+
+	parked := make(chan struct{})
+
+	thresher.SetCancelParkSeam(func() {
+		// runs INSIDE Cancel, after the check saw a live instance
+		require.Eventually(t, func() bool {
+			return fw.saw(observability.KindInstanceState,
+				observability.PhaseDehydrated)
+		}, 3*time.Second, 10*time.Millisecond,
+			"the instance must park inside the window this test aims at")
+
+		close(parked)
+	})
+	defer thresher.SetCancelParkSeam(nil)
+
+	ctx, ccancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer ccancel()
+
+	st, err := h.Cancel(ctx)
+	require.NoError(t, err, "the cancel must reach the parked instance")
+
+	select {
+	case <-parked:
+	default:
+		t.Fatal("the seam never ran — the test did not exercise the window")
+	}
+
+	require.Equal(t, thresher.StateTerminated, st,
+		"a cancel that lands in the park window still terminates the instance")
+
+	// and it stays cancelled: its own timer must not resurrect it
+	hydrations := fw.count(observability.KindInstanceState,
+		observability.PhaseHydrated)
+
+	clk.Advance(3 * time.Hour)
+
+	require.Never(t, func() bool {
+		return fw.count(observability.KindInstanceState,
+			observability.PhaseHydrated) > hydrations || hit.Load()
+	}, 200*time.Millisecond, 20*time.Millisecond,
+		"a cancelled instance must not be woken by its own timer")
 }

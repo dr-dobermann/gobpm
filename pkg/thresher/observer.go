@@ -114,7 +114,13 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 	h.nextObs++
 	obsID := h.nextObs
 	h.observers[obsID] = ho
-	ho.cancel = h.current().AddObserver(fanout)
+
+	// Record WHICH object it landed on, under the same lock reattachObservers
+	// takes: this call can be racing a rebuild, and a re-attach that cannot
+	// tell it already sits on the new object registers it a second time.
+	on := h.current()
+	ho.on = on
+	ho.cancel = on.AddObserver(fanout)
 
 	h.obsMu.Unlock()
 

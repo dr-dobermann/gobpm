@@ -1,8 +1,11 @@
 package eventhub
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -454,9 +457,21 @@ func TestUnregisterRacingRegisterKeepsTheRegistration(t *testing.T) {
 type faultyWaiter struct {
 	*countingWaiter
 
+	// id distinguishes two waiters for ONE definition — countingWaiter derives
+	// its id from the definition, so a winner and a loser are otherwise
+	// indistinguishable in a fact.
+	id      string
 	addErr  error
 	stopErr error
 	stops   atomic.Int32
+}
+
+func (w *faultyWaiter) ID() string {
+	if w.id != "" {
+		return w.id
+	}
+
+	return w.countingWaiter.ID()
 }
 
 func (w *faultyWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
@@ -594,4 +609,97 @@ func TestRemoveWaiterDropsTheRegistration(t *testing.T) {
 	err = hub.RemoveWaiter(def.ID())
 	require.Error(t, err, "removing it again is not a silent success")
 	require.ErrorContains(t, err, "waiter isn't found")
+}
+
+// TestLostRegistrationReportsTheServingWaiter is the independent review's
+// finding A4. On the losing path the processor is attached to the WINNER, but
+// the PhaseRegistered fact named `w` — the waiter this call built, stopped and
+// discarded a moment earlier. An operator following that id lands on a waiter
+// that no longer exists.
+func TestLostRegistrationReportsTheServingWaiter(t *testing.T) {
+	var buf bytes.Buffer
+
+	logger := slog.New(slog.NewTextHandler(&buf,
+		&slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	hub, err := New(enginert.Default().WithLogger(logger))
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	def, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	winner := &faultyWaiter{countingWaiter: newCountingWaiter(def), id: "winner-waiter"}
+	built := &faultyWaiter{countingWaiter: newCountingWaiter(def), id: "discarded-waiter"}
+
+	// the winner appears DURING the unlocked build, so this registration loses
+	// and joins it — successfully, this time.
+	build := func(_ eventproc.EventHub, ep eventproc.EventProcessor,
+		_ flow.EventDefinition, _ renv.EngineRuntime,
+	) (eventproc.EventWaiter, error) {
+		hub.m.Lock()
+		hub.waiters[def.ID()] = winner
+		hub.m.Unlock()
+
+		_ = built.AddEventProcessor(ep)
+
+		return built, nil
+	}
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().ID().Return("ep-lost-report").Maybe()
+
+	require.NoError(t, hub.registerWaiter(ep, def, build),
+		"joining the winner is a successful registration")
+
+	out := buf.String()
+	require.Contains(t, out, winner.ID(),
+		"the fact must name the waiter the processor actually landed on")
+	require.NotContains(t, out, built.ID(),
+		"it must not name the waiter this call discarded")
+}
+
+// TestUnstoppableWaiterStaysMapped is the independent review's finding A5. The
+// §1.3 fix moved the removal under the lock that observes the waiter empty,
+// which is correct — but it also made the removal happen BEFORE Stop. A waiter
+// that will not stop is still serving its subscription, so leaving it unmapped
+// strands it: the next registration for this definition builds a second waiter
+// and subscribes again, and nothing can ever reach the first.
+//
+// A failed unregistration must leave the registry as it found it.
+func TestUnstoppableWaiterStaysMapped(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	def, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	w := &faultyWaiter{
+		countingWaiter: newCountingWaiter(def),
+		stopErr:        errors.New("the waiter will not stop"),
+	}
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().ID().Return("ep-unstoppable").Maybe()
+
+	require.NoError(t, w.AddEventProcessor(ep))
+	require.NoError(t, w.Service(context.Background())) // so Stop is attempted
+
+	hub.m.Lock()
+	hub.waiters[def.ID()] = w
+	hub.m.Unlock()
+
+	err = hub.UnregisterEvent(ep, def.ID())
+	require.Error(t, err, "a waiter that will not stop is a failed unregister")
+	require.ErrorContains(t, err, "waiter stop failed")
+
+	hub.m.Lock()
+	got, mapped := hub.waiters[def.ID()]
+	hub.m.Unlock()
+
+	require.True(t, mapped,
+		"the waiter is still alive, so it must still be reachable")
+	require.Equal(t, eventproc.EventWaiter(w), got,
+		"and it is the same waiter, not a replacement")
 }

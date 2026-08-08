@@ -371,9 +371,17 @@ func (eh *EventHub) publishWaiter(
 			errs.E(addErr))
 	}
 
+	// Name the waiter the processor actually landed on. On the losing path
+	// that is the WINNER: w was stopped and discarded a few lines up, so
+	// reporting it points an operator at a waiter that no longer exists.
+	served := w
+	if lost {
+		served = winner
+	}
+
 	eh.reportEventFlow(observability.PhaseRegistered, map[string]string{
 		observability.AttrEventDefinitionID: eDef.ID(),
-		observability.AttrWaiterID:          w.ID(),
+		observability.AttrWaiterID:          served.ID(),
 	})
 
 	return nil
@@ -533,6 +541,14 @@ func (eh *EventHub) UnregisterEvent(
 	// host broker, which must never run under the hub lock (FIX-038 §1.1).
 	if w.State() == eventproc.WSRunned {
 		if err := w.Stop(); err != nil {
+			// A waiter that will not stop is still serving its subscription,
+			// so leaving it unmapped strands it: the next registration for
+			// this definition builds a SECOND waiter and subscribes again.
+			// Put it back — only if the key is still free, since a
+			// registration may have installed its own by now — which makes
+			// the failed unregistration atomic: nothing happened.
+			eh.remapUnstopped(eDefID, w)
+
 			return errs.New(
 				errs.M("waiter stop failed"),
 				errs.C(errorClass, errs.OperationFailed),
@@ -711,6 +727,26 @@ func (eh *EventHub) RemoveWaiter(eDefID string) error {
 func (eh *EventHub) dropWaiterLocked(eDefID string, w eventproc.EventWaiter) {
 	eh.removeWaiterFromIndex(w)
 	delete(eh.waiters, eDefID)
+}
+
+// remapUnstopped puts back a waiter whose Stop failed, so a failed
+// unregistration leaves the registry as it found it rather than stranding a
+// live subscription outside the map. It restores nothing if the key is taken:
+// a registration that installed its own waiter in the meantime owns the
+// definition now, and overwriting it would strand THAT one instead.
+func (eh *EventHub) remapUnstopped(eDefID string, w eventproc.EventWaiter) {
+	eh.m.Lock()
+	defer eh.m.Unlock()
+
+	if _, taken := eh.waiters[eDefID]; taken {
+		return
+	}
+
+	eh.waiters[eDefID] = w
+
+	if name, ok := signalName(w.EventDefinition()); ok {
+		eh.signalIdx[name] = append(eh.signalIdx[name], w)
+	}
 }
 
 // removeWaiterFromIndex drops a signal waiter from signalIdx in step with its removal from the
