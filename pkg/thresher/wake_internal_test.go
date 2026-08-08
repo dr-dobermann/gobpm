@@ -1609,3 +1609,59 @@ func TestFailedRegisterRestoresThePreviousStarters(t *testing.T) {
 		"a retry after a failed registration must behave like a first attempt")
 	require.Greater(t, v2.Version(), v1.Version())
 }
+
+// TestFirstRegistrationFailureLeavesNoTrace is the other half of T-5: when the
+// FAILING registration is a key's first, there is no previous version to
+// restore. The rollback must still undo its own bookkeeping and return the
+// original cause unwrapped — a caller retrying the very first registration of a
+// key must find it as untouched as if the call had never happened.
+func TestFirstRegistrationFailureLeavesNoTrace(t *testing.T) {
+	th, hub, cancel := hookedWakeEngine(t, "engine-first-register-fails")
+	defer cancel()
+
+	proc := msgStartProcess(t, "p-first-fails", "order placed")
+
+	hub.failArms(errors.New("hub refuses"), 1)
+
+	_, err := th.RegisterProcess(proc)
+	require.Error(t, err, "the failing registration is reported")
+	require.ErrorContains(t, err, "hub refuses",
+		"with no previous version there is nothing to join to the cause")
+
+	th.m.Lock()
+	regs := th.registrations[proc.ID()]
+	th.m.Unlock()
+
+	require.Empty(t, regs, "the failed version leaves no registration behind")
+
+	// the key is usable: a retry against a healthy hub is a first attempt
+	hub.failArms(nil, 0)
+
+	v1, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+	require.NotNil(t, v1)
+}
+
+// TestRollbackFailureJoinsTheCause is T-5's worst case: the registration fails
+// AND restoring the previous version's starters fails too. The caller must
+// learn both — that its registration did not land, and that the key is now
+// without auto-start (ADR-022 v.2 §2.2). Reporting only one of the two leaves
+// an operator repairing the wrong thing.
+func TestRollbackFailureJoinsTheCause(t *testing.T) {
+	th, hub, cancel := hookedWakeEngine(t, "engine-rollback-fails")
+	defer cancel()
+
+	proc := msgStartProcess(t, "p-rollback-fails", "order placed")
+
+	_, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	// two arms fail: v2's own, and the re-arm of v1's starters in the rollback
+	hub.failArms(errors.New("hub refuses"), 2)
+
+	_, err = th.RegisterProcess(proc)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "hub refuses", "the original cause survives")
+	require.ErrorContains(t, err, "no auto-start",
+		"and the failed rollback is reported beside it")
+}

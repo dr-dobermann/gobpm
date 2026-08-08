@@ -16,6 +16,7 @@ import (
 // its registry lock while finding out.
 type blockingActor struct {
 	id      string
+	groups  []string
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
@@ -27,7 +28,7 @@ func (a *blockingActor) Groups() []string {
 	a.once.Do(func() { close(a.entered) })
 	<-a.release
 
-	return nil
+	return a.groups
 }
 
 // TestTaskAuthorizationDoesNotHoldTheEngineLock is FIX-038 T-2: the eligibility
@@ -167,4 +168,105 @@ func TestHandleObserverSurvivesARebuild(t *testing.T) {
 	require.Eventually(t, func() bool { return obs.count() > before },
 		2*time.Second, 10*time.Millisecond,
 		"a subscription taken before the rebuild must keep delivering after it")
+}
+
+// TestReattachObserversWithoutAnInstance: a handle that speaks for no instance
+// yet — one whose adopt has not run — must ignore the re-attachment rather than
+// dereference nothing. The call sits on the rebuild path, where the instance
+// lookup is allowed to fail.
+func TestReattachObserversWithoutAnInstance(t *testing.T) {
+	h := &InstanceHandle{}
+
+	require.NotPanics(t, h.reattachObservers)
+}
+
+// TestTaskVanishesBetweenThePhases covers the window the §1.2 split opens: the
+// engine lock is released for the embedder's Authorize, so the task can be gone
+// by the time the verdict is applied. Both phase-2 paths must re-read and
+// report the task as unknown — applying a verdict to a record that no longer
+// exists is worse than refusing.
+func TestTaskVanishesBetweenThePhases(t *testing.T) {
+	eligible := interactor.Eligibility{
+		CandidateGroups: interactor.ResolvedSlot{
+			Declared: true,
+			IDs:      []string{"reviewers"},
+		},
+	}
+
+	// the actor blocks inside the embedder's Groups(), which is where the
+	// engine lock is NOT held — the test deletes the task in that window.
+	vanish := func(t *testing.T, th *Thresher, act *blockingActor, call func()) {
+		t.Helper()
+
+		done := make(chan struct{})
+
+		go func() {
+			defer close(done)
+
+			call()
+		}()
+
+		<-act.entered
+
+		th.m.Lock()
+		delete(th.tasks, "task-1")
+		th.m.Unlock()
+
+		close(act.release)
+		<-done
+	}
+
+	t.Run("completing it", func(t *testing.T) {
+		th, err := New("task-vanish-complete",
+			WithoutBanner(), WithoutStartupConfig())
+		require.NoError(t, err)
+
+		th.m.Lock()
+		th.tasks["task-1"] = &taskRecord{eligible: eligible, owner: "u-1"}
+		th.m.Unlock()
+
+		act := &blockingActor{
+			id:      "u-1",
+			groups:  []string{"reviewers"},
+			entered: make(chan struct{}),
+			release: make(chan struct{}),
+		}
+
+		var verdictErr error
+
+		vanish(t, th, act, func() {
+			_, verdictErr = th.completeVerdict("task-1", act)
+		})
+
+		require.Error(t, verdictErr,
+			"a task removed mid-authorization is unknown, not completable")
+		require.ErrorContains(t, verdictErr, "task-1")
+	})
+
+	t.Run("claiming it", func(t *testing.T) {
+		th, err := New("task-vanish-claim",
+			WithoutBanner(), WithoutStartupConfig())
+		require.NoError(t, err)
+
+		th.m.Lock()
+		th.tasks["task-1"] = &taskRecord{eligible: eligible}
+		th.m.Unlock()
+
+		act := &blockingActor{
+			id:      "u-2",
+			groups:  []string{"reviewers"},
+			entered: make(chan struct{}),
+			release: make(chan struct{}),
+		}
+
+		var ownErr error
+
+		vanish(t, th, act, func() {
+			ownErr = th.setOwner("task-1", "u-2", act, claimGuard(act))
+		})
+
+		require.Error(t, ownErr,
+			"a task removed mid-authorization cannot be claimed")
+		require.ErrorContains(t, ownErr, "task-1")
+	})
 }

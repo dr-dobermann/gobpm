@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -445,4 +446,152 @@ func TestUnregisterRacingRegisterKeepsTheRegistration(t *testing.T) {
 
 		_ = hub.UnregisterEvent(ep, def.ID()) // reset for the next round
 	}
+}
+
+// faultyWaiter is a countingWaiter whose two failure points can be armed: the
+// join a losing registration performs on the winner, and the teardown of a
+// waiter that was built but never installed.
+type faultyWaiter struct {
+	*countingWaiter
+
+	addErr  error
+	stopErr error
+	stops   atomic.Int32
+}
+
+func (w *faultyWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
+	if w.addErr != nil {
+		return w.addErr
+	}
+
+	return w.countingWaiter.AddEventProcessor(ep)
+}
+
+func (w *faultyWaiter) Stop() error {
+	w.stops.Add(1)
+
+	_ = w.countingWaiter.Stop()
+
+	return w.stopErr
+}
+
+// TestRegisterOnAStoppedHubIsRejectedAndTearsDown covers the branch the §1.3
+// restructure introduced: the builder runs BEFORE the lock, so a registration
+// that arrives at a stopped hub is holding a live waiter nothing will install.
+// It must be rejected AND torn down — a waiter left running past Shutdown is
+// exactly what SRD-019 forbids.
+func TestRegisterOnAStoppedHubIsRejectedAndTearsDown(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	def, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	// Stop fails too: an uninstalled waiter's teardown failure is a Debug fact,
+	// not a second error for the caller, who already has the real one.
+	built := &faultyWaiter{
+		countingWaiter: newCountingWaiter(def),
+		stopErr:        errors.New("the waiter will not stop"),
+	}
+
+	// The hub shuts down DURING the unlocked build. An already-stopped hub is
+	// refused at the fast path; this window — open only because building no
+	// longer holds the lock (§1.1) — is what leaves a live waiter in the hands
+	// of a registration that has nowhere to install it.
+	build := func(_ eventproc.EventHub, ep eventproc.EventProcessor,
+		_ flow.EventDefinition, _ renv.EngineRuntime,
+	) (eventproc.EventWaiter, error) {
+		require.NoError(t, hub.Shutdown(context.Background()))
+
+		_ = built.AddEventProcessor(ep)
+
+		return built, nil
+	}
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().ID().Return("ep-stopped").Maybe()
+
+	err = hub.registerWaiter(ep, def, build)
+	require.Error(t, err, "a stopped hub rejects the registration")
+	require.ErrorContains(t, err, "shut down")
+
+	require.Positive(t, built.stops.Load(),
+		"the uninstalled waiter must be torn down, not left running")
+}
+
+// TestRegisterJoinFailureIsReported covers the other uninstalled-waiter branch:
+// the registration lost the race to install, so it joins the winner instead —
+// and the join can fail. The caller must be told, because its processor is
+// subscribed to nothing at all: it is neither the winner's nor its own.
+func TestRegisterJoinFailureIsReported(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	def, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	// a winner that refuses joiners, installed DURING the unlocked build — the
+	// window the §1.1 restructure opens, and the only way the losing branch is
+	// reached: the fast path checked the map before this waiter existed.
+	winner := &faultyWaiter{
+		countingWaiter: newCountingWaiter(def),
+		addErr:         errors.New("the winner refuses the processor"),
+	}
+
+	built := &faultyWaiter{countingWaiter: newCountingWaiter(def)}
+
+	build := func(_ eventproc.EventHub, ep eventproc.EventProcessor,
+		_ flow.EventDefinition, _ renv.EngineRuntime,
+	) (eventproc.EventWaiter, error) {
+		hub.m.Lock()
+		hub.waiters[def.ID()] = winner
+		hub.m.Unlock()
+
+		_ = built.AddEventProcessor(ep)
+
+		return built, nil
+	}
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().ID().Return("ep-join-fails").Maybe()
+
+	err = hub.registerWaiter(ep, def, build)
+	require.Error(t, err, "a failed join is not a successful registration")
+	require.ErrorContains(t, err, "couldn't add event processor to waiter")
+
+	require.Positive(t, built.stops.Load(),
+		"the losing registration's own waiter must be torn down")
+}
+
+// TestRemoveWaiterDropsTheRegistration covers RemoveWaiter's success path: the
+// waiter leaves the registry and the name index together, through the same
+// dropWaiterLocked the §1.3 restructure made the single removal point. Removing
+// it twice reports not-found rather than silently succeeding.
+func TestRemoveWaiterDropsTheRegistration(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	def, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	w := newCountingWaiter(def)
+
+	hub.m.Lock()
+	hub.waiters[def.ID()] = w
+	hub.m.Unlock()
+
+	require.NoError(t, hub.RemoveWaiter(def.ID()))
+
+	hub.m.Lock()
+	_, present := hub.waiters[def.ID()]
+	hub.m.Unlock()
+
+	require.False(t, present, "the waiter is gone from the registry")
+
+	err = hub.RemoveWaiter(def.ID())
+	require.Error(t, err, "removing it again is not a silent success")
+	require.ErrorContains(t, err, "waiter isn't found")
 }

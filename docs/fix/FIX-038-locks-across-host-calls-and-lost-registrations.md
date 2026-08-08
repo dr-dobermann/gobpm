@@ -342,6 +342,17 @@ nobody misinformed, while an operator told "cancelled" needs it to be true.
 | T-12 | `TestRebuildForOpReportsAFailedClaim`, `TestRebuildForOpReportsAFailedRebuild` | a request that cannot take the latch or cannot rebuild is reported, names the operation, and releases the latch (§1.11) |
 | T-13 | `TestCancelOnAParkedInstanceReportsAStoppedEngine`, `TestAwaitOpVerdictHonoursTheCallerContext` | a request arriving after shutdown fails instead of reporting success; the verdict wait is bounded by the caller's context (§1.12) |
 
+The gate then found that several of the remedies' own failure branches had no
+test — the FIX-037 lesson repeating, so they are pinned too:
+
+| # | Test | Asserts |
+|---|---|---|
+| T-14 | `TestRegisterOnAStoppedHubIsRejectedAndTearsDown`, `TestRegisterJoinFailureIsReported` | a registration whose hub stops, or whose join fails, DURING the now-unlocked build is rejected and its uninstalled waiter torn down (§1.1) |
+| T-15 | `TestRemoveWaiterDropsTheRegistration` | `RemoveWaiter` drops the waiter through the single removal point, and a second call reports not-found (§1.3) |
+| T-16 | `TestFirstRegistrationFailureLeavesNoTrace`, `TestRollbackFailureJoinsTheCause` | a failing FIRST registration returns its cause unwrapped and leaves no version behind; a failing rollback joins its own error to the cause (§1.5) |
+| T-17 | `TestTaskVanishesBetweenThePhases` | a task removed while the embedder's `Authorize` runs is reported unknown by both phase-2 paths, not acted on (§1.2) |
+| T-18 | `TestGetDataByIDStopsAtAnUnrootedPath`, `TestReattachObserversWithoutAnInstance` | the id walk terminates on a path with no parent; a handle with no instance ignores the re-attachment (§1.7, §1.8) |
+
 ### 4.2 Gate
 
 `make ci` green end to end, `-race` included; diff-coverage ≥95% on the touched
@@ -375,6 +386,13 @@ lines (`COVER_MIN`).
 - Every path fixed here reported success while failing. A registration that
   cannot fire, a recovery that did not happen and an observer that will not be
   called now each produce an error or a log.
+- **The remedy's own error branches need the same coverage as the defect's.**
+  The first full gate run failed at 91.7% diff-coverage, and the gap was not in
+  the fixes but in what happens when THEY fail: a rollback that cannot restore
+  the previous starters, a registration meeting a hub that stopped mid-build, a
+  task deleted inside the very window the lock-split opens. Each is reachable
+  only through the new structure, so nothing older covered them — T-14 to T-18
+  exist because the gate, not a reviewer, asked.
 
 ## 6 Regressions and side effects
 

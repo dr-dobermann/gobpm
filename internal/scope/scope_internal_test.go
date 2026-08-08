@@ -473,3 +473,17 @@ func TestSnapshotAtIsAtomic(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
+
+// TestGetDataByIDStopsAtAnUnrootedPath: the walk climbs toward the root, and a
+// path that cannot yield a parent ends it. EmptyDataPath is the case a caller
+// actually reaches — instances are constructed with it — so the lookup must
+// answer "not visible", not spin or fault.
+func TestGetDataByIDStopsAtAnUnrootedPath(t *testing.T) {
+	p, err := New(mustPath(t, "/proc"), nil)
+	require.NoError(t, err)
+
+	d, err := p.dataByIDLocked(EmptyDataPath, "no-such-item")
+	require.Error(t, err, "an unrooted path resolves nothing")
+	require.Nil(t, d)
+	require.ErrorContains(t, err, "no-such-item")
+}
