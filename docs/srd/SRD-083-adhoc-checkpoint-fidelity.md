@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted (2026-08-08) |
 | Date | 2026-08-08 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-033 v.4](../design/ADR-033-persistence-and-state.md) §2.10 (composite constructs capture faithfully), [ADR-035 v.1](../design/ADR-035-adhoc-sub-process.md) (the Router-driven routing model whose position this persists) |
@@ -217,16 +217,34 @@ engine, model or thresher surface changes.
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-6 implemented; every §6 test exists and passes.
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%); touched
+- [x] FR-1…FR-6 implemented; every §6 test exists and passes.
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%); touched
       functions ≥80%.
-- [ ] The persistence guide's "Current limits" no longer lists ad-hoc
+- [x] The persistence guide's "Current limits" no longer lists ad-hoc
       routing state; the ad-hoc guide carries the restart note.
-- [ ] §10 filled.
+- [x] §10 filled.
 
 ## §10 Implementation summary
 
-*Post-landing placeholder.*
+Landed on `feat/composite-followups` in three milestones plus the
+audit round — doc `926a4c5`, M1 `a8de260` (schema 5 + capture; four
+pre-existing tests re-pinned from the literal schema 4 to
+`checkpoint.CurrentSchema`), M2 `d3a36e2` (adoption + refusals; the
+cancel-window completion edge surfaced here and was folded into FR-4),
+M3 `0566575` (the kill-and-resume e2e + guides/CHANGELOG/roadmap), and
+the `/check-srd` close-out commit (the FR-4 sequential-invariant test;
+the README composite-fidelity paragraph gained the ad-hoc clause — and
+its RU twin turned out to be missing the whole paragraph since
+SRD-082, fixed under "no pre-existing errors").
+
+Verification: `make ci` green end to end (exit 0 — the gate aborts on
+the first failing step), with **diff-coverage 98.1% of 103 changed
+coverable lines** (min 95%; `adhoc.go`, `loop.go`, `restore.go` at
+100%); all suites race-clean; golangci-lint incl. tests 0 issues.
+
+Deviations from the plan: none in scope. The roadmap §5 map now files
+the #277-review follow-ups: #305 → E1, #306 → S1, #307 → E2 (this
+landing), #308 → S6.
 
 ## Open questions
 

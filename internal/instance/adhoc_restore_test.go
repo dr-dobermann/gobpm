@@ -359,6 +359,34 @@ func TestAdHocRestoreCompletesStoppedEmpty(t *testing.T) {
 	restoreToDone(t, doc, s)
 }
 
+// TestAdHocSequentialInvariantAfterRestore (SRD-083 FR-4): the
+// sequential-ordering guard counts RESTORED live work — a
+// multi-successor answer after the restore is rejected exactly as it
+// is on a fresh run.
+func TestAdHocSequentialInvariantAfterRestore(t *testing.T) {
+	const key = "cr-ahq"
+
+	var gate atomic.Int32
+
+	r := &scriptedRouter{
+		turns: [][]string{{key + "-a"}, {key + "-b"},
+			{key + "-a", key + "-b"}},
+	}
+
+	s := adHocSnapshot(t, key, r, &gate, instantOp(t, key+"-op"),
+		activities.WithAdHocOrdering(activities.AdHocSequential))
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		rec := adHocRec(d)
+
+		return rec != nil && trackAtAdHoc(d, key+"-b") != nil
+	})
+
+	// post-restore, b's settle draws the scripted TWO-successor answer.
+	gate.Store(1)
+	restoreExpectFault(t, doc, s, "only one may run at a time")
+}
+
 // TestAdHocRestoreRefusals is T-5 (SRD-083 FR-5/FR-6): every
 // inconsistent record — and the pre-fidelity document — refuses with
 // its cause.
