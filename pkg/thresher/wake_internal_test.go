@@ -1351,3 +1351,191 @@ func TestIncidentOpTakesTheWakeLatch(t *testing.T) {
 		t.Fatal("the incident op was not released")
 	}
 }
+
+// TestHydrateForTaskPinsAfterWaiting is the half of T-2 that matters: a task
+// action that lost the latch must come back holding a pin. residentForTask
+// hands the instance to onTaskInstance, which unpins unconditionally, so a path
+// that returns without pinning underflows the counter (FIX-037 §1.2).
+func TestHydrateForTaskPinsAfterWaiting(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-task-pin")
+	defer cancel()
+
+	proc := noneStartProcess(t, "p-task-pin")
+	_, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	inst, err := th.instanceByID(h.ID())
+	require.NoError(t, err)
+
+	before := inst.ResidentPins()
+
+	_, claimed := th.claimWake(h.ID())
+	require.True(t, claimed)
+
+	returned := make(chan error, 1)
+
+	go func() { returned <- th.hydrateForTask(h.ID()) }()
+
+	select {
+	case <-returned:
+		t.Fatal("returned without waiting for the in-flight wake")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	th.releaseWake(h.ID())
+
+	select {
+	case err := <-returned:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the task action was not released")
+	}
+
+	require.Equal(t, before+1, inst.ResidentPins(),
+		"the waiter must take its OWN pin — the caller unpins unconditionally")
+}
+
+// TestAwaitWakeStopsWithTheEngine covers awaitWake's two refusals: before Run
+// there is no engine lifetime to wait within, and a shutdown mid-wait releases
+// the waiter rather than stranding it on a latch nobody will clear.
+func TestAwaitWakeStopsWithTheEngine(t *testing.T) {
+	t.Run("before Run", func(t *testing.T) {
+		th, err := New("await-unrun", WithoutBanner(), WithoutStartupConfig())
+		require.NoError(t, err)
+
+		require.False(t, th.awaitWake(make(chan struct{})),
+			"a wait with no engine lifetime is refused, not blocked forever")
+	})
+
+	t.Run("engine stops while waiting", func(t *testing.T) {
+		th, cancel := armedWakeEngine(t, "await-stopped")
+
+		done := make(chan struct{}) // never closed: only the engine releases it
+		got := make(chan bool, 1)
+
+		go func() { got <- th.awaitWake(done) }()
+
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+
+		select {
+		case ok := <-got:
+			require.False(t, ok, "a stopped engine releases the waiter as failed")
+		case <-time.After(3 * time.Second):
+			t.Fatal("awaitWake did not observe the engine stopping")
+		}
+	})
+}
+
+// TestWakeInstanceReportsWhenTheEngineStops pins the loud path: a trigger whose
+// wait is broken by shutdown reports instead of returning nil. Silence on this
+// path is what made the dropped-trigger defect invisible.
+func TestWakeInstanceReportsWhenTheEngineStops(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-wake-stop")
+
+	_, claimed := th.claimWake("i-stop")
+	require.True(t, claimed)
+
+	returned := make(chan error, 1)
+
+	go func() {
+		returned <- th.wakeInstance("i-stop", &instance.PendingTrigger{
+			TrackID: "t-1", EDef: wakeSignalDef(t, "stop-sig")})
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-returned:
+		require.Error(t, err, "a trigger stranded by shutdown is reported")
+	case <-time.After(3 * time.Second):
+		t.Fatal("the waiter was not released by the shutdown")
+	}
+}
+
+// TestWakeDeliveryAttemptsAreBounded pins the loud exhaustion path directly:
+// an instance that keeps being rebuilt by concurrent wakes must eventually
+// REPORT that the trigger could not be delivered, never return nil. Driving the
+// counter directly is deterministic where racing three successive latch losses
+// is not.
+func TestWakeDeliveryAttemptsAreBounded(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-exhaust")
+	defer cancel()
+
+	_, claimed := th.claimWake("i-x")
+	require.True(t, claimed)
+
+	// Release from ANOTHER goroutine: the call below WAITS for this latch, so
+	// releasing it in a defer would deadlock the test against its own subject.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		th.releaseWake("i-x")
+	}()
+
+	err := th.wakeInstanceAttempt("i-x", &instance.PendingTrigger{
+		TrackID: "t-1", EDef: wakeSignalDef(t, "exhaust-sig")},
+		wakeDeliverAttempts-1)
+
+	require.ErrorContains(t, err, "could not be delivered",
+		"the last attempt reports rather than dropping the trigger")
+}
+
+// TestTaskHydrationReportsWhenTheEngineStops and its incident sibling cover the
+// shutdown escape on the other two latch callers: a waiter must be released
+// when the engine goes away, and must say so rather than proceeding as if the
+// rebuild had happened.
+func TestTaskHydrationReportsWhenTheEngineStops(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-task-stop")
+
+	_, claimed := th.claimWake("i-ts")
+	require.True(t, claimed)
+
+	returned := make(chan error, 1)
+
+	go func() { returned <- th.hydrateForTask("i-ts") }()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-returned:
+		require.Error(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the task waiter was not released by the shutdown")
+	}
+}
+
+func TestIncidentOpReportsWhenTheEngineStops(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-inc-stop")
+
+	proc := noneStartProcess(t, "p-inc-stop")
+	_, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	_, claimed := th.claimWake(h.ID())
+	require.True(t, claimed)
+
+	returned := make(chan error, 1)
+
+	go func() {
+		returned <- th.wakeForIncidentOp(context.Background(), h,
+			instance.IncidentRetry, "inc-stop")
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-returned:
+		require.Error(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the incident waiter was not released by the shutdown")
+	}
+}

@@ -172,6 +172,11 @@ unconditional `UnpinResident` is then correct as written.
 `wakeForIncidentOp` takes the latch before `rebuildAndContinue`, so the operator
 path cannot start a second loop beside a timer wake.
 
+Both go through **one** helper, `awaitClaim` (`wake.go`): claim, and on a loss
+wait for the in-flight wake and retry, bounded, refusing when the engine stops.
+Writing it twice was how §1.3 happened in the first place — the third rebuild
+path simply never grew the code the other two had.
+
 #### 3.2.4 `pkg/thresher/locked.go` — the displaced cancel is returned, not dropped
 
 `trackInstanceLocked` returns the `stop` it displaced along with the handle; the
@@ -205,9 +210,9 @@ which the defect could return.
 
 | # | Test | Asserts |
 |---|---|---|
-| T-1 | `TestRefusedWakeStillDeliversItsTrigger` | a second trigger arriving while a wake is in flight is delivered, not dropped — the instance observes both (§1.1) |
-| T-2 | `TestRefusedTaskHydrationPinsBeforeReturning` | a task action racing a wake gets a pinned, resident instance; the residency counter is balanced after `UnpinResident` (§1.2) |
-| T-3 | `TestIncidentOpDoesNotDuplicateTheLoop` | an incident op racing a timer wake produces exactly one live instance for the id (§1.3) |
+| T-1 | `TestWakeSingleFlightWaitsThenRetries` | a second trigger arriving while a wake is in flight is delivered, not dropped — the instance observes both (§1.1) |
+| T-2 | `TestHydrateForTaskWaitsForAnInFlightWake` | a task action racing a wake gets a pinned, resident instance; the residency counter is balanced after `UnpinResident` (§1.2) |
+| T-3 | `TestIncidentOpTakesTheWakeLatch` | an incident op racing a timer wake produces exactly one live instance for the id (§1.3) |
 | T-4 | `TestRebuildReleasesThePreviousContext` | a dehydrate→rehydrate cycle cancels the displaced context; N cycles leave no accumulation (§1.4) |
 | T-5 | `TestReleaseWaitsDuringHoldTimerRefusesTheArm` | a `ReleaseWaits` driven into the middle of `HoldTimer` leaves no deadline registered (§1.5) |
 
@@ -241,7 +246,57 @@ merged.
 
 ## 8 Implementation summary
 
-_To be filled after the milestones land._
+### 8.1 Milestones
+
+| # | Commit | Scope |
+|---|---|---|
+| — | `982ef34` | this document and the 2026-08-08 package audit |
+| M1 | `2afb305` | §1.4 — `trackInstanceLocked` returns the cancel it displaces (§3.2.4) |
+| M2 | `a4af0de` | §1.5 — an arm is announced before it is built (§3.2.5) |
+| M3 | `55399d4` | §1.1–1.3 — the waitable latch and its three callers (§3.2.1–3.2.3) |
+
+M3 and M4 of the planned four landed together: they are one root cause reached
+through three callers, and the latch's signature change touches all three at
+once — splitting them would have left the tree uncompilable between commits.
+
+### 8.2 What the implementation added to the design
+
+- **§3.2.5's epoch became an in-flight token.** An epoch keyed by
+  (instance, track) is never emptied, so it grows for every track the engine has
+  ever run — the §1.4 leak class, reintroduced by the §1.5 remedy. A token keyed
+  by the arming *call* lives only for the duration of one `HoldTimer`. The
+  window closed is identical; §3.1 #4 and §3.2.5 are amended.
+- **Three existing tests asserted the defective contract.**
+  `TestWakeSingleFlightRefusesSecond` documented §1.1 as intended behaviour ("a
+  no-op (it will ride the resident loop)"), and its task counterpart did the
+  same for the pin. Both are re-pinned to the corrected contract rather than
+  relaxed. A defect that a test asserts is a defect the test will defend.
+- **A refused arm and an exhausted retry differ.** A `HoldTimer` refused by a
+  concurrent release is a success — the wait is gone, nothing to hold. A trigger
+  that exhausts `wakeDeliverAttempts` is an error, reported loudly. Both used to
+  be `nil`, which is what made §1.1 invisible.
+
+### 8.3 Gate
+
+The first full run at `55399d4` **failed**: diff-coverage 78.2% against a 95%
+floor. The uncovered lines were the branches this fix exists to create — most
+importantly `hydrateForTask`'s pin path, the actual remedy for §1.2, which the
+first T-2 never asserted (it checked only that the call unblocked). A test that
+asserts less than it appears to is the failure mode §1.2 itself came from.
+
+Closing it produced a better shape than more tests would have. `hydrateForTask`
+and `wakeForIncidentOp` had each hand-rolled the same wait-then-claim loop;
+both now call one `awaitClaim` helper, which is the reusable form of "I need to
+rebuild this instance and someone else may be rebuilding it right now". The
+duplication and the coverage gap went together — `incident_ops.go` and
+`tasks.go` are at 100% of changed lines, and there is now a single place where
+a rebuild path takes the latch.
+
+`Instance.ResidentPins` was added (internal package) so the pin BALANCE is
+observable: the invariant §1.2 breaks could not be asserted from `pkg/thresher`
+at all, which is why the original test could only check that it unblocked.
+
+Final: `diff-coverage: 96.5% of 113 changed coverable lines (min 95%) — PASS`.
 
 ## 9 Open questions
 

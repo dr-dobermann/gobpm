@@ -600,42 +600,26 @@ func (t *Thresher) residentForTask(taskID string) (*instance.Instance, error) {
 // Complete then travels the normal in-instance path. The rebuild starts pinned
 // so it cannot release before that action arrives.
 func (t *Thresher) hydrateForTask(instanceID string) error {
-	for range wakeDeliverAttempts {
-		done, claimed := t.claimWake(instanceID)
-		if claimed {
-			err := t.rebuildAndContinue(instanceID, nil,
-				instance.WithResidentPin())
-			t.releaseWake(instanceID)
-
-			return err
-		}
-
-		// Another wake is rebuilding it. Returning here used to report success
-		// without having rebuilt OR pinned, while residentForTask's contract
-		// says the instance it hands back "was built already pinned" — so
-		// onTaskInstance unpinned a pin this call never took (FIX-037 §1.2).
-		// Wait for that rebuild, then take our own pin on the result.
-		if !t.awaitWake(done) {
-			return t.errEngineNotRunning("hydrateForTask")
-		}
-
-		inst, err := t.instanceByID(instanceID)
-		if err != nil {
-			continue // it vanished between the wake and the lookup — retry
-		}
-
-		if inst.State() != instance.Dehydrated {
-			// PinResident before returning: the caller unpins unconditionally,
-			// so the pin must exist on EVERY path out of here.
-			inst.PinResident()
-
-			return nil
-		}
-		// it re-parked before we could pin it — claim the next rebuild
+	// Wait for any in-flight rebuild and take the latch, then rebuild pinned.
+	// Returning on a lost claim used to report success without having rebuilt
+	// OR pinned, while residentForTask's contract says the instance it hands
+	// back "was built already pinned" — so onTaskInstance unpinned a pin this
+	// call never took (FIX-037 §1.2).
+	if err := t.awaitClaim(instanceID, "hydrateForTask"); err != nil {
+		return err
 	}
 
-	return errs.New(
-		errs.M("hydrateForTask: instance %q kept re-parking across %d wakes",
-			instanceID, wakeDeliverAttempts),
-		errs.C(errorClass, errs.OperationFailed))
+	defer t.releaseWake(instanceID)
+
+	// The wake we waited for may already have made it resident. Pin that
+	// instead of rebuilding it again — the pin must exist on EVERY path out of
+	// here, because the caller unpins unconditionally.
+	if inst, err := t.instanceByID(instanceID); err == nil &&
+		inst.State() != instance.Dehydrated {
+		inst.PinResident()
+
+		return nil
+	}
+
+	return t.rebuildAndContinue(instanceID, nil, instance.WithResidentPin())
 }

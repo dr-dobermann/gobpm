@@ -369,6 +369,30 @@ func (t *Thresher) claimWake(instanceID string) (<-chan struct{}, bool) {
 	return nil, true
 }
 
+// awaitClaim takes the wake latch for instanceID, waiting for an in-flight wake
+// when the first attempt loses and retrying a bounded number of times. On a nil
+// return the caller OWNS the latch and must releaseWake.
+//
+// It is the shared form of "I need to rebuild this instance, and someone else
+// may be rebuilding it right now" — the shape every rebuild path needs and only
+// some of them had (FIX-037 §1.3).
+func (t *Thresher) awaitClaim(instanceID, op string) error {
+	for range wakeDeliverAttempts {
+		done, claimed := t.claimWake(instanceID)
+		if claimed {
+			return nil
+		}
+
+		if !t.awaitWake(done) {
+			return t.errEngineNotRunning(op)
+		}
+	}
+
+	return gerrs.New(
+		gerrs.M("%s: instance %q is being rebuilt concurrently", op, instanceID),
+		gerrs.C(errorClass, gerrs.OperationFailed))
+}
+
 // awaitWake blocks until the in-flight wake signaled by done completes, or the
 // engine stops. It reports whether the wake finished — a false means the engine
 // is going away and the caller must not retry.

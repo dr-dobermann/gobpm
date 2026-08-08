@@ -141,7 +141,8 @@ Both from the architecture lens alone — the other two lenses did not run.
 
 ## 6 Next actions
 
-1. **FIX-037** lands C-1…C-5 (in progress, branch `fix/wake-residency-races`).
+1. **FIX-037 has landed C-1…C-5** on branch `fix/wake-residency-races`
+   (`2afb305`, `a4af0de`, `55399d4`).
 2. **Re-run `internal/instance`** with four-or-more-way splitting; two thirds of
    the largest package in the engine is currently unaudited.
 3. **Verify §5 in unit-sized batches**, routing each to a FIX or to

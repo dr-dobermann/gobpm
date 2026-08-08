@@ -27,22 +27,8 @@ func (t *Thresher) wakeForIncidentOp(
 	// concurrent rebuilds both succeed at successive incarnations (FIX-037
 	// §1.3). Without this an operator's retry racing a timer wake started a
 	// second execution loop over the same state.
-	done, claimed := t.claimWake(h.ID())
-	if !claimed {
-		if !t.awaitWake(done) {
-			return t.errEngineNotRunning("wakeForIncidentOp")
-		}
-
-		// the in-flight wake rebuilt it; claim the rebuild this op needs.
-		done, claimed = t.claimWake(h.ID())
-		if !claimed {
-			_ = t.awaitWake(done)
-
-			return errs.New(
-				errs.M("incident op: instance %q is being woken concurrently",
-					h.ID()),
-				errs.C(errorClass, errs.OperationFailed))
-		}
+	if err := t.awaitClaim(h.ID(), "wakeForIncidentOp"); err != nil {
+		return err
 	}
 
 	defer t.releaseWake(h.ID())
