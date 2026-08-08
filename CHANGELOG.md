@@ -173,6 +173,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Iteration-counter race**: the loop decorators wrote the pass
   ordinal bare while the checkpoint capture read it under the track
   mutex.
+- **The wake latch discarded what it refused, and two retained handles were
+  never released** (FIX-037 — the first findings of the `/audit-package` sweep).
+  - **A message arriving during a timer wake was permanently lost.** The
+    single-flight latch told a second trigger that another wake was already in
+    flight, and that trigger returned `nil` — which the event hub and the timer
+    service both read as *delivered*. The in-flight wake carries its own
+    trigger and cannot deliver another's. An Event-Based Gateway arming a timer
+    and a message on one dehydrated instance is the ordinary shape that reached
+    it. A refused caller now waits for the in-flight wake and retries its own
+    delivery, and a trigger that cannot be delivered is reported rather than
+    dropped.
+  - **An operator's incident retry could start a second execution loop.**
+    `RetryIncident` on a parked instance rebuilt it without taking the latch —
+    the only rebuild path that did not. The durable claim does not compensate:
+    it retries a lost compare-and-swap rather than failing, so two concurrent
+    rebuilds both succeed and two goroutine loops run over one instance's state.
+  - **A task action racing a wake unbalanced the residency counter** and could
+    act on a still-dehydrated instance, surfacing a spurious failure.
+  - **Every dehydrate/rehydrate cycle leaked a context.** A rebuild replaced the
+    instance's registration and dropped the previous cancel without calling it,
+    so each cycle left a child attached to the engine context for the engine's
+    lifetime.
+  - **A cancelled timer wait could re-arm itself.** `HoldTimer` registered its
+    deadline blind, so a release landing mid-arm withdrew nothing and was
+    overtaken by the arm — leaving a deadline that later woke the instance for a
+    track that no longer existed.
 
 - **The engine's lifecycle bookkeeping: a data race, reservations with no
   owner, and host code with no containment** (FIX-036 — the remediation of an

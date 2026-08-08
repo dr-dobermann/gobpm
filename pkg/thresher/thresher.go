@@ -197,7 +197,12 @@ type Thresher struct {
 	// waking latches per-instance wakes so concurrent triggers hydrate an
 	// instance exactly once (single-flight, SRD-071 §4.6). Guarded by wakeMu,
 	// distinct from m.
-	waking map[string]bool
+	// waking maps an instance whose wake is IN FLIGHT to a channel closed when
+	// that wake finishes. A loser waits on it and then retries its own path:
+	// the latch transfers responsibility for rebuilding the INSTANCE, never for
+	// the caller's own payload — a trigger, a residency pin, an operator's
+	// operation (FIX-037 §2). Guarded by wakeMu.
+	waking map[string]chan struct{}
 	// subs are the hub subscriptions the engine holds on released instances'
 	// behalf (SRD-071 FR-7) — one per armed message/signal wait, so a track may
 	// own several (the Event-Based Gateway set). Guarded by subMu, distinct
@@ -304,7 +309,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		seenKeys:      map[string]string{},
 		tasks:         map[string]*taskRecord{},
 		keyLocks:      newKeyLockManager(),
-		waking:        map[string]bool{},
+		waking:        map[string]chan struct{}{},
 		subs:          map[subKey]*subHolder{},
 		settled:       map[string]chan struct{}{},
 	}
@@ -1388,7 +1393,8 @@ func (t *Thresher) launchInstanceFromEvent(
 	// An event-born instance is tracked with its read-only handle just like a
 	// StartProcess one, so the SRD-019 discovery API (Instances -> Instance(id))
 	// returns a usable handle for it instead of a nil that panics on observation.
-	t.trackInstanceLocked(inst, cancel, settled)
+	_, displaced := t.trackInstanceLocked(inst, cancel, settled)
+	stopDisplaced(displaced)
 
 	// Bind the correlation reservation to the instance that now owns it
 	// (FIX-036 §1.2): until this point the entry only says "a start is in
@@ -1582,7 +1588,10 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error)
 			errs.E(err))
 	}
 
-	return t.trackInstanceLocked(inst, cancel, settled), nil
+	h, displaced := t.trackInstanceLocked(inst, cancel, settled)
+	stopDisplaced(displaced)
+
+	return h, nil
 }
 
 // =============================================================================

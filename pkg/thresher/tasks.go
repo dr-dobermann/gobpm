@@ -600,10 +600,26 @@ func (t *Thresher) residentForTask(taskID string) (*instance.Instance, error) {
 // Complete then travels the normal in-instance path. The rebuild starts pinned
 // so it cannot release before that action arrives.
 func (t *Thresher) hydrateForTask(instanceID string) error {
-	if !t.claimWake(instanceID) {
-		return nil // another wake is already rebuilding it
+	// Wait for any in-flight rebuild and take the latch, then rebuild pinned.
+	// Returning on a lost claim used to report success without having rebuilt
+	// OR pinned, while residentForTask's contract says the instance it hands
+	// back "was built already pinned" — so onTaskInstance unpinned a pin this
+	// call never took (FIX-037 §1.2).
+	if err := t.awaitClaim(instanceID, "hydrateForTask"); err != nil {
+		return err
 	}
+
 	defer t.releaseWake(instanceID)
+
+	// The wake we waited for may already have made it resident. Pin that
+	// instead of rebuilding it again — the pin must exist on EVERY path out of
+	// here, because the caller unpins unconditionally.
+	if inst, err := t.instanceByID(instanceID); err == nil &&
+		inst.State() != instance.Dehydrated {
+		inst.PinResident()
+
+		return nil
+	}
 
 	return t.rebuildAndContinue(instanceID, nil, instance.WithResidentPin())
 }

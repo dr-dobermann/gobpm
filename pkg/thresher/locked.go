@@ -439,9 +439,6 @@ func (t *Thresher) snapshotForVersionLocked(
 	return nil
 }
 
-// trackInstanceLocked records a launched instance with its cancel func and a
-// fresh read-only handle in the instances map, returning the handle. Shared by
-// launchInstance and launchInstanceFromEvent.
 // handleForLocked returns the handle for an instance id, minting one (with its
 // per-ID terminal signal) on first sight. Caller holds t.m.
 func (t *Thresher) handleForLocked(
@@ -474,11 +471,21 @@ func (t *Thresher) settledFor(instanceID string) chan struct{} {
 	return ch
 }
 
+// trackInstanceLocked records a launched instance with its cancel and its
+// read-only handle, returning the handle AND the cancel it displaced.
+//
+// The displaced cancel belongs to the PREVIOUS incarnation's context, and the
+// caller must run it once the lock is released (FIX-037 §1.4). Dropping it
+// leaves that child attached to the engine context's children for the engine's
+// whole lifetime, and a dehydrating instance replaces its registration on every
+// wake — so the leak is per cycle, not per instance. It is returned rather than
+// canceled here because canceling under t.m is the shape this file exists to
+// forbid. A first registration displaces nothing and returns nil.
 func (t *Thresher) trackInstanceLocked(
 	inst *instance.Instance,
 	cancel context.CancelFunc,
 	settled chan struct{},
-) *InstanceHandle {
+) (*InstanceHandle, context.CancelFunc) {
 	t.m.Lock()
 	defer t.m.Unlock()
 
@@ -489,11 +496,21 @@ func (t *Thresher) trackInstanceLocked(
 	h := t.handleForLocked(inst.ID(), settled)
 	h.adopt(inst)
 
+	displaced := t.instances[inst.ID()].stop
+
 	t.instances[inst.ID()] = instanceReg{
 		stop:   cancel,
 		inst:   inst,
 		handle: h,
 	}
 
-	return h
+	return h, displaced
+}
+
+// stopDisplaced runs the cancel trackInstanceLocked displaced, if any. Always
+// call it OUTSIDE t.m.
+func stopDisplaced(displaced context.CancelFunc) {
+	if displaced != nil {
+		displaced()
+	}
 }

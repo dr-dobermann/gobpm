@@ -21,6 +21,18 @@ func (t *Thresher) wakeForIncidentOp(
 ) error {
 	resp := make(chan error, 1)
 
+	// Take the wake latch like every other rebuild path. It is the ONLY thing
+	// preventing two live loops over one instance: the repository claim does
+	// not exclude, it orders — claimForWake RETRIES a lost CAS, so two
+	// concurrent rebuilds both succeed at successive incarnations (FIX-037
+	// §1.3). Without this an operator's retry racing a timer wake started a
+	// second execution loop over the same state.
+	if err := t.awaitClaim(h.ID(), "wakeForIncidentOp"); err != nil {
+		return err
+	}
+
+	defer t.releaseWake(h.ID())
+
 	if err := t.rebuildAndContinue(h.ID(), nil,
 		instance.WithPendingIncidentOp(op, incidentID, resp)); err != nil {
 		return errs.New(

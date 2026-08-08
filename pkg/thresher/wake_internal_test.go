@@ -57,13 +57,28 @@ func TestWakeSingleFlightLatch(t *testing.T) {
 	th, err := New("engine-latch", WithoutBanner(), WithoutStartupConfig())
 	require.NoError(t, err)
 
-	require.True(t, th.claimWake("i-1"), "the first wake claims")
-	require.False(t, th.claimWake("i-1"),
-		"a concurrent wake is refused — it delivers into the resident loop")
-	require.True(t, th.claimWake("i-2"), "a different instance is unaffected")
+	_, claimed := th.claimWake("i-1")
+	require.True(t, claimed, "the first wake claims")
+
+	done, claimed := th.claimWake("i-1")
+	require.False(t, claimed, "a concurrent wake is refused")
+	require.NotNil(t, done,
+		"a refused claim hands back the channel to wait on — the loser must be "+
+			"able to retry its own payload (FIX-037 §1.1)")
+
+	_, claimed = th.claimWake("i-2")
+	require.True(t, claimed, "a different instance is unaffected")
 
 	th.releaseWake("i-1")
-	require.True(t, th.claimWake("i-1"), "the latch clears on release")
+
+	select {
+	case <-done:
+	default:
+		t.Fatal("releaseWake must close the channel losers wait on")
+	}
+
+	_, claimed = th.claimWake("i-1")
+	require.True(t, claimed, "the latch clears on release")
 }
 
 // TestWakeFailureIsLoud: a wake for an instance whose checkpoint is missing
@@ -111,7 +126,8 @@ func TestTimerServiceReleaseAndIdle(t *testing.T) {
 	require.False(t, ok, "an idle service holds nothing")
 
 	deadline := wakeEpoch.Add(time.Hour)
-	ts.hold(timerHold{instanceID: "i-1", trackID: "t-1", deadline: deadline})
+	ts.hold(timerHold{instanceID: "i-1", trackID: "t-1", deadline: deadline},
+		ts.beginArm("i-1", "t-1"))
 
 	got, ok := ts.nearest()
 	require.True(t, ok)
@@ -119,7 +135,8 @@ func TestTimerServiceReleaseAndIdle(t *testing.T) {
 
 	// an earlier hold wins the nearest slot.
 	earlier := wakeEpoch.Add(30 * time.Minute)
-	ts.hold(timerHold{instanceID: "i-2", trackID: "t-2", deadline: earlier})
+	ts.hold(timerHold{instanceID: "i-2", trackID: "t-2", deadline: earlier},
+		ts.beginArm("i-2", "t-2"))
 
 	got, _ = ts.nearest()
 	require.True(t, earlier.Equal(got))
@@ -162,7 +179,7 @@ func TestTimerServiceRunStops(t *testing.T) {
 	ts.hold(timerHold{
 		instanceID: "i-1", trackID: "t-1",
 		deadline: wakeEpoch.Add(time.Hour),
-	})
+	}, ts.beginArm("i-1", "t-1"))
 
 	cancel()
 
@@ -183,7 +200,7 @@ func TestTimerServiceRunStops(t *testing.T) {
 		})
 	ts2.hold(timerHold{
 		instanceID: "i-9", trackID: "t-9", deadline: wakeEpoch,
-	})
+	}, ts2.beginArm("i-9", "t-9"))
 	ts2.fireDue(ctx)
 	require.Zero(t, woke, "a canceled wake batch fires nothing")
 }
@@ -327,20 +344,48 @@ func TestWakeUnknownInstanceIsLoud(t *testing.T) {
 	require.Error(t, err, "a wake with no checkpoint is an error, not a panic")
 }
 
-// TestWakeSingleFlightRefusesSecond: with a wake already latched, a second
-// trigger for the same instance is a no-op (it will ride the resident loop).
-func TestWakeSingleFlightRefusesSecond(t *testing.T) {
+// TestWakeSingleFlightWaitsThenRetries is FIX-037 T-1: with a wake already
+// latched, a second trigger must WAIT for it and then retry its own delivery.
+//
+// This test previously asserted the opposite — that the second trigger is "a
+// no-op (it will ride the resident loop)" — which was §1.1's defect written
+// down as the contract. The in-flight wake carries its own PendingTrigger and
+// cannot deliver this one, so returning nil dropped the event while telling the
+// hub and the timer service it had been delivered.
+func TestWakeSingleFlightWaitsThenRetries(t *testing.T) {
 	th, cancel := armedWakeEngine(t, "engine-latched")
 	defer cancel()
 
-	require.True(t, th.claimWake("i-1"))
+	_, claimed := th.claimWake("i-1")
+	require.True(t, claimed)
 
-	err := th.wakeInstance("i-1", &instance.PendingTrigger{
-		TrackID: "t-1", EDef: wakeSignalDef(t, "latched-sig")})
-	require.NoError(t, err,
-		"a second concurrent trigger defers to the in-flight wake")
+	returned := make(chan error, 1)
+
+	go func() {
+		returned <- th.wakeInstance("i-1", &instance.PendingTrigger{
+			TrackID: "t-1", EDef: wakeSignalDef(t, "latched-sig")})
+	}()
+
+	// It must still be waiting: dropping the trigger would show up here as an
+	// immediate return.
+	select {
+	case <-returned:
+		t.Fatal("the second trigger returned instead of awaiting the in-flight wake")
+	case <-time.After(150 * time.Millisecond):
+	}
 
 	th.releaseWake("i-1")
+
+	select {
+	case err := <-returned:
+		// The retry runs; "i-1" has no checkpoint here, so it reports rather
+		// than claiming success. Loud is the point — silence is what hid it.
+		require.Error(t, err,
+			"the retried trigger reports its failure instead of vanishing")
+
+	case <-time.After(3 * time.Second):
+		t.Fatal("the waiter was not released")
+	}
 }
 
 // TestClaimForWakeExhausts: a repository whose CAS never succeeds exhausts the
@@ -757,18 +802,37 @@ func TestWakeOutcomeLabels(t *testing.T) {
 		TrackID: "t-1"}))
 }
 
-// TestHydrateForTaskDefersToAnInFlightWake: with a wake already latched for an
-// instance, a task action does not start a second rebuild — it lets the
-// in-flight one finish and replays against the result (§4.6).
-func TestHydrateForTaskDefersToAnInFlightWake(t *testing.T) {
+// TestHydrateForTaskWaitsForAnInFlightWake is FIX-037 T-2: a task action that
+// loses the wake latch must WAIT for the in-flight rebuild rather than return.
+//
+// It previously asserted that returning immediately was correct ("deferred to,
+// not duplicated"). It was not: residentForTask's contract says the instance it
+// hands back "was built already pinned", and this path neither rebuilt nor
+// pinned — so onTaskInstance unpinned a pin the call never took (§1.2).
+func TestHydrateForTaskWaitsForAnInFlightWake(t *testing.T) {
 	th, cancel := armedWakeEngine(t, "engine-taskwake")
 	defer cancel()
 
-	require.True(t, th.claimWake("i-1"))
-	defer th.releaseWake("i-1")
+	_, claimed := th.claimWake("i-1")
+	require.True(t, claimed)
 
-	require.NoError(t, th.hydrateForTask("i-1"),
-		"a concurrent wake is deferred to, not duplicated")
+	returned := make(chan error, 1)
+
+	go func() { returned <- th.hydrateForTask("i-1") }()
+
+	select {
+	case <-returned:
+		t.Fatal("the task action returned without rebuilding or pinning")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	th.releaseWake("i-1")
+
+	select {
+	case <-returned: // it proceeds; the outcome depends on the absent record
+	case <-time.After(3 * time.Second):
+		t.Fatal("the task action was not released")
+	}
 }
 
 // TestRebuildRefusesABrokenRecord: a checkpoint whose recorded node is not in
@@ -1195,4 +1259,295 @@ func TestPromoteFailureSurfaces(t *testing.T) {
 
 	require.False(t, th.registrations[proc.ID()][0].wired,
 		"the version that could not be armed is not marked wired")
+}
+
+// TestReleaseWaitsDuringHoldTimerRefusesTheArm is FIX-037 T-5: HoldTimer used
+// to register its deadline blind, so a ReleaseWaits that ran between the
+// method's entry and its hold scanned the service, found nothing to withdraw,
+// and was then overtaken by a hold that armed the very wait it had canceled —
+// a zombie deadline that later wakes the instance for a track that is gone.
+//
+// This is the timer counterpart of the subscription window FIX-036 §1.4 closed.
+// The interleaving is driven directly rather than raced: the arm is announced,
+// the release runs, and only then does the hold land.
+func TestReleaseWaitsDuringHoldTimerRefusesTheArm(t *testing.T) {
+	ts := newTimerService(clocktest.New(wakeEpoch), time.Second,
+		func(string, *instance.PendingTrigger) bool { return true })
+
+	h := timerHold{
+		instanceID: "i-1",
+		trackID:    "t-1",
+		deadline:   wakeEpoch.Add(time.Hour),
+	}
+
+	// the ordinary path: an uncontended arm is accepted.
+	require.True(t, ts.hold(h, ts.beginArm("i-1", "t-1")),
+		"an arm nothing released must be accepted")
+
+	ts.mu.Lock()
+	require.Len(t, ts.holds, 1)
+	ts.mu.Unlock()
+
+	ts.release("i-1", "t-1")
+
+	// the raced path: the arm is announced, THEN the release runs, THEN the
+	// hold lands. It must be refused and leave nothing behind.
+	token := ts.beginArm("i-1", "t-1")
+	ts.release("i-1", "t-1")
+
+	require.False(t, ts.hold(h, token),
+		"an arm whose wait was released mid-flight must be refused")
+
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	require.Empty(t, ts.holds, "a refused arm registers no deadline")
+	require.Empty(t, ts.arming, "a refused arm leaves no in-flight marker")
+}
+
+// TestIncidentOpTakesTheWakeLatch is FIX-037 T-3: wakeForIncidentOp used to
+// call rebuildAndContinue directly — the only rebuild path that never claimed.
+//
+// The repository CAS does not compensate: claimForWake RETRIES a lost CAS
+// rather than failing (wake.go), so two concurrent rebuilds both succeed at
+// successive incarnations. The in-process latch is the only thing preventing
+// two live loops over one instance, so an operator's RetryIncident racing a
+// timer wake started a second execution loop over the same state (§1.3).
+func TestIncidentOpTakesTheWakeLatch(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-incident-latch")
+	defer cancel()
+
+	proc := noneStartProcess(t, "p-incident-latch")
+	_, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	_, claimed := th.claimWake(h.ID())
+	require.True(t, claimed, "a wake is in flight for this instance")
+
+	returned := make(chan error, 1)
+
+	ctx, opCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer opCancel()
+
+	go func() {
+		returned <- th.wakeForIncidentOp(ctx, h, instance.IncidentRetry, "inc-1")
+	}()
+
+	// It must wait for the in-flight wake rather than rebuilding beside it.
+	select {
+	case <-returned:
+		t.Fatal("the incident op rebuilt without taking the wake latch")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	th.releaseWake(h.ID())
+
+	select {
+	case <-returned: // proceeds; the outcome depends on the instance state
+	case <-time.After(3 * time.Second):
+		t.Fatal("the incident op was not released")
+	}
+}
+
+// TestHydrateForTaskPinsAfterWaiting is the half of T-2 that matters: a task
+// action that lost the latch must come back holding a pin. residentForTask
+// hands the instance to onTaskInstance, which unpins unconditionally, so a path
+// that returns without pinning underflows the counter (FIX-037 §1.2).
+func TestHydrateForTaskPinsAfterWaiting(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-task-pin")
+	defer cancel()
+
+	proc := noneStartProcess(t, "p-task-pin")
+	_, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	inst, err := th.instanceByID(h.ID())
+	require.NoError(t, err)
+
+	before := inst.ResidentPins()
+
+	_, claimed := th.claimWake(h.ID())
+	require.True(t, claimed)
+
+	returned := make(chan error, 1)
+
+	go func() { returned <- th.hydrateForTask(h.ID()) }()
+
+	select {
+	case <-returned:
+		t.Fatal("returned without waiting for the in-flight wake")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	th.releaseWake(h.ID())
+
+	select {
+	case err := <-returned:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the task action was not released")
+	}
+
+	require.Equal(t, before+1, inst.ResidentPins(),
+		"the waiter must take its OWN pin — the caller unpins unconditionally")
+}
+
+// TestAwaitWakeStopsWithTheEngine covers awaitWake's two refusals: before Run
+// there is no engine lifetime to wait within, and a shutdown mid-wait releases
+// the waiter rather than stranding it on a latch nobody will clear.
+func TestAwaitWakeStopsWithTheEngine(t *testing.T) {
+	t.Run("before Run", func(t *testing.T) {
+		th, err := New("await-unrun", WithoutBanner(), WithoutStartupConfig())
+		require.NoError(t, err)
+
+		require.False(t, th.awaitWake(make(chan struct{})),
+			"a wait with no engine lifetime is refused, not blocked forever")
+	})
+
+	t.Run("engine stops while waiting", func(t *testing.T) {
+		th, cancel := armedWakeEngine(t, "await-stopped")
+
+		done := make(chan struct{}) // never closed: only the engine releases it
+		got := make(chan bool, 1)
+
+		go func() { got <- th.awaitWake(done) }()
+
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+
+		select {
+		case ok := <-got:
+			require.False(t, ok, "a stopped engine releases the waiter as failed")
+		case <-time.After(3 * time.Second):
+			t.Fatal("awaitWake did not observe the engine stopping")
+		}
+	})
+}
+
+// TestWakeInstanceReportsWhenTheEngineStops pins the loud path: a trigger whose
+// wait is broken by shutdown reports instead of returning nil. Silence on this
+// path is what made the dropped-trigger defect invisible.
+func TestWakeInstanceReportsWhenTheEngineStops(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-wake-stop")
+
+	_, claimed := th.claimWake("i-stop")
+	require.True(t, claimed)
+
+	returned := make(chan error, 1)
+
+	go func() {
+		returned <- th.wakeInstance("i-stop", &instance.PendingTrigger{
+			TrackID: "t-1", EDef: wakeSignalDef(t, "stop-sig")})
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-returned:
+		require.Error(t, err, "a trigger stranded by shutdown is reported")
+	case <-time.After(3 * time.Second):
+		t.Fatal("the waiter was not released by the shutdown")
+	}
+}
+
+// TestWakeDeliveryAttemptsAreBounded pins the loud exhaustion path directly:
+// an instance that keeps being rebuilt by concurrent wakes must eventually
+// REPORT that the trigger could not be delivered, never return nil. Driving the
+// counter directly is deterministic where racing three successive latch losses
+// is not.
+func TestWakeDeliveryAttemptsAreBounded(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-exhaust")
+	defer cancel()
+
+	_, claimed := th.claimWake("i-x")
+	require.True(t, claimed)
+
+	// Release from ANOTHER goroutine: the call below WAITS for this latch, so
+	// releasing it in a defer would deadlock the test against its own subject.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		th.releaseWake("i-x")
+	}()
+
+	err := th.wakeInstanceAttempt("i-x", &instance.PendingTrigger{
+		TrackID: "t-1", EDef: wakeSignalDef(t, "exhaust-sig")},
+		wakeDeliverAttempts-1)
+
+	require.ErrorContains(t, err, "could not be delivered",
+		"the last attempt reports rather than dropping the trigger")
+}
+
+// TestTaskHydrationReportsWhenTheEngineStops and its incident sibling cover the
+// shutdown escape on the other two latch callers: a waiter must be released
+// when the engine goes away, and must say so rather than proceeding as if the
+// rebuild had happened.
+func TestTaskHydrationReportsWhenTheEngineStops(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-task-stop")
+
+	_, claimed := th.claimWake("i-ts")
+	require.True(t, claimed)
+
+	returned := make(chan error, 1)
+
+	go func() { returned <- th.hydrateForTask("i-ts") }()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-returned:
+		require.Error(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the task waiter was not released by the shutdown")
+	}
+}
+
+func TestIncidentOpReportsWhenTheEngineStops(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-inc-stop")
+
+	proc := noneStartProcess(t, "p-inc-stop")
+	_, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	_, claimed := th.claimWake(h.ID())
+	require.True(t, claimed)
+
+	returned := make(chan error, 1)
+
+	go func() {
+		returned <- th.wakeForIncidentOp(context.Background(), h,
+			instance.IncidentRetry, "inc-stop")
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-returned:
+		require.Error(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the incident waiter was not released by the shutdown")
+	}
+}
+
+// TestReportRefusedArm covers the refusal report itself. The branch that calls
+// it needs a release to land inside HoldTimer's own arm — a window no test can
+// schedule deterministically — so the reporting is pinned here and the
+// interleaving it belongs to is pinned by T-5 at the service.
+func TestReportRefusedArm(t *testing.T) {
+	th, err := New("refused-arm", WithoutBanner(), WithoutStartupConfig())
+	require.NoError(t, err)
+
+	require.NotPanics(t, func() { th.reportRefusedArm("i-1", "t-1") },
+		"a refused arm is a Debug fact, never a failure")
 }

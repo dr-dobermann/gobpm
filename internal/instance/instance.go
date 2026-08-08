@@ -239,6 +239,15 @@ func (inst *Instance) UnpinResident() {
 	inst.dehydrationPins.Add(-1)
 }
 
+// ResidentPins reports how many interactions are currently holding the instance
+// in memory. It exists so the engine's own tests can assert the pin BALANCE:
+// every caller that takes a pin must hand back exactly one, and a path that
+// returns without pinning while its caller unpins unconditionally underflows
+// this counter (FIX-037 §1.2).
+func (inst *Instance) ResidentPins() int32 {
+	return inst.dehydrationPins.Load()
+}
+
 // pinnedResident reports whether an interaction is holding the instance in
 // memory.
 func (inst *Instance) pinnedResident() bool {
