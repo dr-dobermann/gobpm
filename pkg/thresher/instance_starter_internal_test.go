@@ -462,7 +462,12 @@ func TestRegisterProcessSupersedeHubErrors(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("re-register of the new version errors", func(t *testing.T) {
+	// A failed re-register now ROLLS BACK (FIX-038 §1.5): the superseded
+	// version's starters go back on the hub, so the hub sees a SECOND
+	// RegisterPersistentEvent — the restore. This subtest previously expected
+	// exactly one, which pinned the behaviour that left the key with no live
+	// starters at all and bricked it for every later registration.
+	t.Run("re-register of the new version errors, and rolls back", func(t *testing.T) {
 		th, err := New("sup-rereg")
 		require.NoError(t, err)
 
@@ -471,9 +476,15 @@ func TestRegisterProcessSupersedeHubErrors(t *testing.T) {
 			UnregisterEvent(mock.Anything, mock.Anything).
 			Return(nil).
 			Once()
+		// the new version's arm fails …
 		mh.EXPECT().
 			RegisterPersistentEvent(mock.Anything, mock.Anything).
 			Return(fmt.Errorf("hub register rejected")).
+			Once()
+		// … and the previous version's starters are put back.
+		mh.EXPECT().
+			RegisterPersistentEvent(mock.Anything, mock.Anything).
+			Return(nil).
 			Once()
 		th.eventHub = mh
 
@@ -481,6 +492,13 @@ func TestRegisterProcessSupersedeHubErrors(t *testing.T) {
 
 		_, err = th.RegisterProcess(proc) // teardown ok, re-register fails
 		require.Error(t, err)
+
+		th.m.Lock()
+		regs := th.registrations[proc.ID()]
+		th.m.Unlock()
+
+		require.Len(t, regs, 1,
+			"the failed version is removed, leaving the previous one latest")
 	})
 }
 

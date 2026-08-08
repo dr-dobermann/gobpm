@@ -1015,7 +1015,8 @@ type armHookHub struct {
 	onRegister func()
 	withdrawn  map[string]int // eDefID → successful withdrawals
 	registered int            // total successful arms
-	armErr     error          // when set, every persistent arm fails with it
+	armErr     error          // when set, the next armFails persistent arms fail
+	armFails   int            // how many arms still fail (negative = all)
 }
 
 // hookOnce installs a one-shot callback run at the start of the next arm.
@@ -1048,13 +1049,15 @@ func (h *armHookHub) RegisterEvent(
 
 // RegisterPersistentEvent counts the arms of the instance-STARTER path, which
 // is the one T-8 watches: a starter subscription is persistent by nature.
-// failArms makes every later starter arm fail, so a test can break the hub
-// under a RUNNING engine without racing the eventHub field.
-func (h *armHookHub) failArms(err error) {
+// failArms makes the next n starter arms fail, so a test can break the hub
+// under a RUNNING engine without racing the eventHub field. n < 0 fails every
+// later arm; n == 0 clears the fault.
+func (h *armHookHub) failArms(err error, n int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	h.armErr = err
+	h.armFails = n
 }
 
 func (h *armHookHub) RegisterPersistentEvent(
@@ -1062,11 +1065,18 @@ func (h *armHookHub) RegisterPersistentEvent(
 ) error {
 	h.mu.Lock()
 	armErr := h.armErr
-	h.mu.Unlock()
 
-	if armErr != nil {
+	if armErr != nil && h.armFails != 0 {
+		if h.armFails > 0 {
+			h.armFails--
+		}
+
+		h.mu.Unlock()
+
 		return armErr
 	}
+
+	h.mu.Unlock()
 
 	err := h.EventHub.RegisterPersistentEvent(ep, eDef)
 	if err == nil {
@@ -1249,7 +1259,7 @@ func TestPromoteFailureSurfaces(t *testing.T) {
 	v2, err := th.RegisterProcess(proc)
 	require.NoError(t, err)
 
-	hub.failArms(errors.New("arm boom"))
+	hub.failArms(errors.New("arm boom"), -1)
 
 	require.ErrorContains(t, th.UnregisterVersion(v2), "arm boom",
 		"a failed promotion is the caller's error, not a silent half-removal")
@@ -1550,4 +1560,52 @@ func TestReportRefusedArm(t *testing.T) {
 
 	require.NotPanics(t, func() { th.reportRefusedArm("i-1", "t-1") },
 		"a refused arm is a Debug fact, never a failure")
+}
+
+// TestFailedRegisterRestoresThePreviousStarters is FIX-038 T-5. RegisterProcess
+// withdraws the previous version's starters to make way for the new ones. When
+// the second call failed it returned with NEITHER on the hub — nothing
+// auto-started — and left the failed version sitting as `latest`, so every
+// later RegisterProcess for that key tried to unregister starters that were
+// never registered, got ObjectNotFound, and failed too. The key was dead.
+//
+// The retry is the assertion that matters: a failed registration must leave the
+// key exactly as it was, not merely fail politely.
+func TestFailedRegisterRestoresThePreviousStarters(t *testing.T) {
+	th, hub, cancel := hookedWakeEngine(t, "engine-register-rollback")
+	defer cancel()
+
+	proc := msgStartProcess(t, "p-rollback", "order placed")
+
+	v1, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	armsAfterV1 := hub.arms()
+	require.Positive(t, armsAfterV1, "v1's starter is on the hub")
+
+	// v2's arm fails: the supersede has already withdrawn v1's starters.
+	hub.failArms(errors.New("hub refuses"), 1) // only v2's own arm
+
+	_, err = th.RegisterProcess(proc)
+	require.Error(t, err, "the failing registration is reported")
+
+	// the failed version must be gone, leaving v1 as latest again
+	th.m.Lock()
+	regs := th.registrations[proc.ID()]
+	th.m.Unlock()
+
+	require.Len(t, regs, 1, "the failed version is removed from the registry")
+	require.Equal(t, v1.Version(), regs[0].Version(), "v1 is latest again")
+
+	// and v1's starters are back on the hub
+	require.Greater(t, hub.arms(), armsAfterV1,
+		"the previous version's starters are re-armed")
+
+	// the key is not bricked: with the hub healthy again, a retry succeeds
+	hub.failArms(nil, 0)
+
+	v2, err := th.RegisterProcess(proc)
+	require.NoError(t, err,
+		"a retry after a failed registration must behave like a first attempt")
+	require.Greater(t, v2.Version(), v1.Version())
 }
