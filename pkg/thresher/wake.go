@@ -48,15 +48,19 @@ func (t *Thresher) HoldTimer(
 		cycles:     cycles,
 		kind:       kind,
 	}, token) {
-		// The wait was released while this arm was in flight. That is not a
-		// failure: the release is authoritative and there is nothing left to
-		// hold, exactly as a withdrawn subscription hold reports success.
-		t.cfg.logger.Debug("timer hold refused — the wait was released mid-arm",
-			observability.AttrInstanceID, instanceID,
-			observability.AttrTrackID, trackID)
+		t.reportRefusedArm(instanceID, trackID)
 	}
 
 	return nil
+}
+
+// reportRefusedArm records an arm the timer service refused because a release
+// withdrew the track's waits while it was in flight. It is NOT a failure: the
+// release is authoritative and there is nothing left to hold, exactly as a
+// withdrawn subscription hold reports success (FIX-037 §1.5).
+func (t *Thresher) reportRefusedArm(instanceID, trackID string) {
+	t.cfg.logger.Debug("timer hold refused — the wait was released mid-arm",
+		observability.AttrInstanceID, instanceID, observability.AttrTrackID, trackID)
 }
 
 // hydrateFromTimer is the timer service's wake callback (SRD-071 FR-4): a held

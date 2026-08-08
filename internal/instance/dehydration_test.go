@@ -1331,3 +1331,25 @@ func TestHoldTaskDeclinedStaysResident(t *testing.T) {
 		"no holder registry — the wait stays resident")
 	require.False(t, tr.holdTask(tr.currentStep().node))
 }
+
+// TestResidentPinsCounts pins the accessor the engine's tests use to assert the
+// pin BALANCE (FIX-037 §1.2): a caller that takes a pin must hand back exactly
+// one, and a path that returns without pinning while its caller unpins
+// unconditionally drives this below zero. Without an accessor that invariant
+// could not be asserted from pkg/thresher at all, so the test that should have
+// caught the defect could only check that the call returned.
+func TestResidentPinsCounts(t *testing.T) {
+	inst := &Instance{}
+
+	require.Zero(t, inst.ResidentPins(), "a fresh instance holds no pins")
+
+	inst.PinResident()
+	inst.PinResident()
+	require.EqualValues(t, 2, inst.ResidentPins(), "pins nest")
+
+	inst.UnpinResident()
+	require.EqualValues(t, 1, inst.ResidentPins())
+
+	inst.UnpinResident()
+	require.Zero(t, inst.ResidentPins(), "a balanced pair leaves nothing held")
+}

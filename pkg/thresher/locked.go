@@ -439,9 +439,6 @@ func (t *Thresher) snapshotForVersionLocked(
 	return nil
 }
 
-// trackInstanceLocked records a launched instance with its cancel func and a
-// fresh read-only handle in the instances map, returning the handle. Shared by
-// launchInstance and launchInstanceFromEvent.
 // handleForLocked returns the handle for an instance id, minting one (with its
 // per-ID terminal signal) on first sight. Caller holds t.m.
 func (t *Thresher) handleForLocked(

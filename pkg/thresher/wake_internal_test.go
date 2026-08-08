@@ -1539,3 +1539,15 @@ func TestIncidentOpReportsWhenTheEngineStops(t *testing.T) {
 		t.Fatal("the incident waiter was not released by the shutdown")
 	}
 }
+
+// TestReportRefusedArm covers the refusal report itself. The branch that calls
+// it needs a release to land inside HoldTimer's own arm — a window no test can
+// schedule deterministically — so the reporting is pinned here and the
+// interleaving it belongs to is pinned by T-5 at the service.
+func TestReportRefusedArm(t *testing.T) {
+	th, err := New("refused-arm", WithoutBanner(), WithoutStartupConfig())
+	require.NoError(t, err)
+
+	require.NotPanics(t, func() { th.reportRefusedArm("i-1", "t-1") },
+		"a refused arm is a Debug fact, never a failure")
+}
