@@ -405,11 +405,6 @@ func (eh *EventHub) Shutdown(ctx context.Context) error {
 
 	eh.setState(hubStopped)
 
-	eh.rt.Reporter().Report(observability.Fact{
-		Kind:  observability.KindHubState,
-		Phase: observability.PhaseStopped,
-	})
-
 	ws := make([]eventproc.EventWaiter, 0, len(eh.waiters))
 	for _, w := range eh.waiters {
 		ws = append(ws, w)
@@ -418,6 +413,15 @@ func (eh *EventHub) Shutdown(ctx context.Context) error {
 	eh.waiters = map[string]eventproc.EventWaiter{}
 	eh.signalIdx = map[string][]eventproc.EventWaiter{}
 	eh.m.Unlock()
+
+	// Report AFTER the unlock: Reporter() is the engine's producer, which fans
+	// the fact out to HOST observers and through the host's log redactor. Under
+	// the hub lock it was the same shape §1.1 removes from the registration
+	// path — an embedder's code deciding how long the hub stays locked.
+	eh.rt.Reporter().Report(observability.Fact{
+		Kind:  observability.KindHubState,
+		Phase: observability.PhaseStopped,
+	})
 
 	// Stop each waiter (logging — never aborting on — a failed Stop) and wait for
 	// its service goroutine to exit via its Done channel, off the lock.

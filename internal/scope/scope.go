@@ -91,12 +91,18 @@ func (p *Scope) GetData(from DataPath, name string) (data.Data, error) {
 		return nil, err
 	}
 
-	p.m.Lock()
-	defer p.m.Unlock()
-
+	// A runtime variable is served by the SUPPLIER, not from the plane's maps,
+	// so it is answered before the lock is taken. Holding p.m across
+	// RuntimeVar put a call out of this package inside the plane's critical
+	// section — the shape FIX-038 removes everywhere else — and it is
+	// gratuitous here: the branch reads nothing the lock protects. p.rt and
+	// p.rtPath are set at construction and never reassigned.
 	if p.rt != nil && from == p.rtPath {
 		return p.rt.RuntimeVar(name)
 	}
+
+	p.m.Lock()
+	defer p.m.Unlock()
 
 	return p.getData(
 		from, name,

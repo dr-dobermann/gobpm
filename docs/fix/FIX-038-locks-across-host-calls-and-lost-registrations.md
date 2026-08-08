@@ -147,6 +147,41 @@ host observer stops receiving facts, silently, while its `Subscription` still
 reports itself live. The method's own comment notes the instance is "swappable"
 — for the logger.
 
+### 1.9 The plane lock spans the runtime-variable supplier
+
+```go
+// scope.go:94-99
+p.m.Lock()
+defer p.m.Unlock()
+
+if p.rt != nil && from == p.rtPath {
+    return p.rt.RuntimeVar(name)
+}
+```
+
+`RuntimeVarsSupplier` is engine-internal rather than host code, so this is
+milder than §1.1 — but it is the same shape, and here it is also gratuitous:
+a runtime variable comes from the SUPPLIER, not from the plane's maps, so the
+branch reads nothing the lock protects. It was found while fixing §1.6, in the
+function that fix touches.
+
+`EventHub.Shutdown` has the same thing, and this one IS host-facing:
+
+```go
+// eventhub.go:398-411
+eh.m.Lock()
+…
+eh.rt.Reporter().Report(observability.Fact{
+    Kind:  observability.KindHubState,
+    Phase: observability.PhaseStopped,
+})
+```
+
+`Reporter()` is the engine's producer: it fans the fact out to host observers
+and through the host's log redactor. Under `eh.m` that is §1.1 exactly — an
+embedder's code deciding how long the hub stays locked — in the same file as
+§1.1 and §1.3, and it survived the first pass over that file.
+
 ## 2 Root cause analysis
 
 **A lock whose scope was never stated.** §1.1, §1.2 and §1.3 are one cause: the
@@ -219,6 +254,13 @@ The handle keeps its observer registrations and re-attaches them when `adopt`
 re-points it at a rebuilt instance, so a subscription taken before a dehydration
 keeps delivering after it.
 
+#### 3.2.7 `internal/scope/scope.go`, `eventhub.go` — the last two
+
+`GetData` serves a runtime variable before taking `p.m`; `p.rt` and `p.rtPath`
+are set at construction and never reassigned, so the branch needs no lock at
+all. `Shutdown` reports its stopped fact after releasing `eh.m` — the registry
+is already cleared by then, so nothing depends on the order.
+
 ## 4 Verification
 
 ### 4.1 Regression tests
@@ -233,6 +275,7 @@ keeps delivering after it.
 | T-6 | `TestSnapshotAtIsAtomic` | a concurrent commit cannot tear a snapshot (§1.6) |
 | T-7 | `TestGetDataByIDRefusesAnAmbiguousID` | two data sharing an ItemDefinition id produce a classified error naming both (§1.7) |
 | T-8 | `TestHandleObserverSurvivesARebuild` | an observer registered before a dehydration receives facts after the rebuild (§1.8) |
+| T-9 | `TestRuntimeVarIsServedOutsideThePlaneLock` | while the supplier is working, the rest of the plane stays usable (§1.9) |
 
 ### 4.2 Gate
 
@@ -241,10 +284,29 @@ lines (`COVER_MIN`).
 
 ## 5 Prevention
 
-- The hub and the task registry get the sentence `pkg/thresher/locked.go`
-  already carries: the lock covers registry mutation, and nothing else runs
-  inside it. Where the rule is written down it has held; where it was not, it
-  broke twice.
+- The hub, the task registry and the scope plane get the sentence
+  `pkg/thresher/locked.go` already carries: the lock covers registry mutation,
+  and nothing else runs inside it. Where the rule is written down it has held;
+  where it was not, it broke four times — the producer (FIX-036 §1.5), the hub,
+  the task path, and the plane.
+- A mechanical sweep for the shape is worth more than reading the sites an audit
+  names: the one run for this FIX found `setOwner`'s two callback-mediated calls,
+  which no reviewer reported. But it took **three** attempts, and the failures
+  are the lesson.
+
+  The first treated `defer m.Unlock()` as closing the critical section. Every
+  lock in this codebase is written that way, so it reported **clean** on a
+  package with three live instances. The second was function-scoped and flagged
+  five ALREADY-FIXED sites, because it could not tell "in the function" from "in
+  the critical section". The third tracks lock state, understands `defer`, and
+  is the only one worth running.
+
+  A scanner that reports clean is the dangerous failure mode — it looks exactly
+  like the answer you wanted. Two of the findings in this document were reported
+  as "swept, nothing left" before a re-check found them: `Shutdown`'s host
+  Report was missed because the pattern list had dropped `Report`. Re-run the
+  sweep with the fix in place and confirm it FAILS on the pre-fix code, the same
+  discipline every regression test here follows.
 - Every path fixed here reported success while failing. A registration that
   cannot fire, a recovery that did not happen and an observer that will not be
   called now each produce an error or a log.
