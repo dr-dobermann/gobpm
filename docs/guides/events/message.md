@@ -104,6 +104,7 @@ than passing a single definition to the constructor:
 |---|---|
 | `WithMessageTrigger(med *MessageEventDefinition)` | add a message trigger to an event's `eventConfig` (multi-trigger catch). |
 | `WithCorrelationKey(key *bpmncommon.CorrelationKey)` | route by a correlation key so the message reaches the right instance — see [Correlation](../operating/correlation.md). |
+| `WithIterationCorrelation(keyName, expr)` | route to the right **iteration** when a parallel Multi-Instance body waits at this catch: `keyName` names a declared process correlation key (its retrieval derives the envelope-side value), `expr` evaluates at registration over the iteration's scope (the split item is bound there). Without it, a second concurrent waiter on one definition is refused loudly — delivery would be ambiguous. |
 | `WithInterrupting()` / `WithNonInterrupting()` | for a **boundary** message event — see [Boundary events](boundary.md). |
 
 > The single-definition constructors above (`NewIntermediateCatchEvent(name,

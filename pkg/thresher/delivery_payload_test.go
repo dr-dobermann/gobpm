@@ -3,11 +3,13 @@ package thresher_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -22,6 +24,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"github.com/dr-dobermann/gobpm/pkg/repository"
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
@@ -342,4 +346,180 @@ func TestKeylessConcurrentWaitersRefused(t *testing.T) {
 		return h.State() == thresher.StateTerminated
 	}, 3*time.Second, 5*time.Millisecond,
 		"two keyless waiters on one definition must fault the instance")
+}
+
+// iterCorrEngine boots a checkpoint-armed engine over the SHARED repo
+// and broker in the recovery group — the T-7 pair.
+func iterCorrEngine(
+	t *testing.T, name string, repo repository.Repository,
+	broker messaging.MessageBroker, ttl time.Duration,
+	p *process.Process,
+) (*thresher.Thresher, *factWatch, context.CancelFunc) {
+	t.Helper()
+
+	th, err := thresher.New(name,
+		thresher.WithoutBanner(),
+		thresher.WithoutStartupConfig(),
+		thresher.WithRepository(repo),
+		thresher.WithMessageBroker(broker),
+		thresher.WithEngineGroup(recoveryGroup),
+		thresher.WithLeaseTTL(ttl))
+	require.NoError(t, err)
+
+	fw := &factWatch{}
+	sub := th.Observe(fw)
+	t.Cleanup(sub.Cancel)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	_, err = th.RegisterProcess(p)
+	require.NoError(t, err)
+	require.NoError(t, th.Run(ctx))
+
+	return th, fw, cancel
+}
+
+// cuttableBroker wraps a broker so a test can sever ONE engine's
+// subscriptions — the crash shape: the zombie's process memory stays
+// (its late saves are CAS-fenced) but its network is gone, so it can
+// no longer steal point-to-point messages from the recovering engine.
+type cuttableBroker struct {
+	messaging.MessageBroker
+
+	mu   sync.Mutex
+	subs []messaging.Subscription
+}
+
+func (b *cuttableBroker) Subscribe(
+	ctx context.Context, name string, keys ...string,
+) (messaging.Subscription, error) {
+	sub, err := b.MessageBroker.Subscribe(ctx, name, keys...)
+	if err != nil {
+		return nil, err
+	}
+
+	b.mu.Lock()
+	b.subs = append(b.subs, sub)
+	b.mu.Unlock()
+
+	return sub, nil
+}
+
+// cut severs every subscription made through this wrapper.
+func (b *cuttableBroker) cut() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, sub := range b.subs {
+		_ = sub.Unsubscribe()
+	}
+}
+
+// TestIterationRoutingKillAndResume is SRD-085 T-7: the worked trace
+// across a crash — one envelope served pre-kill, the engine abandoned,
+// and the RECOVERED iteration's key re-derives from its restored
+// scope's item, so the second envelope still routes to exactly the
+// matching iteration.
+func TestIterationRoutingKillAndResume(t *testing.T) {
+	repo := memrepo.New()
+	broker := membroker.New()
+
+	got1 := make(chan string, 2)
+	p1 := iterCorrProcess(t, "dr-kr", got1, true)
+
+	broker1 := &cuttableBroker{MessageBroker: broker}
+
+	th1, _, cancel1 := iterCorrEngine(t, "engine-1", repo, broker1,
+		80*time.Millisecond, p1)
+	defer cancel1() // teardown only; the "crash" is the cut + abandonment
+
+	h, err := th1.StartLatest(p1.ID())
+	require.NoError(t, err)
+
+	instID := h.ID()
+
+	time.Sleep(200 * time.Millisecond) // both iterations parked
+
+	ctx := context.Background()
+
+	require.NoError(t, broker.Publish(ctx, messaging.Envelope{
+		Name: "confirm", Payload: "b", CorrelationKey: "b"}))
+
+	select {
+	case pair := <-got1:
+		require.Equal(t, "b=b", pair)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the pre-kill envelope reached no iteration")
+	}
+
+	// the checkpoint must hold the position: iteration b drained,
+	// iteration a still open and waiting.
+	require.Eventually(t, func() bool {
+		rec, ok, _ := repo.Load(ctx, instID)
+		if !ok {
+			return false
+		}
+
+		doc, derr := checkpoint.Unmarshal(rec.Payload)
+		if derr != nil {
+			return false
+		}
+
+		fmt.Printf("DBG doc: groups=%d open=%v tracks=%d\n",
+			len(doc.MIGroups),
+			func() any {
+				if len(doc.MIGroups) > 0 {
+					return doc.MIGroups[0].Open
+				}
+				return nil
+			}(),
+			len(doc.Tracks))
+
+		return len(doc.MIGroups) == 1 && len(doc.MIGroups[0].Open) == 1
+	}, 3*time.Second, 500*time.Millisecond,
+		"the checkpoint must freeze the one-open-iteration position")
+
+	// the crash: sever engine-1's network and ABANDON it — a graceful
+	// cancel would persist a terminal record and recovery would rightly
+	// skip it; a live zombie on the broker would steal the
+	// point-to-point envelope from the recovering engine. The cut keeps
+	// the zombie's memory (its late saves stay CAS-fenced) while its
+	// subscriptions vanish, which is what a crashed process looks like
+	// from the broker's side.
+	broker1.cut()
+	time.Sleep(120 * time.Millisecond) // > engine-1's lease TTL
+
+	got2 := make(chan string, 2)
+	p2 := iterCorrProcess(t, "dr-kr", got2, true)
+
+	_, fw2, cancel2 := iterCorrEngine(t, "engine-2", repo, broker,
+		time.Minute, p2)
+	defer cancel2()
+
+	require.Eventually(t, func() bool {
+		return fw2.saw(observability.KindInstanceState,
+			observability.PhaseRecovered)
+	}, 2*time.Second, 5*time.Millisecond,
+		"engine-2 must claim and recover the abandoned instance")
+
+	time.Sleep(200 * time.Millisecond) // the restored iteration re-registers
+
+	require.NoError(t, broker.Publish(ctx, messaging.Envelope{
+		Name: "confirm", Payload: "a", CorrelationKey: "a"}))
+
+	select {
+	case pair := <-got2:
+		require.Equal(t, "a=a", pair,
+			"the recovered iteration's re-derived key must route the envelope")
+	case <-time.After(3 * time.Second):
+		t.Fatal("the post-recovery envelope reached no iteration")
+	}
+
+	require.Eventually(t, func() bool {
+		rec, ok, _ := repo.Load(ctx, instID)
+
+		return ok && rec.Status == repository.StatusCompleted &&
+			rec.Lease.Owner == "engine-2"
+	}, 3*time.Second, 10*time.Millisecond,
+		"the recovered instance must complete on engine-2")
 }

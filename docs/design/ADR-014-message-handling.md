@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.1 |
-| Date | 2026-06-14 |
+| Version | v.2 |
+| Date | 2026-06-14 (v.2 2026-08-08) |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
 
@@ -160,8 +160,11 @@ The `MessageWaiter` is built the same way the timer waiter is: the waiter
 registry gains a `TriggerMessage` builder; the waiter runs its own service loop,
 subscribes to the broker for `(message name, correlation key)`, and on the first
 matching `Envelope` calls the event-processing path that resumes the registered
-track(s). The waiter carries the arrived payload to the node so the consumer can
-bind it. This makes message waiting a peer of timer waiting — one waiter
+track(s). The waiter carries the arrived payload with the fired definition to
+the DELIVERY: the receiving execution captures it and binds it from its own
+execution context — never from node state, which N concurrent executions of one
+shared node would corrupt (ADR-006 v.5 §2.9.1 decides this; v.2 syncs the
+wording). This makes message waiting a peer of timer waiting — one waiter
 abstraction, many trigger kinds — rather than a special path.
 
 ### 2.6 Correlation is phased: name-match now, key derivation later
@@ -310,5 +313,6 @@ Advisory, not gating — for the implementing SRD(s) and later work:
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.2 | 2026-08-08 | Ruslan Gabitov | **Wording sync with ADR-006 v.5 §2.9.1** — §2.5's "the waiter carries the arrived payload to the node" described the retired node-resident capture: since SRD-085 the payload is a property of the DELIVERY, captured by the receiving execution and bound from its own execution context (N concurrent executions of one shared node made a node slot corrupt by construction — the parallel-MI case). No mechanism owned by THIS ADR changes; the delivery contract lives in ADR-006 v.5 §2.9. |
 | v.1 | 2026-06-14 | Ruslan Gabitov | Draft. Decides message handling: messages travel the `MessageBroker` (external channel) while the EventHub stays the internal wait machine, bridged by a new `MessageWaiter` (peer of the timer waiter); a directional **producer/consumer seam** (`MessageProducer` = `SendTask` + throw message event; `MessageConsumer` = `ReceiveTask` + catch message event) carries one bind→publish / subscribe→bind choreography per direction (the seam deferred from ADR-011 v.5 §2.6). `SendTask` publishes and completes; `ReceiveTask` waits via the `MessageWaiter`, then binds the payload to scope. **Phased core**: correlation routes by message name now (key-derivation deferred), and message-triggered instantiation is deferred (§2.8); the vestigial `Operation` field on the tasks is removed (service-operation-backed send is a deferred alternative). Refines ADR-001 v.5; sibling to ADR-006 v.1 and ADR-011 v.5. |
 | v.1 | 2026-06-16 | Ruslan Gabitov | Status Draft → **Accepted**: the decided scope is fully implemented by the task-half SRD (`SendTask`/`ReceiveTask` + `MessageWaiter`) and the event-half SRD (intermediate throw/catch message events + the `MessageProducer`/`MessageConsumer` seam in `pkg/model/msgflow`). No content change; the §2.8 deferrals (correlation-key derivation, message-triggered instantiation, boundary message events, service-operation-backed messaging) remain open for their named follow-ups. RU twin added. |

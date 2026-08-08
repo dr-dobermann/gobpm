@@ -224,6 +224,25 @@ Behavior worth knowing:
 > the barrier lifts. An Event Sub-Process cannot carry Multi-Instance: it is
 > instantiated by its trigger, not reached by a token and iterated.
 
+## Events in a parallel body
+
+Parallel iterations execute over ONE shared node graph, so a catch
+inside the body is the SAME node for every iteration. Two rules keep
+that sharing safe (ADR-006 v.5 §2.9):
+
+- **The payload binds per delivery.** Each iteration captures the item
+  of the delivery IT received and binds it in its own execution frame
+  — iterations can never observe a sibling's payload. A signal
+  broadcast wakes every waiting iteration.
+- **Messages route by iteration correlation.** Declare
+  `events.WithIterationCorrelation(keyName, expr)` on the catch: the
+  named process correlation key derives the envelope-side value, and
+  `expr` — evaluated over the iteration's scope, where the split item
+  is bound — gives each iteration its own subscription value. An
+  arriving message serves exactly the matching iteration; a parallel
+  message catch WITHOUT the declaration is refused loudly, because
+  delivery would be ambiguous.
+
 ## Restarts
 
 The iteration position is part of the instance checkpoint (ADR-033

@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **In-instance event delivery: per-delivery payload binding and
+  iteration-correlated routing** (ADR-006 v.5 §2.9, SRD-085, closes
+  #305). A fired definition's payload now travels with the DELIVERY —
+  captured by the receiving execution and bound from its own frame —
+  and `events.WithIterationCorrelation(keyName, expr)` routes a
+  message to exactly the matching parallel-MI iteration; a second
+  keyless concurrent waiter on one definition refuses loudly.
+
+
 - **Ad-Hoc Sub-Process checkpoint fidelity** (SRD-083, closes #307).
   The checkpoint document (schema 5) records each open container's
   routing state — completed counts, a manual container's pending
@@ -181,6 +190,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offending attributes, and cites Table 10.101 where the standard is the reason.
 
 ### Fixed
+
+- **A shared catch node's payload slot crossed iterations.** All
+  parallel-MI iterations bound from ONE mutable cell on the shared
+  node (mutex-guarded but single), so an iteration could bind its
+  sibling's message; the slot (and the ReceiveTask's twin of it) is
+  designed out — the frame carries each delivery's payload.
+- **A second same-definition message waiter was silently
+  overwritten** — the routing index mapped a definition to one track,
+  making the earlier iteration undeliverable.
+- **The engine never forwarded the hub's `AddEventKey`**, so no
+  instance under the engine could extend a live broker subscription
+  (the conversation flow's lazy secondary-key association silently
+  no-opped); and the subscription-extension walk visited only
+  top-level nodes, missing every message catch inside a composite
+  body.
+
 
 - **An in-flight Ad-Hoc container restored silently corrupt.** The
   routing state was never captured (and, unlike the other composites,
