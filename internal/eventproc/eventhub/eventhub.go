@@ -240,27 +240,14 @@ func (eh *EventHub) registerWaiter(
 	eDef flow.EventDefinition,
 	build waiterBuilder,
 ) error {
-	eh.m.Lock()
-	defer eh.m.Unlock()
-
-	if eh.getState() == hubStopped {
-		return errs.New(
-			errs.M("event hub is shut down; registration rejected"),
-			errs.C(errorClass, errs.InvalidState),
-			errs.D(observability.AttrEventDefinitionID, eDef.ID()))
+	// FAST PATH — an existing waiter just gains a processor. That is registry
+	// work and stays under the lock.
+	joined, w, err := eh.joinExistingWaiter(ep, eDef)
+	if err != nil {
+		return err
 	}
 
-	if w, ok := eh.waiters[eDef.ID()]; ok {
-		if err := w.AddEventProcessor(ep); err != nil {
-			return errs.New(
-				errs.M("couldn't add event processor to waiter"),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.D(observability.AttrWaiterID, w.ID()),
-				errs.D(observability.AttrEventDefinitionID, eDef.ID()),
-				errs.D(observability.AttrEventDefinitionType, string(eDef.Type())),
-				errs.D(observability.AttrEventProcessorID, ep.ID()))
-		}
-
+	if joined {
 		eh.reportEventFlow(observability.PhaseRegistered, map[string]string{
 			observability.AttrEventDefinitionID: eDef.ID(),
 			observability.AttrWaiterID:          w.ID(),
@@ -269,7 +256,12 @@ func (eh *EventHub) registerWaiter(
 		return nil
 	}
 
-	w, err := build(eh, ep, eDef, eh.rt)
+	// SLOW PATH — building and starting a waiter is FOREIGN work: a message
+	// waiter's Service subscribes to the host's broker, which may be remote and
+	// may block. Holding the hub's one lock across it stalled every
+	// registration, unregistration and lookup in the engine behind one host
+	// call (FIX-038 §1.1). It happens here, unlocked.
+	w, err = build(eh, ep, eDef, eh.rt)
 	if err != nil {
 		return errs.New(
 			errs.M("eventWaiter building failed"),
@@ -279,8 +271,8 @@ func (eh *EventHub) registerWaiter(
 			errs.E(err))
 	}
 
-	// Start the waiter BEFORE inserting it: a failed start never leaves a
-	// dead, non-serving waiter in the map (no cleanup branch needed).
+	// Start BEFORE inserting: a failed start never leaves a dead, non-serving
+	// waiter in the map (no cleanup branch needed).
 	if err := w.Service(eh.ctx); err != nil {
 		return errs.New(
 			errs.M("failed to start waiter service"),
@@ -289,12 +281,94 @@ func (eh *EventHub) registerWaiter(
 			errs.E(err))
 	}
 
-	eh.waiters[eDef.ID()] = w
+	return eh.publishWaiter(ep, eDef, w)
+}
 
-	// A new signal waiter joins the name index (SRD-027 FR-6). The "added to existing
-	// waiter" branch above creates no waiter, so it leaves the index untouched.
-	if name, ok := signalName(eDef); ok {
-		eh.signalIdx[name] = append(eh.signalIdx[name], w)
+// joinExistingWaiter adds ep to the waiter already serving eDef, if there is
+// one. Registry work only, so it runs under eh.m.
+func (eh *EventHub) joinExistingWaiter(
+	ep eventproc.EventProcessor, eDef flow.EventDefinition,
+) (joined bool, w eventproc.EventWaiter, err error) {
+	eh.m.Lock()
+	defer eh.m.Unlock()
+
+	if eh.getState() == hubStopped {
+		return false, nil, errs.New(
+			errs.M("event hub is shut down; registration rejected"),
+			errs.C(errorClass, errs.InvalidState),
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()))
+	}
+
+	w, ok := eh.waiters[eDef.ID()]
+	if !ok {
+		return false, nil, nil
+	}
+
+	if err := w.AddEventProcessor(ep); err != nil {
+		return false, nil, errs.New(
+			errs.M("couldn't add event processor to waiter"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.D(observability.AttrWaiterID, w.ID()),
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()),
+			errs.D(observability.AttrEventDefinitionType, string(eDef.Type())),
+			errs.D(observability.AttrEventProcessorID, ep.ID()))
+	}
+
+	return true, w, nil
+}
+
+// publishWaiter installs a started waiter, or — if another registration won the
+// race while this one was building outside the lock — joins that winner and
+// stops the loser. Stopping happens AFTER the lock is released: a message
+// waiter's Stop unsubscribes from the host broker, which is the same foreign
+// call the build path must not hold the lock across.
+func (eh *EventHub) publishWaiter(
+	ep eventproc.EventProcessor, eDef flow.EventDefinition, w eventproc.EventWaiter,
+) error {
+	eh.m.Lock()
+
+	stopped := eh.getState() == hubStopped
+	winner, lost := eh.waiters[eDef.ID()]
+
+	var addErr error
+
+	switch {
+	case stopped:
+		// nothing to install into
+
+	case lost:
+		addErr = winner.AddEventProcessor(ep)
+
+	default:
+		eh.waiters[eDef.ID()] = w
+
+		// A new signal waiter joins the name index (SRD-027 FR-6); the join
+		// paths create no waiter and leave the index untouched.
+		if name, ok := signalName(eDef); ok {
+			eh.signalIdx[name] = append(eh.signalIdx[name], w)
+		}
+	}
+
+	eh.m.Unlock()
+
+	if stopped || lost {
+		eh.stopUnusedWaiter(w)
+	}
+
+	switch {
+	case stopped:
+		return errs.New(
+			errs.M("event hub is shut down; registration rejected"),
+			errs.C(errorClass, errs.InvalidState),
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()))
+
+	case addErr != nil:
+		return errs.New(
+			errs.M("couldn't add event processor to waiter"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()),
+			errs.D(observability.AttrEventProcessorID, ep.ID()),
+			errs.E(addErr))
 	}
 
 	eh.reportEventFlow(observability.PhaseRegistered, map[string]string{
@@ -303,6 +377,17 @@ func (eh *EventHub) registerWaiter(
 	})
 
 	return nil
+}
+
+// stopUnusedWaiter tears down a waiter this registration built but did not
+// install. A failure is a Debug fact: nothing references it, so there is
+// nothing a caller could do.
+func (eh *EventHub) stopUnusedWaiter(w eventproc.EventWaiter) {
+	if err := w.Stop(); err != nil {
+		eh.rt.Logger().Debug("stopping an uninstalled waiter",
+			observability.AttrWaiterID, w.ID(),
+			observability.AttrError, err.Error())
+	}
 }
 
 // Shutdown stops every registered waiter and waits — bounded by ctx — for their
@@ -394,11 +479,18 @@ func (eh *EventHub) UnregisterEvent(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	eh.m.RLock()
-	w, ok := eh.waiters[eDefID]
-	eh.m.RUnlock()
+	// The emptiness check and the removal must be ONE critical section. Read
+	// under RLock, release, then check-and-remove let a concurrent
+	// registerWaiter find this waiter still mapped and attach a processor to
+	// it — after which this call stopped and unmapped it, and that
+	// registration's events never arrived, with no error anywhere
+	// (FIX-038 §1.3).
+	eh.m.Lock()
 
+	w, ok := eh.waiters[eDefID]
 	if !ok {
+		eh.m.Unlock()
+
 		// ObjectNotFound (not InvalidParameter): a missing waiter is an
 		// "already gone" condition the instance treats as idempotent —
 		// the fired-timer path self-removes the waiter before the track
@@ -410,6 +502,8 @@ func (eh *EventHub) UnregisterEvent(
 	}
 
 	if err := w.RemoveEventProcessor(ep); err != nil {
+		eh.m.Unlock()
+
 		return errs.New(
 			errs.M("couldn't remove event processor from waiter"),
 			errs.C(errorClass, errs.ObjectNotFound),
@@ -419,24 +513,29 @@ func (eh *EventHub) UnregisterEvent(
 			errs.E(err))
 	}
 
-	if len(w.EventProcessors()) == 0 {
-		if w.State() == eventproc.WSRunned {
-			if err := w.Stop(); err != nil {
-				return errs.New(
-					errs.M("waiter stop failed"),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.D(observability.AttrWaiterID, w.ID()),
-					errs.D(observability.AttrEventDefinitionID, w.EventDefinition().ID()),
-					errs.D(observability.AttrEventDefinitionType, string(w.EventDefinition().Type())))
-			}
+	last := len(w.EventProcessors()) == 0
+	if last {
+		// Remove it here, under the same lock that observed it empty.
+		eh.dropWaiterLocked(eDefID, w)
+	}
+
+	eh.m.Unlock()
+
+	if !last {
+		return nil
+	}
+
+	// Stop OUTSIDE the lock: a message waiter's Stop unsubscribes from the
+	// host broker, which must never run under the hub lock (FIX-038 §1.1).
+	if w.State() == eventproc.WSRunned {
+		if err := w.Stop(); err != nil {
+			return errs.New(
+				errs.M("waiter stop failed"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.D(observability.AttrWaiterID, w.ID()),
+				errs.D(observability.AttrEventDefinitionID, w.EventDefinition().ID()),
+				errs.D(observability.AttrEventDefinitionType, string(w.EventDefinition().Type())))
 		}
-
-		eh.reportEventFlow(observability.PhaseUnregistered, map[string]string{
-			observability.AttrEventDefinitionID: eDefID,
-			observability.AttrWaiterID:          w.ID(),
-		})
-
-		return eh.RemoveWaiter(w.EventDefinition().ID())
 	}
 
 	eh.reportEventFlow(observability.PhaseUnregistered, map[string]string{
@@ -594,10 +693,20 @@ func (eh *EventHub) RemoveWaiter(eDefID string) error {
 			errs.D(observability.AttrEventDefinitionID, eDefID))
 	}
 
-	eh.removeWaiterFromIndex(w)
-	delete(eh.waiters, eDefID)
+	eh.dropWaiterLocked(eDefID, w)
 
 	return nil
+}
+
+// dropWaiterLocked takes a waiter the caller has ALREADY found under eh.m out
+// of the registry and its name index. It cannot fail, which is the point:
+// UnregisterEvent's emptiness check and this removal must happen under ONE
+// acquisition, or a concurrent registration slips between them and attaches a
+// processor to a waiter this call is about to stop and unmap (FIX-038 §1.3).
+// Caller holds eh.m.
+func (eh *EventHub) dropWaiterLocked(eDefID string, w eventproc.EventWaiter) {
+	eh.removeWaiterFromIndex(w)
+	delete(eh.waiters, eDefID)
 }
 
 // removeWaiterFromIndex drops a signal waiter from signalIdx in step with its removal from the

@@ -3,7 +3,9 @@ package eventhub
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/enginert"
@@ -225,4 +227,222 @@ func TestRemoveWaiterNotFound(t *testing.T) {
 	require.NoError(t, err)
 
 	require.ErrorContains(t, hub.RemoveWaiter("no-such-def"), "waiter isn't found")
+}
+
+// TestRegisterWaiterDoesNotHoldTheLockAcrossService is FIX-038 T-1.
+//
+// Building and starting a waiter is FOREIGN work: a message waiter's Service
+// subscribes to the host's broker, which may be remote and may block. The hub
+// used to hold its ONE lock across that call, so while a broker was slow no
+// waiter could be registered, unregistered or looked up anywhere in the engine.
+//
+// The interleaving is driven directly: Service blocks until the test releases
+// it, and a concurrent hub operation must complete meanwhile.
+func TestRegisterWaiterDoesNotHoldTheLockAcrossService(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	def, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().ID().Return("ep-slow").Maybe()
+
+	inService := make(chan struct{})
+	release := make(chan struct{})
+
+	w := mockeventproc.NewMockEventWaiter(t)
+	w.EXPECT().ID().Return("w-slow").Maybe()
+	w.EXPECT().EventDefinition().Return(def).Maybe()
+	w.EXPECT().Service(mock.Anything).RunAndReturn(
+		func(context.Context) error {
+			close(inService)
+			<-release
+
+			return nil
+		}).Once()
+
+	registered := make(chan error, 1)
+
+	go func() {
+		registered <- hub.registerWaiter(ep, def,
+			func(eventproc.EventHub, eventproc.EventProcessor,
+				flow.EventDefinition, renv.EngineRuntime,
+			) (eventproc.EventWaiter, error) {
+				return w, nil
+			})
+	}()
+
+	<-inService // the waiter is mid-Service, inside the registration
+
+	// The hub must still be usable. Under the old code this blocked until the
+	// broker returned, which is the whole defect.
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		_ = hub.RemoveWaiter("nothing-here") // any operation needing eh.m
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the hub lock was held across the waiter's Service call")
+	}
+
+	close(release)
+	require.NoError(t, <-registered)
+}
+
+// countingWaiter is a minimal, concurrency-safe EventWaiter for the race
+// traces: a mockery mock inside a hot loop asserts call counts this test does
+// not care about, and hides the state it does.
+type countingWaiter struct {
+	def flow.EventDefinition
+
+	mu      sync.Mutex
+	procs   []eventproc.EventProcessor
+	state   eventproc.EventWaiterState
+	stopped chan struct{}
+}
+
+func newCountingWaiter(def flow.EventDefinition) *countingWaiter {
+	return &countingWaiter{def: def, stopped: make(chan struct{})}
+}
+
+func (w *countingWaiter) ID() string                            { return "counting-" + w.def.ID() }
+func (w *countingWaiter) EventDefinition() flow.EventDefinition { return w.def }
+func (w *countingWaiter) Process(flow.EventDefinition) error    { return nil }
+func (w *countingWaiter) Done() <-chan struct{}                 { return w.stopped }
+
+func (w *countingWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.procs = append(w.procs, ep)
+
+	return nil
+}
+
+func (w *countingWaiter) RemoveEventProcessor(eventproc.EventProcessor) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if len(w.procs) > 0 {
+		w.procs = w.procs[:len(w.procs)-1]
+	}
+
+	return nil
+}
+
+func (w *countingWaiter) EventProcessors() []eventproc.EventProcessor {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return append([]eventproc.EventProcessor{}, w.procs...)
+}
+
+func (w *countingWaiter) Service(context.Context) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.state = eventproc.WSRunned
+
+	return nil
+}
+
+func (w *countingWaiter) Stop() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.state == eventproc.WSRunned {
+		w.state = eventproc.WSEnded
+		close(w.stopped)
+	}
+
+	return nil
+}
+
+func (w *countingWaiter) State() eventproc.EventWaiterState {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return w.state
+}
+
+// TestUnregisterRacingRegisterKeepsTheRegistration is FIX-038 T-3.
+//
+// UnregisterEvent read the waiter under RLock, RELEASED, then removed the
+// processor, tested emptiness, stopped the waiter and unmapped it. A
+// registerWaiter landing in that window found the waiter still mapped and
+// attached a processor to it — and this call then stopped and unmapped it. The
+// registration reported success and its events never arrived.
+//
+// The invariant: a registration that returns nil leaves its definition MAPPED.
+// Hammering both paths concurrently under -race exercises the window the fix
+// closes; the assertion is the invariant, not a timing.
+func TestUnregisterRacingRegisterKeepsTheRegistration(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	def, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	// The real builders receive ep and register it inside the waiter they
+	// return (waiters.CreateWaiter), so the stub must too — a waiter installed
+	// without its processor is not the state the hub ever produces.
+	build := func(_ eventproc.EventHub, ep eventproc.EventProcessor,
+		_ flow.EventDefinition, _ renv.EngineRuntime,
+	) (eventproc.EventWaiter, error) {
+		w := newCountingWaiter(def)
+		_ = w.AddEventProcessor(ep)
+
+		return w, nil
+	}
+
+	for range 200 {
+		ep := mockeventproc.NewMockEventProcessor(t)
+		ep.EXPECT().ID().Return("ep-race").Maybe()
+
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+
+		regErr := make(chan error, 1)
+
+		go func() {
+			defer wg.Done()
+
+			regErr <- hub.registerWaiter(ep, def, build)
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			_ = hub.UnregisterEvent(ep, def.ID())
+		}()
+
+		wg.Wait()
+
+		if err := <-regErr; err != nil {
+			continue // a refused registration promises nothing
+		}
+
+		// It reported success, so the definition must be served.
+		hub.m.Lock()
+		w, mapped := hub.waiters[def.ID()]
+		hub.m.Unlock()
+
+		if !mapped {
+			continue // the unregister ran last and legitimately removed it
+		}
+
+		require.NotEmpty(t, w.EventProcessors(),
+			"a mapped waiter must carry the processors registered against it")
+
+		_ = hub.UnregisterEvent(ep, def.ID()) // reset for the next round
+	}
 }
