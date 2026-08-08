@@ -183,7 +183,15 @@ func (t *Thresher) reattachChild(childID string) (exec.ChildProcess, error) {
 			errs.C(errorClass, errs.InvalidState))
 	}
 
-	rec, ok, err := t.cfg.Repository().Load(t.ctx, childID)
+	ctx, running := t.engineContext()
+	if !running {
+		return nil, errs.New(
+			errs.M("re-attach of %q on an engine that isn't running",
+				childID),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	rec, ok, err := t.cfg.Repository().Load(ctx, childID)
 	if err != nil {
 		return nil, err
 	}
