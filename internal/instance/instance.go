@@ -111,6 +111,10 @@ type Instance struct {
 	// Activities the loop re-links at start (SRD-082 FR-7); nil for a
 	// fresh instance.
 	restoredCalls []checkpoint.CallRecord
+	// restoredAdHoc are the checkpoint-recorded Ad-Hoc containers'
+	// routing states the loop adopts at start (SRD-083 FR-3); nil for
+	// a fresh instance.
+	restoredAdHoc []checkpoint.AdHocRecord
 	// callReattach re-finds a recorded child instance through the
 	// engine (SRD-082 FR-7) — nil when no engine seam was wired, which
 	// makes a restored in-flight call a loud failure.

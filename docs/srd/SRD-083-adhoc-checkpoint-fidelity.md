@@ -90,7 +90,12 @@ corrupt.
   routing and completes when its live activities drain; a manual
   container's restored offer is visible through `AdHocView` and
   consumable through `ActivateAdHoc`; the sequential-ordering
-  invariant (one live activity) holds across the restore.
+  invariant (one live activity) holds across the restore. A `stopped`
+  container captured in its **cancel window** — the condition fired
+  and `cancelScope` ran, but the canceled tracks settled before the
+  capture — restores with nothing live to drive the drain, so it
+  completes at adoption (the `seedAdHoc` empty-first-answer rule,
+  applied post-spawn).
 - **FR-5 — refusals are loud and classified.** A restore refuses, naming
   the cause, when an `AdHocRecord` names a host track the track table
   does not carry; when the named host's node is not an ad-hoc

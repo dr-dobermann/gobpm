@@ -2,13 +2,17 @@ package instance
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -173,16 +177,286 @@ func trackAtAdHoc(
 	return nil
 }
 
-// instantOp is a service operation that returns at once.
-func instantOp(t *testing.T, name string) service.Operation {
+// instantOp is a service operation that returns at once, counting its
+// runs when a counter is given.
+func instantOp(t *testing.T, name string, count ...*atomic.Int32) service.Operation {
 	t.Helper()
 
 	op, err := gooper.New(name,
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			for _, c := range count {
+				c.Add(1)
+			}
+
 			return nil, nil
 		})
 	require.NoError(t, err)
 
 	return op
+}
+
+// docCopy deep-copies a document over the wire form, so refusal
+// subtests can each mutate their own.
+func docCopy(t *testing.T, doc *checkpoint.Document) *checkpoint.Document {
+	t.Helper()
+
+	raw, err := doc.Marshal()
+	require.NoError(t, err)
+
+	back, err := checkpoint.Unmarshal(raw)
+	require.NoError(t, err)
+
+	return back
+}
+
+// TestAdHocRestoresRoutingMidFlight is T-2 (SRD-083 FR-3/FR-4): the
+// automatic container restores at its position — "a" does not re-run,
+// the post-restore Router ask sees the true progress, and the
+// container completes with the unkilled run's outcome.
+func TestAdHocRestoresRoutingMidFlight(t *testing.T) {
+	const key = "cr-ahr"
+
+	var gate, count atomic.Int32
+
+	r := &scriptedRouter{turns: [][]string{{key + "-a"}, {key + "-b"}}}
+
+	s := adHocSnapshot(t, key, r, &gate, instantOp(t, key+"-op", &count))
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		rec := adHocRec(d)
+
+		return rec != nil && rec.Completed[key+"-a"] == 1 &&
+			trackAtAdHoc(d, key+"-b") != nil
+	})
+
+	require.Equal(t, int32(1), count.Load())
+
+	asked := len(r.states())
+
+	gate.Store(1) // open b's catch: the restored container can drain
+	restoreToDone(t, doc, s)
+
+	require.Equal(t, int32(1), count.Load(),
+		"the completed activity must not re-run across the crash")
+
+	states := r.states()
+	require.Greater(t, len(states), asked,
+		"the settle of the restored activity consults the Router")
+
+	last := states[len(states)-1]
+	require.Equal(t, map[string]int{key + "-a": 1, key + "-b": 1},
+		last.Completed, "the Router sees the true cross-crash progress")
+	require.Empty(t, last.Running)
+	require.Equal(t, key+"-b", last.Last)
+}
+
+// TestAdHocManualOfferRestores is T-3 (SRD-083 FR-3/FR-4): the
+// restored offer is visible, consumable, and the container completes.
+func TestAdHocManualOfferRestores(t *testing.T) {
+	const key = "cr-ahm"
+
+	var gate, count atomic.Int32
+
+	r := &scriptedRouter{turns: [][]string{{key + "-a"}}}
+
+	s := adHocSnapshot(t, key, r, &gate, instantOp(t, key+"-op", &count),
+		activities.WithAdHocManualSelection())
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		rec := adHocRec(d)
+
+		return rec != nil && len(rec.Offered) == 1
+	})
+
+	restored, err := Restore(doc, s, scope.EmptyDataPath,
+		cpRuntime(t), laxEP(t), nil, nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, restored.Run(ctx))
+
+	offered, running, err := restored.AdHocView(ctx, key+"-triage")
+	require.NoError(t, err)
+	require.Equal(t, []string{key + "-a"}, offered,
+		"the held offer survives the crash")
+	require.Empty(t, running)
+
+	require.NoError(t,
+		restored.ActivateAdHoc(ctx, key+"-triage", key+"-a"))
+
+	select {
+	case <-restored.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the restored manual container did not finish")
+	}
+
+	require.Equal(t, Completed, restored.State())
+	require.Equal(t, int32(1), count.Load(),
+		"the activated offer ran exactly once")
+}
+
+// TestAdHocRestoreHonorsRecordedStop is T-4 (SRD-083 FR-4): a stopped
+// container runs no further routing after restore — the in-flight
+// activity drains it.
+func TestAdHocRestoreHonorsRecordedStop(t *testing.T) {
+	const key = "cr-ahs"
+
+	var gate atomic.Int32
+
+	r := &scriptedRouter{turns: [][]string{{key + "-a"}, {key + "-b"}}}
+
+	s := adHocSnapshot(t, key, r, &gate, instantOp(t, key+"-op"))
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		rec := adHocRec(d)
+
+		return rec != nil && trackAtAdHoc(d, key+"-b") != nil
+	})
+
+	// what the container would have recorded had its completion
+	// condition fired while "b" was still draining.
+	rec := adHocRec(doc)
+	rec.Stopped = true
+	rec.StopReason = adHocStopCompletionCond
+
+	asked := len(r.states())
+
+	gate.Store(1)
+	restoreToDone(t, doc, s)
+
+	require.Equal(t, asked, len(r.states()),
+		"a stopped container consults the Router no further")
+}
+
+// TestAdHocRestoreCompletesStoppedEmpty pins the cancel-window edge
+// (SRD-083 FR-4): a stopped container captured with nothing live — no
+// routed track survived to drive the drain — completes at adoption
+// instead of hanging.
+func TestAdHocRestoreCompletesStoppedEmpty(t *testing.T) {
+	const key = "cr-ahe"
+
+	var gate atomic.Int32
+
+	r := &scriptedRouter{turns: [][]string{{key + "-a"}}}
+
+	s := adHocSnapshot(t, key, r, &gate, instantOp(t, key+"-op"),
+		activities.WithAdHocManualSelection())
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		rec := adHocRec(d)
+
+		return rec != nil && len(rec.Offered) == 1
+	})
+
+	// the cancel-window shape: stopped, no offer, no live routed work.
+	rec := adHocRec(doc)
+	rec.Stopped = true
+	rec.StopReason = adHocStopCompletionCond
+	rec.Offered = nil
+
+	restoreToDone(t, doc, s)
+}
+
+// TestAdHocRestoreRefusals is T-5 (SRD-083 FR-5/FR-6): every
+// inconsistent record — and the pre-fidelity document — refuses with
+// its cause.
+func TestAdHocRestoreRefusals(t *testing.T) {
+	const key = "cr-ahf"
+
+	var gate atomic.Int32
+
+	r := &scriptedRouter{turns: [][]string{{key + "-a"}, {key + "-b"}}}
+
+	s := adHocSnapshot(t, key, r, &gate, instantOp(t, key+"-op"))
+
+	base := captureAt(t, s, func(d *checkpoint.Document) bool {
+		rec := adHocRec(d)
+
+		return rec != nil && rec.Completed[key+"-a"] == 1 &&
+			trackAtAdHoc(d, key+"-b") != nil
+	})
+
+	t.Run("a ghost host track", func(t *testing.T) {
+		doc := docCopy(t, base)
+		adHocRec(doc).HostTrack = "ghost"
+
+		restoreExpectFault(t, doc, s, "the track table does not carry")
+	})
+
+	t.Run("a scope the table does not hold", func(t *testing.T) {
+		doc := docCopy(t, base)
+		adHocRec(doc).ScopePath = "/nowhere"
+
+		restoreExpectFault(t, doc, s,
+			"not in the document's scope table")
+	})
+
+	t.Run("an unresolvable offered id", func(t *testing.T) {
+		doc := docCopy(t, base)
+		adHocRec(doc).Offered = []string{"nope"}
+
+		restoreExpectFault(t, doc, s, "doesn't resolve")
+	})
+
+	t.Run("a record naming a plain composite", func(t *testing.T) {
+		doc := docCopy(t, base)
+
+		// b's own child scope is open in the capture — a three-segment
+		// path hosted by the PLAIN sub-process "b".
+		var bScope string
+
+		for _, sc := range doc.Scopes {
+			if strings.Count(sc.Path, "/") == 3 {
+				bScope = sc.Path
+			}
+		}
+
+		require.NotEmpty(t, bScope)
+
+		doc.AdHoc = append(doc.AdHoc, checkpoint.AdHocRecord{
+			HostTrack: trackAtAdHoc(doc, key+"-b").ID,
+			ScopePath: bScope,
+		})
+
+		restoreExpectFault(t, doc, s, "is not an Ad-Hoc container")
+	})
+
+	t.Run("a pre-fidelity document", func(t *testing.T) {
+		doc := docCopy(t, base)
+		doc.AdHoc = nil
+
+		restoreExpectFault(t, doc, s,
+			"predates ad-hoc checkpoint fidelity")
+	})
+}
+
+// TestSchemaFourNoAdHocRestores is T-6 (SRD-083 FR-1/FR-6): a
+// schema-4 document without ad-hoc work restores exactly as today.
+func TestSchemaFourNoAdHocRestores(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	_, inst, doc, cancel := parkAndInspect(t)
+	cancel()
+
+	raw, err := doc.Marshal()
+	require.NoError(t, err)
+
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(raw, &m))
+	m["schema"] = 4
+	delete(m, "adhoc")
+
+	old, err := json.Marshal(m)
+	require.NoError(t, err)
+
+	back, err := checkpoint.Unmarshal(old)
+	require.NoError(t, err)
+	require.Equal(t, 4, back.Schema)
+
+	restored, err := Restore(back, condSnapshotFor(t, back),
+		scope.EmptyDataPath, cpRuntime(t), laxEP(t), nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, inst.ID(), restored.ID())
 }

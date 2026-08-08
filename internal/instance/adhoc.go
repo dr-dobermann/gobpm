@@ -522,6 +522,110 @@ func findAdHocNode(inner []flow.Node, id string) flow.Node {
 	return nil
 }
 
+// adoptRestoredAdHoc rebuilds the Ad-Hoc containers' routing state on
+// the scope entries adoptRestoredScopes derived (SRD-083 FR-3): the
+// recorded completed counts, a manual container's held offer (resolved
+// against the container's inner nodes — an unknown id refuses loud),
+// the stopped flag, and running counts rebuilt from the restored
+// tracks' AdHocActivity assignments. It then enforces FR-6: an adopted
+// ad-hoc scope with NO record is a pre-fidelity capture whose routing
+// state is unrecoverable — refusing beats resuming corrupt. Runs on
+// the loop goroutine, after adoptRestoredScopes and before the spawns.
+func (ls *loopState) adoptRestoredAdHoc(initial []*track) error {
+	for i := range ls.inst.restoredAdHoc {
+		rec := &ls.inst.restoredAdHoc[i]
+
+		path := scope.DataPath(rec.ScopePath)
+
+		entry, ok := ls.scopes[path]
+		if !ok {
+			return errs.New(
+				errs.M("restored ad-hoc record names scope %q, which is not "+
+					"in the document's scope table", rec.ScopePath),
+				errs.C(errorClass, errs.InvalidState))
+		}
+
+		if trackByID(initial, rec.HostTrack) == nil {
+			return errs.New(
+				errs.M("restored ad-hoc container names host track %q, "+
+					"which the track table does not carry", rec.HostTrack),
+				errs.C(errorClass, errs.InvalidState))
+		}
+
+		spec := adHocOf(entry.node)
+		if spec == nil {
+			return errs.New(
+				errs.M("restored ad-hoc record's host %q is not an Ad-Hoc "+
+					"container", entry.node.ID()),
+				errs.C(errorClass, errs.InvalidState))
+		}
+
+		p := newAdHocProgress()
+		p.completed = copyCounts(rec.Completed)
+		p.stopped = rec.Stopped
+		p.stopReason = rec.StopReason
+
+		if len(rec.Offered) > 0 {
+			nodes, err := resolveAdHocNodes(entry.node, rec.Offered)
+			if err != nil {
+				return errs.New(
+					errs.M("restored ad-hoc offer of %q doesn't resolve",
+						entry.node.Name()),
+					errs.C(errorClass, errs.InvalidState),
+					errs.E(err))
+			}
+
+			p.offered = nodes
+		}
+
+		for _, t := range initial {
+			if t.scopePath == path && t.adHocActivity != "" {
+				p.running[t.adHocActivity]++
+			}
+		}
+
+		entry.adHoc = p
+	}
+
+	// FR-6 — the pre-fidelity refusal: an open ad-hoc scope the record
+	// set does not cover was captured by an engine that recorded no
+	// routing state; its restore would be the silent corruption SRD-083
+	// §1 documents.
+	for path, entry := range ls.scopes {
+		if entry.adHoc == nil && adHocOf(entry.node) != nil {
+			return errs.New(
+				errs.M("the checkpoint holds open ad-hoc scope %q but no "+
+					"routing record — the document predates ad-hoc "+
+					"checkpoint fidelity and cannot restore faithfully",
+					string(path)),
+				errs.C(errorClass, errs.InvalidState))
+		}
+	}
+
+	return nil
+}
+
+// completeRestoredAdHoc completes a restored container that has
+// nothing left to drive its drain (SRD-083 FR-4): a stopped container
+// captured in its cancel window — the completion condition fired and
+// cancelScope ran, but the canceled tracks settled before the capture
+// — restores with no live work, no offer and no further routing, so
+// nothing will ever call completeScope. The seedAdHoc empty-first-
+// answer rule applied at adoption: the drain condition is already met.
+// Runs on the loop goroutine, after the spawns counted tracks in.
+func (ls *loopState) completeRestoredAdHoc(ctx context.Context) {
+	for path, entry := range ls.scopes {
+		if entry.adHoc == nil || !entry.adHoc.stopped {
+			continue
+		}
+
+		if entry.active == 0 && len(entry.adHoc.running) == 0 &&
+			len(entry.adHoc.offered) == 0 && !ls.stopping {
+			ls.completeScope(ctx, path, entry)
+		}
+	}
+}
+
 // spawnAdHoc starts one routed activity as its own track in the Ad-Hoc scope,
 // counting it live, and records who selected it. Mirrors seedScope's pre-spawn
 // discipline: the scope path and the routed activity are set on the loop

@@ -123,12 +123,13 @@ func Restore(
 		return nil, err
 	}
 
-	// the parallel open sets, the resolving sweeps and the in-flight
-	// calls ride to the loop's adoption (SRD-082 FR-4/FR-6/FR-7) — the
-	// substrates are loop-owned.
+	// the parallel open sets, the resolving sweeps, the in-flight calls
+	// and the ad-hoc routing states ride to the loop's adoption (SRD-082
+	// FR-4/FR-6/FR-7, SRD-083 FR-3) — the substrates are loop-owned.
 	inst.restoredGroups = doc.MIGroups
 	inst.restoredSweeps = doc.Sweeps
 	inst.restoredCalls = doc.Calls
+	inst.restoredAdHoc = doc.AdHoc
 
 	// a recorded caller re-PARKS instead of re-invoking its child — the
 	// adoption re-links to the recorded child; a second InvokeProcess
@@ -360,6 +361,9 @@ func (inst *Instance) continuationTrack(
 		scopePath:   scope.DataPath(rec.ScopePath),
 		scopeSeg:    rec.ScopeSeg,
 		loopCounter: rec.LoopCounter,
+		// a woken track may be an ad-hoc-routed activity: keep the
+		// assignment, or its settle would skip the Router (SRD-083 FR-3).
+		adHocActivity: rec.AdHocActivity,
 	}
 
 	if len(pending.Data) > 0 {
@@ -433,6 +437,9 @@ func restoredTrack(
 		// the recorded human-task id: parkHumanTask REUSES it rather than
 		// minting, so the id a human holds survives rehydration (SRD-071 FR-8).
 		taskID: rec.TaskID,
+		// the recorded routed-activity assignment: the adoption rebuilds
+		// the container's running counts from it (SRD-083 FR-3).
+		adHocActivity: rec.AdHocActivity,
 	}
 
 	if rec.Timer != nil {

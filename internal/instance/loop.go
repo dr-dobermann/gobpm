@@ -175,6 +175,10 @@ func (inst *Instance) adoptRestored(
 
 	err := ls.adoptRestoredScopes(initial)
 	if err == nil {
+		err = ls.adoptRestoredAdHoc(initial)
+	}
+
+	if err == nil {
 		err = ls.adoptRestoredCalls(ctx)
 	}
 
@@ -208,6 +212,11 @@ func (inst *Instance) spawnInitial(
 
 		return false
 	}
+
+	// a stopped ad-hoc container with nothing live completes here — the
+	// spawns above have counted every restored track into its scope, so
+	// the drain check is over the real accounting (SRD-083 FR-4).
+	ls.completeRestoredAdHoc(ctx)
 
 	return true
 }
