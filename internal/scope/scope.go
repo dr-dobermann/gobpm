@@ -115,11 +115,22 @@ func (p *Scope) SnapshotAt(from DataPath) ([]data.Data, error) {
 		return nil, err
 	}
 
-	names := p.namesFrom(from)
+	// ONE acquisition for the whole walk. Reading the names, releasing, then
+	// reading each datum let another goroutine mutate the plane in between —
+	// and this runs on the TRACK goroutine, where commits bypass the loop
+	// (instance/track.go). The result was a snapshot of a world that never
+	// existed at any instant, which is exactly what it exists to prevent, or a
+	// spurious failure when a datum was removed mid-walk (FIX-038 §1.6).
+	p.m.Lock()
+	defer p.m.Unlock()
+
+	names := p.namesFromLocked(from)
 	snap := make([]data.Data, 0, len(names))
 
 	for _, n := range names {
-		d, err := p.GetData(from, n)
+		d, err := p.getData(from, n, func(d data.Data) bool {
+			return d.Name() == n
+		})
 		if err != nil {
 			return nil, errs.New(
 				errs.M("SnapshotAt: couldn't read %q at %q", n, string(from)),
@@ -309,6 +320,12 @@ func (p *Scope) namesFrom(from DataPath) []string {
 	p.m.Lock()
 	defer p.m.Unlock()
 
+	return p.namesFromLocked(from)
+}
+
+// namesFromLocked is namesFrom's body for a caller already holding p.m —
+// SnapshotAt needs the names and the data under ONE acquisition.
+func (p *Scope) namesFromLocked(from DataPath) []string {
 	seen := map[string]struct{}{}
 	prefix := from.String() + PathSeparator
 
@@ -353,13 +370,64 @@ func (p *Scope) GetDataByID(from DataPath, id string) (data.Data, error) {
 	p.m.Lock()
 	defer p.m.Unlock()
 
-	return p.getData(
-		from, id,
-		func(d data.Data) bool {
-			idef := d.ItemDefinition()
+	return p.dataByIDLocked(from, id)
+}
 
-			return idef != nil && idef.ID() == id
-		})
+// dataByIDLocked resolves by ItemDefinition id DETERMINISTICALLY.
+//
+// An ItemDefinition is a TYPE, so several variables can share its id — a
+// send/receive flow does exactly that, binding a message's payload definition
+// to both the message variable and the variable that receives it. The old
+// resolution iterated a scope's map and returned the first match, and Go
+// randomizes that order: the same lookup answered differently on different runs
+// (FIX-038 §1.7).
+//
+// Two rules make it total. The walk is parent-ward, so the NEAREST scope wins —
+// that is meaningful, and it is what the by-name lookup already does. Within one
+// scope the lowest name wins — that is arbitrary, and it is chosen because the
+// alternative is worse: refusing an ambiguous id looked principled until it
+// rejected the send/receive pattern above, which is legitimate BPMN.
+//
+// An id that names several data in one scope is still a modeling smell; the
+// engine now answers it the same way every time instead of at random.
+// Caller holds p.m.
+func (p *Scope) dataByIDLocked(from DataPath, id string) (data.Data, error) {
+	path := from
+
+	for {
+		var match data.Data
+
+		for _, d := range p.scopes[path] {
+			idef := d.ItemDefinition()
+			if idef == nil || idef.ID() != id {
+				continue
+			}
+
+			if match == nil || d.Name() < match.Name() {
+				match = d
+			}
+		}
+
+		if match != nil {
+			return match, nil
+		}
+
+		if path.String() == PathSeparator {
+			break
+		}
+
+		parent, err := path.DropTail()
+		if err != nil {
+			break
+		}
+
+		path = parent
+	}
+
+	return nil, errs.New(
+		errs.M("GetDataByID: no data with ItemDefinition id %q visible from %q",
+			id, string(from)),
+		errs.C(errorClass, errs.ObjectNotFound))
 }
 
 // Commit atomically stores the batch dd into the open container scope at.

@@ -350,3 +350,126 @@ func TestScopeNamesFromRoot(t *testing.T) {
 	require.Contains(t, names, "rootVar")
 	require.Contains(t, names, "childVar")
 }
+
+// sharedIDData carries a chosen ItemDefinition id, so a scope can hold several
+// data of "one type" — the send/receive pattern that makes id resolution
+// ambiguous in real models.
+type sharedIDData struct {
+	data.Data
+
+	idef *data.ItemDefinition
+}
+
+func (s sharedIDData) ItemDefinition() *data.ItemDefinition { return s.idef }
+
+// TestGetDataByIDIsDeterministic is FIX-038 T-7. Resolution by ItemDefinition
+// id iterated a scope's map and returned the first match, and Go randomizes
+// that order — so the same lookup answered differently on different runs.
+//
+// It is not an error for several data to share an id: a send/receive flow binds
+// a message's payload definition to both the message variable and the variable
+// receiving it. The rule is therefore total rather than strict — nearest scope
+// first, lowest name within a scope — and, above all, the SAME every time.
+func TestGetDataByIDIsDeterministic(t *testing.T) {
+	root := mustPath(t, "/proc")
+
+	p, err := New(root, nil)
+	require.NoError(t, err)
+
+	idef := data.MustItemDefinition(values.NewVariable("payload"))
+
+	// three data of one "type" in one scope, added in a non-alphabetical order
+	for _, n := range []string{"zulu", "alpha", "mike"} {
+		require.NoError(t, errOf(p.Commit(root,
+			sharedIDData{Data: testData(t, n, "v"), idef: idef})))
+	}
+
+	// The same answer, every time — the defect was that this varied.
+	for range 50 {
+		got, err := p.GetDataByID(root, idef.ID())
+		require.NoError(t, err)
+		require.Equal(t, "alpha", got.Name(),
+			"within one scope the lowest name wins, and it wins every time")
+	}
+
+	// A nearer scope still outranks the tiebreak: proximity is the meaningful
+	// rule, the name order only settles a tie.
+	child, err := root.Append("child")
+	require.NoError(t, err)
+	require.NoError(t, p.OpenScope(child))
+
+	require.NoError(t, errOf(p.Commit(child,
+		sharedIDData{Data: testData(t, "omega", "v"), idef: idef})))
+
+	got, err := p.GetDataByID(child, idef.ID())
+	require.NoError(t, err)
+	require.Equal(t, "omega", got.Name(),
+		"the nearest scope answers before any ancestor")
+}
+
+// TestSnapshotAtIsAtomic is FIX-038 T-6. SnapshotAt read the visible NAMES
+// under one acquisition and then each DATUM under another, so a concurrent
+// mutation landed in between. It runs on the track goroutine, where commits
+// bypass the loop, so that window is reachable — and the result was a snapshot
+// of a world that never existed at any instant, which is exactly what the
+// compensation ledger and the incident snapshot rely on it not to be.
+//
+// The assertion is internal consistency: every datum a snapshot returns must
+// carry the value of ONE generation, never a mixture of two.
+func TestSnapshotAtIsAtomic(t *testing.T) {
+	root := mustPath(t, "/proc")
+
+	p, err := New(root, nil)
+	require.NoError(t, err)
+
+	const names = 12
+
+	for i := range names {
+		require.NoError(t, errOf(p.Commit(root,
+			testData(t, fmt.Sprintf("v%02d", i), 0))))
+	}
+
+	stop := make(chan struct{})
+
+	var wg sync.WaitGroup
+
+	// A writer advancing EVERY name to the same generation, over and over. A
+	// torn snapshot shows two generations at once.
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		for gen := 1; ; gen++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+
+			batch := make([]data.Data, 0, names)
+			for i := range names {
+				batch = append(batch, testData(t, fmt.Sprintf("v%02d", i), gen))
+			}
+
+			_, _ = p.Commit(root, batch...)
+		}
+	}()
+
+	for range 200 {
+		snap, err := p.SnapshotAt(root)
+		require.NoError(t, err, "a concurrent commit must not break the snapshot")
+		require.Len(t, snap, names)
+
+		seen := map[any]struct{}{}
+		for _, d := range snap {
+			seen[d.Value().Get(t.Context())] = struct{}{}
+		}
+
+		require.Len(t, seen, 1,
+			"every datum must come from ONE generation — a torn snapshot mixes two")
+	}
+
+	close(stop)
+	wg.Wait()
+}

@@ -177,7 +177,7 @@ new and has no path back when the second step fails.
 | 4 | §1.4 recovery | (a) retry like `claimForWake` — hides a genuine outage behind attempts; (b) **classify: a lost CAS is `nil`, anything else is reported** — the repository already distinguishes them | **(b)** |
 | 5 | §1.5 the bricked key | (a) re-register `prevLatest` on failure — restores auto-start but leaves the failed version as `latest`, so the retry still misbehaves; (b) **remove the failed version from the registry AND restore the previous latest's starters** | **(b)** — the key returns to exactly its pre-call state |
 | 6 | §1.6 the snapshot | (a) a coarse "snapshot lock" held by every mutator — a second lock over the same state; (b) **one locked walk**: a `snapshotAtLocked` that reads names and data under a single acquisition | **(b)** |
-| 7 | §1.7 ambiguous ids | (a) pick deterministically (sorted by name) — makes the result stable and still arbitrary; (b) **refuse an ambiguous lookup with a classified error naming both candidates** | **(b)** — two variables of one type resolved by type is a modelling error, and answering it silently is how it stays unnoticed |
+| 7 | §1.7 ambiguous ids | (a) **resolve deterministically**: nearest scope first (as the by-name lookup already does), then lowest name within a scope; (b) refuse an ambiguous lookup with a classified error naming the candidates | **(a)** — (b) was chosen first and is WRONG. It rejects the send/receive pattern, where a message's payload ItemDefinition is legitimately bound to both the message variable and the variable receiving it; `TestSendReceiveMidFlow` fails against it with *"`order_in` is ambiguous — it names 2 data (order_in, received order)"*. Refusing looked principled until it refused correct BPMN. Determinism is the achievable improvement: the nearest-scope rule is meaningful, the lowest-name tiebreak is arbitrary but stable, and an id naming several data in one scope remains a modelling smell the engine now answers the same way every time |
 | 8 | §1.8 observers | (a) re-register in `adopt` — the handle would need to remember its observers; (b) **register the observer on the HANDLE, and have the handle's fan-out follow the current instance** | **(a)** — the handle already owns identity across rebuilds (SRD-071); it keeps its observer set and re-attaches on adopt, which is the smaller change |
 
 ### 3.2 Changes by file
@@ -206,10 +206,12 @@ On a failed `registerStarters`, the version just appended is removed from the
 registry and the previous latest's starters are put back on the hub, so the key
 is exactly as it was before the call and a retry behaves like a first attempt.
 
-#### 3.2.5 `internal/scope/scope.go` — one locked walk, and an ambiguous id refuses
+#### 3.2.5 `internal/scope/scope.go` — one locked walk, and a total id rule
 
-`SnapshotAt` reads names and data under a single acquisition of `p.m`.
-`GetDataByID` refuses when more than one datum carries the id, naming both.
+`SnapshotAt` reads names and data under a single acquisition of `p.m`
+(`namesFromLocked` + the unlocked `getData` the by-name path already uses).
+`GetDataByID` resolves nearest-scope-first, lowest-name-within-a-scope — total
+and deterministic, where it previously depended on Go's map iteration order.
 
 #### 3.2.6 `pkg/thresher/observer.go`, `handle.go` — observers belong to the handle
 
@@ -249,9 +251,12 @@ lines (`COVER_MIN`).
 
 ## 6 Regressions and side effects
 
-- `GetDataByID` becomes stricter: a model with two variables sharing an
-  ItemDefinition id now gets a classified error instead of a random answer. That
-  is the point, and it is a behavioural change called out in the CHANGELOG.
+- `GetDataByID` becomes DETERMINISTIC, not stricter. A model with two variables
+  sharing an ItemDefinition id used to get a random one of them and now gets a
+  stated one — nearest scope, then lowest name. No model that worked starts
+  failing; a model that worked *by luck* now works reliably, and one that was
+  silently picking the wrong variable will start doing so consistently, which is
+  what makes it findable. Called out in the CHANGELOG.
 - `SnapshotAt` holds the plane lock for the whole walk rather than per datum.
   The walk is bounded by the visible surface and takes no host call.
 - `RegisterProcess`'s failure path now mutates the registry (removing the
