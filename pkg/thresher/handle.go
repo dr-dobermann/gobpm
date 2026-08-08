@@ -3,12 +3,14 @@ package thresher
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // ErrNotImplemented marks a control operation that is part of the stable handle
@@ -42,8 +44,43 @@ type InstanceHandle struct {
 	// captured at adopt so a handle answers correctly even before or
 	// after the instance object itself is reachable (SRD-082 FR-7,
 	// independent-review note A3).
+	// observers are the handle's own observer registrations. They live HERE,
+	// not on the instance object, because the object is replaced on every
+	// rebuild: registering on h.current() alone meant a host observer stopped
+	// receiving facts after the first dehydration, silently, while its
+	// Subscription still reported itself live (FIX-038 §1.8). The handle owns
+	// identity across rebuilds (SRD-071), so it owns these too.
+	observers  map[uint64]*handleObserver
 	parentID   string
 	callNodeID string
+	nextObs    uint64
+	obsMu      sync.Mutex
+}
+
+// handleObserver is one registration the handle re-attaches after a rebuild:
+// the fan-out closure is stable, the deregistration is not — it belongs to
+// whichever instance object the closure is currently registered on.
+type handleObserver struct {
+	fanout func(observability.Fact)
+	cancel func()
+}
+
+// reattachObservers re-registers the handle's observers on the instance it now
+// speaks for. Call it AFTER the engine lock is released: AddObserver takes the
+// instance's own observer lock, and the engine does not hold t.m across another
+// component's lock (the rule locked.go states).
+func (h *InstanceHandle) reattachObservers() {
+	inst := h.current()
+	if inst == nil {
+		return
+	}
+
+	h.obsMu.Lock()
+	defer h.obsMu.Unlock()
+
+	for _, ho := range h.observers {
+		ho.cancel = inst.AddObserver(ho.fanout)
+	}
 }
 
 // current returns the instance object the handle speaks for right now.

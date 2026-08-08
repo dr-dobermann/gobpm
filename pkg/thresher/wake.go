@@ -218,8 +218,13 @@ func (t *Thresher) rebuildAndContinue(
 		t.ReleaseWaits(instanceID, pending.TrackID)
 	}
 
-	_, displaced := t.trackInstanceLocked(inst, cancel, t.settledFor(instanceID))
+	h, displaced := t.trackInstanceLocked(inst, cancel, t.settledFor(instanceID))
 	stopDisplaced(displaced)
+
+	// A rebuild replaces the instance OBJECT; the handle's observers must
+	// follow it or the host's subscription goes quiet (FIX-038 §1.8). Outside
+	// the engine lock: AddObserver takes the instance's own observer lock.
+	h.reattachObservers()
 
 	// A hydrated conversation re-takes its correlation reservation, for the
 	// same reason a recovered one does (FIX-036 §1.2).

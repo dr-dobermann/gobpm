@@ -139,8 +139,9 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 		return recoveryErr("the restored instance doesn't run", err)
 	}
 
-	_, displaced := t.trackInstanceLocked(inst, cancel, t.settledFor(id))
+	h, displaced := t.trackInstanceLocked(inst, cancel, t.settledFor(id))
 	stopDisplaced(displaced)
+	h.reattachObservers()
 
 	// A recovered conversation re-takes its correlation reservation (FIX-036
 	// §1.2): the reservation map does not survive the process, so without this
