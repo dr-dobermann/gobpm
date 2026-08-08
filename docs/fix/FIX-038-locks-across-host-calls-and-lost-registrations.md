@@ -52,9 +52,19 @@ defer t.m.Unlock()
 if err := rec.eligible.Authorize(taskID, actor); err != nil {
 ```
 
-`Authorize` is host policy — a directory or database lookup is the normal
-implementation. It runs holding `t.m`, the lock every registration, launch and
+`Authorize` itself is engine-owned and in-memory: `Eligibility` holds
+already-RESOLVED slots and `permits` compares them. What crosses the host
+boundary is the **actor**: `permits` calls `actor.UserID()` and
+`actor.Groups()` (`eligibility.go:127,136`), and `hi.Actor` is an interface the
+embedder implements. Their contract is "return the id / the groups", so the
+normal implementation is a trivial getter — but the engine cannot assume that,
+and it runs them holding `t.m`, the lock every registration, launch and
 discovery call needs.
+
+This is weaker than §1.1: a blocking `Groups()` is a misbehaving embedder
+rather than an expected one. It is fixed for the same reason the producer's
+hooks were (FIX-036 §1.5) — the engine does not get to decide how long someone
+else's code takes — and because the SHAPE is what keeps recurring.
 
 **§1.1 and §1.2 are the same defect as FIX-036 §1.5**, which found host code
 running uncontained inside the producer. That landing fixed the producer and
@@ -162,7 +172,7 @@ new and has no path back when the second step fails.
 | # | Decision | Alternatives | Chosen |
 |---|---|---|---|
 | 1 | §1.1 the hub lock | (a) a second lock for waiter *creation* — two locks over one registry invites the ordering bugs the package has already had; (b) **build and Service the waiter OUTSIDE the lock, then insert under it**, tearing the waiter down if the insert loses a race | **(b)** — the same shape `HoldSubscription` uses since FIX-036: the expensive, foreign work happens unlocked, the registry mutation is a short critical section |
-| 2 | §1.2 authorization | (a) copy the record under the lock and authorize outside; (b) authorize before taking the lock — needs the record, so it would read it twice | **(a)** |
+| 2 | §1.2 authorization | (a) copy the record under the lock and authorize outside; (b) leave it — the actor's accessors are expected to be getters, so the exposure is small | **(a)** — the eligibility policy is written once and read-only, so reading it separately cannot go stale, and the ownership decision still happens under the lock on a freshly read record. `setOwner` additionally stops taking a CALLBACK it runs under the lock, which is the shape `locked.go` forbids by construction and the reason two of the three call sites went unnoticed |
 | 3 | §1.3 the unregister race | (a) re-check `len(EventProcessors())` after re-acquiring — still a window; (b) **hold the write lock across the whole check-and-remove** | **(b)** — it is registry work, which is exactly what the lock is for; the waiter's `Stop` moves out of the critical section |
 | 4 | §1.4 recovery | (a) retry like `claimForWake` — hides a genuine outage behind attempts; (b) **classify: a lost CAS is `nil`, anything else is reported** — the repository already distinguishes them | **(b)** |
 | 5 | §1.5 the bricked key | (a) re-register `prevLatest` on failure — restores auto-start but leaves the failed version as `latest`, so the retry still misbehaves; (b) **remove the failed version from the registry AND restore the previous latest's starters** | **(b)** — the key returns to exactly its pre-call state |
