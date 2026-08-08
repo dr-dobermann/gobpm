@@ -1014,6 +1014,7 @@ type armHookHub struct {
 	mu         sync.Mutex
 	onRegister func()
 	withdrawn  map[string]int // eDefID → successful withdrawals
+	armedIDs   []string       // starter ids of the successful arms, in order
 	registered int            // total successful arms
 	armErr     error          // when set, the next armFails persistent arms fail
 	armFails   int            // how many arms still fail (negative = all)
@@ -1052,6 +1053,14 @@ func (h *armHookHub) RegisterEvent(
 // failArms makes the next n starter arms fail, so a test can break the hub
 // under a RUNNING engine without racing the eventHub field. n < 0 fails every
 // later arm; n == 0 clears the fault.
+// armedStarters returns the starter ids armed so far, in order.
+func (h *armHookHub) armedStarters() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return append([]string{}, h.armedIDs...)
+}
+
 func (h *armHookHub) failArms(err error, n int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1082,6 +1091,10 @@ func (h *armHookHub) RegisterPersistentEvent(
 	if err == nil {
 		h.mu.Lock()
 		h.registered++
+		// WHICH starter was armed, not just how many: a rollback that re-armed
+		// the failed version's starters instead of the previous version's
+		// raises the count exactly as the correct one does.
+		h.armedIDs = append(h.armedIDs, ep.ID())
 		h.mu.Unlock()
 	}
 
@@ -1582,6 +1595,7 @@ func TestFailedRegisterRestoresThePreviousStarters(t *testing.T) {
 
 	armsAfterV1 := hub.arms()
 	require.Positive(t, armsAfterV1, "v1's starter is on the hub")
+	require.Len(t, hub.armedStarters(), armsAfterV1)
 
 	// v2's arm fails: the supersede has already withdrawn v1's starters.
 	hub.failArms(errors.New("hub refuses"), 1) // only v2's own arm
@@ -1597,9 +1611,15 @@ func TestFailedRegisterRestoresThePreviousStarters(t *testing.T) {
 	require.Len(t, regs, 1, "the failed version is removed from the registry")
 	require.Equal(t, v1.Version(), regs[0].Version(), "v1 is latest again")
 
-	// and v1's starters are back on the hub
-	require.Greater(t, hub.arms(), armsAfterV1,
-		"the previous version's starters are re-armed")
+	// and V1'S starters are back on the hub — the identity matters, not the
+	// count: re-arming the FAILED version's starters would raise the count
+	// just the same, and leave the key serving a version that never landed.
+	armed := hub.armedStarters()
+	require.Greater(t, len(armed), armsAfterV1,
+		"the rollback arms something")
+	require.Equal(t, armed[:armsAfterV1], armed[len(armed)-armsAfterV1:],
+		"the restored arms are the SAME starters v1 armed, not the failed"+
+			" version's")
 
 	// the key is not bricked: with the hub healthy again, a retry succeeds
 	hub.failArms(nil, 0)

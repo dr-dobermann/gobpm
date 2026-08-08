@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -330,13 +332,24 @@ func (w *countingWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	return nil
 }
 
-func (w *countingWaiter) RemoveEventProcessor(eventproc.EventProcessor) error {
+// RemoveEventProcessor removes ep BY IDENTITY, as every real waiter does
+// (waiters/message.go:148 and its siblings), and reports an absent one instead
+// of succeeding. The earlier stub dropped whichever processor happened to be
+// last, which quietly made a two-processor test remove the wrong one — and a
+// stub that is laxer than the thing it stands in for hides exactly the defects
+// the test exists to find.
+func (w *countingWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	if len(w.procs) > 0 {
-		w.procs = w.procs[:len(w.procs)-1]
+	idx := slices.Index(w.procs, ep)
+	if idx == -1 {
+		return errs.New(
+			errs.M("event processor isn't registered with the waiter"),
+			errs.C(errorClass, errs.ObjectNotFound))
 	}
+
+	w.procs = slices.Delete(w.procs, idx, idx+1)
 
 	return nil
 }
@@ -384,9 +397,16 @@ func (w *countingWaiter) State() eventproc.EventWaiterState {
 // attached a processor to it — and this call then stopped and unmapped it. The
 // registration reported success and its events never arrived.
 //
-// The invariant: a registration that returns nil leaves its definition MAPPED.
-// Hammering both paths concurrently under -race exercises the window the fix
-// closes; the assertion is the invariant, not a timing.
+// The invariant: a registration that returns nil leaves its definition MAPPED
+// and serving the processor it registered.
+//
+// The registering and unregistering processors must be DIFFERENT. An earlier
+// version of this test used one processor for both, and the independent review
+// caught that it could not fail with the fix reverted: with a shared processor
+// the defect's outcome (registration succeeds, definition unmapped) is exactly
+// what a legitimate unregister-ran-last also produces, so the test skipped its
+// own defect. With two, an unregister of epOld can never justify unmapping a
+// definition epNew has just registered against.
 func TestUnregisterRacingRegisterKeepsTheRegistration(t *testing.T) {
 	hub, err := New(enginert.Default())
 	require.NoError(t, err)
@@ -407,9 +427,16 @@ func TestUnregisterRacingRegisterKeepsTheRegistration(t *testing.T) {
 		return w, nil
 	}
 
-	for range 200 {
-		ep := mockeventproc.NewMockEventProcessor(t)
-		ep.EXPECT().ID().Return("ep-race").Maybe()
+	for round := range 200 {
+		epOld := mockeventproc.NewMockEventProcessor(t)
+		epOld.EXPECT().ID().Return("ep-old").Maybe()
+
+		epNew := mockeventproc.NewMockEventProcessor(t)
+		epNew.EXPECT().ID().Return("ep-new").Maybe()
+
+		// epOld holds the definition before the round starts, so the
+		// unregister below has something real to remove.
+		require.NoError(t, hub.registerWaiter(epOld, def, build))
 
 		var wg sync.WaitGroup
 
@@ -420,34 +447,43 @@ func TestUnregisterRacingRegisterKeepsTheRegistration(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			regErr <- hub.registerWaiter(ep, def, build)
+			regErr <- hub.registerWaiter(epNew, def, build)
 		}()
 
 		go func() {
 			defer wg.Done()
 
-			_ = hub.UnregisterEvent(ep, def.ID())
+			_ = hub.UnregisterEvent(epOld, def.ID())
 		}()
 
 		wg.Wait()
 
 		if err := <-regErr; err != nil {
-			continue // a refused registration promises nothing
+			// a refused registration promises nothing — but clean up
+			_ = hub.UnregisterEvent(epOld, def.ID())
+
+			continue
 		}
 
-		// It reported success, so the definition must be served.
+		// epNew's registration reported success, so the definition MUST still
+		// be served, and by a waiter carrying epNew. Unmapping is not a
+		// legitimate outcome here: the only unregistration was epOld's.
 		hub.m.Lock()
 		w, mapped := hub.waiters[def.ID()]
 		hub.m.Unlock()
 
-		if !mapped {
-			continue // the unregister ran last and legitimately removed it
-		}
+		require.True(t, mapped,
+			"round %d: a successful registration must leave its definition"+
+				" mapped — an unregister of ANOTHER processor cannot remove it",
+			round)
 
-		require.NotEmpty(t, w.EventProcessors(),
-			"a mapped waiter must carry the processors registered against it")
+		require.Contains(t, w.EventProcessors(), eventproc.EventProcessor(epNew),
+			"round %d: the mapped waiter must carry the processor that"+
+				" registered against it", round)
 
-		_ = hub.UnregisterEvent(ep, def.ID()) // reset for the next round
+		// reset for the next round
+		_ = hub.UnregisterEvent(epNew, def.ID())
+		_ = hub.UnregisterEvent(epOld, def.ID())
 	}
 }
 
