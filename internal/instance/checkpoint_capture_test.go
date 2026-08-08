@@ -2,6 +2,8 @@ package instance
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
@@ -29,15 +32,41 @@ import (
 var lastCondSnapshot *snapshot.Snapshot
 
 // cpSink collects reported facts for the degradation assertions.
+// Mutex-guarded: tracks report from their own goroutines while a test
+// polls has() (SRD-082's capture tests do).
 type cpSink struct {
+	mu    sync.Mutex
 	facts []observability.Fact
 }
 
 func (cs *cpSink) Report(f observability.Fact) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
 	cs.facts = append(cs.facts, f)
 }
 
+// hasDeferralReason reports a CheckpointDeferred fact whose reason
+// carries the given substring (independent-review note T3 — a
+// deferral for an unrelated cause must not satisfy a deferral test).
+func (cs *cpSink) hasDeferralReason(sub string) bool {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	for _, f := range cs.facts {
+		if f.Phase == observability.PhaseCheckpointDeferred &&
+			strings.Contains(f.Details["reason"], sub) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (cs *cpSink) has(phase observability.Phase) bool {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
 	for _, f := range cs.facts {
 		if f.Kind == observability.KindInstanceState && f.Phase == phase {
 			return true
@@ -206,16 +235,27 @@ func TestCheckpointDeferGuard(t *testing.T) {
 		WithCheckpointing("engine-A", "engine-A", time.Minute))
 	require.NoError(t, err)
 
+	// no construct guards remain (SRD-082 FR-8, M4): an in-flight call
+	// is RECORDED — deferral means only a real encode/save failure.
 	ls := newLoopState(inst)
-	ls.calls["busy"] = nil // a Call Activity in flight
+	tr := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		steps:       []*stepInfo{{node: findNode(t, s, "cond-catch")}},
+	}
+	ls.calls["busy"] = &callEntry{track: tr, node: tr.currentStep().node}
 
 	ls.checkpointNow(context.Background())
 
-	require.True(t, sink.has(observability.PhaseCheckpointDeferred),
-		"the degradation must be operator-visible")
+	require.False(t, sink.has(observability.PhaseCheckpointDeferred),
+		"an in-flight call captures — the deferral posture is retired")
 
-	_, ok, _ := rt.Repository().Load(context.Background(), inst.ID())
-	require.False(t, ok, "no torn document may be written")
+	rec, ok, _ := rt.Repository().Load(context.Background(), inst.ID())
+	require.True(t, ok, "the document is written")
+
+	d, err := checkpoint.Unmarshal(rec.Payload)
+	require.NoError(t, err)
+	require.Len(t, d.Calls, 1)
+	require.Equal(t, "busy", d.Calls[0].ChildID)
 }
 
 // TestCheckpointDisabledByDefault: without the option the instance
@@ -270,20 +310,30 @@ func TestCaptureArms(t *testing.T) {
 		return inst, newLoopState(inst), sink
 	}
 
-	t.Run("MI and sweep guards defer",
+	t.Run("no construct defers; every position is recorded",
 		func(t *testing.T) {
 			inst, ls, _ := newArmedInstance(t)
+			host := inst.tracks[firstTrackID(inst)]
 
-			ls.miGroups["g"] = nil
-			_, reason := ls.captureDocument(context.Background())
-			require.Contains(t, reason, "multi-instance")
-
-			delete(ls.miGroups, "g")
-			ls.sweeps["s"] = nil
-			_, reason = ls.captureDocument(context.Background())
-			require.Contains(t, reason, "compensation sweep")
-
-			_ = inst
+			// every guard retired (SRD-082 FR-8): groups in M2, sweeps
+			// in M3, calls in M4 — all recorded now, never deferred.
+			ls.miGroups["g"] = &miGroup{host: host}
+			ls.sweeps["s"] = &sweepRun{
+				sweep: &compSweep{path: inst.sc.root, thrower: host,
+					wait: true},
+				entry: &ledgerEntry{activityID: "a-1", ordinal: 0},
+			}
+			ls.calls["c"] = &callEntry{
+				track: host, node: host.currentStep().node,
+			}
+			doc, reason := ls.captureDocument(context.Background())
+			require.Empty(t, reason)
+			require.Len(t, doc.MIGroups, 1)
+			require.Len(t, doc.Sweeps, 1)
+			require.Equal(t, host.ID(), doc.Sweeps[0].ThrowerTrack)
+			require.NotNil(t, doc.Sweeps[0].Running)
+			require.Len(t, doc.Calls, 1)
+			require.Equal(t, "c", doc.Calls[0].ChildID)
 		})
 
 	t.Run("ledger entries flatten with their folded children",
@@ -761,4 +811,14 @@ func TestRestoreKeysAndLedgerEncodeArms(t *testing.T) {
 			_, reason := ls.captureDocument(context.Background())
 			require.Contains(t, reason, "ledger encode:")
 		})
+}
+
+// firstTrackID returns any track id of the instance (the armed-capture
+// tests need a host for a synthetic group).
+func firstTrackID(inst *Instance) string {
+	for id := range inst.tracks {
+		return id
+	}
+
+	return ""
 }

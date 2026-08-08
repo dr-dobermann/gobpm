@@ -23,7 +23,7 @@ recovers what the store says is unfinished (see
 
 `repository.Repository` is a compare-and-set store over
 `InstanceRecord`, the group-scoped recovery listing, and the
-engine-group registry (ADR-033 v.3 §2.8):
+engine-group registry (ADR-033 v.4 §2.8):
 
 ```go
 type Repository interface {
@@ -82,8 +82,8 @@ type InstanceRecord struct {
 | `ID` | the instance id — your primary key. |
 | `Payload` | the engine's **schema-versioned checkpoint document**, opaque bytes. The serialization model is the engine's; the storage's job is bytes. Store and return **copies** — never alias the caller's slice. |
 | `Lease` | the **ownership claim** (ADR-033 §2.8): the engine running the instance, its fencing incarnation, and the claim's expiry. A zero lease means "unowned"; `Lease.Expired(now)` reports whether it still holds. |
-| `Group` | the creator engine's group (ADR-033 v.3 §2.8) — **never empty**: an ungrouped engine forms a single-engine group under its own id, and a store MUST reject a group-less record. |
-| `Tenant` | the owning tenant (ADR-033 v.3 §2.7). `""` means the group's default tenant; resolution is the store's concern (the postgres adapter resolves it to the group's flag-designated default row). The engine stamps `""` until the Multi-tenancy ADR lands. |
+| `Group` | the creator engine's group (ADR-033 v.4 §2.8) — **never empty**: an ungrouped engine forms a single-engine group under its own id, and a store MUST reject a group-less record. |
+| `Tenant` | the owning tenant (ADR-033 v.4 §2.7). `""` means the group's default tenant; resolution is the store's concern (the postgres adapter resolves it to the group's flag-designated default row). The engine stamps `""` until the Multi-tenancy ADR lands. |
 | `RecVersion` | the compare-and-set version — see `Save`. |
 | `Status` | `StatusActive`, `StatusSuspended` (in-flight, refuses triggers — reserved for the suspend/resume slice), or terminal `StatusCompleted` / `StatusTerminated` (`Status.IsTerminal()`). |
 

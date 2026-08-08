@@ -271,6 +271,13 @@ past). Armed boundary timers keep ticking against the stuck node and are never
 reset by retries; incidents survive restarts through the checkpoint. The
 guide: [**docs/guides/operating/incidents.md**](docs/guides/operating/incidents.md).
 
+Since the composite-fidelity landing, the checkpoint covers every
+construct **mid-flight**: iterations resume at their recorded pass,
+parallel fan-outs re-open exactly their open instances, a resolving
+compensation continues its sweep, and a Call Activity's child is a
+durable instance re-linked to its caller on recovery — nothing
+completed ever re-executes, and no construct defers the capture.
+
 The same switch buys **dehydration** — see
 [`examples/dehydration/`](examples/dehydration/): an instance whose every
 live track sits on a long wait releases *all* of its goroutines, its loop

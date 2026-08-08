@@ -104,6 +104,9 @@ func decodeNode(ctx context.Context, n node) (data.Value, error) {
 	case kindArray:
 		return decodeArray(ctx, n)
 
+	case kindNil:
+		return nil, nil // an explicit staging hole (SRD-082 FR-4)
+
 	default:
 		dec, ok := scalarDecoders[n.Kind]
 		if !ok {
@@ -299,7 +302,7 @@ func uniformScalarKind(nn []node) (string, bool) {
 
 	for _, n := range nn {
 		switch n.Kind {
-		case kindArray, kindRecord, kindMap:
+		case kindArray, kindRecord, kindMap, kindNil:
 			return "", false
 		}
 

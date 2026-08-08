@@ -4,6 +4,8 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
+
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -331,6 +333,77 @@ func (ls *loopState) finishSweep(ctx context.Context, sweep *compSweep) {
 	})
 
 	sweep.thrower = nil // resume once
+}
+
+// adoptRestoredSweeps resumes the checkpoint-recorded compensation
+// sweeps (SRD-082 FR-6): the queue rebuilds from the records with the
+// RUNNING entry prepended — its handler re-runs (an effect;
+// at-least-once per ADR-033 §2.3, well-defined over the immutable
+// snapshot) — the parked thrower re-registers for the drain's
+// sentinel, and a Transaction-abort sweep re-marks its scope aborting
+// so residual drains keep deferring to finalizeTransaction. Runs on
+// the loop goroutine, after the initial spawns.
+func (ls *loopState) adoptRestoredSweeps(ctx context.Context) error {
+	for i := range ls.inst.restoredSweeps {
+		rec := &ls.inst.restoredSweeps[i]
+
+		sweep := &compSweep{
+			path: scope.DataPath(rec.ScopePath),
+			wait: rec.Wait,
+		}
+
+		if rec.ThrowerTrack != "" {
+			thrower, ok := ls.inst.tracks[rec.ThrowerTrack]
+			if !ok {
+				return errs.New(
+					errs.M("restored sweep names thrower track %q, which "+
+						"the track table does not carry", rec.ThrowerTrack),
+					errs.C(errorClass, errs.InvalidState))
+			}
+
+			sweep.thrower = thrower
+			ls.waiting[thrower.ID()] = struct{}{}
+		}
+
+		if rec.TxHostTrack != "" {
+			txHost, ok := ls.inst.tracks[rec.TxHostTrack]
+			if !ok {
+				return errs.New(
+					errs.M("restored sweep names Transaction host %q, which "+
+						"the track table does not carry", rec.TxHostTrack),
+					errs.C(errorClass, errs.InvalidState))
+			}
+
+			sweep.txHost = txHost
+
+			if entry, ok := ls.scopes[sweep.path]; ok {
+				entry.aborting = true
+			}
+		}
+
+		// the running entry re-runs, then the remaining queue in order.
+		recs := make([]*checkpoint.LedgerRecord, 0, len(rec.Queue)+1)
+		if rec.Running != nil {
+			recs = append(recs, rec.Running)
+		}
+
+		for j := range rec.Queue {
+			recs = append(recs, &rec.Queue[j])
+		}
+
+		for _, lr := range recs {
+			entry, err := ledgerEntryFromRecord(ctx, lr)
+			if err != nil {
+				return err
+			}
+
+			sweep.queue = append(sweep.queue, entry)
+		}
+
+		ls.runNextCompensation(ctx, sweep)
+	}
+
+	return nil
 }
 
 // reportUnresolvedCompensation logs a throw that resolved to nothing — an

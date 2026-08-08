@@ -2,15 +2,18 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.3 |
-| Date | 2026-07-16 (v.1 accepted 2026-07-17; v.2 accepted 2026-07-18; v.3 drafted 2026-07-22) |
+| Date | 2026-07-16 (v.1 accepted 2026-07-17; v.2 accepted 2026-07-18; v.3 drafted 2026-07-22, accepted 2026-08-08) |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-010 v.2 Process Data Model](ADR-010-process-data-model.md) §2.2, [ADR-018 v.1 Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md) §2.2/§2.6, [ADR-006 v.3 Events & Subscriptions](ADR-006-events-and-subscriptions.md) §2.6/§2.7, [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning.md), [SAD-001 v.1](SAD-001-vision-and-architecture.md) §15.3 |
 
-> **Draft (v.3)** — a documentation-only bump over the accepted v.2: §2.3 firms
-> the `startQuantity`/`completionQuantity` note into a deliberate non-goal
-> (→ SAD-001 §4 N8); the execution-model conception (§2.1–§2.10) is unchanged.
+> **Accepted (v.3)** — over the accepted v.2: §2.3 firms the
+> `startQuantity`/`completionQuantity` note into a deliberate non-goal
+> (→ SAD-001 §4 N8), and §2.7 gains the **restart contract** — an
+> in-flight call survives an engine restart whole (durable child,
+> recorded call, recovery re-links both ends; governed by ADR-033 v.4
+> §2.10); the execution-model conception is otherwise unchanged.
 > v.2 extended the accepted v.1 with the **Event Sub-Process**
 > decision (§2.10), promoting it from the v.1 "designed-for" seam (§2.8) to a
 > full conception; the interrupting slice has landed (the accompanying SRD). The v.1 keystone stays as accepted: the **embedded
@@ -284,6 +287,22 @@ composition is by **reference**, not containment, so the execution unit is a
 - **Observability linkage**: the child instance's facts carry the parent
   linkage (caller instance id + Call Activity node id) so a trace can be
   stitched across the boundary (§6).
+- **Restart contract — the call survives a restart whole** (the standard
+  is silent on engine restarts; engine choice, governed by the
+  Persistence & State ADR's composite-fidelity rule, ADR-033 v.4 §2.10):
+  the child instance is **durable in its own right** — it checkpoints
+  under the same repository and discipline as any instance, carrying the
+  parent linkage; the caller's checkpoint records the in-flight call
+  (the awaited child instance id + the call node). Recovery restores
+  **both ends and re-links them**: the caller's parked track resumes
+  waiting on the recovered child, the child's terminal state re-enters
+  the restored caller exactly as it would a resident one, and the
+  cancel cascade above survives the restart. A restored caller whose
+  awaited child record is missing **fails its restore loudly** — the
+  call is recorded state, so silently re-launching the child (a
+  duplicated child instance) is designed out; conversely a recovered
+  child whose parent record vanished fails loudly rather than running
+  orphaned.
 
 ### 2.8 Designed-for: what rides the scope model next
 
@@ -560,4 +579,5 @@ None.
 | v.1 | 2026-07-17 | Ruslan Gabitov | **Accepted** — both slices landed (the embedded Sub-Process and the Call Activity, via the accompanying SRDs); epic #85 closed. Status flip only, no conception change (no version bump). |
 | v.2 | 2026-07-17 | Ruslan Gabitov | **Draft** — adds §2.10 **Event Sub-Process**, promoting the §2.8 seam to a full conception (epic #91): a `triggeredByEvent` handler **armed while its enclosing scope is open** (the boundary-watch pattern lifted from an activity window to a scope window), reusing the per-kind trigger machinery (hub Message/Signal, Timer, the ADR-006 v.3 **conditional start** landing here, the §2.6 Error walk); an **interrupting** start cancels its scope's sibling tracks (§2.5) and runs the handler in the parent's data context (Error→Failing / non-error→Terminating realized by cancellation path + observability, no new token state); the **interrupting budget is one per Event Declaration, shared with boundary events** (§10.5.6), enforced by a per-scope interrupting-arm registry; **absorb vs re-throw** (§10.5.6) gives terminal-vs-decorator control. **Non-interrupting** decided (concurrent handler spawn, unlimited, Error excluded) but implementation sliced second. **Transaction/compensation + the Escalation trigger stay out of scope** — they need #90; §2.8 keeps them as designed-for. §2.8 event-sub bullet updated to point at §2.10; §3 grounding + §4 alternatives + Engine-notes extended. v.1 keystone (§2.1–§2.7) unchanged and stays accepted. Standard-grounded against §13.5.4 / §10.5.2 / §10.5.6 / §10.4.3. Implementation by the accompanying SRD (interrupting first). |
 | v.2 | 2026-07-18 | Ruslan Gabitov | **Accepted** — the interrupting Event Sub-Process landed (the accompanying SRD): the scope-armed handler, the cancel-and-run, the shared interrupting budget with boundary events, the Error scope-chain catch, and absorb. Non-interrupting handlers and Transaction/compensation remain sliced (#90). Status flip only, no conception change (no version bump). |
-| v.3 | 2026-07-22 | Ruslan Gabitov | **Draft** — §2.3 note firmed: `startQuantity`/`completionQuantity` ≠ 1 recharacterized from "existing deferral" to a **deliberate non-goal** (→ SAD-001 v.1 §4 N8) — implicit token multiplication/join with no diagram notation is opaque, Camunda does not support them, and an explicit Parallel Gateway covers the intent visibly; the runtime honours the default 1. Documentation-only; no execution-model change (§2.1–§2.10 unchanged). RU twin syncs at re-Accept. |
+| v.3 | 2026-07-22 | Ruslan Gabitov | **Draft** — §2.3 note firmed: `startQuantity`/`completionQuantity` ≠ 1 recharacterized from "existing deferral" to a **deliberate non-goal** (→ SAD-001 v.1 §4 N8) — implicit token multiplication/join with no diagram notation is opaque, Camunda does not support them, and an explicit Parallel Gateway covers the intent visibly; the runtime honours the default 1. Documentation-only; no execution-model change (§2.1–§2.10 unchanged). Extended in draft 2026-08-06 with §2.7's **restart contract** (an engine choice; the standard is silent on restarts): the child instance is durable in its own right, the caller's checkpoint records the in-flight call, recovery restores both ends and re-links them, and a missing counterpart record fails the restore loudly (no silent child re-launch, no orphaned child) — governed by ADR-033 v.4 §2.10. RU twin syncs at re-Accept. |
+| v.3 | 2026-08-08 | Ruslan Gabitov | **Accepted** — the restart contract landed via the accompanying SRD (#277): durable children with symmetric parent↔child linkage, recovery re-link (live, in-flight and terminal child shapes), loud refusal on a missing counterpart. Status flip; RU twin synced. |

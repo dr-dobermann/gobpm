@@ -99,6 +99,22 @@ type Instance struct {
 	// set, New wires this to read each track's `held` flag (set at arm time when
 	// a holder accepted the wait). Tests may inject their own predicate.
 	waitHeld func(*track) bool
+	// restoredGroups are the checkpoint-recorded parallel Multi-Instance
+	// open sets the loop adopts at start (SRD-082 FR-4); nil for a fresh
+	// instance.
+	restoredGroups []checkpoint.MIGroupRecord
+	// restoredSweeps are the checkpoint-recorded resolving compensation
+	// sweeps the loop resumes at start (SRD-082 FR-6); nil for a fresh
+	// instance.
+	restoredSweeps []checkpoint.SweepRecord
+	// restoredCalls are the checkpoint-recorded in-flight Call
+	// Activities the loop re-links at start (SRD-082 FR-7); nil for a
+	// fresh instance.
+	restoredCalls []checkpoint.CallRecord
+	// callReattach re-finds a recorded child instance through the
+	// engine (SRD-082 FR-7) — nil when no engine seam was wired, which
+	// makes a restored in-flight call a loud failure.
+	callReattach CallReattacher
 	// restoredLedgers is the checkpoint-rebuilt compensation ledger the
 	// loop adopts at start (SRD-070 FR-6); nil for a fresh instance.
 	restoredLedgers map[scope.DataPath][]*ledgerEntry
@@ -330,6 +346,9 @@ type newConfig struct {
 	// a dehydratable timer registers its deadline here at arm time. nil for a
 	// library embedder or a volatile instance — every wait then stays resident.
 	waitHolders exec.WaitHolders
+	// callReattach re-finds a recorded child instance through the engine
+	// at restore (SRD-082 FR-7); nil without an engine seam.
+	callReattach CallReattacher
 	// settled is the engine's per-instance-ID terminal signal (SRD-071).
 	settled chan struct{}
 	// rootData is committed into the root scope at construction — the Call
@@ -395,6 +414,22 @@ func withCallLinkage(parentInstanceID, callNodeID string) newOption {
 func WithInvoker(inv exec.ProcessInvoker) Option {
 	return func(c *newConfig) {
 		c.invoker = inv
+	}
+}
+
+// CallReattacher re-finds a recorded child instance through the engine
+// (SRD-082 FR-7): the returned handle behaves like the one InvokeProcess
+// returned before the restart — Done from the engine's settled registry,
+// outcome and outputs resolved when the child settles.
+type CallReattacher func(childID string) (exec.ChildProcess, error)
+
+// WithCallReattacher wires the engine seam a RESTORED instance re-links
+// its in-flight Call Activities through (SRD-082 FR-7). The engine
+// (thresher) passes its own re-attach; left unset, a restored call is a
+// loud failure — never a silent drop.
+func WithCallReattacher(f CallReattacher) Option {
+	return func(c *newConfig) {
+		c.callReattach = f
 	}
 }
 
@@ -464,6 +499,7 @@ func New(
 		scopeReq:            make(chan scopeRequest),
 		incidentReq:         make(chan incidentRequest),
 		invoker:             cfg.invoker,
+		callReattach:        cfg.callReattach,
 		waitHolders:         cfg.waitHolders,
 		settled:             cfg.settled,
 		loopDone:            make(chan struct{}),
@@ -792,3 +828,14 @@ func (inst *Instance) seedParallelStart(
 
 	return nil
 }
+
+// ParentID returns the caller instance's id for a Call Activity child,
+// "" for a root instance (SRD-082 FR-7 — the discovery separation).
+func (inst *Instance) ParentID() string { return inst.parentInstanceID }
+
+// CallNodeID returns the caller's Call Activity node id for a child,
+// "" for a root instance.
+func (inst *Instance) CallNodeID() string { return inst.callNodeID }
+
+// Version returns the pinned process version this instance runs.
+func (inst *Instance) Version() int { return inst.s.Version }

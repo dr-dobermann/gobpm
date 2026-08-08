@@ -137,6 +137,7 @@ func (t *Thresher) rebuildAndContinue(
 	opts := append([]instance.Option{
 		instance.WithSettledSignal(t.settledFor(instanceID)),
 		instance.WithInvoker(t),
+		instance.WithCallReattacher(t.reattachChild),
 		instance.WithWaitHolders(t),
 		instance.WithCheckpointing(t.id, t.group, t.cfg.leaseTTL),
 		instance.WithCheckpointCursor(rec.RecVersion, rec.Lease.Incarnation),

@@ -170,6 +170,68 @@ func (ls *loopState) handleCallCompletion(req callRequest) {
 // FR-6, NFR-1 — no live sharing). Returns the cloned data to seed the child's
 // root scope. A transient frame is opened and discarded here (loop goroutine) so
 // the read stays single-writer with the rest of scope access.
+// adoptRestoredCalls re-links the checkpoint-recorded in-flight Call
+// Activities (SRD-082 FR-7): the caller track re-registers as parked,
+// the entry rebuilds, and the completion watch re-establishes over the
+// engine's re-attach seam — the child is its own record, recovered
+// independently; the seam's handle resolves it whether it is already
+// resident, still awaiting recovery, or finished while the engine was
+// down. Missing pieces are loud: no seam, no track, no child record.
+// Runs on the loop goroutine, before the initial spawns.
+func (ls *loopState) adoptRestoredCalls(ctx context.Context) error {
+	for i := range ls.inst.restoredCalls {
+		rec := &ls.inst.restoredCalls[i]
+
+		tr, ok := ls.inst.tracks[rec.TrackID]
+		if !ok {
+			return errs.New(
+				errs.M("restored call to child %q names caller track %q, "+
+					"which the track table does not carry",
+					rec.ChildID, rec.TrackID),
+				errs.C(errorClass, errs.InvalidState))
+		}
+
+		node := tr.currentStep().node
+		if node.ID() != rec.NodeID {
+			return errs.New(
+				errs.M("restored call to child %q: the caller track is at "+
+					"node %q, the record names %q",
+					rec.ChildID, node.ID(), rec.NodeID),
+				errs.C(errorClass, errs.InvalidState))
+		}
+
+		if ls.inst.callReattach == nil {
+			return errs.New(
+				errs.M("restored call to child %q: no call re-attach seam "+
+					"is wired (the engine must pass WithCallReattacher)",
+					rec.ChildID),
+				errs.C(errorClass, errs.InvalidState))
+		}
+
+		child, err := ls.inst.callReattach(rec.ChildID)
+		if err != nil {
+			return errs.New(
+				errs.M("restored call: child %q didn't re-attach",
+					rec.ChildID),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+
+		ls.waiting[tr.ID()] = struct{}{}
+		ls.calls[rec.ChildID] = &callEntry{
+			track: tr,
+			node:  node,
+			child: child,
+		}
+
+		ls.reportCall(observability.PhaseStarted, node, child)
+
+		go ls.inst.watchCall(ctx, child)
+	}
+
+	return nil
+}
+
 func (ls *loopState) resolveCallInputs(
 	tr *track,
 	node flow.Node,

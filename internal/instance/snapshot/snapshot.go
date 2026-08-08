@@ -236,6 +236,30 @@ type nodeLister interface {
 	Nodes() []flow.Node
 }
 
+// NodeByID resolves a node anywhere in the snapshot's graph — the
+// top-level index first, then a deep walk into nested containers: a
+// mid-composite checkpoint records INNER nodes, which the top-level
+// index does not carry (SRD-082 FR-5).
+func (s *Snapshot) NodeByID(id string) (flow.Node, bool) {
+	if n, ok := s.Nodes[id]; ok {
+		return n, true
+	}
+
+	var found flow.Node
+
+	walkNodesDeep(s.Nodes, func(n flow.Node) bool {
+		if n.ID() == id {
+			found = n
+
+			return false
+		}
+
+		return true
+	})
+
+	return found, found != nil
+}
+
 // walkNodesDeep visits every node of the graph and, recursively, of every
 // nested container (SRD-049 FR-5). visit returning false stops the walk.
 func walkNodesDeep(nodes map[string]flow.Node, visit func(flow.Node) bool) bool {

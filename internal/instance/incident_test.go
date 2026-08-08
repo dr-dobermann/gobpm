@@ -500,7 +500,7 @@ func TestIncidentCheckpointRecovery(t *testing.T) {
 		return true
 	}, 3*time.Second, 5*time.Millisecond)
 
-	require.Equal(t, 3, doc.Schema)
+	require.Equal(t, 4, doc.Schema)
 	require.Len(t, doc.Incidents, 1)
 	require.Equal(t, failID, doc.Incidents[0].NodeID)
 	require.Equal(t, "open", doc.Incidents[0].State)
@@ -575,7 +575,7 @@ func TestIncidentRecordRoundTrip(t *testing.T) {
 
 	back, err := checkpoint.Unmarshal(raw)
 	require.NoError(t, err)
-	require.Equal(t, 3, back.Schema)
+	require.Equal(t, 4, back.Schema)
 	require.Equal(t, doc.Incidents, back.Incidents)
 
 	// a pre-incident (schema 2) document still reads.

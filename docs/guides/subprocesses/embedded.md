@@ -218,6 +218,14 @@ Behavior worth knowing:
 When the fragment is a whole reusable process with its own isolated data, use a
 [Call Activity](call-activity.md) instead of an embedded scope.
 
+## Restarts
+
+An embedded sub-process restored **mid-body** keeps its position: the
+open scope's data and live tracks rebuild, the drained scope resumes
+its host exactly once, and the body is never re-entered from the top —
+completed work does not re-execute (ADR-033 v.4 §2.10).
+
+
 ## See also
 
 - Examples: [`examples/embedded-subprocess/`](../../../examples/embedded-subprocess/)

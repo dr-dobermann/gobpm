@@ -177,6 +177,14 @@ Behavior worth knowing:
   loop characteristics — it is instantiated by its event trigger, not reached by
   a token and iterated.
 
+## Restarts
+
+A Standard-Loop **composite** restored mid-flight resumes at its
+recorded pass (the position rides the instance checkpoint, ADR-033
+v.4 §2.10); completed passes never re-run, and the loop condition
+re-evaluates naturally at the resumed pass over the restored data.
+
+
 ## See also
 
 - Examples: [`examples/standard-loop/`](../../../examples/standard-loop/)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"sync"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
@@ -281,10 +282,21 @@ type catchEvent struct {
 	// received holds the payload item captured from a fired message event
 	// definition, bound into scope on resume (ADR-014 v.1 §2.2). It is
 	// per-instance runtime state, nil until a payload-carrying event fires.
+	// Guarded by the package recvMu — see its comment.
 	received           *data.ItemDefinition
 	outputAssociations []*data.Association
 	parallelMultiple   bool
 }
+
+// recvMu guards every catchEvent's received field: N parallel
+// Multi-Instance bodies SHARE their catch node, so concurrent fires
+// write it from different track goroutines (surfaced by SRD-082's
+// parallel-restore tests). A package-level mutex, because the model
+// layer copies event structs by value at build time — an embedded
+// mutex would be copied with them (govet copylocks). The
+// payload-routing semantics of that node sharing are a follow-up
+// issue; the mutex makes the access safe, not the ordering fair.
+var recvMu sync.Mutex
 
 // ProcessEvent captures the payload carried by a fired event definition, so a
 // catch event can bind it into scope on resume (the consumer side of ADR-014
@@ -294,7 +306,9 @@ func (ce *catchEvent) ProcessEvent(
 	_ context.Context,
 	eDef flow.EventDefinition,
 ) error {
+	recvMu.Lock()
 	ce.received = msgflow.CaptureItem(eDef)
+	recvMu.Unlock()
 
 	return nil
 }
@@ -407,6 +421,10 @@ func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
 			errs.E(err))
 	}
 
+	recvMu.Lock()
+	received := ce.received
+	recvMu.Unlock()
+
 	outs := map[string]*data.Parameter{}
 	for _, o := range f.Outputs() {
 		id := o.ItemDefinition().ID()
@@ -415,9 +433,9 @@ func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
 		// runtime payload into the matching output, overriding the static
 		// value, so it commits to scope and flows through the associations. A
 		// catch with no captured payload keeps the static-output path.
-		if ce.received != nil && id == ce.received.ID() {
+		if received != nil && id == received.ID() {
 			if err := o.ItemDefinition().Structure().
-				Update(ctx, ce.received.Structure().Get(ctx)); err != nil {
+				Update(ctx, received.Structure().Get(ctx)); err != nil {
 				return errs.New(
 					errs.M("couldn't bind received payload for event %q",
 						ce.Name()),

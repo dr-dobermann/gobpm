@@ -1535,6 +1535,7 @@ func (t *Thresher) instanceOptions(settled chan struct{}) []instance.Option {
 	opts := []instance.Option{
 		instance.WithInvoker(t),
 		instance.WithSettledSignal(settled),
+		instance.WithCallReattacher(t.reattachChild),
 	}
 
 	if t.cfg.repoSet {

@@ -224,6 +224,17 @@ Behavior worth knowing:
 > the barrier lifts. An Event Sub-Process cannot carry Multi-Instance: it is
 > instantiated by its trigger, not reached by a token and iterated.
 
+## Restarts
+
+The iteration position is part of the instance checkpoint (ADR-033
+v.4 §2.10): a **sequential** MI restored mid-flight resumes at its
+recorded pass with the outputs collected so far — completed passes
+never re-run, and a fired `completionCondition` is honored; a
+**parallel** MI re-opens exactly its still-open instances at their
+recorded ordinals, with completed slots' outputs (and canceled slots'
+holes) intact in the assembled output.
+
+
 ## See also
 
 - Examples: [`multi-instance-sequential/`](../../../examples/multi-instance-sequential/) · [`multi-instance-parallel/`](../../../examples/multi-instance-parallel/) · [`multi-instance-behavior/`](../../../examples/multi-instance-behavior/)

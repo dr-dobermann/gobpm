@@ -2,7 +2,11 @@ package instance
 
 import (
 	"context"
+	"encoding/json"
+
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -102,7 +106,7 @@ func (ls *loopState) captureSequentialOutput(
 		return err
 	}
 
-	return st.staging.SetAt(ctx, entry.host.loopCounter, d.Value().Get(ctx))
+	return st.staging.SetAt(ctx, entry.host.loopCounterSnap(), d.Value().Get(ctx))
 }
 
 // evalCompletion evaluates the boolean completionCondition at the host scope
@@ -248,6 +252,146 @@ func (it miIterator) bindInstance(
 	return nil
 }
 
+// prepareSequential resolves the activation, builds the host's miState
+// (staging included) and applies a restored seed (SRD-082 FR-3): the
+// recorded N is the frozen activation count (§13.3.7) — the cardinality
+// expression must not re-resolve to a different bound after the restart
+// — and the recorded staging returns the completed passes' outputs. It
+// returns the frozen instance count and the first pass to launch.
+func (t *track) prepareSequential(
+	ctx context.Context, it miIterator, mi multiInstance, step *stepInfo,
+) (int, int, error) {
+	n, col, err := it.resolveActivation(ctx, t, step.node)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	seed := t.miSeed
+	t.miSeed = nil
+
+	if seed != nil && seed.N > 0 {
+		n = seed.N
+
+		if col != nil && col.Count() < n {
+			return 0, 0, errs.New(
+				errs.M("restored Multi-Instance %q: the input collection "+
+					"holds %d items, the recorded activation froze %d",
+					step.node.ID(), col.Count(), n),
+				errs.C(errorClass, errs.InvalidState))
+		}
+	}
+
+	t.miState = &miState{
+		collection:        col,
+		inputItem:         mi.InputDataItem(),
+		outputRef:         mi.LoopDataOutputRef(),
+		outputItem:        mi.OutputDataItem(),
+		numberOfInstances: n,
+	}
+
+	// an output-assembling Multi-Instance stages each instance's item privately and
+	// publishes the collection once, at completion (the visibility barrier).
+	if t.miState.outputRef != "" {
+		t.miState.staging = values.NewArray[any]()
+
+		if seed != nil && seed.Staging != nil {
+			if serr := seedStaging(ctx, t.miState.staging,
+				seed.Staging); serr != nil {
+				return 0, 0, serr
+			}
+		}
+	}
+
+	if seed == nil || n <= 0 {
+		return n, 0, nil
+	}
+
+	start, err := t.seedSequentialStart(ctx, it, mi, step, seed, n)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return n, start, nil
+}
+
+// seedSequentialStart applies a restored position (SRD-082 FR-3): the
+// completed count stands, and the iteration's stop verdict is the
+// recorded one — or, when the capture predates the runner's note, the
+// SAME predicate re-evaluated over the restored data and the recorded
+// counters (deterministic, so never "backwards"). It returns the first
+// pass to launch: n when the iteration already stopped.
+func (t *track) seedSequentialStart(
+	ctx context.Context, it miIterator, mi multiInstance,
+	step *stepInfo, seed *checkpoint.MIRecord, n int,
+) (int, error) {
+	start := seed.Completed
+	t.miState.completed = start
+
+	if start <= 0 || start >= n {
+		return start, nil
+	}
+
+	stop := seed.ConditionMet
+
+	if !stop && mi.CompletionCondition() != nil {
+		if err := t.bindMICounters(n, start, 0); err != nil {
+			return 0, err
+		}
+
+		met, err := it.evalCompletion(ctx, t, step.node)
+		if err != nil {
+			return 0, err
+		}
+
+		stop = met
+	}
+
+	if stop {
+		return n, nil // completed passes stand; no further launches
+	}
+
+	return start, nil
+}
+
+// seedStaging decodes a recorded staging array into the fresh staging
+// collection at its recorded positions (SRD-082 FR-3).
+func seedStaging(
+	ctx context.Context, staging *values.Array[any], raw json.RawMessage,
+) error {
+	v, err := checkpoint.DecodeValue(ctx, raw)
+	if err != nil {
+		return err
+	}
+
+	col, ok := v.(data.Collection)
+	if !ok {
+		return errs.New(
+			errs.M("restored Multi-Instance staging isn't a collection"),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	for i, el := range col.GetAll(ctx) {
+		// a recorded hole (a parallel slot not yet filled, or canceled):
+		// the pre-sized slot is already nil — skip, SetAt refuses nil.
+		if el == nil {
+			continue
+		}
+
+		// the codec wraps scalars in canonical values; the live staging
+		// holds RAW elements (captureSequentialOutput stores Get's
+		// result) — unwrap, so the published output stays uniform.
+		if v, ok := el.(data.Value); ok {
+			el = v.Get(ctx)
+		}
+
+		if err := staging.SetAt(ctx, i, el); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // drivesOwnIteration reports whether a looped composite drives its OWN iteration
 // off the loop (the iteration decorator, ADR-025 v.2 §2.12): a Standard-Loop
 // composite (runCompositeLoop) or ANY Multi-Instance composite — sequential
@@ -278,23 +422,9 @@ func (t *track) runMISequential(
 ) ([]*flow.SequenceFlow, error) {
 	it := miIterator{mi: mi}
 
-	n, col, err := it.resolveActivation(ctx, t, step.node)
+	n, start, err := t.prepareSequential(ctx, it, mi, step)
 	if err != nil {
 		return nil, err
-	}
-
-	t.miState = &miState{
-		collection:        col,
-		inputItem:         mi.InputDataItem(),
-		outputRef:         mi.LoopDataOutputRef(),
-		outputItem:        mi.OutputDataItem(),
-		numberOfInstances: n,
-	}
-
-	// an output-assembling Multi-Instance stages each instance's item privately and
-	// publishes the collection once, at completion (the visibility barrier).
-	if t.miState.outputRef != "" {
-		t.miState.staging = values.NewArray[any]()
 	}
 
 	// N <= 0 runs zero instances — follow the outgoing flow once, no scope, no
@@ -305,8 +435,8 @@ func (t *track) runMISequential(
 		return t.executeNode(ctx, step)
 	}
 
-	for i := 0; i < n; i++ {
-		t.loopCounter = i
+	for i := start; i < n; i++ {
+		t.setLoopCounter(i)
 
 		// split the per-instance data at the host scope BEFORE the open, off the
 		// loop (loopCounter=i, numberOf* attrs, inputItem=collection[i]); the seeded
@@ -354,6 +484,13 @@ func (t *track) runMISequential(
 		}
 
 		if stop {
+			// the loop's iteration mirror cannot observe this verdict from
+			// the open/drain protocol — post it (SRD-082 FR-2).
+			if _, err := t.instance.scopeExchange(ctx,
+				scopeRequest{op: scopeNote, host: t}); err != nil {
+				return nil, err
+			}
+
 			break
 		}
 	}
@@ -363,7 +500,7 @@ func (t *track) runMISequential(
 	}
 
 	t.miState = nil
-	t.loopCounter = 0
+	t.setLoopCounter(0)
 
 	return t.executeNode(ctx, step)
 }

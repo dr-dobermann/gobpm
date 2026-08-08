@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Checkpoint fidelity for composite constructs** (SRD-082, closes
+  #277). The checkpoint document (schema 4) records every composite
+  construct's position, and restore rebuilds it there: composite
+  scopes resume their host exactly once (previously the body
+  double-executed — or the document refused to restore at all, since
+  inner nodes were unresolvable); sequential MI and Standard Loop
+  resume at the recorded pass with their collected outputs; parallel
+  MI re-opens exactly its still-open ordinals; a resolving
+  compensation sweep continues in order with its RUNNING handler
+  re-run (at-least-once over the immutable snapshot) and the
+  wait-throw resuming only after the drain; and a Call Activity child
+  is now a durable instance of its own, symmetrically linked — kill
+  an engine mid-call and the next one re-links the SAME child, never
+  a duplicate, with loud refusals when either record is missing. The
+  capture-deferral guards are fully retired: `CheckpointDeferred` now
+  means a real failure only. Discovery separates the registry:
+  `Instances(InstancesRoots/InstancesChildren)` and
+  `InstanceHandle.ParentID()/CallNodeID()`. Design: ADR-033 v.4
+  §2.10, ADR-023's restart contract.
+
 - **Incidents: a technical failure becomes durable, operable state**
   (ADR-036, SRD-079). An unhandled failure — an in-process task error, a
   worker whose job retries exhausted, an uncaught BPMN error — no longer
@@ -140,6 +160,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offending attributes, and cites Table 10.101 where the standard is the reason.
 
 ### Fixed
+
+- **The checkpoint codec refused nil** — but a parallel MI's staging
+  is pre-sized with nil holes, and an early-stopped group *publishes*
+  an output containing them: one nil silently poisoned every later
+  checkpoint of the instance. The codec now carries an explicit nil
+  kind.
+- **Shared-node payload race**: N parallel MI bodies share their
+  catch node, and concurrent fires wrote the captured payload to it
+  unsynchronized. The access is now guarded; the payload-routing
+  semantics of node sharing are a filed follow-up.
+- **Iteration-counter race**: the loop decorators wrote the pass
+  ordinal bare while the checkpoint capture read it under the track
+  mutex.
 
 - **The engine's lifecycle bookkeeping: a data race, reservations with no
   owner, and host code with no containment** (FIX-036 — the remediation of an

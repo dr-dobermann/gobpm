@@ -38,6 +38,12 @@ type InstanceHandle struct {
 	// an op on a PARKED instance (its loop exited on an incident park or a
 	// dehydration) can rebuild it from its checkpoint first (SRD-079 §3.6).
 	th *Thresher
+	// parentID/callNodeID cache the call linkage — immutable identity,
+	// captured at adopt so a handle answers correctly even before or
+	// after the instance object itself is reachable (SRD-082 FR-7,
+	// independent-review note A3).
+	parentID   string
+	callNodeID string
 }
 
 // current returns the instance object the handle speaks for right now.
@@ -49,6 +55,8 @@ func (h *InstanceHandle) current() *instance.Instance {
 // holding it follow the instance across a dehydration cycle.
 func (h *InstanceHandle) adopt(inst *instance.Instance) {
 	h.inst.Store(inst)
+	h.parentID = inst.ParentID()
+	h.callNodeID = inst.CallNodeID()
 }
 
 // ID returns the instance id.
@@ -355,3 +363,13 @@ func tokenState(ts instance.TokenState) TokenState {
 		return TokenInvalid
 	}
 }
+
+// ParentID returns the caller instance's id when this instance is a
+// Call Activity child, "" for a root instance (SRD-082 FR-7 — the
+// discovery separation: a host lists roots and reaches children
+// through their parent).
+func (h *InstanceHandle) ParentID() string { return h.parentID }
+
+// CallNodeID returns the caller's Call Activity node id for a child,
+// "" for a root instance.
+func (h *InstanceHandle) CallNodeID() string { return h.callNodeID }

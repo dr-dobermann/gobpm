@@ -154,6 +154,21 @@ Behavior worth knowing — what happens when the caller's token reaches the node
   fact the child emits carries `parent_instance_id` and
   `call_activity_node_id`, stitching the trace across the boundary.
 
+## Restarts
+
+With a configured repository the **child is a durable instance of its
+own**: it checkpoints under the same discipline as any instance, its
+record carries the caller linkage, and the caller's record carries the
+call. Restart recovery restores **both ends and re-links them** — the
+caller re-parks without re-invoking (never a duplicate child), and the
+child's terminal outcome reaches the restored caller exactly as it
+would a resident one, even when the child finished while the engine
+was down. A missing record on either side fails the restore loudly.
+The engine's discovery keeps the two apart: `Instances(InstancesRoots)`
+lists callers as processes, children come through
+`InstanceHandle.ParentID()`.
+
+
 ## See also
 
 - Examples: `examples/call-activity/`

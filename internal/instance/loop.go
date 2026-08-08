@@ -111,6 +111,10 @@ type loopState struct {
 	// (SRD-059 FR-6): the sweep advances on the handler's evEnded and aborts
 	// on its evFailed. Loop-owned.
 	sweeps map[string]*sweepRun
+	// iter mirrors each own-iteration host's decorator position for the
+	// checkpoint capture (SRD-082 FR-2), keyed by host track id.
+	// Loop-owned; dropped when the host track ends.
+	iter map[string]*iterMirror
 	// conds is the loop-owned armed-conditional registry (SRD-048 FR-8): a SLICE,
 	// because arming order is the multi-fire contract (fires from one commit apply
 	// in arming order — ADR-006 v.3 §2.7). Armed by evWaiting / recordBornWaiter,
@@ -151,9 +155,61 @@ func newLoopState(inst *Instance) *loopState {
 		scopeInterrupted: map[scope.DataPath]bool{},
 		scopes:           map[scope.DataPath]*scopeEntry{},
 		miGroups:         map[string]*miGroup{},
+		iter:             map[string]*iterMirror{},
 		ledgers:          map[scope.DataPath][]*ledgerEntry{},
 		sweeps:           map[string]*sweepRun{},
 	}
+}
+
+// adoptRestored applies the checkpoint-rebuilt state the loop adopts at
+// start: the compensation ledger (SRD-070 FR-6), the derived composite
+// scope entries (SRD-082 FR-5 — BEFORE the spawns count tracks into
+// them) and the re-linked in-flight calls (FR-7). False means the
+// adoption failed loud and the loop must not start.
+func (inst *Instance) adoptRestored(
+	ctx context.Context, ls *loopState, initial []*track,
+) bool {
+	if inst.restoredLedgers != nil {
+		ls.ledgers = inst.restoredLedgers
+	}
+
+	err := ls.adoptRestoredScopes(initial)
+	if err == nil {
+		err = ls.adoptRestoredCalls(ctx)
+	}
+
+	if err != nil {
+		// fail() is phase-only; the loop is exiting without running, so
+		// the lifecycle must land terminal too — a stuck Active instance
+		// would look healthy forever (SRD-082 NFR-2).
+		inst.fail(err)
+		inst.setState(Terminated)
+
+		return false
+	}
+
+	return true
+}
+
+// spawnInitial spawns the initial tracks and then resumes the restored
+// compensation sweeps (SRD-082 FR-6) — after the spawns, so the
+// handler tracks count into their scopes' drain accounting like live
+// ones. False means the sweep adoption failed loud and terminal.
+func (inst *Instance) spawnInitial(
+	ctx context.Context, ls *loopState, initial []*track,
+) bool {
+	for _, t := range initial {
+		ls.spawn(ctx, t)
+	}
+
+	if err := ls.adoptRestoredSweeps(ctx); err != nil {
+		inst.fail(err)
+		inst.setState(Terminated)
+
+		return false
+	}
+
+	return true
 }
 
 // loop is the single owner of the Instance's lifecycle state (the tracks
@@ -165,14 +221,14 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 	ls := newLoopState(inst)
 
-	// A restored instance adopts its checkpoint-rebuilt compensation
-	// ledger (SRD-070 FR-6) — compensability survives the restart.
-	if inst.restoredLedgers != nil {
-		ls.ledgers = inst.restoredLedgers
+	// A restored instance adopts its checkpoint-rebuilt state; a fresh
+	// one adopts nothing and proceeds.
+	if !inst.adoptRestored(ctx, ls, initial) {
+		return
 	}
 
-	for _, t := range initial {
-		ls.spawn(ctx, t)
+	if !inst.spawnInitial(ctx, ls, initial) {
+		return
 	}
 
 	// arm the process's top-level Event Sub-Process handlers at the instance
@@ -459,6 +515,7 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		// FR-6) — checked first, before the standard accounting.
 		ls.compensationTrackEnded(ctx, ev.track, false)
 		ls.active--
+		delete(ls.iter, ev.track.ID())
 		ls.decScope(ctx, ev.track)
 		ls.flipNotParked(ev.track)
 		ls.clearPosition(ev.track)

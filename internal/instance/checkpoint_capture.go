@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"time"
 
@@ -40,6 +41,12 @@ var checkpointTransitions = map[trackEventKind]bool{
 	evTaskWaiting: true,
 	evJobWaiting:  true,
 	evScopeOpen:   true,
+	// a Call Activity park is a persist point since the call is
+	// recorded (SRD-082 FR-7, M4): the parent's document must carry the
+	// in-flight call the moment the child exists — a crash between the
+	// launch and the next transition would otherwise restore a parent
+	// that re-invokes.
+	evCallWaiting: true,
 	// an incident raise is a persist point (SRD-079 FR-5): an incident that
 	// vanished with the process would be no incident at all.
 	evIncident: true,
@@ -135,14 +142,10 @@ func (ls *loopState) captureDocument(
 ) (*checkpoint.Document, string) {
 	inst := ls.inst
 
-	switch {
-	case len(ls.calls) > 0:
-		return nil, "a Call Activity is in flight"
-	case len(ls.miGroups) > 0:
-		return nil, "a parallel multi-instance group is in flight"
-	case len(ls.sweeps) > 0:
-		return nil, "a compensation sweep is in flight"
-	}
+	// No capture-deferral guards remain (SRD-082 FR-8): every composite
+	// construct records its position — groups since M2, sweeps since
+	// M3, in-flight calls since M4. Deferral now means only a real
+	// encode/save failure, still loud.
 
 	doc := &checkpoint.Document{
 		InstanceID:  inst.ID(),
@@ -181,15 +184,92 @@ func (ls *loopState) captureDocument(
 	}
 
 	for _, t := range inst.tracks {
-		if rec, live := trackRecord(t); live {
+		// a sweep handler's track is fully represented by its
+		// SweepRecord.Running — restoring it as a plain track TOO would
+		// run the handler twice (SRD-082 FR-6).
+		if _, isHandler := ls.sweeps[t.ID()]; isHandler {
+			continue
+		}
+
+		rec, live, err := trackRecord(ctx, t, ls.iter[t.ID()])
+		if err != nil {
+			return nil, "encode: " + err.Error()
+		}
+
+		if live {
 			doc.Tracks = append(doc.Tracks, rec)
 		}
 	}
 
+	groups, encErr := ls.miGroupRecords(ctx)
+	if encErr != "" {
+		return nil, encErr
+	}
+
+	doc.MIGroups = groups
+
+	sweeps, encErr := ls.sweepRecords(ctx)
+	if encErr != "" {
+		return nil, encErr
+	}
+
+	doc.Sweeps = sweeps
+	doc.Calls = ls.callRecords()
 	doc.Boundaries = ls.boundaryRecords()
 	doc.Incidents = inst.incidentRecords()
 
 	return doc, ""
+}
+
+// miGroupRecords captures the parallel Multi-Instance open sets
+// (SRD-082 FR-4). Everything read — the group registry, the open map,
+// the staging the loop itself writes — is loop-owned, so the capture
+// is a consistent cut by construction. Open sets sort by ordinal for a
+// deterministic document.
+func (ls *loopState) miGroupRecords(
+	ctx context.Context,
+) ([]checkpoint.MIGroupRecord, string) {
+	if len(ls.miGroups) == 0 {
+		return nil, ""
+	}
+
+	out := make([]checkpoint.MIGroupRecord, 0, len(ls.miGroups))
+
+	for _, grp := range ls.miGroups {
+		rec := checkpoint.MIGroupRecord{
+			HostTrack: grp.host.ID(),
+			N:         grp.n,
+			Pending:   grp.pending,
+			Open:      make([]checkpoint.OpenScope, 0, len(grp.open)),
+		}
+
+		for p, ord := range grp.open {
+			rec.Open = append(rec.Open,
+				checkpoint.OpenScope{Path: string(p), Ordinal: ord})
+		}
+
+		sort.Slice(rec.Open, func(i, j int) bool {
+			return rec.Open[i].Ordinal < rec.Open[j].Ordinal
+		})
+
+		if grp.staging != nil {
+			raw, err := checkpoint.EncodeValue(
+				ctx, "mi group "+grp.host.ID(), grp.staging)
+			if err != nil {
+				return nil, "encode: " + err.Error()
+			}
+
+			rec.Staging = raw
+		}
+
+		out = append(out, rec)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].HostTrack < out[j].HostTrack
+	})
+
+	return out, ""
 }
 
 // boundaryRecords captures the boundary events armed over the live tracks
@@ -239,18 +319,12 @@ func ledgerRecords(
 	out := make([]checkpoint.LedgerRecord, 0, len(entries))
 
 	for _, e := range entries {
-		snap, err := checkpoint.EncodeData(ctx, path, e.snapshot)
+		rec, err := ledgerRecordOf(ctx, path, e)
 		if err != nil {
 			return nil, err
 		}
 
-		out = append(out, checkpoint.LedgerRecord{
-			ScopePath:  path,
-			ActivityID: e.activityID,
-			HandlerID:  e.handlerID,
-			Snapshot:   snap,
-			Ordinal:    e.ordinal,
-		})
+		out = append(out, rec)
 
 		folded, err := ledgerRecords(ctx, path, e.folded)
 		if err != nil {
@@ -263,16 +337,121 @@ func ledgerRecords(
 	return out, nil
 }
 
+// ledgerRecordOf encodes ONE ledger entry (folded children not
+// included — the sweep queue is 1:1 entry→handler run, SRD-082 FR-6).
+func ledgerRecordOf(
+	ctx context.Context, path string, e *ledgerEntry,
+) (checkpoint.LedgerRecord, error) {
+	snap, err := checkpoint.EncodeData(ctx, path, e.snapshot)
+	if err != nil {
+		return checkpoint.LedgerRecord{}, err
+	}
+
+	return checkpoint.LedgerRecord{
+		ScopePath:       path,
+		ActivityID:      e.activityID,
+		ActivityName:    e.activityName,
+		HandlerID:       e.handlerID,
+		HandlerName:     e.handlerName,
+		Snapshot:        snap,
+		Ordinal:         e.ordinal,
+		HandlerEventSub: e.handlerEventSub,
+	}, nil
+}
+
+// callRecords captures the in-flight Call Activities (SRD-082 FR-7):
+// the parent's half of the symmetric link — the awaited child, the
+// call node and the parked caller track. The child instance is its own
+// record; ls.calls is loop-owned, so the read is a consistent cut.
+func (ls *loopState) callRecords() []checkpoint.CallRecord {
+	if len(ls.calls) == 0 {
+		return nil
+	}
+
+	out := make([]checkpoint.CallRecord, 0, len(ls.calls))
+
+	for id, entry := range ls.calls {
+		out = append(out, checkpoint.CallRecord{
+			ChildID: id,
+			NodeID:  entry.node.ID(),
+			TrackID: entry.track.ID(),
+		})
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ChildID < out[j].ChildID
+	})
+
+	return out
+}
+
+// sweepRecords captures the resolving compensation sweeps (SRD-082
+// FR-6): one record per live handler run — the parked thrower (or the
+// Transaction host), the remaining queue in run order, and the entry
+// being undone, which RE-RUNS on restore (a handler is an effect;
+// at-least-once per ADR-033 §2.3). Everything read is loop-owned.
+func (ls *loopState) sweepRecords(
+	ctx context.Context,
+) ([]checkpoint.SweepRecord, string) {
+	if len(ls.sweeps) == 0 {
+		return nil, ""
+	}
+
+	out := make([]checkpoint.SweepRecord, 0, len(ls.sweeps))
+
+	for _, run := range ls.sweeps {
+		rec := checkpoint.SweepRecord{
+			ScopePath: string(run.sweep.path),
+			Wait:      run.sweep.wait,
+		}
+
+		if run.sweep.thrower != nil {
+			rec.ThrowerTrack = run.sweep.thrower.ID()
+		}
+
+		if run.sweep.txHost != nil {
+			rec.TxHostTrack = run.sweep.txHost.ID()
+		}
+
+		running, err := ledgerRecordOf(ctx, rec.ScopePath, run.entry)
+		if err != nil {
+			return nil, "encode: " + err.Error()
+		}
+
+		rec.Running = &running
+
+		for _, e := range run.sweep.queue {
+			qr, err := ledgerRecordOf(ctx, rec.ScopePath, e)
+			if err != nil {
+				return nil, "encode: " + err.Error()
+			}
+
+			rec.Queue = append(rec.Queue, qr)
+		}
+
+		out = append(out, rec)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ScopePath < out[j].ScopePath
+	})
+
+	return out, ""
+}
+
 // trackRecord captures one live track; live=false skips it. Every read
 // rides the track mutex: the capture runs on the loop goroutine while
 // the track's own goroutine may be mid-arming (writes guarded on its
-// side too).
-func trackRecord(t *track) (checkpoint.TrackRecord, bool) {
+// side too). mirror is the loop-owned iteration position of an
+// own-iteration host (SRD-082 FR-2), nil for every other track.
+func trackRecord(
+	ctx context.Context, t *track, mirror *iterMirror,
+) (checkpoint.TrackRecord, bool, error) {
 	t.m.RLock()
 	defer t.m.RUnlock()
 
 	if !liveTrackStates[t.state] {
-		return checkpoint.TrackRecord{}, false
+		return checkpoint.TrackRecord{}, false, nil
 	}
 
 	rec := checkpoint.TrackRecord{
@@ -294,7 +473,32 @@ func trackRecord(t *track) (checkpoint.TrackRecord, bool) {
 		}
 	}
 
-	return rec, true
+	// the own-iteration position (SRD-082 FR-2): the mirror exists
+	// exactly while the host's iteration is in flight (dropped on the
+	// host's end), whatever step-state the host shows between passes.
+	// The mirror is loop-owned and staging is loop-written, so both
+	// reads are loop-serialized.
+	if mirror != nil {
+		mi := &checkpoint.MIRecord{
+			N:            mirror.n,
+			Completed:    mirror.completed,
+			ConditionMet: mirror.conditionMet,
+		}
+
+		if mirror.staging != nil {
+			raw, err := checkpoint.EncodeValue(
+				ctx, "track "+t.ID(), mirror.staging)
+			if err != nil {
+				return checkpoint.TrackRecord{}, false, err
+			}
+
+			mi.Staging = raw
+		}
+
+		rec.MI = mi
+	}
+
+	return rec, true, nil
 }
 
 // persistedStatus maps the runtime lifecycle onto the repository's

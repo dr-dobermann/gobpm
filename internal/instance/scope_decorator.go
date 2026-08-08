@@ -32,6 +32,15 @@ const (
 	// instances (a completionCondition fired), publishes the assembled output,
 	// and drops the group.
 	scopeComplete
+	// scopeNote informs the loop's iteration mirror that the runner's
+	// completionCondition fired (SRD-082 FR-2) — the one decorator
+	// decision the loop cannot observe from the open/drain protocol.
+	scopeNote
+	// scopeReAttach is a RESTORED parallel runner re-joining its adopted
+	// group (SRD-082 FR-4): the loop lifts the entries' awaitAttach
+	// holds — the roundtrip is the fence — and completes any drains
+	// that arrived early.
+	scopeReAttach
 )
 
 // scopeRequest is a looped composite's off-loop iteration decorator asking the
@@ -122,6 +131,14 @@ func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 		ls.handleReArm(ctx, req)
 	case scopeComplete:
 		ls.handleComplete(req)
+	case scopeNote:
+		if m, ok := ls.iter[req.host.ID()]; ok {
+			m.conditionMet = true
+		}
+
+		req.reply <- scopeReply{}
+	case scopeReAttach:
+		ls.handleReAttach(ctx, req)
 	default:
 		ls.handleScopeOpen(ctx, req)
 	}
@@ -155,6 +172,32 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 		return
 	}
 
+	// a RESTORED pass (SRD-082 FR-3/FR-5): the scope is already open —
+	// its entry was derived at loop start, its inner tracks respawned as
+	// initial tracks — so the runner RE-ATTACHES: no reopen, no reseed,
+	// just park for the drain.
+	if entry, open := ls.scopes[child]; open && entry.host == req.host {
+		ls.waiting[req.host.ID()] = struct{}{}
+
+		if drivesOwnIteration(req.node) {
+			ls.ensureIterMirror(req.host)
+		}
+
+		entry.awaitAttach = false
+
+		req.reply <- scopeReply{scopePath: child}
+
+		// a drain that arrived before the re-attach completes now — the
+		// roundtrip above is the fence that makes the host state
+		// loop-readable (SRD-082 FR-3).
+		if entry.drainPending {
+			entry.drainPending = false
+			ls.completeScope(ctx, child, entry)
+		}
+
+		return
+	}
+
 	if err := ls.inst.sc.plane.OpenScope(child); err != nil {
 		req.reply <- scopeReply{err: errs.New(
 			errs.M("couldn't open scope %q for composite %q",
@@ -173,6 +216,12 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 		host:   req.host,
 		node:   req.node,
 		parent: req.host.scopePath,
+	}
+
+	// mirror the decorator's position for the capture (SRD-082 FR-2);
+	// the runner is parked in its roundtrip, so the reads are fenced.
+	if drivesOwnIteration(req.node) {
+		ls.ensureIterMirror(req.host)
 	}
 
 	ls.reportScope(observability.PhaseOpened, req.node, child,
@@ -194,12 +243,21 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 func (t *track) runCompositeLoop(
 	ctx context.Context, step *stepInfo, sl standardLoop,
 ) ([]*flow.SequenceFlow, error) {
-	for pass := 0; ; pass++ {
+	// a restored host resumes at its recorded pass (SRD-082 FR-3):
+	// completed passes are never re-run; the loop condition re-evaluates
+	// naturally at the seeded pass over the restored scope data.
+	first := 0
+	if t.miSeed != nil {
+		first = t.miSeed.Completed
+		t.miSeed = nil
+	}
+
+	for pass := first; ; pass++ {
 		// publish the 0-based ordinal (track field + host-scope datum) so the
 		// condition and the body resolve it by name via walk-up, and it survives
 		// the child close for the next pass's test (§4.6). Off the loop — a
 		// plane write, mutex-safe, mirroring runStandardLoop's leaf bind.
-		t.loopCounter = pass
+		t.setLoopCounter(pass)
 		if err := t.instance.sc.bindLoopCounterAt(t.scopePath, pass); err != nil {
 			return nil, err
 		}

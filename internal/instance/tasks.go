@@ -391,7 +391,14 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 	// twin of the mid-run evCallWaiting (SRD-050 FR-5; construction never emits,
 	// the SRD-048 deadlock rule).
 	if _, isCall := node.(callActivity); isCall {
-		ls.onCallWaiting(ctx, trackEvent{track: t, node: node})
+		// a RESTORED caller re-parks WITHOUT re-invoking (SRD-082
+		// FR-7): the adoption re-linked it to the recorded child — a
+		// second InvokeProcess would duplicate the child instance.
+		if t.callRestored {
+			t.callRestored = false
+		} else {
+			ls.onCallWaiting(ctx, trackEvent{track: t, node: node})
+		}
 	}
 
 	// a track born parked ON a wait-for-completion Compensation throw (a fork
@@ -400,12 +407,20 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 	// evCompensate (SRD-059 FR-5; construction never emits).
 	if tw, ok := node.(interface{ CompensationWaitRef() (string, bool) }); ok {
 		if ref, wait := tw.CompensationWaitRef(); wait {
-			ls.applyCompensate(ctx, trackEvent{
-				track:    t,
-				node:     node,
-				compRef:  ref,
-				compWait: true,
-			})
+			// a RESTORED thrower re-parks WITHOUT re-throwing (SRD-082
+			// FR-6): its adopted sweep is already running and delivers
+			// the sentinel — a re-throw would sweep the already-consumed
+			// ledger and resume the thrower early.
+			if t.compWaitRestored {
+				t.compWaitRestored = false
+			} else {
+				ls.applyCompensate(ctx, trackEvent{
+					track:    t,
+					node:     node,
+					compRef:  ref,
+					compWait: true,
+				})
+			}
 		}
 	}
 

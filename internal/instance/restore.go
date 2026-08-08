@@ -123,6 +123,33 @@ func Restore(
 		return nil, err
 	}
 
+	// the parallel open sets, the resolving sweeps and the in-flight
+	// calls ride to the loop's adoption (SRD-082 FR-4/FR-6/FR-7) — the
+	// substrates are loop-owned.
+	inst.restoredGroups = doc.MIGroups
+	inst.restoredSweeps = doc.Sweeps
+	inst.restoredCalls = doc.Calls
+
+	// a recorded caller re-PARKS instead of re-invoking its child — the
+	// adoption re-links to the recorded child; a second InvokeProcess
+	// would duplicate the child instance (SRD-082 FR-7).
+	for i := range doc.Calls {
+		if tr, ok := inst.tracks[doc.Calls[i].TrackID]; ok {
+			tr.callRestored = true
+		}
+	}
+
+	// a recorded wait-throw thrower re-PARKS instead of re-entering its
+	// throw node — a second evCompensate would double-compensate
+	// (SRD-082 FR-6). Marked here, before any track goroutine exists.
+	for i := range doc.Sweeps {
+		if id := doc.Sweeps[i].ThrowerTrack; id != "" {
+			if tr, ok := inst.tracks[id]; ok {
+				tr.compWaitRestored = true
+			}
+		}
+	}
+
 	if err := inst.restoreIncidents(doc); err != nil {
 		return nil, err
 	}
@@ -202,20 +229,12 @@ func (inst *Instance) restoreLedgers(
 
 	inst.restoredLedgers = map[scope.DataPath][]*ledgerEntry{}
 
-	for _, rec := range doc.Ledgers {
-		var err error
+	for i := range doc.Ledgers {
+		rec := &doc.Ledgers[i]
 
-		entry := &ledgerEntry{
-			activityID: rec.ActivityID,
-			handlerID:  rec.HandlerID,
-			ordinal:    rec.Ordinal,
-		}
-
-		if len(rec.Snapshot) > 0 {
-			entry.snapshot, err = checkpoint.DecodeData(ctx, rec.Snapshot)
-			if err != nil {
-				return err
-			}
+		entry, err := ledgerEntryFromRecord(ctx, rec)
+		if err != nil {
+			return err
 		}
 
 		path := scope.DataPath(rec.ScopePath)
@@ -223,6 +242,32 @@ func (inst *Instance) restoreLedgers(
 	}
 
 	return nil
+}
+
+// ledgerEntryFromRecord rebuilds one ledger entry — the shared decoder
+// of the ledger table and the sweep queues (SRD-082 FR-6).
+func ledgerEntryFromRecord(
+	ctx context.Context, rec *checkpoint.LedgerRecord,
+) (*ledgerEntry, error) {
+	entry := &ledgerEntry{
+		activityID:      rec.ActivityID,
+		activityName:    rec.ActivityName,
+		handlerID:       rec.HandlerID,
+		handlerName:     rec.HandlerName,
+		ordinal:         rec.Ordinal,
+		handlerEventSub: rec.HandlerEventSub,
+	}
+
+	if len(rec.Snapshot) > 0 {
+		var err error
+
+		entry.snapshot, err = checkpoint.DecodeData(ctx, rec.Snapshot)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return entry, nil
 }
 
 // restoreTracks rebuilds the live tracks at their recorded nodes for
@@ -242,7 +287,7 @@ func (inst *Instance) restoreTracks(
 	for i := range doc.Tracks {
 		rec := &doc.Tracks[i]
 
-		node, ok := inst.s.Nodes[rec.NodeID]
+		node, ok := inst.s.NodeByID(rec.NodeID)
 		if !ok {
 			return errs.New(
 				errs.M("Restore: the recorded node isn't in the pinned "+
@@ -395,6 +440,10 @@ func restoredTrack(
 		t.timerCycles = rec.Timer.CyclesLeft
 		t.timerHinted = true
 	}
+
+	// a recorded own-iteration position: the decorator resumes at the
+	// recorded pass instead of iterating from zero (SRD-082 FR-3).
+	t.miSeed = rec.MI
 
 	if err := t.checkNodeType(node, true); err != nil {
 		return nil, err

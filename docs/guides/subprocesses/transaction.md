@@ -208,6 +208,15 @@ teardown discards the very completion ledger the compensation sweeps. Further:
   and the Cancel boundary are independent: a Transaction may declare handlers
   without an outer Cancel boundary, or a Cancel boundary with nothing to undo.
 
+## Restarts
+
+A Transaction **abort captured mid-compensation resumes after a
+restart**: the sweep continues (the running undo re-runs — at-least-
+once over its snapshot), the residual tracks are terminated once it
+drains, and control leaves through the Cancel boundary exactly as a
+resident abort would.
+
+
 ## See also
 
 - Examples: `examples/transaction-sub-process/`
