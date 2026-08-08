@@ -1,6 +1,7 @@
 package thresher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -173,4 +174,53 @@ func TestRebindSkipsEmptyKeyValues(t *testing.T) {
 
 	require.Equal(t, map[string]string{nsKeyFor("p", "C-9"): "i-1"}, th.seenKeys,
 		"only the derived key is reserved")
+}
+
+// TestRebuildReleasesThePreviousContext is FIX-037 T-4: every launch derives a
+// child of the engine context and retains its cancel in instanceReg.stop. A
+// rebuild REPLACES that registration, and the cancel it displaces must be run —
+// otherwise the old child stays attached to the engine context's children for
+// the engine's whole lifetime, and a dehydrating instance replaces its
+// registration on every wake, so the leak is one context per CYCLE.
+//
+// FIX-036 §8.2 fixed the same defect in Forget and missed this path.
+func TestRebuildReleasesThePreviousContext(t *testing.T) {
+	th, err := New("track-displace", WithoutBanner(), WithoutStartupConfig())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	proc := noneStartProcess(t, "p-track-displace")
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	handle, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	inst, err := th.instanceByID(handle.ID())
+	require.NoError(t, err)
+
+	// re-register the SAME instance, which is what a rebuild does.
+	first, firstCancel := context.WithCancel(context.Background())
+	h, displaced := th.trackInstanceLocked(inst, firstCancel, make(chan struct{}))
+	require.NotNil(t, h)
+	require.NotNil(t, displaced,
+		"the launch's own cancel is displaced by this re-registration")
+	stopDisplaced(displaced)
+
+	// a rebuild of the SAME id hands back the previous cancel
+	second, secondCancel := context.WithCancel(context.Background())
+	defer secondCancel()
+
+	_, displaced = th.trackInstanceLocked(inst, secondCancel, make(chan struct{}))
+	require.NotNil(t, displaced,
+		"a rebuild must hand back the cancel it replaced")
+
+	require.NoError(t, first.Err(), "the displaced context is still live")
+	stopDisplaced(displaced)
+	require.Error(t, first.Err(),
+		"running the displaced cancel must end the previous context")
+	require.NoError(t, second.Err(), "the current context is untouched")
 }

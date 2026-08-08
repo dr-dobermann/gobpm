@@ -94,7 +94,8 @@ func (t *Thresher) InvokeProcess(
 			errs.C(errorClass, errs.OperationFailed), errs.E(err))
 	}
 
-	t.trackInstanceLocked(inst, cancel, settled)
+	_, displaced := t.trackInstanceLocked(inst, cancel, settled)
+	stopDisplaced(displaced)
 
 	return &childProcess{inst: inst, settled: settled, version: resolved}, nil
 }

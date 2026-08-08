@@ -173,7 +173,8 @@ func (t *Thresher) rebuildAndContinue(
 		t.ReleaseWaits(instanceID, pending.TrackID)
 	}
 
-	t.trackInstanceLocked(inst, cancel, t.settledFor(instanceID))
+	_, displaced := t.trackInstanceLocked(inst, cancel, t.settledFor(instanceID))
+	stopDisplaced(displaced)
 
 	// A hydrated conversation re-takes its correlation reservation, for the
 	// same reason a recovered one does (FIX-036 §1.2).

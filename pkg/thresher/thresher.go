@@ -1388,7 +1388,8 @@ func (t *Thresher) launchInstanceFromEvent(
 	// An event-born instance is tracked with its read-only handle just like a
 	// StartProcess one, so the SRD-019 discovery API (Instances -> Instance(id))
 	// returns a usable handle for it instead of a nil that panics on observation.
-	t.trackInstanceLocked(inst, cancel, settled)
+	_, displaced := t.trackInstanceLocked(inst, cancel, settled)
+	stopDisplaced(displaced)
 
 	// Bind the correlation reservation to the instance that now owns it
 	// (FIX-036 §1.2): until this point the entry only says "a start is in
@@ -1582,7 +1583,10 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error)
 			errs.E(err))
 	}
 
-	return t.trackInstanceLocked(inst, cancel, settled), nil
+	h, displaced := t.trackInstanceLocked(inst, cancel, settled)
+	stopDisplaced(displaced)
+
+	return h, nil
 }
 
 // =============================================================================
