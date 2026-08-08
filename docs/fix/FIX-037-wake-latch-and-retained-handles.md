@@ -250,10 +250,15 @@ merged.
 
 | # | Commit | Scope |
 |---|---|---|
-| — | `982ef34` | this document and the 2026-08-08 package audit |
-| M1 | `2afb305` | §1.4 — `trackInstanceLocked` returns the cancel it displaces (§3.2.4) |
-| M2 | `a4af0de` | §1.5 — an arm is announced before it is built (§3.2.5) |
-| M3 | `55399d4` | §1.1–1.3 — the waitable latch and its three callers (§3.2.1–3.2.3) |
+| — | `b7fad7b` | this document and the 2026-08-08 package audit |
+| M1 | `96fbffb` | §1.4 — `trackInstanceLocked` returns the cancel it displaces (§3.2.4) |
+| M2 | `67a6b82` | §1.5 — an arm is announced before it is built (§3.2.5) |
+| M3 | `3a64fdb` | §1.1–1.3 — the waitable latch and its three callers (§3.2.1–3.2.3) |
+| M4 | `d15191b` | one `awaitClaim` for every rebuild path; the branches the fix adds, covered |
+| M5 | `901ba11` | the gate re-earned on master's new base after the rebase |
+
+The branch was rebased onto `cdafd20` (SRD-082 — composite checkpoint fidelity)
+partway through, so these are the post-rebase hashes.
 
 M3 and M4 of the planned four landed together: they are one root cause reached
 through three callers, and the latch's signature change touches all three at
@@ -296,7 +301,21 @@ a rebuild path takes the latch.
 observable: the invariant §1.2 breaks could not be asserted from `pkg/thresher`
 at all, which is why the original test could only check that it unblocked.
 
-Final: `diff-coverage: 96.5% of 113 changed coverable lines (min 95%) — PASS`.
+Then the rebase onto `cdafd20` changed the diff's shape and the gate had to be
+re-earned: `internal/instance/instance.go` read 0/2, because `ResidentPins` is
+called only from `pkg/thresher`'s tests and Go instruments the package under
+test. It gets a test in its own package.
+
+Final, on the rebased base: `diff-coverage: 95.8% of 118 changed coverable
+lines (min 95%) — PASS`, no vulnerabilities, no error markers, exit 0.
+
+**Two branches are not covered end to end, and this is not a waiver.**
+`HoldTimer`'s refused-arm branch and `awaitClaim`'s exhaustion return each need
+an interleaving that cannot be scheduled deterministically — a release landing
+inside `HoldTimer`'s own arm, and three consecutive lost claims. Both are pinned
+where they can be: the refusal report directly, the service-level interleaving
+by T-5, and the delivery bound by driving the attempt counter. A flaky race test
+would assert less than it appears to, which is the defect §1.2 came from.
 
 ## 9 Open questions
 

@@ -7,7 +7,9 @@ unit — architecture & contracts, correctness & concurrency, failure modes &
 testability. Findings are raw model output until verified against the source;
 this document records what verification found, including what it **refuted**.
 
-**Baseline:** `11a0321` (master, after FIX-036).
+**Baseline:** `11a0321` (master, after FIX-036). The remediation branch was
+later rebased onto `cdafd20` (SRD-082); none of the five confirmed findings had
+been fixed there, and none of §5's pending items were invalidated by it.
 
 **Why an external reviewer.** `/check-srd` asks whether the code matches its
 document and `/check-style` whether it matches the house rules. Both are the
@@ -142,7 +144,8 @@ Both from the architecture lens alone — the other two lenses did not run.
 ## 6 Next actions
 
 1. **FIX-037 has landed C-1…C-5** on branch `fix/wake-residency-races`
-   (`2afb305`, `a4af0de`, `55399d4`).
+   (`96fbffb`, `67a6b82`, `3a64fdb`, `d15191b`, `901ba11`), rebased onto
+   `cdafd20`.
 2. **Re-run `internal/instance`** with four-or-more-way splitting; two thirds of
    the largest package in the engine is currently unaudited.
 3. **Verify §5 in unit-sized batches**, routing each to a FIX or to
