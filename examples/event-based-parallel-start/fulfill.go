@@ -65,7 +65,12 @@ func awaitInstance(
 	ctx context.Context, engine *thresher.Thresher,
 ) (*thresher.InstanceHandle, error) {
 	for {
-		if ids := engine.Instances(thresher.InstancesAll); len(ids) > 0 {
+		ids, err := engine.Instances(thresher.InstanceQuery{})
+		if err != nil {
+			return nil, err
+		}
+
+		if len(ids) > 0 {
 			if h, ok := engine.Instance(ids[0]); ok {
 				return h, nil
 			}

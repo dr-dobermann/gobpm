@@ -44,6 +44,7 @@ type InstanceHandle struct {
 	// independent-review note A3).
 	parentID   string
 	callNodeID string
+	processID  string
 }
 
 // current returns the instance object the handle speaks for right now.
@@ -57,6 +58,7 @@ func (h *InstanceHandle) adopt(inst *instance.Instance) {
 	h.inst.Store(inst)
 	h.parentID = inst.ParentID()
 	h.callNodeID = inst.CallNodeID()
+	h.processID = inst.ProcessID()
 }
 
 // ID returns the instance id.
@@ -373,3 +375,7 @@ func (h *InstanceHandle) ParentID() string { return h.parentID }
 // CallNodeID returns the caller's Call Activity node id for a child,
 // "" for a root instance.
 func (h *InstanceHandle) CallNodeID() string { return h.callNodeID }
+
+// ProcessID returns the key of the process this instance runs
+// (SRD-084 FR-3 — cached at adopt: the key is immutable after birth).
+func (h *InstanceHandle) ProcessID() string { return h.processID }

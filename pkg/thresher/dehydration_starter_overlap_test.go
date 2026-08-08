@@ -132,7 +132,7 @@ func TestSameMessageNameStartsAndWakes(t *testing.T) {
 		Name: "order event", Payload: "ORD-1", CorrelationKey: "ORD-1"}))
 
 	require.Eventually(t, func() bool {
-		return len(th.Instances(thresher.InstancesAll)) == 1
+		return len(instanceIDs(t, th, thresher.InstanceQuery{})) == 1
 	}, 3*time.Second, 10*time.Millisecond,
 		"the first message starts exactly one instance")
 
@@ -154,7 +154,7 @@ func TestSameMessageNameStartsAndWakes(t *testing.T) {
 		3*time.Second, 10*time.Millisecond,
 		"a message for a seen key wakes the dehydrated instance")
 
-	require.Len(t, th.Instances(thresher.InstancesAll), 1,
+	require.Len(t, instanceIDs(t, th, thresher.InstanceQuery{}), 1,
 		"waking must not also start a second instance for the same key")
 
 	// a message for an UNSEEN key still instantiates — the wake path must not
@@ -163,7 +163,7 @@ func TestSameMessageNameStartsAndWakes(t *testing.T) {
 		Name: "order event", Payload: "ORD-2", CorrelationKey: "ORD-2"}))
 
 	require.Eventually(t, func() bool {
-		return len(th.Instances(thresher.InstancesAll)) == 2
+		return len(instanceIDs(t, th, thresher.InstanceQuery{})) == 2
 	}, 3*time.Second, 10*time.Millisecond,
 		"an unseen key still starts a new instance")
 }

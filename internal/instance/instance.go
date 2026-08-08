@@ -850,5 +850,9 @@ func (inst *Instance) ParentID() string { return inst.parentInstanceID }
 // "" for a root instance.
 func (inst *Instance) CallNodeID() string { return inst.callNodeID }
 
+// ProcessID returns the key of the process this instance runs
+// (SRD-084 FR-3 — the discovery process axis).
+func (inst *Instance) ProcessID() string { return inst.s.ProcessID }
+
 // Version returns the pinned process version this instance runs.
 func (inst *Instance) Version() int { return inst.s.Version }
