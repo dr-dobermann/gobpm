@@ -283,7 +283,13 @@ type track struct {
 	// dehydrated track's lineage without appending it (bounded across cycles,
 	// §4.1).
 	woken bool
-	state trackState
+	// leafPlain marks a track spawned to execute a PARALLEL LEAF MI
+	// instance (SRD-086 FR-3): the group's fan-out drives the
+	// iteration, so this track's executeStep must run the node plainly
+	// instead of re-entering the MI decorator. Set pre-spawn on the
+	// loop goroutine, before the run goroutine exists.
+	leafPlain bool
+	state     trackState
 }
 
 // record appends a track-state transition to the history, copy-on-write, and

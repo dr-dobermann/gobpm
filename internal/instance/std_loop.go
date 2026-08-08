@@ -75,6 +75,15 @@ func (t *track) executeStep(
 		if mi.IsSequential() {
 			return t.runLeafMISequential(ctx, step, mi)
 		}
+
+		// a parallel LEAF rides the same fan-out decorator composites
+		// use (SRD-086 FR-2): per-instance scopes, each running one
+		// spawned leaf track. leafPlain guards the spawned track's own
+		// pass through this routing — the group drives the iteration,
+		// the track executes the node exactly once (FR-3).
+		if !t.leafPlain {
+			return t.runMIParallel(ctx, step, mi)
+		}
 	}
 
 	return t.executeNode(ctx, step)

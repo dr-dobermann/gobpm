@@ -427,3 +427,213 @@ func TestLeafMISequentialCondFailure(t *testing.T) {
 
 	require.NotEqual(t, Completed, inst.State())
 }
+
+// TestLeafMIParallelFansOut is T-3 (SRD-086 FR-2/FR-3): 3 items run
+// CONCURRENTLY — each op parks until all three have arrived, so a
+// sequential execution would deadlock — each reads ITS item, the
+// outputs land by ordinal, and the flow follows once.
+func TestLeafMIParallelFansOut(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	var (
+		mu      sync.Mutex
+		log     []string
+		arrived = make(chan struct{}, 3)
+		release = make(chan struct{})
+		once    sync.Once
+	)
+
+	mi, err := activities.NewMultiInstance(
+		activities.WithInputCollection("items", "item"),
+		activities.WithOutputCollection("outs", "res"))
+	require.NoError(t, err)
+
+	items := data.MustProperty("items",
+		data.MustItemDefinition(values.NewArray("a", "b", "c"),
+			foundation.WithID("items")),
+		data.ReadyDataState)
+
+	outs := data.MustProperty("outs",
+		data.MustItemDefinition(values.NewArray[any](),
+			foundation.WithID("outs")),
+		data.ReadyDataState)
+
+	op, err := gooper.New("lm-par-op",
+		func(ctx context.Context, r service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			item, err := r.GetData("item")
+			if err != nil {
+				return nil, err
+			}
+
+			arrived <- struct{}{}
+
+			once.Do(func() {
+				go func() {
+					for i := 0; i < 3; i++ {
+						<-arrived
+					}
+					close(release)
+				}()
+			})
+
+			select {
+			case <-release:
+			case <-time.After(3 * time.Second):
+				return nil, fmt.Errorf("passes did not overlap — " +
+					"a sequential run, not a fan-out")
+			}
+
+			v := fmt.Sprint(item.Value().Get(ctx))
+
+			mu.Lock()
+			log = append(log, v)
+			mu.Unlock()
+
+			return data.MustItemDefinition(
+				values.NewVariable("R:"+v),
+				foundation.WithID("res")), nil
+		})
+	require.NoError(t, err)
+
+	p, err := process.New("lm-par", foundation.WithID("lm-par"),
+		data.WithProperties(items, outs))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	work, err := activities.NewServiceTask("work", op,
+		activities.WithoutParams(), activities.WithLoop(mi),
+		foundation.WithID("lm-par-work"))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, work, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, work)
+	link(t, work, end)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	inst := runLeafMI(t, s)
+
+	mu.Lock()
+	require.ElementsMatch(t, []string{"a", "b", "c"}, log)
+	mu.Unlock()
+
+	od, err := inst.sc.plane.GetData(scope.DataPath("/lm-par"), "outs")
+	require.NoError(t, err)
+
+	col, ok := od.Value().(data.Collection)
+	require.True(t, ok)
+
+	got := make([]any, 0, col.Count())
+	for _, el := range col.GetAll(context.Background()) {
+		got = append(got, el)
+	}
+
+	require.Equal(t, []any{"R:a", "R:b", "R:c"}, got,
+		"outputs must land by ORDINAL, not completion order")
+}
+
+// TestLeafMIParallelCompletionCancels is T-4 (SRD-086 FR-2): the first
+// drain's true completionCondition cancels the still-parked sibling
+// leaf tracks; their slots keep nil and the run completes.
+func TestLeafMIParallelCompletionCancels(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	cond := goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable(false)),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			d, err := ds.Find(ctx, "numberOfCompletedInstances")
+			if err != nil {
+				return nil, err
+			}
+
+			n, _ := d.Value().Get(ctx).(int)
+
+			return values.NewVariable(n >= 1), nil
+		})
+
+	mi, err := activities.NewMultiInstance(
+		activities.WithInputCollection("items", "item"),
+		activities.WithOutputCollection("outs", "res"),
+		activities.WithCompletionCondition(cond))
+	require.NoError(t, err)
+
+	items := data.MustProperty("items",
+		data.MustItemDefinition(values.NewArray("a", "b", "c"),
+			foundation.WithID("items")),
+		data.ReadyDataState)
+
+	outs := data.MustProperty("outs",
+		data.MustItemDefinition(values.NewArray[any](),
+			foundation.WithID("outs")),
+		data.ReadyDataState)
+
+	// ordinal 0 returns at once; the siblings park until canceled.
+	op, err := gooper.New("lm-can-op",
+		func(ctx context.Context, r service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			item, err := r.GetData("item")
+			if err != nil {
+				return nil, err
+			}
+
+			v := fmt.Sprint(item.Value().Get(ctx))
+			if v != "a" {
+				<-ctx.Done() // parked until the cancel
+
+				return nil, ctx.Err()
+			}
+
+			return data.MustItemDefinition(
+				values.NewVariable("R:"+v),
+				foundation.WithID("res")), nil
+		})
+	require.NoError(t, err)
+
+	p, err := process.New("lm-can", foundation.WithID("lm-can"),
+		data.WithProperties(items, outs))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	work, err := activities.NewServiceTask("work", op,
+		activities.WithoutParams(), activities.WithLoop(mi),
+		foundation.WithID("lm-can-work"))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, work, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, work)
+	link(t, work, end)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	inst := runLeafMI(t, s)
+
+	od, err := inst.sc.plane.GetData(scope.DataPath("/lm-can"), "outs")
+	require.NoError(t, err)
+
+	col, ok := od.Value().(data.Collection)
+	require.True(t, ok)
+
+	all := col.GetAll(context.Background())
+	require.Len(t, all, 3)
+	require.Nil(t, all[1], "a canceled slot keeps its pre-run nil")
+	require.Nil(t, all[2], "a canceled slot keeps its pre-run nil")
+}
