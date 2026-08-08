@@ -202,7 +202,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Engine locks held across host calls, and requests that were silently lost**
   (FIX-038 — the second `/audit-package` sweep, over `internal/eventproc`,
-  `internal/scope`, `pkg/thresher` and `internal/instance`). Twelve defects
+  `internal/scope`, `pkg/thresher` and `internal/instance`). Sixteen defects
   sharing two shapes: an engine-wide lock held while foreign code runs under it,
   and an operation that reports success while nothing happened.
   - **One slow host call stalled the whole engine.** The event hub built and
@@ -243,6 +243,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **A concurrent register could orphan itself against an unregister**, and a
     scope snapshot taken during a commit could tear. Both are now taken under a
     single acquisition.
+  - **A cancel could still be lost, and an observer could be told twice.** The
+    routing that fixes the parked-instance cancel read the state and then
+    cancelled, so an instance parking between those two steps lost the request
+    exactly as before; the state is now re-read. And a subscription taken while
+    the engine was rebuilding an instance was registered twice on the new
+    object, so the host received every fact twice from a subscription it could
+    only cancel once. Both were found by an independent pre-merge review, on
+    code whose gate was already green.
   - **`GetDataByID` became deterministic, not stricter.** An ItemDefinition is a
     *type*, so two variables of one type share its id and Go's map iteration
     returned a different one per run. Resolution is now nearest scope, then

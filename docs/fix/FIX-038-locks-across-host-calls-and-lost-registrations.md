@@ -216,6 +216,39 @@ engine context, and returned **nil** to the operator.
 That is the same silent loss as §1.10 one step further out: the caller is told
 its request landed when nothing ever observed it.
 
+### 1.13 The cancel routing races the park it routes for
+
+§1.10's guard reads the instance's state and then cancels. The two steps are not
+atomic, so an instance that parks in between takes the direct cancel to a loop
+that has already exited — the same silent loss, now inside the fix for it.
+
+Found by the independent review (`/pr-review`), not by `/check-srd` or the
+coverage gate: the guard is fully covered, and coverage cannot ask whether the
+line after the check still holds the assumption the check made.
+
+### 1.14 A re-attach registers an observer twice
+
+`reattachObservers` re-registered every observer unconditionally. An `Observe`
+landing between `adopt` and the re-attach registers on the NEW instance object
+already, so the re-attach adds the same fan-out to that object a second time:
+every fact is delivered twice, and the first registration's cancel is
+overwritten, leaving a registration that can never be removed.
+
+### 1.15 The registration fact names a discarded waiter
+
+On the losing path the processor is attached to the winner, but the
+`PhaseRegistered` fact reported the waiter this call built, stopped and threw
+away. An operator following that id finds nothing.
+
+### 1.16 A waiter that will not stop is stranded
+
+§1.3 correctly moved the removal under the lock that observes the waiter empty
+— which also moved it BEFORE `Stop`. A waiter whose `Stop` fails is still
+serving its subscription, and leaving it unmapped strands it: the next
+registration for that definition builds a second waiter and subscribes again,
+and nothing can ever reach the first. Before this branch a failed `Stop`
+returned early and left the waiter mapped, so a later registration rejoined it.
+
 ## 2 Root cause analysis
 
 **A lock whose scope was never stated.** §1.1, §1.2 and §1.3 are one cause: the
@@ -322,6 +355,21 @@ already cancelled (§1.12). The check lives here rather than in
 verdict: a timer wake arriving after shutdown rebuilds and terminates with
 nobody misinformed, while an operator told "cancelled" needs it to be true.
 
+#### 3.2.10 the independent review's remediation
+
+`Cancel` re-reads the instance state after the direct cancel and routes a
+newly-parked instance, bounded by `cancelRouteAttempts` (§1.13). `cancelParkSeam`
+is a nil-in-production seam that lets a test aim at the window rather than race
+for it; it is bridged to the external test package by `export_test.go`.
+
+`handleObserver` records the instance object its registration sits on, so
+`reattachObservers` is idempotent per object and cancels a stale registration
+before moving it (§1.14). `publishWaiter` reports the waiter that serves the
+processor (§1.15). `remapUnstopped` puts back a waiter whose `Stop` failed, but
+only if the key is still free — a registration that installed its own waiter in
+the meantime owns the definition, and overwriting it would strand THAT one
+(§1.16).
+
 ## 4 Verification
 
 ### 4.1 Regression tests
@@ -352,6 +400,15 @@ test — the FIX-037 lesson repeating, so they are pinned too:
 | T-16 | `TestFirstRegistrationFailureLeavesNoTrace`, `TestRollbackFailureJoinsTheCause` | a failing FIRST registration returns its cause unwrapped and leaves no version behind; a failing rollback joins its own error to the cause (§1.5) |
 | T-17 | `TestTaskVanishesBetweenThePhases` | a task removed while the embedder's `Authorize` runs is reported unknown by both phase-2 paths, not acted on (§1.2) |
 | T-18 | `TestGetDataByIDStopsAtAnUnrootedPath`, `TestReattachObserversWithoutAnInstance` | the id walk terminates on a path with no parent; a handle with no instance ignores the re-attachment (§1.7, §1.8) |
+
+The independent review's findings (§1.13–§1.16):
+
+| # | Test | Asserts |
+|---|---|---|
+| T-19 | `TestCancelRacingTheParkStillLands` | a cancel whose check saw a live instance still terminates it when the park lands in the window — driven through the seam, not raced for (§1.13) |
+| T-20 | `TestReattachIsIdempotentPerObject` | one fact, one delivery: a re-attach onto the object an observer already sits on does not register it twice (§1.14) |
+| T-21 | `TestLostRegistrationReportsTheServingWaiter` | the registration fact names the winner, never the discarded waiter (§1.15) |
+| T-22 | `TestUnstoppableWaiterStaysMapped` | a waiter whose `Stop` fails is still mapped, and is the same waiter (§1.16) |
 
 ### 4.2 Gate
 
@@ -458,10 +515,20 @@ Prior art: [FIX-036](FIX-036-thresher-lifecycle-races-and-reservations.md) §1.5
 | M7 | `e78a071` | §1.9 — the last two calls out of a package under a lock |
 | M8 | `b714e95` | §1.10, §1.11, §1.12 — a cancel reaches a parked instance, and its rail is shared |
 | M9 | `a05bf34` | T-14 to T-18 — the remedies' own failure branches |
+| M10 | `b8637a0` | §1.13–§1.16 — the four defects the independent review confirmed |
+| M11 | `177c5d0` | T-3 strengthened, the rollback assertions pinned by identity, the stub made as strict as a real waiter |
 
 M8 and M9 are the rule at work rather than a plan: M8's §1.11 and §1.12 were
 found while writing §1.10's fix, and M9 exists because the gate — not a reviewer
 — showed that the remedies' error paths were untested. Neither was deferred.
+
+M10 and M11 come from `/pr-review` — a doc-blind read of the diff by a different
+model family, run at the PR handover with the gate already green. It returned 11
+notes; 8 survived verification and are fixed here, 3 did not and are recorded in
+§8.3. The two that matter are self-inflicted: §1.13 is this document's own §1.10
+defect reappearing inside the guard that fixes it, and T-3 could not fail on the
+code it pins. Neither `/check-srd` nor the coverage gate can ask either
+question — T-3 had 100% coverage of the lines it failed to pin.
 
 ### 8.2 Empirical findings
 
@@ -478,6 +545,26 @@ found while writing §1.10's fix, and M9 exists because the gate — not a revie
 - **Two lenses agreeing is not evidence.** Two independent lenses confidently
   reported the same non-existent restore defect. Convergence narrows where to
   look; it does not decide.
+
+### 8.3 Review notes NOT acted on
+
+Recorded with their reasons, so the next review does not re-investigate them.
+
+- **"`reattachObservers` runs under the engine lock."** Refuted. The reviewer
+  read the `*Locked` suffix as "the caller holds the lock". In this package it
+  means the opposite: `locked.go`'s header states each helper acquires `t.m`
+  itself, and `trackInstanceLocked` opens with `t.m.Lock(); defer t.m.Unlock()`.
+  No lock is held at the call site.
+- **"The eventhub tests pin the internal `waiters` map; the task and rollback
+  tests pin `th.tasks` / `th.registrations`."** Rejected. These are internal
+  tests of windows that exist only inside those functions — the gap between two
+  phases of one call — and no legitimate concurrent action can be aimed at them.
+  Both rollback tests also assert the observable behaviour that matters: the
+  retry succeeds, which is the bricked-key symptom.
+- **"A stranded waiter causes double-processing."** Half refuted: the stranding
+  is real and fixed (§1.16), but the stranded waiter holds zero processors, so
+  it cannot deliver anything to anyone. The cost is a duplicate broker
+  subscription, not duplicate work.
 
 ## 9 Open questions
 
