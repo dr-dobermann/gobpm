@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted (2026-08-08) |
 | Date | 2026-08-08 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-006 v.5](../design/ADR-006-events-and-subscriptions.md) §2.9 (the in-instance delivery contract) |
-| Upstream | [ADR-014 v.1](../design/ADR-014-message-handling.md) §2.5/§2.6 (the waiter/key seam), [ADR-016 v.1](../design/ADR-016-message-correlation.md) (the key machinery), [ADR-025 v.2](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.6 (the split item a key derives from) |
+| Upstream | [ADR-014 v.2](../design/ADR-014-message-handling.md) §2.5/§2.6 (the waiter/key seam; v.2 is this landing's wording sync), [ADR-016 v.1](../design/ADR-016-message-correlation.md) (the key machinery), [ADR-025 v.2](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.6 (the split item a key derives from) |
 | Related | [SRD-082](SRD-082-checkpoint-composite-fidelity.md) (whose parallel-restore tests surfaced the slot race) |
 | Tracking | #305 |
 
@@ -144,7 +144,7 @@ restored scopes' items).
 | T-3 | keyless ambiguity refusal (`internal/instance`) | FR-4: the second keyless subscription faults loud, naming the definition |
 | T-4 | signal fan-out (`internal/instance`) | FR-5: one broadcast wakes all iterations, each with its own payload |
 | T-5 | single keyless catch unchanged (`internal/instance`) | FR-2: the existing single-waiter path behaves as today |
-| T-6 | catch-position sweep (`internal/instance`, `pkg/thresher`) | FR-1: EB-gateway arm, boundary, event-sub start and the wake path all bind from the frame |
+| T-6 | catch-position sweep (`internal/instance`, `pkg/thresher`) | FR-1: every position that binds — EB-gateway arm, ReceiveTask, the wake path — binds from the frame (the existing gateway/dehydration suites are the net); boundary/event-sub never bound (the FR-1 recorded gap) |
 | T-7 | kill/restore mid-trace (`pkg/thresher`) | the §3 trace across a crash — keys re-derive, the second envelope routes correctly |
 
 ## §7 Milestones
@@ -167,16 +167,33 @@ restored scopes' items).
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-5 implemented; every §6 test exists and passes.
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%); touched
+- [x] FR-1…FR-5 implemented; every §6 test exists and passes.
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%); touched
       functions ≥80%.
-- [ ] No `received`/`recvMu` remains; the guides note the correlation
+- [x] No `received`/`recvMu` remains; the guides note the correlation
       option.
-- [ ] §10 filled.
+- [x] §10 filled.
 
 ## §10 Implementation summary
 
-*Post-landing placeholder.*
+Landed on `feat/composite-followups` in three milestones — doc
+`a27e07e`, M1 `e065c6f` (the frame carrier; both slots deleted; the
+compensation sentinel's nil-method fix; the boundary/event-sub
+never-bound reality recorded), M2 `d811fff` (msgSub routing, the
+option, the conversation-gating exclusion, the engine's AddEventKey
+passthrough and the recursive extension walk — both latent gaps fixed
+under "no pre-existing errors"), M3 `8f8c53c` (the kill-and-resume
+trace with the cuttable-broker crash shape; guides; ADR-014 v.2
+wording sync; CHANGELOG).
+
+Verification: `make ci` exit 0 end to end; **diff-coverage 95.9% of
+366 changed coverable lines** (min 95%); every touched function ≥85%
+in-package, most at 100%; all suites race-clean; golangci-lint incl.
+tests 0 issues.
+
+Deviations: FR-3 gained the `keyName` half (the declared key pairs the
+envelope-side retrieval with the iteration-side expression) — folded
+into the Draft when the derivation seam made it the natural shape.
 
 ## Open questions
 
