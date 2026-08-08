@@ -200,6 +200,20 @@ tracks inside it, read the scope's data with the usual walk-up, and the whole
 container completes when the scope drains. Boundary events, compensation and the
 Error scope chain behave exactly as they do on an embedded Sub-Process.
 
+## Restarts
+
+With a repository configured, an in-flight container is
+checkpoint-faithful: the routing position — which activities have
+completed and how often, a manual container's pending offer, a fired
+completion condition — rides the checkpoint, and a recovered engine
+restores the container **at that position**. The next Router decision
+sees the true pre-crash progress, a restored offer is still visible in
+`AdHocView` and consumable by `ActivateAdHoc`, and completed
+activities never re-run. A checkpoint written by a pre-fidelity engine
+(schema ≤ 4) with the container in flight refuses to restore loudly —
+its routing state was never recorded. See
+[Persistence](../operating/persistence.md).
+
 ## See also
 
 - Family: [Composition taxonomy](index.md) · [Embedded Sub-Process](embedded.md) · [Transaction Sub-Process](transaction.md)

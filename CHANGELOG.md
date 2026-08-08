@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ad-Hoc Sub-Process checkpoint fidelity** (SRD-083, closes #307).
+  The checkpoint document (schema 5) records each open container's
+  routing state — completed counts, a manual container's pending
+  offer, a fired completion condition — and the routed tracks'
+  activity assignments; restore rebuilds the container at that
+  position, so the next Router decision sees the true cross-crash
+  progress and completed activities never re-run.
+
 - **Checkpoint fidelity for composite constructs** (SRD-082, closes
   #277). The checkpoint document (schema 4) records every composite
   construct's position, and restore rebuilds it there: composite
@@ -160,6 +168,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offending attributes, and cites Table 10.101 where the standard is the reason.
 
 ### Fixed
+
+- **An in-flight Ad-Hoc container restored silently corrupt.** The
+  routing state was never captured (and, unlike the other composites,
+  no guard deferred the capture): after a restore the Router was
+  never consulted again, the progress counts were false, a manual
+  container's pending offer hung forever, and a stopped container
+  re-routed work past its fired completion condition. The state now
+  rides the checkpoint; a pre-fidelity document (schema ≤ 4) with an
+  in-flight container refuses to restore loudly instead.
 
 - **The checkpoint codec refused nil** — but a parallel MI's staging
   is pre-sized with nil holes, and an early-stopped group *publishes*

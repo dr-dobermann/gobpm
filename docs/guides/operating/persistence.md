@@ -297,6 +297,12 @@ ever re-executes, and no construct defers the capture:
   reverse completion order; the handler that was RUNNING re-runs (a
   handler is an effect — at-least-once over its immutable snapshot);
   the wait-throw resumes only after the drain.
+- An **Ad-Hoc Sub-Process**: the routing state — completed counts, a
+  manual container's pending offer, a fired completion condition —
+  restores with the container, and the next Router decision sees the
+  true cross-crash progress. A pre-fidelity document (schema ≤ 4) that
+  froze an in-flight container refuses to restore loudly rather than
+  resuming with the routing state lost.
 - An **in-flight Call Activity**: the child is a durable instance of
   its own, symmetrically linked — recovery restores both ends and
   re-links them, whether the child is recovered, still awaiting
@@ -310,12 +316,11 @@ payload, a failed save) — still loud, never a silent skip.
 ## Current limits (the next slices)
 
 The operator **suspend/resume** surface is the remaining ADR-033
-slice. Two documented corners: in a **multi-engine group**, recovery
+slice. One documented corner: in a **multi-engine group**, recovery
 may claim a caller and its called child on different engines — each
-recovers correctly, but the cross-engine re-link is future work (keep
-call pairs on one engine, or in one solo group, until it lands); and
-**Ad-Hoc sub-process routing state** is not yet part of the document
-(its own follow-up).
+recovers correctly, but the cross-engine re-link is future work
+(#308; keep call pairs on one engine, or in one solo group, until it
+lands).
 
 ## See also
 
