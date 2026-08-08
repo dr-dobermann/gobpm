@@ -1,7 +1,7 @@
 # FIX-037 — the wake latch loses what it refuses, and two retained handles are never released
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft.
+**Status:** Accepted.
 **Date:** 2026-08-08.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/wake-residency-races` — remediation of the first `/audit-package` sweep of `pkg/thresher` (2026-08-08).
