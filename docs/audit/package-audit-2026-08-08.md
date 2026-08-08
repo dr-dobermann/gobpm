@@ -185,9 +185,32 @@ duplicating tracks · `mi.go` / `mi_parallel.go` restore-count and fan-out gaps 
 `track.go:287/1021/1045` history race, subscription leak, cancellation
 misreported as failure · `std_loop.go:93` `loopCounter` collision.
 
-## 6 Next actions
+## 6 Disposition
 
-1. **FIX-038 for the confirmed defect track** — C-6…C-15. They group naturally:
+Landed by [FIX-038](../fix/FIX-038-locks-across-host-calls-and-lost-registrations.md).
+
+| Finding | Route | Where |
+|---|---|---|
+| C-6 `SnapshotAt` not atomic | fixed | FIX-038 §1.6 |
+| C-7 `GetDataByID` non-deterministic | fixed | FIX-038 §1.7 |
+| C-8 hub lock across `Service` | fixed | FIX-038 §1.1 |
+| C-9 `UnregisterEvent` TOCTOU | fixed | FIX-038 §1.3 |
+| C-10 recovery abandons an instance | fixed | FIX-038 §1.4 |
+| C-11 `Cancel` on a parked instance | fixed | FIX-038 §1.10 |
+| C-12 a failed registration bricks the key | fixed | FIX-038 §1.5 |
+| C-13 engine lock across `Authorize` | fixed | FIX-038 §1.2 |
+| C-14 `Observe` on the instance object | fixed | FIX-038 §1.8 |
+| C-15 `msgIdx` keyed by definition alone | filed | issue #305, with SRD-082 |
+
+Three defects not in this audit were found while fixing the ones that were, and
+landed with them: the plane lock spanning the runtime-variable supplier and
+`Shutdown` reporting under the hub lock (§1.9), the incident path dropping the
+handle's observers (§1.11), and an operator request reporting success after
+shutdown (§1.12).
+
+## 7 Next actions
+
+1. ~~**FIX-038 for the confirmed defect track** — C-6…C-15.~~ Landed; see §6. They group naturally:
    the host-code-under-an-engine-lock shape (C-8, C-13), the hub's registration
    TOCTOU (C-9), the silently-abandoned recovery (C-10), the bricked process key
    (C-12), and the identity-vs-object leaks (C-11, C-14).

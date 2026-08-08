@@ -1,7 +1,7 @@
 # FIX-038 — engine locks held across host calls, and registrations that are silently lost
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft.
+**Status:** Accepted.
 **Date:** 2026-08-08.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/audit-round2` — the confirmed defect track of the 2026-08-08 package audit.
@@ -443,7 +443,41 @@ Prior art: [FIX-036](FIX-036-thresher-lifecycle-races-and-reservations.md) §1.5
 
 ## 8 Implementation summary
 
-_To be filled after the milestones land._
+### 8.1 Milestone commits
+
+| M | Commit | Scope |
+|---|---|---|
+| — | `d700122` | the audit that produced this document: `internal/instance` finished, the pending backlog verified |
+| — | `dadb1d1` | this document |
+| M1 | `fab88e8` | §1.4 — a store failure is not a lost claim (`lostClaim`) |
+| M2 | `1f0a88f` | §1.5 — a failed registration restores the previous version (`rollbackRegistration`) |
+| M3 | `034c803` | §1.1, §1.3 — the hub lock covers the registry, not the broker |
+| M4 | `bbcc6e6` | §1.2 — the engine lock does not span the embedder's `Actor` |
+| M5 | `83faa4a` | §1.6, §1.7 — one locked snapshot walk, and a total id resolution rule |
+| M6 | `7ae3504` | §1.8 — the handle owns its observers |
+| M7 | `e78a071` | §1.9 — the last two calls out of a package under a lock |
+| M8 | `b714e95` | §1.10, §1.11, §1.12 — a cancel reaches a parked instance, and its rail is shared |
+| M9 | `a05bf34` | T-14 to T-18 — the remedies' own failure branches |
+
+M8 and M9 are the rule at work rather than a plan: M8's §1.11 and §1.12 were
+found while writing §1.10's fix, and M9 exists because the gate — not a reviewer
+— showed that the remedies' error paths were untested. Neither was deferred.
+
+### 8.2 Empirical findings
+
+- **A `defer`-based lock scan reports what you hoped for.** Three sweeps were
+  needed (§5): the first treated `defer m.Unlock()` as ending the locked region
+  and called three live instances clean; the second was function-scoped and
+  flagged five already-fixed sites; only the third tracked lock state. Even it
+  missed `EventHub.Shutdown` because the pattern list had dropped `Report` —
+  found by re-reading the file the scanner had cleared.
+- **`agy`'s line citations are unreliable, its mechanisms often are not.**
+  Roughly one finding in nine cited a line that does not contain what it claims,
+  while describing a real defect elsewhere in the same function. Verify the
+  mechanism, not the coordinate.
+- **Two lenses agreeing is not evidence.** Two independent lenses confidently
+  reported the same non-existent restore defect. Convergence narrows where to
+  look; it does not decide.
 
 ## 9 Open questions
 
