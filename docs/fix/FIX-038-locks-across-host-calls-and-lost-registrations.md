@@ -182,6 +182,40 @@ and through the host's log redactor. Under `eh.m` that is §1.1 exactly — an
 embedder's code deciding how long the hub stays locked — in the same file as
 §1.1 and §1.3, and it survived the first pass over that file.
 
+### 1.10 A cancel does not reach a parked instance
+
+`InstanceHandle.Cancel` calls `h.current().Cancel()`, which cancels the
+instance's CONTEXT. A dehydrated instance has no loop reading that context: its
+goroutines are gone and its state lives in a checkpoint. The request therefore
+vanishes, and the next wake rebuilds the instance and carries on as if it had
+never been made — while `WaitCompletion` blocks until the caller's deadline.
+
+Incident operations solved this in SRD-079 §3.6 by riding the rebuild
+(`WithPendingIncidentOp`); `Cancel` never got the same rail.
+
+### 1.11 An incident operation drops the handle's observers
+
+§1.8's remedy — the handle-owned observer registry, re-attached after a rebuild
+— landed in `cancelParked` and in the wake path, but **not** in
+`wakeForIncidentOp`, which adopts the rebuilt instance object and stops there.
+An operator's retry or resolve therefore silenced a host's subscription exactly
+as a dehydration used to, while its `Subscription` still reported itself live.
+
+Found while implementing §1.10, whose new path was a near-copy of
+`wakeForIncidentOp`: the copy is what let one of the two callers keep the bug.
+
+### 1.12 An operator request after shutdown reports success
+
+`engineContext` reports `running` for the whole life of the process once `Run`
+has been called — `t.engine` is stored at startup (`thresher.go:655`) and never
+cleared — so `rebuildAndContinue`'s `!running` guard cannot fire after a
+shutdown. An incident operation or a cancel arriving then rebuilt the instance
+from its checkpoint, watched the fresh loop tear straight back down on the dead
+engine context, and returned **nil** to the operator.
+
+That is the same silent loss as §1.10 one step further out: the caller is told
+its request landed when nothing ever observed it.
+
 ## 2 Root cause analysis
 
 **A lock whose scope was never stated.** §1.1, §1.2 and §1.3 are one cause: the
@@ -261,6 +295,33 @@ are set at construction and never reassigned, so the branch needs no lock at
 all. `Shutdown` reports its stopped fact after releasing `eh.m` — the registry
 is already cleared by then, so nothing depends on the order.
 
+#### 3.2.8 `internal/instance`, `pkg/thresher` — a cancel rides the rebuild
+
+`WithPendingCancel` mirrors `WithPendingIncidentOp`, and `applyPendingOps`
+applies both at the same seam: after the scope handlers are armed, before the
+park decision. The cancel is applied through `stopAll`, **not** `inst.Cancel` —
+`stopAll` sets `ls.stopping`, which `maybeDehydrate` checks, so the instance
+cannot park again before observing the request. A bare context cancel would race
+the re-park and be lost exactly as the pre-rebuild one was.
+
+`InstanceHandle.Cancel` routes a dehydrated instance through
+`Thresher.cancelParked`, which takes the wake latch (`awaitClaim`) like every
+other rebuild path. A resident instance keeps today's direct path.
+
+#### 3.2.9 `pkg/thresher/incident_ops.go` — one rail for a request that rides a rebuild
+
+`wakeForIncidentOp` and `cancelParked` were near-copies: claim the wake latch,
+rebuild with the request as a pending option, adopt the new object, wait for the
+verdict. They collapse into `rebuildForOp`, so the handle re-attachment (§1.11)
+exists once and cannot land in one caller only, and `awaitOpVerdict` isolates
+the bounded wait.
+
+`rebuildForOp` refuses before claiming anything when the engine context is
+already cancelled (§1.12). The check lives here rather than in
+`rebuildAndContinue` because this is the path with a caller waiting for a
+verdict: a timer wake arriving after shutdown rebuilds and terminates with
+nobody misinformed, while an operator told "cancelled" needs it to be true.
+
 ## 4 Verification
 
 ### 4.1 Regression tests
@@ -273,9 +334,13 @@ is already cleared by then, so nothing depends on the order.
 | T-4 | `TestRecoveryReportsATransportError` | a non-CAS `Save` failure is reported, not swallowed; a CAS conflict still returns silently (§1.4) |
 | T-5 | `TestFailedRegisterRestoresThePreviousStarters` | after a failed `registerStarters` the previous version is live again, the failed version is gone, and a retry succeeds (§1.5) |
 | T-6 | `TestSnapshotAtIsAtomic` | a concurrent commit cannot tear a snapshot (§1.6) |
-| T-7 | `TestGetDataByIDRefusesAnAmbiguousID` | two data sharing an ItemDefinition id produce a classified error naming both (§1.7) |
+| T-7 | `TestGetDataByIDIsDeterministic` | two data sharing an ItemDefinition id resolve to the same one on every run — nearest scope, then lowest name (§1.7) |
 | T-8 | `TestHandleObserverSurvivesARebuild` | an observer registered before a dehydration receives facts after the rebuild (§1.8) |
 | T-9 | `TestRuntimeVarIsServedOutsideThePlaneLock` | while the supplier is working, the rest of the plane stays usable (§1.9) |
+| T-10 | `TestCancelReachesADehydratedInstance` | cancelling a parked instance terminates it, and advancing past its timer does not resurrect it (§1.10) |
+| T-11 | `TestApplyPendingCancel`, `TestApplyPendingOpsWithNothingPending` | the rebuild-borne cancel stops the loop before its park decision and answers its caller; an ordinary rebuild is untouched (§1.10) |
+| T-12 | `TestRebuildForOpReportsAFailedClaim`, `TestRebuildForOpReportsAFailedRebuild` | a request that cannot take the latch or cannot rebuild is reported, names the operation, and releases the latch (§1.11) |
+| T-13 | `TestCancelOnAParkedInstanceReportsAStoppedEngine`, `TestAwaitOpVerdictHonoursTheCallerContext` | a request arriving after shutdown fails instead of reporting success; the verdict wait is bounded by the caller's context (§1.12) |
 
 ### 4.2 Gate
 
@@ -324,20 +389,35 @@ lines (`COVER_MIN`).
 - `RegisterProcess`'s failure path now mutates the registry (removing the
   version it appended). Callers already treat a returned error as "not
   registered"; this makes that true.
+- An incident operation or a cancel against a parked instance now FAILS after
+  the engine's context is cancelled, where it previously returned nil (§1.12).
+  A caller that shut the engine down and then issued an operator request was
+  already getting nothing done; it is now told so. Nothing in the wake or timer
+  paths changes — the guard is scoped to the two operator entry points.
 
 ## 7 Related
 
-Two confirmed findings are **not** fixed here:
+One confirmed finding is **not** fixed here:
 
-- **`InstanceHandle.Cancel` is lost on a dehydrated instance** (audit §5.1
-  C-11). Making it durable means giving Cancel the pending-operation rail that
-  incident ops ride (`WithPendingIncidentOp`), and deciding what cancelling a
-  *parked* instance means for its checkpoint. That is a design decision, not a
-  patch — it needs its own document.
 - **`msgIdx` overwrites concurrent tracks for one message definition** (C-15) is
   the subject of issue **#305**, "per-iteration event payload routing for shared
   catch nodes in parallel MI", filed with SRD-082. The audit rediscovered it
   independently; the issue is the right home.
+
+**§1.10 was itself a deferral, and that was the mistake.** This section
+originally parked `InstanceHandle.Cancel` as "a design decision, not a patch —
+it needs its own document". It was not blocked on anything: the rail existed
+(`WithPendingIncidentOp`), the latch existed (`awaitClaim`), and "large" is not
+"blocked". It is fixed here as §1.10. The global rule now says so explicitly:
+*out of scope* is the same deferral as *not mine*, only justified by a schedule
+instead of by authorship.
+
+The same rule ran again during §1.10's own implementation: the new
+`cancelParked` was a near-copy of `wakeForIncidentOp`, and reading the two side
+by side exposed §1.11 (the observer re-attachment that had landed in one caller
+only) and §1.12 (an operator request reporting success after shutdown). Both are
+fixed here, in this branch, rather than recorded as "noted for the next pass" —
+and the copy that hid §1.11 is gone with them.
 
 Prior art: [FIX-036](FIX-036-thresher-lifecycle-races-and-reservations.md) §1.5
 (host code under an engine lock — the shape §1.1 and §1.2 repeat) and its M6

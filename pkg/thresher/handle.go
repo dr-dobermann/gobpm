@@ -294,6 +294,19 @@ func (h *InstanceHandle) WaitCompletion(
 // second call, or Cancel of an already-terminal instance, returns the terminal
 // state at once.
 func (h *InstanceHandle) Cancel(ctx context.Context) (InstanceState, error) {
+	// A DEHYDRATED instance has no loop to observe a context cancellation, so
+	// canceling here canceled a context nobody was reading: the request was
+	// lost and the next wake resumed the instance as if it had never been made
+	// (FIX-038 §1.10). It rides a rebuild instead, like an incident operation.
+	if inst := h.current(); inst != nil &&
+		inst.State() == instance.Dehydrated && h.th != nil {
+		if err := h.th.cancelParked(ctx, h); err != nil {
+			return h.State(), err
+		}
+
+		return h.WaitCompletion(ctx)
+	}
+
 	h.current().Cancel()
 
 	return h.WaitCompletion(ctx)

@@ -78,3 +78,87 @@ func TestStateDehydratedIsNamed(t *testing.T) {
 	require.Equal(t, thresher.InstanceState("Dehydrated"),
 		thresher.StateDehydrated)
 }
+
+// TestCancelReachesADehydratedInstance is FIX-038 T-10. InstanceHandle.Cancel
+// called inst.Cancel(), which cancels the instance's CONTEXT — but a dehydrated
+// instance has no loop reading that context: its goroutines are gone and its
+// state lives in a checkpoint. The request vanished, and the next wake rebuilt
+// the instance and carried on as if it had never been made.
+//
+// The cancel now rides a rebuild, the way an incident operation does, and the
+// fresh loop tears the instance down through stopAll BEFORE its park decision —
+// stopAll, not a bare context cancel, because maybeDehydrate checks ls.stopping
+// and a plain cancel would race the re-park and be lost again.
+func TestCancelReachesADehydratedInstance(t *testing.T) {
+	repo := memrepo.New()
+	deadline := dehydrationEpoch.Add(2 * time.Hour)
+
+	var hit atomic.Bool
+
+	p := longTimerProc(t, "cancel-parked", deadline, &hit)
+
+	th, fw, clk, cancel := bootDehydrationEngine(t, "engine-CP", repo, p)
+	defer cancel()
+
+	h, err := th.StartLatest(p.ID())
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return fw.saw(observability.KindInstanceState,
+			observability.PhaseDehydrated)
+	}, 3*time.Second, 10*time.Millisecond)
+
+	require.Equal(t, thresher.StateDehydrated, h.State(),
+		"the instance must be parked for this to test anything")
+
+	ctx, ccancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer ccancel()
+
+	st, err := h.Cancel(ctx)
+	require.NoError(t, err, "cancelling a parked instance must reach it")
+	require.Equal(t, thresher.StateTerminated, st,
+		"the instance is terminated, not left parked")
+
+	// And it stays cancelled: advancing past the timer must not resurrect it.
+	clk.Advance(3 * time.Hour)
+
+	require.Never(t, func() bool { return hit.Load() },
+		500*time.Millisecond, 50*time.Millisecond,
+		"a cancelled instance must not be woken by its own timer")
+}
+
+// TestCancelOnAParkedInstanceReportsAStoppedEngine is the other half of T-10:
+// cancelling a DEHYDRATED instance needs a rebuild, and a rebuild needs a
+// running engine. When the engine is gone the request cannot be delivered, and
+// the caller must be told — the silent-loss failure this whole section exists
+// to close would otherwise reappear as a nil error.
+func TestCancelOnAParkedInstanceReportsAStoppedEngine(t *testing.T) {
+	repo := memrepo.New()
+	deadline := dehydrationEpoch.Add(2 * time.Hour)
+
+	var hit atomic.Bool
+
+	p := longTimerProc(t, "cancel-parked-stopped", deadline, &hit)
+
+	th, fw, _, cancel := bootDehydrationEngine(t, "engine-CPS", repo, p)
+
+	h, err := th.StartLatest(p.ID())
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return fw.saw(observability.KindInstanceState,
+			observability.PhaseDehydrated)
+	}, 3*time.Second, 10*time.Millisecond)
+
+	require.Equal(t, thresher.StateDehydrated, h.State(),
+		"the instance must be parked for this to test anything")
+
+	cancel() // the engine goes away; nothing can rebuild the instance now
+
+	ctx, ccancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer ccancel()
+
+	_, err = h.Cancel(ctx)
+	require.Error(t, err,
+		"a cancel that cannot reach the instance must not report success")
+}

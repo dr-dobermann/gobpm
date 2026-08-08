@@ -68,6 +68,8 @@ type Instance struct {
 	// pendingIncidentOp is an operator op riding a rebuild (SRD-079 §3.6),
 	// consumed once by the loop before its park decision.
 	pendingIncidentOp *incidentRequest
+	// pendingCancel is an operator cancel riding a rebuild (FIX-038 §1.10).
+	pendingCancel *cancelRequest
 	// incidentsSnap is the copy-on-write projection IncidentViews serves —
 	// rebuilt by the loop after every incident mutation (the tracksSnap
 	// pattern).
@@ -268,6 +270,25 @@ func WithPendingIncidentOp(
 	}
 }
 
+// WithPendingCancel hands a rebuild an operator's CANCEL (FIX-038 §1.10), the
+// same shape WithPendingIncidentOp uses: a parked instance has no loop to
+// cancel, so the request rides the rebuild and the fresh loop tears the
+// instance down BEFORE deciding whether to park again. Without it, canceling a
+// dehydrated instance canceled a context whose loop had already exited — the
+// request was lost and the next wake resumed the instance as if nothing had
+// happened.
+func WithPendingCancel(resp chan error) Option {
+	return func(cfg *newConfig) {
+		cfg.pendingCancel = &cancelRequest{resp: resp}
+	}
+}
+
+// cancelRequest is an operator cancel riding a rebuild; resp carries the
+// verdict back to the caller that asked for it.
+type cancelRequest struct {
+	resp chan error
+}
+
 // WithSettledSignal gives the instance the channel to close when it reaches a
 // TERMINAL state (SRD-071). The engine owns it per instance ID and passes the
 // same channel to every rebuild, so a host waiting for completion is not woken
@@ -347,6 +368,8 @@ type newConfig struct {
 	// pendingIncidentOp is an operator incident operation riding a rebuild
 	// (SRD-079 §3.6) — applied by the loop before its park decision.
 	pendingIncidentOp *incidentRequest
+	// pendingCancel is an operator cancel riding a rebuild (FIX-038 §1.10).
+	pendingCancel *cancelRequest
 	// invoker launches child instances for the Call Activities this instance
 	// runs (SRD-050 FR-3); nil for a library embedder without a thresher — a
 	// call then fails fast with a classified no-invoker error.
@@ -501,6 +524,7 @@ func New(
 		tracks:              map[string]*track{},
 		incidents:           map[string]*incident{},
 		pendingIncidentOp:   cfg.pendingIncidentOp,
+		pendingCancel:       cfg.pendingCancel,
 		events:              make(chan trackEvent),
 		taskReq:             make(chan taskRequest),
 		jobReq:              make(chan jobRequest),
