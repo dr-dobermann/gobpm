@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.4 |
-| Date | 2026-07-20 |
+| Status | Draft |
+| Version | v.5 |
+| Date | 2026-08-08 (v.4 accepted 2026-07-20) |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) |
 
@@ -15,8 +15,10 @@
 > *trigger* cancellation — Terminate End Event and boundary interruption (§2.2),
 > the wait-node subscription model (§2.3), the in-memory delivery contract (§2.4),
 > the waiter lifecycle (§2.5), Error events (§2.6), Conditional events (§2.7),
-> and Link events (§2.8 — intra-process GOTO by static name-pairing, the one
-> "event" that is not a subscription). Implementation rides the events-workstream SRD(s); some parts are
+> Link events (§2.8 — intra-process GOTO by static name-pairing, the one
+> "event" that is not a subscription), and the in-instance delivery contract
+> (§2.9, v.5 — per-delivery payload binding, per-kind multiplicity among an
+> instance's concurrent waiters, iteration-granular message correlation). Implementation rides the events-workstream SRD(s); some parts are
 > conception ahead of code, exactly as ADR-005 decides Inclusive/Complex joins
 > ahead of their implementation.
 
@@ -540,6 +542,65 @@ residue.
   landing SRD gives Link its own throw/redirect handling rather than routing it
   through `PropagateEvent`.
 
+### 2.9 In-instance delivery: the payload binds per delivery; multiplicity per kind (v.5)
+
+One instance can hold **several concurrent executions waiting on the same
+event definition at the same catch node** — the canonical producer is a
+parallel Multi-Instance activity whose iterations each wait at their catch
+(every iteration is its own execution over the one node graph the instance
+runs, ADR-009 v.1; per-instance parallel scopes per ADR-025 v.2 §2.2). This
+subsection decides how a delivery reaches the right waiter and carries its
+payload there intact.
+
+**2.9.1 The payload is a property of the delivery, never of the node.** A
+fired event definition carries its own item. The consumer of that item is
+the **receiving execution**: at delivery it captures the item from the
+definition it was handed and stages it in its **own execution frame**; the
+catch node binds outputs from that frame. A node is a *definition*,
+immutable at runtime — no mutable payload slot lives on a node, shared or
+otherwise. N concurrent deliveries into N executions stage N items in N
+frames; there is no window in which one execution can observe a sibling's
+payload. (This sharpens ADR-014 v.1 §2.5's "the waiter carries the arrived
+payload to the node": the payload's destination is the **delivery**; the
+node only declares which outputs exist.)
+
+**2.9.2 Multiplicity per kind.** When several executions of one instance
+wait on a matching definition at the same node, an occurrence serves them
+by the kind's own semantics — stated as contract, not left to mechanism:
+
+| Kind | An occurrence serves |
+|---|---|
+| Message | **exactly one** waiter — the correlated one (2.9.3) |
+| Signal | **every** waiter (publication fan-out — `event-handling.md`: a trigger "MAY be received by any catching Event in any scope where the trigger is published") |
+| Timer | its own registration (per-execution schedules; nothing is shared) |
+| Conditional | per §2.7 (loop-owned; every armed subscription evaluates) |
+
+The standard correlates a Message to a **Process instance** (§8.4.2 — the
+extract's "Message routed to that Conversation (and the Process instance
+behind it)") and is **silent** on selection among tokens inside it;
+`exactly one` for messages and `every` for signals are engine choices, the
+first realizing correlation's intent at the finer grain, the second the
+publication semantics quoted above.
+
+**2.9.3 Iteration-granular message correlation.** Each concurrently-waiting
+execution's subscription carries a **correlation key derived from its
+iteration's split input item** (the datum ADR-025 v.2 §2.6 binds per
+instance); the message waiter matches an envelope to **exactly one**
+subscription over the per-subscription key machinery (ADR-016 v.1;
+ADR-014 v.1 §2.6's key seam). A parallel-MI message catch that declares
+**no** iteration correlation is **refused at registration**: with N
+identical subscriptions delivery is genuinely ambiguous, and a loud
+modeling error beats an arbitrary pick (the uncaught-events posture —
+nothing routes silently).
+
+**2.9.4 The queue owns the waiter's life.** A waiter serves a **queue of
+subscriptions** — registration appends a (subscriber, definition) pair,
+unregistration removes exactly that pair, and the waiter tears down only
+when its queue **empties** — never on first fire. (This sharpens §2.5's
+sole-hub ownership with the multiplicity rule: a message waiter
+self-removing after its first match would orphan the sibling iterations'
+subscriptions.)
+
 ## 3. Consequences
 
 - **Link events express intra-process GOTO without a subscription (v.4).** On-page
@@ -687,6 +748,7 @@ questions.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.5 | 2026-08-08 | Ruslan Gabitov | **Draft** — added **§2.9 "In-instance delivery: the payload binds per delivery; multiplicity per kind"**, deciding how a delivery reaches the right one of an instance's several concurrent waiters (parallel MI iterations, ADR-025 v.2 §2.2/§2.5) and carries its payload intact: **per-delivery payload binding** (the receiving execution captures the fired definition's item into its own frame; a node is a runtime-immutable definition — the node-resident payload slot is designed out; sharpens ADR-014 v.1 §2.5), the **per-kind multiplicity table** (message → exactly one, the correlated waiter; signal → every waiter per publication semantics; timer → per-registration; conditional → §2.7), **iteration-granular message correlation** (per-subscription keys derived from the iteration's split input item over ADR-016 v.1's machinery; a parallel-MI message catch declaring no iteration correlation refuses at registration — ambiguous delivery is a loud modeling error), and **queue-owned waiter lifecycle** (teardown on empty queue, never on first fire; sharpens §2.5). Standard-grounded: §8.4.2 correlates to the instance (extract quoted); intra-instance token selection is standard-silent — engine choices called out as such; signal fan-out quotes `event-handling.md` publication. Motivated by #305 (the #277 review's C1/A1 finding: the shared `received` slot on MI-shared catch nodes). Implementation by the accompanying SRDs. |
 | v.4 | 2026-07-20 | Ruslan Gabitov | **Accepted** (landed via the accompanying SRD — three milestones, make ci green, diff-coverage 100%). Added **§2.8 "Link events: intra-process GOTO by static name-pairing"** — the Link conception the taxonomy rows named but never decided. **Key decision: Link is not a wait node.** Unlike every other catch in this ADR (Message/Timer/Signal/Conditional §2.7), a Link catch does not subscribe or park — it is a flow **entry point** (no incoming sequence flow, activated only by its paired throw), and a Link throw is a flow **exit** (no outgoing sequence flow) that **redirects** the token. **Positions:** Intermediate Throw (source) + Intermediate Catch (target) only; Boundary **rejected** (`event-handling.md` "Link | NO (only in normal flow)"; ADR-018), Start/End **rejected** (intermediate-only, `conformance.md`), Event-Based-Gateway arm **rejected** (an arm waits; Link does not — already excluded by ADR-005 v.4 §2.12). **Pairing:** by `name` within **one flow-elements container** (Process / Sub-Process level — "cannot link a parent Process with a Sub-Process", §10.5.1); **many sources → one target** (metamodel `source [0..*]` / `target [0..1]`, `event-definitions.md`); validated **at registration** fail-fast (no-target-with-sources, ≥2-targets, and cross-level pairing all errors); resolution is a **snapshot artifact** (computed once at definition→snapshot conversion, the runtime carries a resolved edge, not a name lookup). **Execution:** reaching the source redirects to the target's outgoing flow(s) — one synchronous hand-off on the instance loop, no `EventHub` propagation (§2.4), no waiter (§2.5), single-writer preserved (ADR-001 v.6 §4); re-entrant for on-page loops. **Engine notes:** Link **retires the `SubscriptionKey()` generalization premise** (the signal conception parked it "until Link — the second name-keyed event"; Link is a static redirect, not a name-matched subscription, so Signal stays the only one — `docs/backlog.md` re-scoped); the Link throw **diverges from the generic throw path** (no outgoing flow, no hub emit — its own redirect handling, not `PropagateEvent`). Added the §3 GOTO-without-subscription consequence; §2.8 listed in the scope blurb + §6. Standard-grounded against `docs/bpmn-spec/` (§10.5.1, `event-definitions.md` LinkEventDefinition cardinality, `semantics/event-handling.md` boundary-invalid, `conformance.md` positions). Conception; the accompanying landing SRD implements. |
 | v.3 | 2026-07-15 | Ruslan Gabitov | Added **§2.7 "Conditional events: status-based triggering by commit-diff"** — the Conditional conception the taxonomy rows named but never decided. **Positions:** Intermediate Catch + Boundary (interrupting/non-interrupting, Tables 10.89/10.90) + **Event-Based Gateway arms** (closing the ADR-005 §2.12 arms deferral; `gateways.md` lists Conditional among the gateway's catching events) in scope; **top-level Conditional Start not supported indefinitely** — an engine choice grounded in Table 10.84's verbatim prohibition ("MUST NOT refer to the data context or instance attribute of the Process … MAY refer to static Process attributes and states of entities in the environment", access mechanisms "out of scope of the standard") + the engine having no such surface (reference engines reduce it to an explicit evaluate-API); **Event Sub-Process start is the planned Conditional-start home** (inside a live instance the condition legally reads the enclosing scope per §10.4.3) — decided now, lands with Sub-Processes. **Evaluation:** instance-scope data context (§10.4.3); evaluated at arm (an arm-time true fires — reference-engine behavior) then re-evaluated on **committed** data change only — the ADR-011 v.6 §2.9.4 commit-diff seam is the change signal (mid-activity writes never fire a conditional); the normative **false→true edge rule** (Table 10.84: "MUST become false and then true before the Event can be triggered again") realized as per-subscription edge state, governing non-interrupting boundary re-fires; opaque-expression granularity = re-evaluate all armed conditionals per non-empty commit by default, with an OPT-IN declared watched-paths filter settled as ONE uniform per-subscription rule with NO processing modes at any level: the expression carries an optional `Dependencies() []string` capability (`data.DependencyLister`; goexpr authors declare via `WithDependencies`, declarative expressions implement it structurally, a conservative codegen source analyzer may derive it) — absent/nil → the CE re-evaluates on every non-empty commit (the safe fallback: a missing statement costs performance, never correctness — which is why no mode or completeness validation exists); non-empty → re-evaluate only when the commit-diff intersects (segment-prefix); explicitly-empty rejected at construction (the never-fire trap); runtime read-tracing rejected (opaque closures take data-dependent paths and can bypass the data source via captured live structs → silently incomplete inferred sets); multi-fire ordering: one commit → one snapshot → evaluate per the rule, apply fires in arming order, a disarming fire voids later-collected deliveries. **Ownership:** conditional subscriptions are **loop-local** — a deliberate exception to §2.5's sole-hub pattern (the trigger source is the instance's own commits; timer stays hub-owned as a clock-driven engine-wide source); delivery through the §2.1 inbound edge, single-writer preserved, §2.4 subscribe-before-publish holds by construction. Added the §3 data-driven-waiting consequence. Standard-grounded against the BPMN 2.0 PDF (Tables 10.84/10.89/10.90, §10.5.1, §10.4.3 — verified verbatim via the spec notebook; the verified clauses added to `event-handling.md`'s appendix so future reviews ground in-repo) and `docs/bpmn-spec/` (`gateways.md`, `sub-processes.md`, `events.md`). §7 refreshed at the bump moment: stale pins ADR-001 v.5→v.6 and ADR-013 v.1→v.2 corrected; ADR-011 v.6 / ADR-005 v.4 / ADR-018 v.1 references added (the ADR-018 §2.7 deferred row gains a decided-here annotation at landing). §2.5 clarified: Conditional is the deliberate loop-owned exception to the sole-hub pattern. Conception; the accompanying SRD implements. |
 | v.2 | 2026-06-27 | Ruslan Gabitov | Added **§2.6 "Error events: throw, propagation, and catch"** — the detailed Error *event* model §2.2 named but left at engine-note depth: the `Error`/`ErrorEventDefinition` object (`errorRef`→`errorCode`/`structureRef`, valid only at End / Boundary / Event-Sub-Process-Start positions per `conformance.md`); the two **throw** sources (Error End Event throwing its `Error`, §10.5.6/`end-events.md`; and an activity raising an interrupting error → `Active→Failing`, `tasks.md`/`activity-lifecycle.md`) and that the throw is **critical** (§10.5.1) with no Error Intermediate Throw Event; **propagation** as the scope-chain walk to the innermost enclosing catcher matching `errorRef` (§10.5.1/§10.5.7), matching **per Event Declaration**; **catch** at an always-interrupting Error Boundary (activity→`Failing`, token on the exception flow, cancel-after-flow per §10.5.6 §7; Error Event Sub-Process catch deferred with Sub-Processes); **unmatched→instance fault** as the engine choice for the spec's "unresolved Error"; and an **engine note** on the single-scope reality before Sub-Processes (no scope to climb to → an activity's error is caught only by a boundary on that same activity, and an Error End Event always resolves to an instance fault) cross-referencing [SAD-001 v.1 §15.3]. Fixed the §2.2 engine-note citation `§11`→`§10.5.7` and pointed it at §2.6. Refines pin updated ADR-001 v.5→v.6. Standard-grounded against `docs/bpmn-spec/` (§10.5.1/§10.5.6/§10.5.7, `event-definitions.md`/`tasks.md`/`end-events.md`/`conformance.md`/`activity-lifecycle.md`). No code/behaviour change — conception only. |
