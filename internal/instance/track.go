@@ -210,8 +210,15 @@ type track struct {
 	foundation.BaseElement
 	prev      []string
 	msgDefIDs []string
-	condDefs  []*events.ConditionalEventDefinition
-	steps     []*stepInfo
+	// msgIterKeyName/msgIterKey are the iteration-correlation pair the
+	// registration evaluated for a catch that declares one (SRD-085
+	// FR-3): the declared key's NAME and this execution's subscription
+	// VALUE, derived from the iteration's own scope. Guarded by t.m
+	// with msgDefIDs; read by the loop when indexing the wait.
+	msgIterKeyName string
+	msgIterKey     string
+	condDefs       []*events.ConditionalEventDefinition
+	steps          []*stepInfo
 	// compWaitRef holds the target ref of the wait-for-completion Compensation
 	// throw this track is parked on (SRD-059 FR-5); informational.
 	compWaitRef string
@@ -499,10 +506,35 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	// (SRD-027 FR-8): carried in the evWaiting emit below for a mid-run wait, and read by
 	// spawn for a track that starts parked before the loop drains events. Conditional
 	// definitions are recorded the same way (SRD-048 FR-7) — the loop arms them itself.
+	msgIDs := messageDefIDs(defs)
+
+	// a catch declaring iteration correlation (SRD-085 FR-3) evaluates
+	// its subscription-side value HERE, over this execution's own scope
+	// — where the iteration's split item is bound — so the loop's
+	// routing and the hub's subscription filter read one value.
+	keyName, keyValue, err := t.iterationKey(node, msgIDs)
+	if err != nil {
+		return err
+	}
+
 	t.m.Lock()
-	t.msgDefIDs = messageDefIDs(defs)
+	t.msgDefIDs = msgIDs
 	t.condDefs = conditionalDefs(defs)
+	t.msgIterKeyName = keyName
+	t.msgIterKey = keyValue
 	t.m.Unlock()
+
+	if keyValue != "" {
+		t.instance.corr.markIterationKeyName(keyName)
+		t.instance.corr.addIterKey(t.ID(), keyValue)
+		// a live message waiter subscribed before this iteration parked
+		// (a sibling registered first) carries the broker subscription —
+		// grow it with this iteration's value, exactly as a
+		// newly-learned conversation value grows it (SRD-017 §4.5); for
+		// the FIRST iteration the subscribe itself reads the value from
+		// CorrelationKeys(), and AddEventKey no-ops benignly.
+		t.instance.corr.extendReceivers(keyValue)
+	}
 
 	// Stash the timer plan BEFORE the wait is declared (SRD-070 FR-3):
 	// the evWaiting emit below lets the loop checkpoint immediately, and
@@ -538,6 +570,44 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	}
 
 	return t.armWaiters(en, defs)
+}
+
+// iterationKey evaluates a catch's declared iteration correlation over
+// this execution's scope (SRD-085 FR-3, ADR-006 v.5 §2.9.3). A node
+// without the capability — or without message definitions — yields
+// ("", "").
+func (t *track) iterationKey(
+	node flow.Node, msgIDs []string,
+) (string, string, error) {
+	ic, ok := node.(interface {
+		IterationCorrelation() (string, data.FormalExpression)
+	})
+	if !ok || len(msgIDs) == 0 {
+		return "", "", nil
+	}
+
+	keyName, expr := ic.IterationCorrelation()
+	if expr == nil {
+		return "", "", nil
+	}
+
+	frame, err := t.instance.sc.openFrameAt(
+		"iter-corr", node.ID(), t.scopePath)
+	if err != nil {
+		return "", "", err
+	}
+	defer frame.Discard()
+
+	v, err := t.instance.ExpressionEngine().Evaluate(
+		context.Background(), expr, newExecEnv(t.instance, frame, t))
+	if err != nil {
+		return "", "", errs.New(
+			errs.M("iteration correlation of %q failed", node.Name()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	return keyName, fmt.Sprint(v.Get(context.Background())), nil
 }
 
 // armWaiters subscribes the node's definitions. Per-trigger registration is the

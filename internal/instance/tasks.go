@@ -369,7 +369,7 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 	ls.waiting[t.ID()] = struct{}{}
 
 	for _, id := range t.msgDefIDs {
-		ls.msgIdx[id] = t
+		ls.addMsgSub(id, t)
 	}
 
 	// arm any conditional subscriptions of a born-parked track — the spawn-path

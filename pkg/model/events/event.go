@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
@@ -277,9 +278,73 @@ func (e Event) NodeType() flow.NodeType {
 
 type catchEvent struct {
 	dataOutputs map[string]*data.Parameter
+	// iterCorr is the declared iteration-correlation pair (SRD-085
+	// FR-3, ADR-006 v.5 §2.9.3): immutable configuration, shared by
+	// reference across per-instance clones; nil when the catch declares
+	// none.
+	iterCorr *iterationCorrelation
 	Event
 	outputAssociations []*data.Association
 	parallelMultiple   bool
+}
+
+// iterationCorrelation pairs a DECLARED process-level correlation key
+// (whose payload-side retrieval the model already carries) with the
+// subscription-side expression a registering execution evaluates over
+// its own scope (SRD-085 FR-3): the two halves of one value, matched
+// at delivery.
+type iterationCorrelation struct {
+	expr    data.FormalExpression
+	keyName string
+}
+
+// CatchOption configures a catch event at construction (SRD-085).
+type CatchOption func(*catchEvent) error
+
+// Option marks CatchOption as an options.Option.
+func (CatchOption) Option() {}
+
+// WithIterationCorrelation declares how a concurrently-waiting
+// execution of this catch (a parallel-MI iteration) is addressed by an
+// arriving message (ADR-006 v.5 §2.9.3): keyName names a declared
+// process CorrelationKey — its retrieval expressions derive the
+// envelope-side value — and expr, evaluated at registration over the
+// registering execution's scope (where the iteration's split item is
+// bound), produces the subscription-side value. Equal values route the
+// delivery to exactly that execution.
+func WithIterationCorrelation(
+	keyName string, expr data.FormalExpression,
+) CatchOption {
+	return CatchOption(func(ce *catchEvent) error {
+		if strings.TrimSpace(keyName) == "" {
+			return errs.New(
+				errs.M("WithIterationCorrelation: an empty correlation "+
+					"key name isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		if expr == nil {
+			return errs.New(
+				errs.M("WithIterationCorrelation: a nil expression "+
+					"isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		ce.iterCorr = &iterationCorrelation{keyName: keyName, expr: expr}
+
+		return nil
+	})
+}
+
+// IterationCorrelation returns the declared iteration-correlation pair,
+// or ("", nil) when the catch declares none — the capability the
+// registering execution probes (SRD-085 FR-3).
+func (ce *catchEvent) IterationCorrelation() (string, data.FormalExpression) {
+	if ce.iterCorr == nil {
+		return "", nil
+	}
+
+	return ce.iterCorr.keyName, ce.iterCorr.expr
 }
 
 // ProcessEvent is the node's delivery notification (implements
@@ -343,17 +408,44 @@ func newCatchEvent(
 	parallel bool,
 	baseOpts ...options.Option,
 ) (*catchEvent, error) {
-	e, err := newEvent(name, props, defs, baseOpts...)
+	// catch-level options apply to the built catchEvent; everything
+	// else rides down to newEvent (the propCollector discipline).
+	catchOpts := make([]CatchOption, 0, len(baseOpts))
+	eventOpts := make([]options.Option, 0, len(baseOpts))
+
+	for _, o := range baseOpts {
+		if co, ok := o.(CatchOption); ok {
+			catchOpts = append(catchOpts, co)
+
+			continue
+		}
+
+		eventOpts = append(eventOpts, o)
+	}
+
+	e, err := newEvent(name, props, defs, eventOpts...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &catchEvent{
+	ce := &catchEvent{
 		Event:              *e,
 		outputAssociations: []*data.Association{},
 		dataOutputs:        map[string]*data.Parameter{},
 		parallelMultiple:   e.triggers.Count() > 1 && parallel,
-	}, nil
+	}
+
+	for _, co := range catchOpts {
+		if err := co(ce); err != nil {
+			return nil, errs.New(
+				errs.M("newCatchEvent: couldn't apply a catch option to "+
+					"event %q", name),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+		}
+	}
+
+	return ce, nil
 }
 
 // clone returns a per-instance copy of the catchEvent: the embedded Event is
@@ -369,6 +461,7 @@ func (ce *catchEvent) clone() (catchEvent, error) {
 		Event:              e,
 		dataOutputs:        ce.dataOutputs,
 		outputAssociations: ce.outputAssociations,
+		iterCorr:           ce.iterCorr,
 		parallelMultiple:   ce.parallelMultiple,
 	}, nil
 }

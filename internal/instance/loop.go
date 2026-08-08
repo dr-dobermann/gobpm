@@ -35,11 +35,16 @@ type loopState struct {
 	// it removes it and sends the event (the winner); a later evDeliver for it finds it
 	// absent and drops (a losing arm of an Event-Based gateway, or a duplicate fire).
 	waiting map[string]struct{}
-	// msgIdx maps a waited Message catch-definition id → the parked track (SRD-027 FR-5/FR-8).
+	// msgIdx maps a waited Message catch-definition id → the ORDERED
+	// subscription list of parked tracks (SRD-027 FR-5/FR-8, SRD-085
+	// FR-2): one keyless entry routes directly (the single-waiter
+	// case); several entries route by the iteration-correlation match,
+	// and a second entry is refused outright when either is keyless —
+	// ambiguous delivery is a loud modeling error (ADR-006 v.5 §2.9.3).
 	// A track-less Message evDeliver (from Instance.ProcessEvent) is resolved through it; it is
 	// seeded alongside waiting (by evWaiting / spawn) and a track is cleared from it the moment
 	// it flips out of waiting or ends, so an index entry never outlives its track.
-	msgIdx map[string]*track
+	msgIdx map[string][]msgSub
 	// position is the loop-owned token-position view (SRD-028 FR-1): live trackID → its current
 	// node. Seeded at spawn, advanced by evMoved, and cleared when a track dies (evEnded/evFailed/
 	// evMerged-absorbed). The reachability and join machinery read THIS map, never another
@@ -144,7 +149,7 @@ func newLoopState(inst *Instance) *loopState {
 	return &loopState{
 		inst:             inst,
 		waiting:          map[string]struct{}{},
-		msgIdx:           map[string]*track{},
+		msgIdx:           map[string][]msgSub{},
 		position:         map[string]flow.Node{},
 		parked:           map[string]flow.Node{},
 		watchers:         map[string][]*boundaryWatch{},
@@ -687,7 +692,7 @@ func (ls *loopState) onWaiting(ctx context.Context, ev trackEvent) {
 	ls.waiting[ev.track.ID()] = struct{}{}
 
 	for _, id := range ev.msgDefIDs {
-		ls.msgIdx[id] = ev.track
+		ls.addMsgSub(id, ev.track)
 	}
 
 	// arm the track's conditional subscriptions AFTER it is recorded parked,
@@ -696,6 +701,78 @@ func (ls *loopState) onWaiting(ctx context.Context, ev trackEvent) {
 	// loop-owned position may still hold the previous node here (evWaiting
 	// precedes evMoved).
 	ls.armConditionalsAt(ctx, ev.track, ev.node)
+}
+
+// msgSub is one waiting subscription for a message definition (SRD-085
+// FR-2): the parked track and its iteration-correlation pair — the
+// declared key's name and this execution's value ("" = keyless).
+type msgSub struct {
+	track   *track
+	keyName string
+	value   string
+}
+
+// addMsgSub records a parked track's message subscription (SRD-085
+// FR-2/FR-4). Ambiguity refuses loud: a SECOND subscription for one
+// definition when either entry is keyless leaves delivery with no rule
+// to pick by — a modeling error the instance faults on rather than an
+// arbitrary pick (ADR-006 v.5 §2.9.3). Runs on the loop goroutine.
+func (ls *loopState) addMsgSub(id string, t *track) {
+	subs := ls.msgIdx[id]
+
+	for _, sub := range subs {
+		if sub.track == t {
+			return // re-parked — already indexed
+		}
+	}
+
+	t.m.RLock()
+	keyName, value := t.msgIterKeyName, t.msgIterKey
+	t.m.RUnlock()
+
+	if len(subs) > 0 && (value == "" || subs[0].value == "") {
+		ls.inst.fail(errs.New(
+			errs.M("message definition %q has %d concurrent waiters but "+
+				"no iteration correlation on every one of them — "+
+				"delivery would be ambiguous (declare "+
+				"WithIterationCorrelation on the catch)",
+				id, len(subs)+1),
+			errs.C(errorClass, errs.InvalidState)))
+		ls.stopAll()
+
+		return
+	}
+
+	ls.msgIdx[id] = append(subs, msgSub{
+		track: t, keyName: keyName, value: value,
+	})
+}
+
+// resolveMsgSub picks the ONE subscription an arriving message serves
+// (SRD-085 FR-2, ADR-006 v.5 §2.9.2): a single keyless subscription
+// routes directly (the pre-SRD-085 contract); keyed subscriptions
+// route by deriving the declared key's envelope-side value and
+// matching it — no match leaves every waiter parked for the next
+// message. Runs on the loop goroutine.
+func (ls *loopState) resolveMsgSub(
+	ctx context.Context, subs []msgSub, eDef flow.EventDefinition,
+) *track {
+	if len(subs) == 0 {
+		return nil
+	}
+
+	if len(subs) == 1 && subs[0].value == "" {
+		return subs[0].track
+	}
+
+	for _, sub := range subs {
+		derived, ok := ls.inst.corr.deriveNamed(ctx, eDef, sub.keyName)
+		if ok && derived == sub.value {
+			return sub.track
+		}
+	}
+
+	return nil
 }
 
 // dispatchToParked sends a fired event to its parked-and-undelivered track. The target is
@@ -711,11 +788,13 @@ func (ls *loopState) onWaiting(ctx context.Context, ev trackEvent) {
 // the loop-owned maps without a lock.
 func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 	tr := ev.track
-	// Message (FR-8): a track-less evDeliver resolves the parked track from the fired def's id.
+	// Message (FR-8): a track-less evDeliver resolves the parked track from the
+	// fired def's id — by the iteration-correlation match when several wait
+	// (SRD-085 FR-2).
 	if tr == nil {
-		tr = ls.msgIdx[ev.eDef.ID()]
+		tr = ls.resolveMsgSub(ctx, ls.msgIdx[ev.eDef.ID()], ev.eDef)
 		if tr == nil {
-			return // no parked track for this message → drop
+			return // no (matching) parked track for this message → drop
 		}
 	}
 
@@ -743,14 +822,30 @@ func (ls *loopState) flipNotParked(tr *track) {
 	ls.clearConds(tr.ID())
 }
 
-// clearMsgIdx removes every msgEDef→track entry pointing at tr, so a fired message can no
-// longer resolve to a track that has flipped out of waiting or ended (SRD-027 §3.4).
+// clearMsgIdx removes every subscription of tr, so a fired message can no
+// longer resolve to a track that has flipped out of waiting or ended
+// (SRD-027 §3.4); tr's iteration key leaves the hub-facing filter with it
+// (SRD-085 FR-3).
 func (ls *loopState) clearMsgIdx(tr *track) {
-	for id, t := range ls.msgIdx {
-		if t == tr {
-			delete(ls.msgIdx, id)
+	for id, subs := range ls.msgIdx {
+		kept := subs[:0]
+
+		for _, sub := range subs {
+			if sub.track != tr {
+				kept = append(kept, sub)
+			}
 		}
+
+		if len(kept) == 0 {
+			delete(ls.msgIdx, id)
+
+			continue
+		}
+
+		ls.msgIdx[id] = kept
 	}
+
+	ls.inst.corr.dropIterKey(tr.ID())
 }
 
 // clearPosition drops tr from the loop-owned position and parked views — a dead track

@@ -55,11 +55,23 @@ to the **correlated** waiter instead of the last-registered one.
   whose key matches the envelope's correlation value; with a single
   keyless subscription, today's direct route is unchanged.
 - **FR-3 — the iteration key (§2.9.3).** A message catch may declare
-  `events.WithIterationCorrelation(expr)` — a `FormalExpression`
-  evaluated at **registration** over the registering track's scope
-  (where ADR-025 v.2 §2.6 has bound the split item); the value joins
+  `events.WithIterationCorrelation(keyName, expr)`: `keyName` names a
+  **declared** process-level CorrelationKey — its retrieval
+  expressions derive the envelope-side value (`msgflow.DeriveKey`) —
+  and `expr`, a `FormalExpression` evaluated at **registration** over
+  the registering track's scope (where ADR-025 v.2 §2.6 has bound the
+  split item), produces the subscription-side value. The value joins
   the track's `CorrelationKeys()` contribution, so the hub-side
-  subscription and the loop-side routing use one key.
+  subscription filter and the loop-side routing read one declared
+  value; an iteration-granular key is **excluded from conversation
+  gating** (`validateAndAssociate` skips it — one instance
+  legitimately holds N values of it). Two latent gaps surfaced and
+  fixed while wiring this ("no pre-existing errors"): the engine never
+  forwarded the hub's `AddEventKey` capability, so an instance under
+  the engine could never extend a live broker subscription (the
+  conversation flow's extension silently no-opped too); and
+  `extendReceivers` walked only TOP-LEVEL nodes, silently missing
+  every message catch inside a composite body.
 - **FR-4 — the ambiguity refusal (§2.9.3).** Registering a second
   subscription for the same message definition when either lacks a key
   is a classified, self-identifying error — the track faults loud; no

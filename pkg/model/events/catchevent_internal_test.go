@@ -7,6 +7,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/stretchr/testify/require"
@@ -105,4 +106,60 @@ func TestCatchEventUploadDataBindError(t *testing.T) {
 		foundation.WithID("order_item")))
 
 	require.Error(t, ice.UploadData(ctx, ff))
+}
+
+// TestWithIterationCorrelation pins the SRD-085 FR-3 option: parameter
+// validation, the applied pair, the accessor's empty answer, and the
+// declaration surviving a per-instance clone.
+func TestWithIterationCorrelation(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	expr := data.FormalExpression(nil)
+
+	stub := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable("v"), nil
+		})
+
+	med := MustMessageEventDefinition(
+		bpmncommon.MustMessage("m", data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID("m_in"))), nil)
+
+	t.Run("an empty key name is refused", func(t *testing.T) {
+		_, err := NewIntermediateCatchEvent("c", med,
+			WithIterationCorrelation("  ", stub))
+		require.ErrorContains(t, err, "key name isn't allowed")
+	})
+
+	t.Run("a nil expression is refused", func(t *testing.T) {
+		_, err := NewIntermediateCatchEvent("c", med,
+			WithIterationCorrelation("k", expr))
+		require.ErrorContains(t, err, "nil expression")
+	})
+
+	t.Run("the declared pair survives the clone", func(t *testing.T) {
+		ice, err := NewIntermediateCatchEvent("c", med,
+			WithIterationCorrelation("k", stub))
+		require.NoError(t, err)
+
+		name, e := ice.IterationCorrelation()
+		require.Equal(t, "k", name)
+		require.NotNil(t, e)
+
+		cl, err := ice.catchEvent.clone()
+		require.NoError(t, err)
+
+		name, e = cl.IterationCorrelation()
+		require.Equal(t, "k", name)
+		require.NotNil(t, e)
+	})
+
+	t.Run("no declaration answers empty", func(t *testing.T) {
+		ice, err := NewIntermediateCatchEvent("c", med)
+		require.NoError(t, err)
+
+		name, e := ice.IterationCorrelation()
+		require.Empty(t, name)
+		require.Nil(t, e)
+	})
 }
