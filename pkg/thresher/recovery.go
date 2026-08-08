@@ -2,6 +2,7 @@ package thresher
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	gerrs "github.com/dr-dobermann/gobpm/pkg/errs"
@@ -69,7 +70,18 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 	}
 
 	if saveErr := repo.Save(ctx, rec); saveErr != nil {
-		return nil //nolint:nilerr // a lost claim race is the normal outcome
+		// A LOST CAS is the normal outcome — another engine recovered it — and
+		// is silence. Anything else is not: a connection reset, a timeout or a
+		// store outage used to be read the same way, so a transient failure
+		// abandoned an in-flight instance at startup and reported success, with
+		// nothing logged anywhere (FIX-038 §1.4). The Repository contract makes
+		// the two distinguishable: a version mismatch MUST carry
+		// errs.ConcurrentUpdate, and every adapter implements it identically.
+		if lostClaim(saveErr) {
+			return nil
+		}
+
+		return recoveryErr("couldn't claim the record for recovery", saveErr)
 	}
 
 	rec.RecVersion++ // Save advanced the stored version; continue from it
@@ -182,6 +194,15 @@ func (t *Thresher) ensureGroup(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// lostClaim reports whether err is the compare-and-set conflict that means
+// another engine claimed this instance first — the one Save failure that is a
+// normal outcome rather than a fault.
+func lostClaim(err error) bool {
+	var ae *gerrs.ApplicationError
+
+	return errors.As(err, &ae) && ae.HasClass(gerrs.ConcurrentUpdate)
 }
 
 // recoveryErr builds one classified recovery error.
