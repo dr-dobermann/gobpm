@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted (2026-08-08) |
 | Date | 2026-08-08 |
 | Owner | Ruslan Gabitov |
 | Upstream | [ADR-013 v.2](../design/ADR-013-instance-observability.md) (the observability posture discovery serves) |
@@ -209,16 +209,30 @@ answers every axis itself: `State()`, `ProcessID()`, `ParentID()`.
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-5 implemented; every §6 test exists and passes.
-- [ ] `make ci` green (incl. consumer-smoke and the examples run);
+- [x] FR-1…FR-5 implemented; every §6 test exists and passes.
+- [x] `make ci` green (incl. consumer-smoke and the examples run);
       diff-coverage ≥95% (aim 100%); touched functions ≥80%.
-- [ ] No in-repo reference to `InstanceFilter` remains (code or
-      current docs; frozen one-shots excepted).
-- [ ] §10 filled.
+- [x] No in-repo reference to `InstanceFilter` remains (code or
+      current docs; frozen one-shots excepted — the CHANGELOG names
+      the old constants only as the migration map).
+- [x] §10 filled.
 
 ## §10 Implementation summary
 
-*Post-landing placeholder.*
+Landed on `feat/composite-followups` in two milestones — doc
+`4edb51e`, M1 `4a83174` (the query API, both getters, the enum's
+removal and the migration of all ten in-repo call-site files), M2
+`e80add3` (the six guides + the CHANGELOG migration map).
+
+Verification: `make ci` green end to end (exit 0), consumer-smoke
+building an external module against the reshaped public API and all
+49 examples running; **diff-coverage 97.7% of 133 changed coverable
+lines** (min 95%) across the branch head, with `Instances`, `matches`,
+`adopt` and both `ProcessID` getters at 100%; suites race-clean;
+golangci-lint incl. tests 0 issues.
+
+Deviations from the plan: none. `TestInstancesFilter` keeps its
+SRD-019 canary name with a comment pointing here.
 
 ## Open questions
 
