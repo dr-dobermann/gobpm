@@ -111,7 +111,8 @@ func TestTimerServiceReleaseAndIdle(t *testing.T) {
 	require.False(t, ok, "an idle service holds nothing")
 
 	deadline := wakeEpoch.Add(time.Hour)
-	ts.hold(timerHold{instanceID: "i-1", trackID: "t-1", deadline: deadline})
+	ts.hold(timerHold{instanceID: "i-1", trackID: "t-1", deadline: deadline},
+		ts.beginArm("i-1", "t-1"))
 
 	got, ok := ts.nearest()
 	require.True(t, ok)
@@ -119,7 +120,8 @@ func TestTimerServiceReleaseAndIdle(t *testing.T) {
 
 	// an earlier hold wins the nearest slot.
 	earlier := wakeEpoch.Add(30 * time.Minute)
-	ts.hold(timerHold{instanceID: "i-2", trackID: "t-2", deadline: earlier})
+	ts.hold(timerHold{instanceID: "i-2", trackID: "t-2", deadline: earlier},
+		ts.beginArm("i-2", "t-2"))
 
 	got, _ = ts.nearest()
 	require.True(t, earlier.Equal(got))
@@ -162,7 +164,7 @@ func TestTimerServiceRunStops(t *testing.T) {
 	ts.hold(timerHold{
 		instanceID: "i-1", trackID: "t-1",
 		deadline: wakeEpoch.Add(time.Hour),
-	})
+	}, ts.beginArm("i-1", "t-1"))
 
 	cancel()
 
@@ -183,7 +185,7 @@ func TestTimerServiceRunStops(t *testing.T) {
 		})
 	ts2.hold(timerHold{
 		instanceID: "i-9", trackID: "t-9", deadline: wakeEpoch,
-	})
+	}, ts2.beginArm("i-9", "t-9"))
 	ts2.fireDue(ctx)
 	require.Zero(t, woke, "a canceled wake batch fires nothing")
 }
@@ -1195,4 +1197,48 @@ func TestPromoteFailureSurfaces(t *testing.T) {
 
 	require.False(t, th.registrations[proc.ID()][0].wired,
 		"the version that could not be armed is not marked wired")
+}
+
+// TestReleaseWaitsDuringHoldTimerRefusesTheArm is FIX-037 T-5: HoldTimer used
+// to register its deadline blind, so a ReleaseWaits that ran between the
+// method's entry and its hold scanned the service, found nothing to withdraw,
+// and was then overtaken by a hold that armed the very wait it had canceled —
+// a zombie deadline that later wakes the instance for a track that is gone.
+//
+// This is the timer counterpart of the subscription window FIX-036 §1.4 closed.
+// The interleaving is driven directly rather than raced: the arm is announced,
+// the release runs, and only then does the hold land.
+func TestReleaseWaitsDuringHoldTimerRefusesTheArm(t *testing.T) {
+	ts := newTimerService(clocktest.New(wakeEpoch), time.Second,
+		func(string, *instance.PendingTrigger) bool { return true })
+
+	h := timerHold{
+		instanceID: "i-1",
+		trackID:    "t-1",
+		deadline:   wakeEpoch.Add(time.Hour),
+	}
+
+	// the ordinary path: an uncontended arm is accepted.
+	require.True(t, ts.hold(h, ts.beginArm("i-1", "t-1")),
+		"an arm nothing released must be accepted")
+
+	ts.mu.Lock()
+	require.Len(t, ts.holds, 1)
+	ts.mu.Unlock()
+
+	ts.release("i-1", "t-1")
+
+	// the raced path: the arm is announced, THEN the release runs, THEN the
+	// hold lands. It must be refused and leave nothing behind.
+	token := ts.beginArm("i-1", "t-1")
+	ts.release("i-1", "t-1")
+
+	require.False(t, ts.hold(h, token),
+		"an arm whose wait was released mid-flight must be refused")
+
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	require.Empty(t, ts.holds, "a refused arm registers no deadline")
+	require.Empty(t, ts.arming, "a refused arm leaves no in-flight marker")
 }

@@ -34,14 +34,27 @@ func (t *Thresher) HoldTimer(
 			gerrs.C(errorClass, gerrs.InvalidState))
 	}
 
-	t.timerSvc.hold(timerHold{
+	// Announce the arm BEFORE building it, so a ReleaseWaits landing between
+	// here and the hold below can cancel it (FIX-037 §1.5). Arming blind let a
+	// release that found nothing be followed by a hold that registered a
+	// deadline for the wait it had just canceled.
+	token := t.timerSvc.beginArm(instanceID, trackID)
+
+	if !t.timerSvc.hold(timerHold{
 		instanceID: instanceID,
 		trackID:    trackID,
 		eDef:       eDef,
 		deadline:   deadline,
 		cycles:     cycles,
 		kind:       kind,
-	})
+	}, token) {
+		// The wait was released while this arm was in flight. That is not a
+		// failure: the release is authoritative and there is nothing left to
+		// hold, exactly as a withdrawn subscription hold reports success.
+		t.cfg.logger.Debug("timer hold refused — the wait was released mid-arm",
+			observability.AttrInstanceID, instanceID,
+			observability.AttrTrackID, trackID)
+	}
 
 	return nil
 }

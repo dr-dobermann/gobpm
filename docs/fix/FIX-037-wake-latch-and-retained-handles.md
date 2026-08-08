@@ -148,7 +148,7 @@ of this and the pattern remained.
 | 1 | §1.1–1.3 the latch | (a) hand the trigger to the in-flight wake (a queue per instance) — the winner must then own delivery for waits it knows nothing about, and the queue needs its own lifecycle; (b) make the latch **waitable**: a loser blocks until the winner finishes, then retries its own path against the now-resident instance | **(b)** — the retry is already written (the resident path at `wake.go:81-91`), each caller keeps ownership of its own payload, and no new lifetime is introduced |
 | 2 | §1.3 the incident path | (a) leave it and rely on the repository CAS — refuted in §1.3: `claimForWake` retries, so the CAS orders but does not exclude; (b) take the same waitable latch | **(b)** |
 | 3 | §1.4 the cancel | (a) cancel the old context inside `trackInstanceLocked` — runs a cancel under `t.m`, the forbidden shape; (b) return the displaced cancel to the caller and let it run outside the lock, exactly as `Forget` does since FIX-036 §8.2 | **(b)** |
-| 4 | §1.5 the timer | (a) mirror `HoldSubscription`'s confirm — needs a record of the hold outside `timerSvc` to confirm against, duplicating the service's own bookkeeping; (b) an **epoch per (instance, track)** in `timerSvc`: `ReleaseWaits` bumps it, and a `hold` carrying a stale epoch is refused | **(b)** — the service already owns this state, and the epoch makes the refusal total-ordered rather than a re-check |
+| 4 | §1.5 the timer | (a) mirror `HoldSubscription`'s confirm — needs a record of the hold outside `timerSvc` to confirm against, duplicating the service's own bookkeeping; (b) an **epoch per (instance, track)** in `timerSvc` — correct, but the map is keyed by track and never emptied, so it grows for the engine's lifetime: the §1.4 leak class reintroduced by the §1.5 remedy; (c) an **in-flight arming token**: `beginArm` announces, `hold` refuses a token a `release` has dropped | **(c)** — the same window as (b), with a map bounded by concurrent arms instead of by every track ever run |
 
 ### 3.2 Changes by file
 
@@ -178,11 +178,26 @@ path cannot start a second loop beside a timer wake.
 caller runs it after the lock is released. A first registration returns nil and
 the caller does nothing.
 
-#### 3.2.5 `pkg/thresher/timer_service.go` — a hold carries an epoch
+#### 3.2.5 `pkg/thresher/timer_service.go` — an arm is announced before it is built
 
-`release` bumps the (instance, track) epoch; `hold` records the epoch it was
-issued under and is refused if the epoch has moved. A refused hold is not an
-error — the wait it belonged to is gone.
+`beginArm` registers an in-flight token for the track and returns it; `hold`
+refuses a token that is no longer live; `release` drops the tokens of every arm
+in flight for that track. A refused hold is not an error — the wait it belonged
+to is gone — so `HoldTimer` logs it at `Debug` and returns nil, exactly as a
+withdrawn subscription hold reports success.
+
+**This replaces the epoch-per-(instance, track) design this section first
+specified.** An epoch map is keyed by track and never emptied, so it grows for
+every track the engine has ever run — the precise leak class §1.4 is about,
+reintroduced by the remedy for §1.5. A token keyed by the *arming call* lives
+only for the duration of one `HoldTimer`, so the map is bounded by concurrent
+arms rather than by history. The window closed is identical: §1.5 is about a
+release landing "between this method's entry and its `hold`", which is exactly
+the span a token covers.
+
+The four existing test call sites move to the token form rather than gaining a
+blind convenience wrapper — one protocol, and no second entry point through
+which the defect could return.
 
 ## 4 Verification
 

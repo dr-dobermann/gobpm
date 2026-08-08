@@ -62,10 +62,17 @@ type timerService struct {
 	// KEPT on failure (FIX-027): the callback has to report which.
 	wake  func(instanceID string, pending *instance.PendingTrigger) bool
 	holds map[string]timerHold
+	// arming holds the IN-FLIGHT HoldTimer calls, so a release landing in the
+	// middle of an arm can tell that arm it lost (FIX-037 §1.5). Keyed by the
+	// arming call's own token, NOT by track: the entry lives only for the
+	// duration of one HoldTimer, so the map is bounded by concurrent arms
+	// rather than growing with every track the engine has ever seen.
+	arming map[uint64]string // token → the track prefix being armed
 	// kick re-runs the loop's deadline computation after a hold is added or
 	// removed (buffered depth 1 — a coalescing signal, never blocks the caller).
-	kick chan struct{}
-	mu   sync.Mutex
+	kick       chan struct{}
+	armingNext uint64
+	mu         sync.Mutex
 	// backoff pushes a failed wake's next attempt out. Without it the hold is
 	// still due the instant the wake returns, so the loop would re-fire it
 	// immediately and spin — retrying as fast as it turns (FIX-027 §3.2.1).
@@ -84,6 +91,7 @@ func newTimerService(
 		wake:    wake,
 		backoff: backoff,
 		holds:   map[string]timerHold{},
+		arming:  map[uint64]string{},
 		kick:    make(chan struct{}, 1),
 	}
 }
@@ -111,13 +119,44 @@ func (ts *timerService) deferHold(h timerHold, next time.Time) {
 	ts.signal()
 }
 
-// hold registers (or replaces) a deadline and re-arms the loop's nearest-timer.
-func (ts *timerService) hold(h timerHold) {
+// beginArm announces an in-flight arm for a track and returns its token. The
+// caller MUST pass the token to hold (FIX-037 §1.5).
+func (ts *timerService) beginArm(instanceID, trackID string) uint64 {
 	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	ts.armingNext++
+	ts.arming[ts.armingNext] = trackPrefix(instanceID, trackID)
+
+	return ts.armingNext
+}
+
+// hold registers (or replaces) a deadline and re-arms the loop's nearest-timer.
+// It is REFUSED — reporting false — when a release withdrew this track's waits
+// while the arm was in flight: release drops the arming token, so a token that
+// is gone means the wait this deadline belongs to has been canceled.
+//
+// Without this, an arm that began before a concurrent ReleaseWaits would
+// register its deadline after that release had already scanned and found
+// nothing, leaving a zombie deadline that later wakes the instance for a track
+// that no longer exists. It is the timer counterpart of HoldSubscription's
+// record→arm→confirm (FIX-036 §3.2.4).
+func (ts *timerService) hold(h timerHold, token uint64) bool {
+	ts.mu.Lock()
+
+	if _, live := ts.arming[token]; !live {
+		ts.mu.Unlock()
+
+		return false
+	}
+
+	delete(ts.arming, token)
 	ts.holds[holdKey(h.instanceID, h.trackID, eDefIDOf(h.eDef))] = h
 	ts.mu.Unlock()
 
 	ts.signal()
+
+	return true
 }
 
 // releaseOne withdraws the single hold that just fired, leaving a track's other
@@ -142,6 +181,14 @@ func (ts *timerService) release(instanceID, trackID string) {
 	for k := range ts.holds {
 		if strings.HasPrefix(k, prefix) {
 			delete(ts.holds, k)
+		}
+	}
+
+	// Cancel any arm still in flight for this track, so a hold that began
+	// before this release cannot land after it (FIX-037 §1.5).
+	for token, p := range ts.arming {
+		if p == prefix {
+			delete(ts.arming, token)
 		}
 	}
 
