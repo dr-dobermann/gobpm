@@ -75,7 +75,7 @@ database". CI provides the same database as a service container.
 
 ## Engine groups
 
-Recovery is scoped to an **engine group** (ADR-033 v.3 §2.8): an
+Recovery is scoped to an **engine group** (ADR-033 v.4 §2.8): an
 engine lists, claims and recovers only its own group's instances.
 
 - **Ungrouped = solo.** Without options, an engine forms a

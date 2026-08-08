@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted (2026-08-08) |
 | Date | 2026-08-06 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-033 v.4](../design/ADR-033-persistence-and-state.md) §2.1 (items 5–7), §2.2 (re-enter applies to steps, not recorded composites), §2.10 (composite fidelity; durable, symmetrically linked children), [ADR-023 v.3](../design/ADR-023-sub-process-and-call-activity.md) §2.7 (the restart contract) |
@@ -49,15 +49,15 @@ siblings, which land here too ("no pre-existing errors").
   drained child scope never resumes its host, and the host track
   (state `TrackExecutingStep`, in `liveTrackStates`) re-enters the
   composite from the top — **double-executing the body**.
-- **The sweep guard has a window.** `applyCompensate` consumes ledger
-  entries out of `ls.ledgers` (`compensation_watch.go:107-137`)
-  **before** the first `runNextCompensation` registers the sweep
-  (`compensation_watch.go:216`); a capture in that window (or the
-  zero-queue `finishSweep` path, `compensation_watch.go:88-93`)
-  persists a ledger already drained — compensability silently lost.
-  Mid-sweep state is `compSweep{thrower, txHost, path, queue, wait}` +
-  the running handler's `sweepRun{sweep, entry}`
-  (`compensation_watch.go:47-54`, `:260-263`).
+- **The sweep consumes the ledger as it runs.** `applyCompensate`
+  moves ledger entries out of `ls.ledgers` into the sweep
+  (`compensation_watch.go:107-137`) — capture cannot interleave inside
+  one loop-event application (the consistent-cut premise), but from
+  the first handler spawn onward the compensable state lives in
+  `compSweep{thrower, txHost, path, queue, wait}` + the running
+  handler's `sweepRun{sweep, entry}` (`compensation_watch.go:47-54`,
+  `:260-263`) — none of it in the document, so a mid-sweep capture
+  records a ledger that no longer holds the swept entries.
 - **A Call Activity child is not persisted at all.**
   `WithCheckpointing` is applied at exactly three sites —
   `instanceOptions` (`pkg/thresher/thresher.go:1320`), recovery
@@ -82,11 +82,12 @@ siblings, which land here too ("no pre-existing errors").
   the per-instance settled channel on demand (`locked.go:250-258`) —
   order-independent, so a restored parent can await a child that has
   not itself been recovered yet; recovery lists both records in the
-  same group scan (`recovery.go:24`). Today `InvokeProcess` wires a
-  **local** settled channel instead (`invoker.go:63-67`,
-  `settled := make(chan struct{})`) — unregistered under the child's
-  id, so nothing could re-find it after a restart; FR-7 moves the
-  child onto the registry channel.
+  same group scan (`recovery.go:24`). `InvokeProcess`'s locally minted
+  settled channel IS registered under the child's id
+  (`trackInstanceLocked` → `handleForLocked`, `locked.go:241`), so
+  the registry channel converges across launch and recovery — the
+  re-link's substrate; what is missing is everything else: the
+  checkpointing options, the call records, the re-link itself.
 
 ## §2 Requirements
 
@@ -108,7 +109,12 @@ siblings, which land here too ("no pre-existing errors").
   - `Sweeps []SweepRecord{ThrowerTrack, TxHostTrack string, ScopePath
     string, Wait bool, Queue []LedgerRecord, Running *LedgerRecord}` —
     the resolving compensation's remaining queue and the entry being
-    undone (item 6).
+    undone (item 6). `LedgerRecord` grows `HandlerEventSub`
+    (behavioral: the restored handler's seed mode — child scope vs
+    frame) and the display names.
+  - The value codec gains an explicit **nil kind**: a parallel
+    staging is pre-sized to N, so unfilled and canceled slots are nil
+    — in the record and in the published output alike.
   - `CurrentSchema` 3 → 4; `Marshal` stamps 4; the future-schema
     refusal is untouched.
 - **FR-2 — the loop mirrors off-loop iteration position.** The
@@ -124,8 +130,10 @@ siblings, which land here too ("no pre-existing errors").
 - **FR-3 — sequential MI and Standard Loop restore at position.** A
   restored host track carrying `MI` re-enters its composite with the
   decorator **seeded**: completed passes are not re-run, `staging`
-  returns the collected outputs, a fired `completionCondition` is not
-  re-evaluated backwards, and the in-flight pass restarts from its
+  returns the collected outputs, and a fired `completionCondition` is
+  honored — recorded when the runner's protocol note reached the loop
+  before the capture, otherwise re-evaluated forward over the restored
+  data (deterministic, never backwards), and the in-flight pass restarts from its
   restored scope data (re-enter applies to the pass, not the
   construct — ADR-033 v.4 §2.2). The §2.9 counters
   (`numberOfInstances`, `loopCounter`, …) re-publish from the record.
@@ -151,16 +159,21 @@ siblings, which land here too ("no pre-existing errors").
   remaining queue (including a `Running` entry, which **re-runs**: a
   handler is at-least-once per ADR-033 §2.3) resumes in order, a
   `TxHostTrack` sweep re-drives `finalizeTransaction` on drain. The
-  drained-ledger window closes structurally: entries consumed into a
-  sweep are always either in `ls.ledgers` or in a captured
-  `SweepRecord` — `applyCompensate` registers the sweep (and its
-  queue) **before** removing entries from the ledger maps.
+  running handler's own track is NOT recorded in the track table —
+  the sweep record is its whole state, and restoring both would run
+  the handler twice. At every capture instant a compensable entry is
+  either in the recorded ledger or in a recorded sweep — the
+  invariant the records themselves establish (capture is loop-atomic,
+  so no register-before-consume reordering is needed).
 - **FR-7 — Call Activity children are durable and re-linked.**
   `Thresher.InvokeProcess` applies the same checkpointing options as
   every other launch site (fixing the `instanceOptions` comment's
   claim); the child's record carries its own lease/group plus
   `ParentID`/`CallNodeID` (already in the document); the parent's
-  capture writes `CallRecord`s from `ls.calls`. On recovery both
+  capture writes `CallRecord`s from `ls.calls`, and `evCallWaiting`
+  becomes a persist point — the parent's document must carry the call
+  the moment the child exists, or a crash in that window restores a
+  parent that re-invokes. On recovery both
   records list in the same group scan; the restored parent rebuilds
   `ls.calls` and re-establishes the completion watch through the
   engine (`settledFor(childID)` is mint-on-demand, so parent/child
@@ -360,6 +373,18 @@ re-executed pass 1; no second child was launched.
   (`operating/persistence.md` "Current limits" rewritten,
   `extending/repository.md` untouched), README, CHANGELOG.
   `feat(instance): the composite kill-and-resume e2e; docs (SRD-082 M5)`.
+- **M6 — the independent-review round.** The `/pr-review` pass (three
+  lenses over the branch diff) returned nine notes: five agreed and
+  landed here — deterministic re-attach completion order (sort pending
+  drains by frozen ordinal), handle linkage cached at `adopt`, refusal
+  tests assert the expected cause (exposing the two refusal shapes:
+  adoption failures land terminal, decorator-seed refusals raise a
+  durable incident), post-`require.Never` semantic anchors, deferral
+  reason assertions. Two agreed-but-out-of-scope → issues #305 (shared
+  catch-node payload routing in parallel MI) and #306 (compositional
+  discovery query API); one rejected (goroutine-leak claim — the
+  instance context cancels every track on fail).
+  `fix: land the agreed independent-review findings (SRD-082 M6)`.
 
 ## §8 Cross-doc
 
@@ -374,16 +399,36 @@ re-executed pass 1; no second child was launched.
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-9 implemented; every §6 test exists and passes.
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%); touched
+- [x] FR-1…FR-9 implemented; every §6 test exists and passes.
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%); touched
       functions ≥80%.
-- [ ] SRD-070's retired deferral is cross-noted (linked-docs sync);
-      the persistence guide's "Current limits" rewritten.
-- [ ] §10 filled.
+- [x] SRD-070's retired FR-4 posture is cross-noted HERE (§1; SRD-070
+      itself is a frozen one-shot and is not retro-edited); the
+      persistence guide's "Current limits" rewritten.
+- [x] §10 filled.
 
 ## §10 Implementation summary
 
-*Post-landing placeholder.*
+Landed on `feat/checkpoint-fidelity` in seven milestones — M1
+`6507e0b`, M2 `717e756`, M3 `a1ef725`, M4 `3b68b66`, M5 `36ea396`
+(rebased onto master after #304; the re-attach seam adapted to the
+engine-group context accessor in `d6f6132`), M6 `fc0266d` (the
+independent-review round, §7), plus a coverage-gate milestone adding
+the re-attach seam's shape tests (resident child, not-running refusal,
+repository load failure, the lazy handle's resident delegation, the
+settled child's root-scope filter and decode refusal).
+
+Verification: `make ci` green end to end — mock/link/example checks,
+tidy, lint (0 issues incl. tests), build, consumer smoke, the full
+`-race` suite, govulncheck — with **diff-coverage 96.8% of 787 changed
+coverable lines** (min 95%).
+
+Deviations from the plan: none in scope; two review findings were
+agreed but out of scope and filed as issues — #305 (per-iteration
+payload routing on shared catch nodes) and #306 (compositional
+discovery queries). The known limits documented in the persistence
+guide are filed as #307 (Ad-Hoc routing state) and #308 (cross-engine
+call re-link).
 
 ## Open questions
 
