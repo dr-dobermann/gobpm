@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
-	"sync"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
@@ -279,37 +278,21 @@ func (e Event) NodeType() flow.NodeType {
 type catchEvent struct {
 	dataOutputs map[string]*data.Parameter
 	Event
-	// received holds the payload item captured from a fired message event
-	// definition, bound into scope on resume (ADR-014 v.1 §2.2). It is
-	// per-instance runtime state, nil until a payload-carrying event fires.
-	// Guarded by the package recvMu — see its comment.
-	received           *data.ItemDefinition
 	outputAssociations []*data.Association
 	parallelMultiple   bool
 }
 
-// recvMu guards every catchEvent's received field: N parallel
-// Multi-Instance bodies SHARE their catch node, so concurrent fires
-// write it from different track goroutines (surfaced by SRD-082's
-// parallel-restore tests). A package-level mutex, because the model
-// layer copies event structs by value at build time — an embedded
-// mutex would be copied with them (govet copylocks). The
-// payload-routing semantics of that node sharing are a follow-up
-// issue; the mutex makes the access safe, not the ordering fair.
-var recvMu sync.Mutex
-
-// ProcessEvent captures the payload carried by a fired event definition, so a
-// catch event can bind it into scope on resume (the consumer side of ADR-014
-// v.1 §2.2). A definition fired without a payload captures nothing. Implements
-// eventproc.EventProcessor for every catch event (StartEvent, IntermediateCatchEvent).
+// ProcessEvent is the node's delivery notification (implements
+// eventproc.EventProcessor for every catch event). Since SRD-085 the
+// payload does NOT land here: a node is a runtime-immutable definition
+// shared by every execution of its instance (parallel MI iterations
+// included), so the delivery's item is captured by the RECEIVING
+// execution and carried to UploadData in its frame (ADR-006 v.5
+// §2.9.1). Nothing is left to do at this seam.
 func (ce *catchEvent) ProcessEvent(
 	_ context.Context,
-	eDef flow.EventDefinition,
+	_ flow.EventDefinition,
 ) error {
-	recvMu.Lock()
-	ce.received = msgflow.CaptureItem(eDef)
-	recvMu.Unlock()
-
 	return nil
 }
 
@@ -421,9 +404,11 @@ func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
 			errs.E(err))
 	}
 
-	recvMu.Lock()
-	received := ce.received
-	recvMu.Unlock()
+	// THIS delivery's payload rides the frame (ADR-006 v.5 §2.9.1,
+	// SRD-085 FR-1): the receiving execution captured it from the fired
+	// definition and staged it here — never node state, so concurrent
+	// deliveries into sibling executions cannot cross payloads.
+	received := f.Received()
 
 	outs := map[string]*data.Parameter{}
 	for _, o := range f.Outputs() {

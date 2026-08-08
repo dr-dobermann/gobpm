@@ -56,6 +56,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/set"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
@@ -192,6 +193,13 @@ type track struct {
 	evtCh       chan flow.EventDefinition
 	taskID      string
 	scopePath   scope.DataPath
+	// receivedItem is THIS delivery's captured payload (ADR-006 v.5
+	// §2.9.1, SRD-085 FR-1): deliver() captures it from the fired
+	// definition on the track's own goroutine, the next node upload
+	// stages it into the execution frame and clears it. Track-goroutine
+	// owned — never read off-goroutine.
+	receivedItem *data.ItemDefinition
+
 	// adHocActivity names the inner activity this track was routed to inside an
 	// Ad-Hoc scope, empty for every other track (SRD-074 §3.4). Set pre-spawn on
 	// the loop goroutine and read after the track is terminal, so it needs no
@@ -1437,6 +1445,15 @@ func (t *track) finalizeNodeExecution(
 	step.state = StepEnded
 	t.updateState(TrackProcessStepResults)
 
+	// stage the delivery's payload for the catch node's binding and
+	// consume it — the next execution must not see a stale item
+	// (SRD-085 FR-1; for an Event-Based Gateway the item survives to
+	// the WINNING ARM's upload, which is this call on the arm's step).
+	if t.receivedItem != nil {
+		f.SetReceived(t.receivedItem)
+		t.receivedItem = nil
+	}
+
 	if err := t.uploadOutgoingData(ctx, step.node, f); err != nil {
 		return err
 	}
@@ -1681,6 +1698,11 @@ func (t *track) deliver(
 				n.Name(), n.ID()),
 			errs.C(errorClass, errs.TypeCastingError))
 	}
+
+	// THIS delivery's payload is captured by the receiving execution —
+	// never by the shared node (ADR-006 v.5 §2.9.1, SRD-085 FR-1). The
+	// node's ProcessEvent stays a notification seam.
+	t.receivedItem = msgflow.CaptureItem(eDef)
 
 	if err := ep.ProcessEvent(ctx, eDef); err != nil {
 		return err

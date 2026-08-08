@@ -13,6 +13,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -104,12 +106,15 @@ func TestReceiveTaskProcessThenExec(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("captured payload is bound into scope on resume",
+	t.Run("the delivery's payload is bound into scope on resume",
 		func(t *testing.T) {
 			rt, err := activities.NewReceiveTask("await", recvMessage(t),
 				activities.WithoutParams())
 			require.NoError(t, err)
 
+			// the node's notification stores nothing (SRD-085 FR-1) —
+			// the payload reaches Exec through the environment, carried
+			// by the RECEIVING execution.
 			require.NoError(t, rt.ProcessEvent(ctx, firedDef(t, "ORD-5")))
 
 			var put data.Data
@@ -123,7 +128,12 @@ func TestReceiveTaskProcessThenExec(t *testing.T) {
 					return nil
 				})
 
-			flows, err := rt.Exec(ctx, re)
+			env := &receivedEnv{
+				RuntimeEnvironment: re,
+				item:               msgflow.CaptureItem(firedDef(t, "ORD-5")),
+			}
+
+			flows, err := rt.Exec(ctx, env)
 			require.NoError(t, err)
 			require.Empty(t, flows)
 
@@ -176,14 +186,17 @@ func TestReceiveTaskProcessThenExec(t *testing.T) {
 				activities.WithoutParams())
 			require.NoError(t, err)
 
-			require.NoError(t, rt.ProcessEvent(ctx, firedDef(t, "x")))
-
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().
 				Put(mock.Anything).
 				Return(fmt.Errorf("commit failed"))
 
-			_, err = rt.Exec(ctx, re)
+			env := &receivedEnv{
+				RuntimeEnvironment: re,
+				item:               msgflow.CaptureItem(firedDef(t, "x")),
+			}
+
+			_, err = rt.Exec(ctx, env)
 			require.Error(t, err)
 		})
 }
@@ -214,3 +227,12 @@ func TestReceiveTaskInstantiate(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, cl.Instantiate())
 }
+
+// receivedEnv wraps a runtime environment with the delivery-payload
+// capability the receiving execution provides (SRD-085 FR-1).
+type receivedEnv struct {
+	renv.RuntimeEnvironment
+	item *data.ItemDefinition
+}
+
+func (e *receivedEnv) ReceivedItem() *data.ItemDefinition { return e.item }

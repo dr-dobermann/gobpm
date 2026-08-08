@@ -12,46 +12,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCatchEventProcessEventCaptures verifies the catch-side capture (SRD-014):
-// ProcessEvent stores a fired message definition's payload item (bound into
-// scope on resume by an IntermediateCatchEvent), and captures nothing for a
-// payload-less trigger. It is an internal test because `received` is unexported.
-func TestCatchEventProcessEventCaptures(t *testing.T) {
+// TestCatchEventProcessEventIsStateless pins the SRD-085 FR-1 contract:
+// the node's delivery notification stores NOTHING — a node is a
+// runtime-immutable definition shared by every execution of its
+// instance, and the payload rides the receiving execution's frame
+// instead (ADR-006 v.5 §2.9.1).
+func TestCatchEventProcessEventIsStateless(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
 	ctx := context.Background()
 
-	t.Run("captures a fired message payload",
-		func(t *testing.T) {
-			se, err := NewStartEvent("start")
-			require.NoError(t, err)
+	se, err := NewStartEvent("start")
+	require.NoError(t, err)
 
-			fired := MustMessageEventDefinition(
-				bpmncommon.MustMessage("order placed",
-					data.MustItemDefinition(values.NewVariable("ORD-9"),
-						foundation.WithID("order_item"))),
-				nil)
+	fired := MustMessageEventDefinition(
+		bpmncommon.MustMessage("order placed",
+			data.MustItemDefinition(values.NewVariable("ORD-9"),
+				foundation.WithID("order_item"))),
+		nil)
 
-			require.NoError(t, se.ProcessEvent(ctx, fired))
-			require.NotNil(t, se.received)
-			require.Equal(t, "order_item", se.received.ID())
-			require.Equal(t, "ORD-9", se.received.Structure().Get(ctx))
-		})
-
-	t.Run("captures nothing for a payload-less trigger",
-		func(t *testing.T) {
-			se, err := NewStartEvent("start")
-			require.NoError(t, err)
-
-			require.NoError(t, se.ProcessEvent(ctx,
-				MustSignalEventDefinition(&Signal{})))
-			require.Nil(t, se.received)
-		})
+	require.NoError(t, se.ProcessEvent(ctx, fired))
+	require.NoError(t, se.ProcessEvent(ctx,
+		MustSignalEventDefinition(&Signal{})))
 }
 
 // fakeFrame is a minimal exec.Frame for unit-testing catchEvent.UploadData: it
-// keeps the instantiated outputs so the test can read the bound value.
-type fakeFrame struct{ outs []*data.Parameter }
+// keeps the instantiated outputs so the test can read the bound value, and
+// carries the delivery payload the way the real frame does (SRD-085 FR-1).
+type fakeFrame struct {
+	outs     []*data.Parameter
+	received *data.ItemDefinition
+}
 
 func (f *fakeFrame) InstantiateInputs([]*data.Parameter) error    { return nil }
 func (f *fakeFrame) InstantiateOutputs(d []*data.Parameter) error { f.outs = d; return nil }
@@ -62,10 +53,12 @@ func (f *fakeFrame) GetDataByID(string) (data.Data, error)        { return nil, 
 func (f *fakeFrame) GetData(string) (data.Data, error)            { return nil, nil }
 func (f *fakeFrame) DataStores() datastore.Registry               { return nil }
 func (f *fakeFrame) RecordDataMovement(_, _ bool, _, _ string)    {}
+func (f *fakeFrame) SetReceived(i *data.ItemDefinition)           { f.received = i }
+func (f *fakeFrame) Received() *data.ItemDefinition               { return f.received }
 
-// TestCatchEventUploadDataBindsReceived verifies the WS-C3 bind: when a payload
-// was captured, UploadData carries the runtime value into the matching output
-// (overriding the static value).
+// TestCatchEventUploadDataBindsReceived verifies the WS-C3 bind over the
+// SRD-085 frame carrier: a payload staged on THIS execution's frame is
+// carried into the matching output (overriding the static value).
 func TestCatchEventUploadDataBindsReceived(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -80,18 +73,18 @@ func TestCatchEventUploadDataBindsReceived(t *testing.T) {
 	ice, err := NewIntermediateCatchEvent("catch", med)
 	require.NoError(t, err)
 
-	// simulate the waiter capture on resume.
-	ice.received = data.MustItemDefinition(values.NewVariable("ORD-9"),
-		foundation.WithID("order_item"))
-
+	// the receiving execution staged its delivery's payload here.
 	ff := &fakeFrame{}
+	ff.SetReceived(data.MustItemDefinition(values.NewVariable("ORD-9"),
+		foundation.WithID("order_item")))
+
 	require.NoError(t, ice.UploadData(ctx, ff))
 
 	require.Len(t, ff.outs, 1)
 	require.Equal(t, "ORD-9", ff.outs[0].ItemDefinition().Structure().Get(ctx))
 }
 
-// TestCatchEventUploadDataBindError covers the bind error path: a captured
+// TestCatchEventUploadDataBindError covers the bind error path: a staged
 // payload whose type doesn't match the output variable fails the update.
 func TestCatchEventUploadDataBindError(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
@@ -107,9 +100,9 @@ func TestCatchEventUploadDataBindError(t *testing.T) {
 	ice, err := NewIntermediateCatchEvent("catch", med)
 	require.NoError(t, err)
 
-	// the output item is a string variable; an int payload fails the update.
-	ice.received = data.MustItemDefinition(values.NewVariable(42),
-		foundation.WithID("order_item"))
+	ff := &fakeFrame{}
+	ff.SetReceived(data.MustItemDefinition(values.NewVariable(42),
+		foundation.WithID("order_item")))
 
-	require.Error(t, ice.UploadData(ctx, &fakeFrame{}))
+	require.Error(t, ice.UploadData(ctx, ff))
 }

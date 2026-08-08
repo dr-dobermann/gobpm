@@ -452,6 +452,52 @@ func (_c *MockFrame_Outputs_Call) RunAndReturn(run func() []*data.Parameter) *Mo
 	return _c
 }
 
+// Received provides a mock function for the type MockFrame
+func (_mock *MockFrame) Received() *data.ItemDefinition {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Received")
+	}
+
+	var r0 *data.ItemDefinition
+	if returnFunc, ok := ret.Get(0).(func() *data.ItemDefinition); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*data.ItemDefinition)
+		}
+	}
+	return r0
+}
+
+// MockFrame_Received_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Received'
+type MockFrame_Received_Call struct {
+	*mock.Call
+}
+
+// Received is a helper method to define mock.On call
+func (_e *MockFrame_Expecter) Received() *MockFrame_Received_Call {
+	return &MockFrame_Received_Call{Call: _e.mock.On("Received")}
+}
+
+func (_c *MockFrame_Received_Call) Run(run func()) *MockFrame_Received_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockFrame_Received_Call) Return(itemDefinition *data.ItemDefinition) *MockFrame_Received_Call {
+	_c.Call.Return(itemDefinition)
+	return _c
+}
+
+func (_c *MockFrame_Received_Call) RunAndReturn(run func() *data.ItemDefinition) *MockFrame_Received_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // RecordDataMovement provides a mock function for the type MockFrame
 func (_mock *MockFrame) RecordDataMovement(engineStore bool, write bool, name string, storeRef string) {
 	_mock.Called(engineStore, write, name, storeRef)
@@ -506,6 +552,46 @@ func (_c *MockFrame_RecordDataMovement_Call) Return() *MockFrame_RecordDataMovem
 }
 
 func (_c *MockFrame_RecordDataMovement_Call) RunAndReturn(run func(engineStore bool, write bool, name string, storeRef string)) *MockFrame_RecordDataMovement_Call {
+	_c.Run(run)
+	return _c
+}
+
+// SetReceived provides a mock function for the type MockFrame
+func (_mock *MockFrame) SetReceived(item *data.ItemDefinition) {
+	_mock.Called(item)
+	return
+}
+
+// MockFrame_SetReceived_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetReceived'
+type MockFrame_SetReceived_Call struct {
+	*mock.Call
+}
+
+// SetReceived is a helper method to define mock.On call
+//   - item *data.ItemDefinition
+func (_e *MockFrame_Expecter) SetReceived(item interface{}) *MockFrame_SetReceived_Call {
+	return &MockFrame_SetReceived_Call{Call: _e.mock.On("SetReceived", item)}
+}
+
+func (_c *MockFrame_SetReceived_Call) Run(run func(item *data.ItemDefinition)) *MockFrame_SetReceived_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 *data.ItemDefinition
+		if args[0] != nil {
+			arg0 = args[0].(*data.ItemDefinition)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockFrame_SetReceived_Call) Return() *MockFrame_SetReceived_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockFrame_SetReceived_Call) RunAndReturn(run func(item *data.ItemDefinition)) *MockFrame_SetReceived_Call {
 	_c.Run(run)
 	return _c
 }

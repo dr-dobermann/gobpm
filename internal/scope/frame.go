@@ -25,18 +25,31 @@ const (
 // A frame is owned by exactly one execution — it is NOT safe for concurrent
 // use; cross-track serialization happens in the Scope, never in frames.
 type Frame struct {
-	stores    datastore.Registry
-	plane     *Scope
-	inputs    map[string]*data.Parameter
-	outputs   map[string]*data.Parameter
-	props     map[string]data.Data
-	puts      map[string]data.Data
+	stores  datastore.Registry
+	plane   *Scope
+	inputs  map[string]*data.Parameter
+	outputs map[string]*data.Parameter
+	props   map[string]data.Data
+	puts    map[string]data.Data
+	// received is THIS delivery's payload item, staged by the receiving
+	// execution at delivery and bound by a catch node's UploadData
+	// (ADR-006 v.5 §2.9.1, SRD-085 FR-1) — per-frame, so concurrent
+	// deliveries can never observe each other's payloads.
+	received  *data.ItemDefinition
 	at        DataPath
 	trackID   string
 	nodeID    string
 	movements []DataMovement
 	state     frameState
 }
+
+// SetReceived stages the delivery's captured payload item on the frame
+// (SRD-085 FR-1); nil clears.
+func (f *Frame) SetReceived(item *data.ItemDefinition) { f.received = item }
+
+// Received returns the delivery payload staged on the frame, nil when
+// this execution carries none.
+func (f *Frame) Received() *data.ItemDefinition { return f.received }
 
 // DataMovement records one value moving through a task's data associations for
 // observability (SRD-063 / SRD-068): the reroute notes each Data Object or Data

@@ -37,7 +37,6 @@ import (
 type ReceiveTask struct {
 	message        *bpmncommon.Message
 	eDef           *events.MessageEventDefinition
-	received       *data.ItemDefinition
 	implementation string
 	task
 	instantiate bool
@@ -170,15 +169,16 @@ func (rt *ReceiveTask) EventClass() flow.EventClass {
 	return flow.IntermediateEventClass
 }
 
-// ProcessEvent captures the payload carried by the fired event definition so
-// Exec can bind it into scope on resume. Implements eventproc.EventProcessor;
-// ReceiveTask is the first model node to handle a fired event.
+// ProcessEvent is the node's delivery notification (implements
+// eventproc.EventProcessor). Since SRD-085 the payload does NOT land
+// here: a node is a runtime-immutable definition shared by every
+// execution of its instance, so the delivery's item is captured by the
+// RECEIVING execution and read back through the runtime environment
+// (ADR-006 v.5 §2.9.1). Nothing is left to do at this seam.
 func (rt *ReceiveTask) ProcessEvent(
 	_ context.Context,
-	eDef flow.EventDefinition,
+	_ flow.EventDefinition,
 ) error {
-	rt.received = msgflow.CaptureItem(eDef)
-
 	return nil
 }
 
@@ -196,7 +196,17 @@ func (rt *ReceiveTask) Exec(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if err := msgflow.Bind(ctx, re, rt.received); err != nil {
+	// THIS delivery's payload comes from the execution environment —
+	// the receiving execution captured it (SRD-085 FR-1); an
+	// environment without the capability carries none.
+	var received *data.ItemDefinition
+	if rp, ok := re.(interface {
+		ReceivedItem() *data.ItemDefinition
+	}); ok {
+		received = rp.ReceivedItem()
+	}
+
+	if err := msgflow.Bind(ctx, re, received); err != nil {
 		return nil,
 			errs.New(
 				errs.M("couldn't bind the received message payload"),
