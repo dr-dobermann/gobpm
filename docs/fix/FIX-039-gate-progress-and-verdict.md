@@ -1,7 +1,7 @@
 # FIX-039 — the gate's progress is invisible and its verdict is destructible
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft.
+**Status:** Accepted.
 **Date:** 2026-08-08.
 **Author:** Руслан Габитов.
 **Branch:** `fix/ci-progress-and-verdict`.
