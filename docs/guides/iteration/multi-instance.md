@@ -230,11 +230,36 @@ MI decorates ANY activity, and since SRD-086 a leaf means what it
 declares: a **sequential leaf** re-runs the task in place — each pass
 in a fresh frame with its split item and `loopCounter` — and a
 **parallel leaf** fans out per-instance scopes, each running one track
-at the task. A waiting leaf (a ReceiveTask — the "MI event node")
-parks one track per iteration; declare
-`activities.WithIterationCorrelation(keyName, expr)` on it so each
-arriving message serves exactly the matching iteration. Before
-SRD-086 a leaf MI silently executed ONCE.
+at the task. Before SRD-086 a leaf MI silently executed ONCE.
+
+**A leaf that WAITS cannot be iterated yet, and the engine refuses to
+build one.** If an activity both declares loop characteristics and
+parks on execution — a ReceiveTask or other catching event node, a
+user task, an external worker — `snapshot.New` fails with a message
+naming the activity and pointing at
+[#313](https://github.com/dr-dobermann/gobpm/issues/313). The reason is
+that nothing owns the node's event registration across iterations: the
+node registers one wait, so a second iteration either never arms or
+serves the wrong one, and both in-place mechanisms tried during SRD-086
+failed (one hung, one fanned out recursively). A refusal at build time
+is the honest outcome until the loop/MI decorator becomes the single
+event processor for the node.
+
+**The workaround is a Sub-Process.** Put the wait inside an iterated
+Sub-Process and iterate that: the composite machinery already opens a
+scope per iteration and drives its waits correctly, including
+`events.WithIterationCorrelation` message routing (see *Events in a
+parallel body*, below).
+
+```go
+// refused by snapshot.New: the wait IS the iterated activity
+recv, _ := activities.NewReceiveTask("collect", msg,
+    activities.WithLoop(mi))
+
+// works: iterate the container, and put the wait inside it
+body, _ := activities.NewSubProcess("collect", activities.WithLoop(mi))
+// … add the ReceiveTask (without WithLoop) to body's own flow
+```
 
 ## Events in a parallel body
 

@@ -25,10 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Leaf-activity Multi-Instance execution** (SRD-086). A sequential
   leaf runs its passes in place (fresh frame each, split item +
   loopCounter bound); a parallel leaf fans out per-instance scopes
-  each running one track at the task — waiting leaves included (a
-  ReceiveTask under parallel MI routes by
-  `activities.WithIterationCorrelation`); both restore at their
-  position over the existing checkpoint schema.
+  each running one track at the task; both restore at their position
+  over the existing checkpoint schema. A leaf that **waits** stays
+  unsupported and is now **refused at build time** rather than run
+  wrongly: an activity that both iterates and parks on execution (a
+  ReceiveTask or other catching event node, a user task, an external
+  worker) fails `snapshot.New` with a message naming it and pointing at
+  the workaround — model the wait inside an iterated Sub-Process. The
+  decorator that would make it work natively is tracked in #313.
 
 
 - **In-instance event delivery: per-delivery payload binding and

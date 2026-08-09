@@ -76,12 +76,21 @@ existing fan-out, barrier and checkpoint machinery).
   its own MI decoration MUST NOT recurse (the iteration is driven by
   the group, not by the track), realized by spawning in a mode that
   executes the node plainly.
-- **FR-4 — a waiting leaf works under parallel MI.** The canonical
-  "MI event node": a ReceiveTask (or other waiting leaf) under
-  parallel MI parks its per-iteration track; delivery follows ADR-006
-  v.5 §2.9 — signals fan out to every iteration, messages route by
-  `WithIterationCorrelation`, and a keyless concurrent message wait
-  refuses (SRD-085's machinery, unchanged).
+- **FR-4 — an iterated waiting leaf is REFUSED at build time.** The
+  canonical "MI event node" — a ReceiveTask (or other waiting leaf)
+  under MI — does not work in place, and this SRD does not make it
+  work. `snapshot.New` refuses such a model with a message naming the
+  activity, pointing at #313 and at the workaround: model the wait
+  inside an iterated Sub-Process, where the composite machinery already
+  drives it correctly. **This replaces the FR-4 this document was
+  accepted with**, which claimed a waiting leaf works under parallel
+  MI; implementation proved it does not, and §10 records why the two
+  in-place mechanisms tried both failed.
+- **FR-4a — the refusal is narrow.** It fires only when an activity
+  both declares loop characteristics and parks on execution (a human
+  task, an external worker, or an event node with a non-conditional
+  definition). A composite is exempt — it has the decorator machinery —
+  and so is every non-waiting leaf, which is what FR-1…FR-3 deliver.
 - **FR-5 — checkpoint fidelity from day one.** A parallel leaf MI
   killed mid-flight restores at its position over the EXISTING schema
   (the group record + per-scope leaf tracks); a sequential leaf MI
@@ -146,7 +155,7 @@ None. Behavioral: a leaf MI executes N times instead of silently once.
 | T-2 | sequential completion condition (`internal/instance`) | FR-1: a true condition stops early; completed outputs stand |
 | T-3 | parallel leaf fans out (`internal/instance`) | FR-2/FR-3: 3 items → 3 concurrent runs, each reading ITS item; outputs land by ordinal; the activity's flow follows once |
 | T-4 | parallel completion condition cancels (`internal/instance`) | FR-2: the §2.7 cancel path over leaf scopes |
-| T-5 | waiting leaf under parallel MI (`pkg/thresher`) | FR-4: a ReceiveTask MI with iteration correlation — out-of-order envelopes serve the matching iterations |
+| T-5 | iterated waiting leaf refused (`pkg/thresher`, `internal/instance/snapshot`) | FR-4/FR-4a: a ReceiveTask under MI refuses at build time naming the activity and #313; a composite and a plain leaf both still build |
 | T-6 | parallel leaf kill-and-resume (`pkg/thresher`) | FR-5: restore at position over the existing schema; completed ordinals never re-run |
 | T-7 | sequential leaf kill-and-resume (`internal/instance`) | FR-5: the TrackRecord.MI mirror resumes at pass k |
 | T-8 | the silent-single-run regression (`internal/instance`) | §1's probe inverted: the 3-item leaf MI now runs 3 times |
@@ -170,7 +179,8 @@ None. Behavioral: a leaf MI executes N times instead of silently once.
 
 ## §9 Definition of Done
 
-- [x] FR-1…FR-5 implemented; every §6 test exists and passes.
+- [x] FR-1…FR-3, FR-4/FR-4a (as amended) and FR-5 implemented; every §6
+      test exists and passes.
 - [x] `make ci` green; diff-coverage ≥95% (aim 100%); touched
       functions ≥80%.
 - [x] The MI guide documents leaf execution; the CHANGELOG records the
@@ -191,7 +201,8 @@ Verification: `make ci` exit 0 end to end; **diff-coverage 96.7% of
 golangci-lint incl. tests 0 issues. Every §6 scenario has its named
 test (T-1/T-8 `TestLeafMISequentialRunsAllPasses`, T-2
 `…CompletionStops`, T-3 `TestLeafMIParallelFansOut`, T-4
-`…CompletionCancels`, T-5 `TestLeafReceiveTaskMIRouting`, T-6
+`…CompletionCancels`, T-5
+`TestLeafReceiveTaskMIRefused` + `TestIteratedWaitingLeafRefused`, T-6
 `TestLeafMIParallelKillAndResume`, T-7
 `TestLeafMISequentialKillAndResume`), plus five error-path pins.
 
@@ -206,8 +217,32 @@ its own (`scopeLeafPass` — a leaf opens no scope, so the run emitted
 none); restore re-marks a leaf instance track `leafPlain`; and the MI
 HOST must not register its waits (only the per-instance tracks do).
 
+**FR-4 was inverted after acceptance, and the amendment is the finding.**
+The document was accepted claiming a waiting leaf works under parallel
+MI, on the strength of a routing test that passed. Review of that test
+showed it proved nothing: the receiver was never armed a second time —
+zero `addMsgSub` calls on the second pass — and its "completed after
+the second delivery" was coincidence, not routing. Two in-place
+mechanisms were then tried and both reverted: re-arming the wait per
+pass (option B) hung the second delivery, and scoping the subscription
+per iteration (option D) fanned out recursively because the parking
+check preceded the `leafPlain` guard. Neither traded a wrong answer for
+a right one — they traded silence for a hang.
+
+The reason is structural rather than incidental, which is why this
+lands as a refusal instead of a third attempt: an iterating leaf has no
+component that owns the node's event registration across iterations.
+The decorator does — one `EventProcessor` for all iterations,
+substituting the Instance on the node's registration calls so the node
+never learns it is decorated — and that is #313's design, too large for
+this branch. Until it exists, a model that would silently deliver to
+the wrong iteration is refused at build time with a workaround in the
+message. The refusal is scoped by `parksOnExecution`, so the leaf MI
+FR-1…FR-3 deliver is untouched.
+
 ## Open questions
 
 *None — §4 records the resolved design points (scope-per-parallel-leaf
 vs in-place, sequential in place, implement-not-guard, the four-way
-routing).*
+routing); the iterated waiting leaf is refused here and designed in
+#313.*
