@@ -75,7 +75,7 @@ database". CI provides the same database as a service container.
 
 ## Engine groups
 
-Recovery is scoped to an **engine group** (ADR-033 v.4 §2.8): an
+Recovery is scoped to an **engine group** (ADR-033 v.5 §2.8): an
 engine lists, claims and recovers only its own group's instances.
 
 - **Ungrouped = solo.** Without options, an engine forms a
@@ -282,7 +282,7 @@ slice.
 ## Composite constructs restore at their position
 
 Every composite construct records its position in the checkpoint and
-restores **at that position** (ADR-033 v.4 §2.10) — nothing completed
+restores **at that position** (ADR-033 v.5 §2.10) — nothing completed
 ever re-executes, and no construct defers the capture:
 
 - A **composite scope** mid-body: the drained scope resumes its host
@@ -297,6 +297,12 @@ ever re-executes, and no construct defers the capture:
   reverse completion order; the handler that was RUNNING re-runs (a
   handler is an effect — at-least-once over its immutable snapshot);
   the wait-throw resumes only after the drain.
+- An **Ad-Hoc Sub-Process**: the routing state — completed counts, a
+  manual container's pending offer, a fired completion condition —
+  restores with the container, and the next Router decision sees the
+  true cross-crash progress. A pre-fidelity document (schema ≤ 4) that
+  froze an in-flight container refuses to restore loudly rather than
+  resuming with the routing state lost.
 - An **in-flight Call Activity**: the child is a durable instance of
   its own, symmetrically linked — recovery restores both ends and
   re-links them, whether the child is recovered, still awaiting
@@ -307,15 +313,40 @@ ever re-executes, and no construct defers the capture:
 `CheckpointDeferred` now signals only a real failure (an unserializable
 payload, a failed save) — still loud, never a silent skip.
 
+## A call tree recovers as a unit
+
+Recovery claims a **call tree**, not an instance: a child is never
+revived on its own — an engine reaches it only through its caller's
+claim, which walks the recorded call links transitively before
+restoring anything. So in a multi-engine group two engines can no
+longer split a caller from the child it awaits, and no manual
+placement rule is needed: the caller resumes with its children already
+resident on the same engine.
+
+Two consequences worth knowing:
+
+- **A child whose caller is terminal is finished, not revived.** A
+  caller completes only after its call returns, and a terminating
+  caller terminates its children — so a terminal caller with a live
+  child means a cancel cascade that a crash interrupted. Recovery
+  writes that child's terminal record and reports it
+  (`InstanceState/Terminated`, `reason=caller-terminal`) rather than
+  running an instance whose outcome nothing will consume.
+- **A child genuinely live on another engine refuses loudly.** If a
+  record written before this rule (or a misbehaving store) leaves a
+  child running elsewhere, the caller's recovery fails with a fact
+  naming the child and its holder — and that child keeps running.
+  Tearing down another engine's work to satisfy a recovery would
+  destroy real state.
+
 ## Current limits (the next slices)
 
 The operator **suspend/resume** surface is the remaining ADR-033
-slice. Two documented corners: in a **multi-engine group**, recovery
-may claim a caller and its called child on different engines — each
-recovers correctly, but the cross-engine re-link is future work (keep
-call pairs on one engine, or in one solo group, until it lands); and
-**Ad-Hoc sub-process routing state** is not yet part of the document
-(its own follow-up).
+slice. One documented corner remains in the multi-engine picture:
+re-linking a caller and child that are *deliberately* placed on
+different engines — remote child handles, cross-engine completion
+delivery and cancel cascade — is distribution work, still open as
+#308. Recovery affinity means a healthy group never needs it.
 
 ## See also
 

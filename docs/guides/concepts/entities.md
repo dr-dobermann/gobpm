@@ -250,7 +250,7 @@ func New(id string, opts ...Option) (*Thresher, error)
 | `RegisterProcess(p *process.Process, opts ...RegisterOption)` | register a definition (versioned). |
 | `StartLatest(key)` / `StartVersion(key, v)` | start an instance, returning an `*InstanceHandle`. |
 | `Run(ctx)` / `Shutdown(ctx)` | engine lifecycle. |
-| `Instance(id)` / `Instances(filter)` | discover running instances. |
+| `Instance(id)` / `Instances(query)` | discover running instances. |
 | `Observe(o Observer)` | subscribe to runtime facts. |
 
 The full engine surface — every `With*` option and lifecycle method — is its own

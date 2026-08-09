@@ -845,7 +845,7 @@ func TestCorrelationKeyReleasedAfterInstanceEnds(t *testing.T) {
 
 	// the first conversation runs to its end (the process is start → end).
 	require.Eventually(t, func() bool {
-		return len(th.Instances(InstancesCompleted)) == 1
+		return len(settledInstanceIDs(t, th)) == 1
 	}, 3*time.Second, 10*time.Millisecond, "the first instance must finish")
 
 	// the SAME key again: a finished conversation is not a conversation.
@@ -895,10 +895,10 @@ func TestForgetCancelsInstanceContext(t *testing.T) {
 		messaging.Envelope{Name: "order placed", Payload: "ORD-CTX"}))
 
 	require.Eventually(t, func() bool {
-		return len(th.Instances(InstancesCompleted)) == 1
+		return len(settledInstanceIDs(t, th)) == 1
 	}, 3*time.Second, 10*time.Millisecond, "the instance must finish")
 
-	id := th.Instances(InstancesCompleted)[0]
+	id := settledInstanceIDs(t, th)[0]
 
 	// Wrap the retained cancel so the test can see whether Forget invokes it.
 	var cancelled atomic.Bool
@@ -942,10 +942,10 @@ func TestForgetReleasesKeyAndSettled(t *testing.T) {
 		3*time.Second, 10*time.Millisecond)
 
 	require.Eventually(t, func() bool {
-		return len(th.Instances(InstancesCompleted)) == 1
+		return len(settledInstanceIDs(t, th)) == 1
 	}, 3*time.Second, 10*time.Millisecond)
 
-	ids := th.Instances(InstancesCompleted)
+	ids := settledInstanceIDs(t, th)
 	require.Len(t, ids, 1)
 
 	id := ids[0]
@@ -1051,4 +1051,15 @@ func TestRecoveredConversationKeepsItsKey(t *testing.T) {
 		"the recovered conversation must own its correlation key again")
 	require.Equal(t, instID, owner,
 		"and the reservation must name the recovered instance")
+}
+
+// settledInstanceIDs lists the terminal instances, failing the test on
+// a refused query (SRD-084 FR-4).
+func settledInstanceIDs(t *testing.T, th *Thresher) []string {
+	t.Helper()
+
+	ids, err := th.Instances(InstanceQuery{Stage: StageSettled})
+	require.NoError(t, err)
+
+	return ids
 }

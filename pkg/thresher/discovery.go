@@ -2,81 +2,136 @@ package thresher
 
 import (
 	"github.com/dr-dobermann/gobpm/internal/instance"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 )
 
-// InstanceFilter selects which tracked instances Instances returns (SRD-019).
-type InstanceFilter uint8
+// InstanceKind is the root/child axis of an InstanceQuery (SRD-084).
+type InstanceKind uint8
 
 const (
-	// InstancesAll returns every tracked instance.
-	InstancesAll InstanceFilter = iota
-	// InstancesRunning returns the non-terminal instances (Created/Active/
-	// Terminating).
-	InstancesRunning
-	// InstancesCompleted returns the terminal instances (Completed/Terminated) —
-	// the ones Forget can release.
-	InstancesCompleted
-	// InstancesRoots returns only the ROOT instances — the ones a host
-	// lists as "processes" (SRD-082 FR-7). Call Activity children are
-	// reachable through their parent (InstanceHandle.ParentID).
-	InstancesRoots
-	// InstancesChildren returns only the Call Activity children —
-	// instances launched by a caller's InvokeProcess. (Multi-Instance
-	// iterations are scopes inside ONE instance and never appear here.)
-	InstancesChildren
+	// KindAny matches roots and children alike (the zero value).
+	KindAny InstanceKind = iota
+	// KindRoots matches only ROOT instances — the ones a host lists as
+	// "processes". Call Activity children are reachable through their
+	// parent (InstanceHandle.ParentID).
+	KindRoots
+	// KindChildren matches only Call Activity children — instances
+	// launched by a caller's InvokeProcess. (Multi-Instance iterations
+	// are scopes inside ONE instance and never appear here.)
+	KindChildren
+
+	kindEnd // the validation bound, not a value
 )
+
+// InstanceStage is the lifecycle axis of an InstanceQuery (SRD-084) —
+// deliberately coarser than InstanceState: running vs settled is what
+// discovery composes on.
+type InstanceStage uint8
+
+const (
+	// StageAny matches every lifecycle state (the zero value).
+	StageAny InstanceStage = iota
+	// StageRunning matches the non-terminal instances
+	// (Created/Active/Terminating).
+	StageRunning
+	// StageSettled matches the terminal instances
+	// (Completed/Terminated) — the ones Forget can release.
+	StageSettled
+
+	stageEnd // the validation bound, not a value
+)
+
+// InstanceQuery selects tracked instances (SRD-084). The predicates
+// AND together, and the zero value selects every tracked instance.
+// ProcessID and ParentID are exact matches; "" means any. A
+// contradictory combination (KindRoots with a non-empty ParentID) is a
+// well-formed empty intersection, not an error.
+type InstanceQuery struct {
+	ProcessID string
+	ParentID  string
+	Kind      InstanceKind
+	Stage     InstanceStage
+}
 
 // instanceTerminal reports whether an instance lifecycle state is terminal.
 func instanceTerminal(s instance.State) bool {
 	return s == instance.Completed || s == instance.Terminated
 }
 
-// Instances returns the ids of tracked instances matching filter (SRD-019).
-// The host reads each one's state/tokens/data via Instance(id). Snapshot-
-// consistent under the engine lock; order is unspecified.
-func (t *Thresher) Instances(filter InstanceFilter) []string {
+// Instances returns the ids of tracked instances matching the query
+// (SRD-084): the axes AND together and InstanceQuery{} lists
+// everything. An out-of-range Kind or Stage refuses — the retired
+// filter enum silently returned EVERYTHING for an unknown value, and
+// a widened result for invalid input is exactly the defect class the
+// validation rule forbids. The host reads each id's state/tokens/data
+// via Instance(id). Snapshot-consistent under the engine lock; order
+// is unspecified.
+func (t *Thresher) Instances(q InstanceQuery) ([]string, error) {
+	if q.Kind >= kindEnd {
+		return nil, errs.New(
+			errs.M("Instances: unknown Kind %d", q.Kind),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if q.Stage >= stageEnd {
+		return nil, errs.New(
+			errs.M("Instances: unknown Stage %d", q.Stage),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
 	t.m.Lock()
 	defer t.m.Unlock()
 
 	out := make([]string, 0, len(t.instances))
 
 	for id, reg := range t.instances {
-		terminal := instanceTerminal(reg.inst.State())
-		child := reg.inst.ParentID() != ""
-
-		switch filter {
-		case InstancesRunning:
-			if terminal {
-				continue
-			}
-
-		case InstancesCompleted:
-			if !terminal {
-				continue
-			}
-
-		case InstancesRoots:
-			if child {
-				continue
-			}
-
-		case InstancesChildren:
-			if !child {
-				continue
-			}
+		if !q.matches(reg.inst) {
+			continue
 		}
 
 		out = append(out, id)
 	}
 
-	return out
+	return out, nil
+}
+
+// matches applies the query's ANDed predicates to one instance. Runs
+// under the engine lock.
+func (q InstanceQuery) matches(inst *instance.Instance) bool {
+	if q.Kind == KindRoots && inst.ParentID() != "" {
+		return false
+	}
+
+	if q.Kind == KindChildren && inst.ParentID() == "" {
+		return false
+	}
+
+	terminal := instanceTerminal(inst.State())
+	if q.Stage == StageRunning && terminal {
+		return false
+	}
+
+	if q.Stage == StageSettled && !terminal {
+		return false
+	}
+
+	if q.ProcessID != "" && inst.ProcessID() != q.ProcessID {
+		return false
+	}
+
+	if q.ParentID != "" && inst.ParentID() != q.ParentID {
+		return false
+	}
+
+	return true
 }
 
 // Forget releases the listed terminal instances from the engine's tracking
 // (SRD-019), so a long-running engine doesn't accumulate finished instances.
 // All-or-nothing: every id is validated first (known AND terminal); on any
 // unknown or still-live id none are removed and an error naming it is returned.
-// Forget(Instances(InstancesCompleted)...) sweeps all finished instances.
+// Forget over an InstanceQuery{Stage: StageSettled} listing sweeps all
+// finished instances.
 func (t *Thresher) Forget(ids ...string) error {
 	stops, err := t.forgetLocked(ids)
 	if err != nil {

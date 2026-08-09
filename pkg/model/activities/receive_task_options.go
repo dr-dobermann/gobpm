@@ -1,13 +1,45 @@
 package activities
 
+import (
+	"strings"
+
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+)
+
 // rcvTaskConfig collects the ReceiveTask-specific options (those that don't
 // belong to the embedded task) applied at NewReceiveTask.
 type rcvTaskConfig struct {
+	iterExpr    data.FormalExpression
+	iterKeyName string
 	instantiate bool
+	// iterDeclared records that WithIterationCorrelation was CALLED,
+	// so a call with empty arguments refuses instead of silently
+	// leaving the task uncorrelated (the events twin refuses too).
+	iterDeclared bool
 }
 
-// Validate implements options.Configurator; rcvTaskConfig has no constraints.
-func (*rcvTaskConfig) Validate() error {
+// Validate implements options.Configurator: an iteration-correlation
+// declaration must carry BOTH halves (the validation rule — a half
+// silently dropped would route nothing).
+func (c *rcvTaskConfig) Validate() error {
+	if !c.iterDeclared {
+		return nil
+	}
+
+	if (c.iterKeyName == "") != (c.iterExpr == nil) {
+		return errs.New(
+			errs.M("WithIterationCorrelation: both the key name and the "+
+				"expression are required"),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if strings.TrimSpace(c.iterKeyName) == "" {
+		return errs.New(
+			errs.M("WithIterationCorrelation: a blank key name isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
 	return nil
 }
 
@@ -21,6 +53,23 @@ type RcvTaskOption func(*rcvTaskConfig)
 // Option marks RcvTaskOption as an options.Option; NewReceiveTask applies it by
 // calling the func directly.
 func (RcvTaskOption) Option() {}
+
+// WithIterationCorrelation declares how a concurrently-waiting
+// iteration of this ReceiveTask (a parallel leaf Multi-Instance,
+// SRD-086 FR-4) is addressed by an arriving message (ADR-006 v.5
+// §2.9.3): keyName names a declared process CorrelationKey — its
+// retrieval expressions derive the envelope-side value — and expr,
+// evaluated at registration over the iteration's scope (where the
+// split item is bound), produces the subscription-side value.
+func WithIterationCorrelation(
+	keyName string, expr data.FormalExpression,
+) RcvTaskOption {
+	return func(c *rcvTaskConfig) {
+		c.iterDeclared = true
+		c.iterKeyName = keyName
+		c.iterExpr = expr
+	}
+}
 
 // WithInstantiate marks the ReceiveTask as instantiating: a ReceiveTask with no
 // incoming sequence flow and instantiate=true starts a new process instance on

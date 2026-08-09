@@ -85,8 +85,12 @@ func TestRecoveryReportsATransportError(t *testing.T) {
 			}))
 		require.NoError(t, err)
 
-		require.NoError(t, th.recoverOne(context.Background(), "i-recover"),
+		claimed, rerr := th.recoverOne(context.Background(), "i-recover",
+			map[string]struct{}{})
+		require.NoError(t, rerr,
 			"another engine recovered it — that is not this engine's failure")
+		require.False(t, claimed,
+			"and the record stays that engine's, not ours")
 	})
 
 	t.Run("a transport error is reported", func(t *testing.T) {
@@ -98,7 +102,8 @@ func TestRecoveryReportsATransportError(t *testing.T) {
 			}))
 		require.NoError(t, err)
 
-		err = th.recoverOne(context.Background(), "i-recover")
+		_, err = th.recoverOne(context.Background(), "i-recover",
+			map[string]struct{}{})
 		require.Error(t, err,
 			"a store failure must not be mistaken for a lost claim")
 		require.ErrorContains(t, err, "couldn't claim the record")

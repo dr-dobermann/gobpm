@@ -123,7 +123,7 @@ func TestLoopStateDropClearsAll(t *testing.T) {
 	tr := &track{instance: inst}
 
 	ls.waiting["t1"] = struct{}{}
-	ls.msgIdx["m1"] = tr
+	ls.msgIdx["m1"] = []msgSub{{track: tr}}
 	ls.position["t1"] = nil
 	ls.parked["t1"] = nil
 	ls.watchers["t1"] = []*boundaryWatch{{}}

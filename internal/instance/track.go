@@ -56,6 +56,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/set"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
@@ -192,6 +193,13 @@ type track struct {
 	evtCh       chan flow.EventDefinition
 	taskID      string
 	scopePath   scope.DataPath
+	// receivedItem is THIS delivery's captured payload (ADR-006 v.5
+	// §2.9.1, SRD-085 FR-1): deliver() captures it from the fired
+	// definition on the track's own goroutine, the next node upload
+	// stages it into the execution frame and clears it. Track-goroutine
+	// owned — never read off-goroutine.
+	receivedItem *data.ItemDefinition
+
 	// adHocActivity names the inner activity this track was routed to inside an
 	// Ad-Hoc scope, empty for every other track (SRD-074 §3.4). Set pre-spawn on
 	// the loop goroutine and read after the track is terminal, so it needs no
@@ -202,8 +210,15 @@ type track struct {
 	foundation.BaseElement
 	prev      []string
 	msgDefIDs []string
-	condDefs  []*events.ConditionalEventDefinition
-	steps     []*stepInfo
+	// msgIterKeyName/msgIterKey are the iteration-correlation pair the
+	// registration evaluated for a catch that declares one (SRD-085
+	// FR-3): the declared key's NAME and this execution's subscription
+	// VALUE, derived from the iteration's own scope. Guarded by t.m
+	// with msgDefIDs; read by the loop when indexing the wait.
+	msgIterKeyName string
+	msgIterKey     string
+	condDefs       []*events.ConditionalEventDefinition
+	steps          []*stepInfo
 	// compWaitRef holds the target ref of the wait-for-completion Compensation
 	// throw this track is parked on (SRD-059 FR-5); informational.
 	compWaitRef string
@@ -268,7 +283,13 @@ type track struct {
 	// dehydrated track's lineage without appending it (bounded across cycles,
 	// §4.1).
 	woken bool
-	state trackState
+	// leafPlain marks a track spawned to execute a PARALLEL LEAF MI
+	// instance (SRD-086 FR-3): the group's fan-out drives the
+	// iteration, so this track's executeStep must run the node plainly
+	// instead of re-entering the MI decorator. Set pre-spawn on the
+	// loop goroutine, before the run goroutine exists.
+	leafPlain bool
+	state     trackState
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -487,14 +508,49 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		return nil
 	}
 
+	// a Multi-Instance HOST doesn't wait — its decorator drives the
+	// iteration, and only the per-instance leaf tracks (leafPlain) or
+	// the serial passes register (SRD-086 FR-4). Registering the host
+	// would evaluate iteration correlation at the HOST scope, where no
+	// split item exists.
+	if mi := multiInstanceOf(node); mi != nil &&
+		!mi.IsSequential() && !t.leafPlain {
+		return nil
+	}
+
 	// Record the Message catch-definition ids so the loop can index them → this track
 	// (SRD-027 FR-8): carried in the evWaiting emit below for a mid-run wait, and read by
 	// spawn for a track that starts parked before the loop drains events. Conditional
 	// definitions are recorded the same way (SRD-048 FR-7) — the loop arms them itself.
+	msgIDs := messageDefIDs(defs)
+
+	// a catch declaring iteration correlation (SRD-085 FR-3) evaluates
+	// its subscription-side value HERE, over this execution's own scope
+	// — where the iteration's split item is bound — so the loop's
+	// routing and the hub's subscription filter read one value.
+	keyName, keyValue, err := t.iterationKey(node, msgIDs)
+	if err != nil {
+		return err
+	}
+
 	t.m.Lock()
-	t.msgDefIDs = messageDefIDs(defs)
+	t.msgDefIDs = msgIDs
 	t.condDefs = conditionalDefs(defs)
+	t.msgIterKeyName = keyName
+	t.msgIterKey = keyValue
 	t.m.Unlock()
+
+	if keyValue != "" {
+		t.instance.corr.markIterationKeyName(keyName)
+		t.instance.corr.addIterKey(t.ID(), keyValue)
+		// a live message waiter subscribed before this iteration parked
+		// (a sibling registered first) carries the broker subscription —
+		// grow it with this iteration's value, exactly as a
+		// newly-learned conversation value grows it (SRD-017 §4.5); for
+		// the FIRST iteration the subscribe itself reads the value from
+		// CorrelationKeys(), and AddEventKey no-ops benignly.
+		t.instance.corr.extendReceivers(keyValue)
+	}
 
 	// Stash the timer plan BEFORE the wait is declared (SRD-070 FR-3):
 	// the evWaiting emit below lets the loop checkpoint immediately, and
@@ -530,6 +586,44 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	}
 
 	return t.armWaiters(en, defs)
+}
+
+// iterationKey evaluates a catch's declared iteration correlation over
+// this execution's scope (SRD-085 FR-3, ADR-006 v.5 §2.9.3). A node
+// without the capability — or without message definitions — yields
+// ("", "").
+func (t *track) iterationKey(
+	node flow.Node, msgIDs []string,
+) (string, string, error) {
+	ic, ok := node.(interface {
+		IterationCorrelation() (string, data.FormalExpression)
+	})
+	if !ok || len(msgIDs) == 0 {
+		return "", "", nil
+	}
+
+	keyName, expr := ic.IterationCorrelation()
+	if expr == nil {
+		return "", "", nil
+	}
+
+	frame, err := t.instance.sc.openFrameAt(
+		"iter-corr", node.ID(), t.scopePath)
+	if err != nil {
+		return "", "", err
+	}
+	defer frame.Discard()
+
+	v, err := t.instance.ExpressionEngine().Evaluate(
+		context.Background(), expr, newExecEnv(t.instance, frame, t))
+	if err != nil {
+		return "", "", errs.New(
+			errs.M("iteration correlation of %q failed", node.Name()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	return keyName, fmt.Sprint(v.Get(context.Background())), nil
 }
 
 // armWaiters subscribes the node's definitions. Per-trigger registration is the
@@ -1437,6 +1531,15 @@ func (t *track) finalizeNodeExecution(
 	step.state = StepEnded
 	t.updateState(TrackProcessStepResults)
 
+	// stage the delivery's payload for the catch node's binding and
+	// consume it — the next execution must not see a stale item
+	// (SRD-085 FR-1; for an Event-Based Gateway the item survives to
+	// the WINNING ARM's upload, which is this call on the arm's step).
+	if t.receivedItem != nil {
+		f.SetReceived(t.receivedItem)
+		t.receivedItem = nil
+	}
+
 	if err := t.uploadOutgoingData(ctx, step.node, f); err != nil {
 		return err
 	}
@@ -1681,6 +1784,11 @@ func (t *track) deliver(
 				n.Name(), n.ID()),
 			errs.C(errorClass, errs.TypeCastingError))
 	}
+
+	// THIS delivery's payload is captured by the receiving execution —
+	// never by the shared node (ADR-006 v.5 §2.9.1, SRD-085 FR-1). The
+	// node's ProcessEvent stays a notification seam.
+	t.receivedItem = msgflow.CaptureItem(eDef)
 
 	if err := ep.ProcessEvent(ctx, eDef); err != nil {
 		return err

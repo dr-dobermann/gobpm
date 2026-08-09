@@ -65,6 +65,18 @@ type Frame interface {
 	// node's data phases. engineStore selects Data Store vs Data Object, write
 	// selects outbound vs inbound; storeRef is empty for a Data Object.
 	RecordDataMovement(engineStore, write bool, name, storeRef string)
+
+	// SetReceived stages the payload item captured from THIS delivery's
+	// fired event definition (ADR-006 v.5 §2.9.1, SRD-085 FR-1): the
+	// receiving execution captures at delivery, the frame carries, and a
+	// catch node's UploadData binds from Received — never from node
+	// state, so N concurrent deliveries can never observe each other's
+	// payloads. nil clears.
+	SetReceived(item *data.ItemDefinition)
+
+	// Received returns the payload item staged by SetReceived, nil when
+	// this execution carries no delivery payload.
+	Received() *data.ItemDefinition
 }
 
 // NodeDataConsumer is implemented by nodes that consume data: LoadData

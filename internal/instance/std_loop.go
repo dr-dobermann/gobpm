@@ -57,15 +57,31 @@ func (t *track) executeStep(
 		return t.runStandardLoop(ctx, step, sl)
 	}
 
-	// a Multi-Instance composite drives itself off the loop via its own decorator
-	// (ADR-025 v.2 §2.12): sequential await-each (runMISequential, SRD-055) or
-	// parallel fan-out-then-await-all (runMIParallel, SRD-056.A).
+	// a Multi-Instance activity drives itself off the loop via its own
+	// decorator (ADR-025 v.2 §2.12): a composite iterates by child scope
+	// (sequential await-each runMISequential, SRD-055; parallel
+	// fan-out-then-await-all runMIParallel, SRD-056.A), a LEAF
+	// sequentially in place (runLeafMISequential, SRD-086 — before it,
+	// a leaf MI fell through to a SINGLE executeNode, silently).
 	if mi := multiInstanceOf(step.node); mi != nil {
 		if _, ok := step.node.(scopeHost); ok {
 			if mi.IsSequential() {
 				return t.runMISequential(ctx, step, mi)
 			}
 
+			return t.runMIParallel(ctx, step, mi)
+		}
+
+		if mi.IsSequential() {
+			return t.runLeafMISequential(ctx, step, mi)
+		}
+
+		// a parallel LEAF rides the same fan-out decorator composites
+		// use (SRD-086 FR-2): per-instance scopes, each running one
+		// spawned leaf track. leafPlain guards the spawned track's own
+		// pass through this routing — the group drives the iteration,
+		// the track executes the node exactly once (FR-3).
+		if !t.leafPlain {
 			return t.runMIParallel(ctx, step, mi)
 		}
 	}

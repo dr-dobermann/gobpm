@@ -65,9 +65,11 @@ func (t *track) runMIParallel(
 	}
 
 	// N <= 0 runs zero instances — follow the outgoing flow once, no fan-out, no
-	// group, no publish.
+	// group, no publish. A LEAF must not run executeNode here: that IS
+	// the activity (SRD-086 FR-3); its token leaves via the declared
+	// outgoing flow.
 	if n <= 0 {
-		return t.executeNode(ctx, step)
+		return t.miParallelExit(ctx, step)
 	}
 
 	for completed := first; ; {
@@ -87,7 +89,22 @@ func (t *track) runMIParallel(
 		}
 	}
 
-	return t.executeNode(ctx, step)
+	return t.miParallelExit(ctx, step)
+}
+
+// miParallelExit follows the host's outgoing flow after the group is
+// done: a composite host re-runs executeNode (its node execution
+// produces the flows without re-opening), a LEAF must not — executing
+// the node IS the activity (SRD-086 FR-3), and the group already ran
+// it N times in the instance scopes.
+func (t *track) miParallelExit(
+	ctx context.Context, step *stepInfo,
+) ([]*flow.SequenceFlow, error) {
+	if _, ok := step.node.(scopeHost); ok {
+		return t.executeNode(ctx, step)
+	}
+
+	return step.node.Outgoing(), nil
 }
 
 // parallelActivation resolves the fan-out — or, for a RESTORED host,
@@ -268,19 +285,22 @@ func (t *track) bindMICounters(n, completed, terminated int) error {
 // fan-out finishes (§4.6). A partial-open error leaves cleanup to the runner's fault
 // (stopAll cancels the subtree).
 func (ls *loopState) handleFanOut(ctx context.Context, req scopeRequest) {
-	sh, ok := req.node.(scopeHost)
-	if !ok {
-		// checkNodeType only routes scopeHost nodes to the decorator; a mismatch
-		// is a corrupt graph.
+	// a composite host seeds its body into each instance scope; a LEAF
+	// (SRD-086 FR-2) has no body — each instance scope runs one spawned
+	// track at the leaf node itself, so sh stays nil for it. The
+	// corrupt-graph key is the MISSING Multi-Instance decoration, not
+	// the missing body (the pre-SRD-086 guard conflated the two).
+	sh, _ := req.node.(scopeHost)
+
+	mi := multiInstanceOf(req.node)
+	if mi == nil {
 		req.reply <- scopeReply{err: errs.New(
-			errs.M("scope fan-out requested for a non-composite node %q",
-				req.node.ID()),
+			errs.M("scope fan-out requested for non-Multi-Instance node %q"+
+				" — a corrupt graph", req.node.ID()),
 			errs.C(errorClass, errs.TypeCastingError))}
 
 		return
 	}
-
-	mi := multiInstanceOf(req.node)
 
 	// the host parks once for the whole fan-out; it resumes as each instance
 	// drains, delivered one at a time via the re-arm handshake.
@@ -430,8 +450,36 @@ func (ls *loopState) openParallelInstance(
 		}
 	}
 
-	ls.seedScope(ctx, sh, child)
-	ls.armScopeHandlers(ctx, sh.Nodes(), child)
+	if sh != nil {
+		ls.seedScope(ctx, sh, child)
+		ls.armScopeHandlers(ctx, sh.Nodes(), child)
+
+		return nil
+	}
+
+	// the LEAF instance (SRD-086 FR-2/FR-3): one track at the leaf node
+	// itself, spawned with the pre-spawn discipline (scope path and the
+	// plain-execution mark set on the loop, before the run goroutine
+	// exists) — the group drives the iteration, the track executes the
+	// node exactly once.
+	nt, terr := newTrack(node, ls.inst, host)
+	if terr != nil {
+		return errs.New(
+			errs.M("couldn't spawn leaf MI instance %d of %q", i, node.ID()),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(terr))
+	}
+
+	nt.scopePath = child
+	nt.leafPlain = true
+
+	ls.inst.trackCount.Add(1)
+	ls.inst.tracks[nt.ID()] = nt
+	ls.spawn(ctx, nt)
+
+	if ls.stopping {
+		nt.stop()
+	}
 
 	return nil
 }

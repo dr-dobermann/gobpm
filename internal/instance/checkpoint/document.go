@@ -29,7 +29,13 @@ import (
 // compensation sweeps. Additive again: a Schema-3 document was only
 // ever written with no construct in flight (the retired capture guards
 // guaranteed it), so absent records mean "nothing to rebuild".
-const CurrentSchema = 4
+//
+// 4 → 5 (SRD-083 FR-1) added the Ad-Hoc routing records. Additive with
+// one deliberate exception: a Schema ≤ 4 document CAN carry an open
+// ad-hoc scope (the construct was never guarded), and such a document
+// refuses to restore rather than resuming with the routing state lost
+// (SRD-083 FR-6) — loud beats silently wrong.
+const CurrentSchema = 5
 
 // Document is one instance's durable state (SRD-070 FR-3): identity +
 // the version pin, status, the scope table, conversation keys, the
@@ -88,6 +94,12 @@ type Document struct {
 	// FR-1): the remaining queue and the entry being undone — the
 	// ledger alone is not the state once a sweep has consumed from it.
 	Sweeps []SweepRecord `json:"sweeps,omitempty"`
+	// AdHoc are the open Ad-Hoc containers' routing states (Schema 5,
+	// SRD-083 FR-1): completed counts, a manual container's pending
+	// offer, and the stopped flag. Running counts are NOT recorded —
+	// they derive from the track table's AdHocActivity assignments
+	// (ADR-033 §2.1 minimality).
+	AdHoc []AdHocRecord `json:"adhoc,omitempty"`
 
 	Schema  int `json:"schema"`
 	Version int `json:"version"` // the FR-1 pin
@@ -161,6 +173,12 @@ type TrackRecord struct {
 	// of a host that drives its own passes — sequential MI or a
 	// Standard Loop. nil for every other track.
 	MI *MIRecord `json:"mi,omitempty"`
+	// AdHocActivity names the inner activity this track was routed to
+	// inside an Ad-Hoc container (Schema 5, SRD-083 FR-2) — the
+	// track-table half of the AdHocRecord: restore rebuilds the
+	// container's running counts from these. Empty for every other
+	// track.
+	AdHocActivity string `json:"adhoc_activity,omitempty"`
 
 	Prev      []string `json:"prev,omitempty"`
 	MsgDefIDs []string `json:"msg_def_ids,omitempty"`
@@ -223,6 +241,22 @@ type SweepRecord struct {
 	Running      *LedgerRecord  `json:"running,omitempty"`
 	Queue        []LedgerRecord `json:"queue,omitempty"`
 	Wait         bool           `json:"wait,omitempty"`
+}
+
+// AdHocRecord is one open Ad-Hoc container's routing state (Schema 5,
+// SRD-083 FR-2): the parked host, the container's scope, how many
+// times each inner activity has settled, the candidates a manual
+// container is holding for its host, and whether the completion
+// condition already fired (with the reason routing stopped). Live
+// work is NOT here — each routed track records its AdHocActivity, so
+// the running counts rebuild from the track table.
+type AdHocRecord struct {
+	Completed  map[string]int `json:"completed,omitempty"`
+	HostTrack  string         `json:"host_track"`
+	ScopePath  string         `json:"scope_path"`
+	StopReason string         `json:"stop_reason,omitempty"`
+	Offered    []string       `json:"offered,omitempty"`
+	Stopped    bool           `json:"stopped,omitempty"`
 }
 
 // BoundaryRecord is one ARMED boundary event guarding a captured track

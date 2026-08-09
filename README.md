@@ -274,9 +274,11 @@ guide: [**docs/guides/operating/incidents.md**](docs/guides/operating/incidents.
 Since the composite-fidelity landing, the checkpoint covers every
 construct **mid-flight**: iterations resume at their recorded pass,
 parallel fan-outs re-open exactly their open instances, a resolving
-compensation continues its sweep, and a Call Activity's child is a
-durable instance re-linked to its caller on recovery — nothing
-completed ever re-executes, and no construct defers the capture.
+compensation continues its sweep, an Ad-Hoc container resumes its
+routing at the recorded progress (a pending manual offer included),
+and a Call Activity's child is a durable instance re-linked to its
+caller on recovery — nothing completed ever re-executes, and no
+construct defers the capture.
 
 The same switch buys **dehydration** — see
 [`examples/dehydration/`](examples/dehydration/): an instance whose every

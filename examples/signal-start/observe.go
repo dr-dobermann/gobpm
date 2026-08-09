@@ -16,7 +16,12 @@ func awaitAll(ctx context.Context, engine *thresher.Thresher, n int) error {
 	done := map[string]bool{}
 
 	for len(done) < n {
-		for _, id := range engine.Instances(thresher.InstancesAll) {
+		ids, err := engine.Instances(thresher.InstanceQuery{})
+		if err != nil {
+			return err
+		}
+
+		for _, id := range ids {
 			if done[id] {
 				continue
 			}

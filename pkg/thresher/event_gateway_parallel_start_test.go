@@ -122,7 +122,7 @@ func instParallelGateProcess(
 func soleInstance(t *testing.T, th *thresher.Thresher) *thresher.InstanceHandle {
 	t.Helper()
 
-	ids := th.Instances(thresher.InstancesAll)
+	ids := instanceIDs(t, th, thresher.InstanceQuery{})
 	require.Len(t, ids, 1, "exactly one instance (Parallel dedup): %v", ids)
 
 	h, ok := th.Instance(ids[0])
@@ -239,7 +239,7 @@ func TestEventGatewayParallelStartCorrelation(t *testing.T) {
 
 	// both conversations created their own instance.
 	require.Eventually(t, func() bool {
-		return len(th.Instances(thresher.InstancesAll)) == 2
+		return len(instanceIDs(t, th, thresher.InstanceQuery{})) == 2
 	}, 3*time.Second, 10*time.Millisecond, "two instances, one per key")
 
 	for _, e := range []messaging.Envelope{
@@ -261,7 +261,7 @@ func TestEventGatewayParallelStartCorrelation(t *testing.T) {
 	}
 
 	require.Eventually(t, func() bool {
-		return len(th.Instances(thresher.InstancesCompleted)) == 2
+		return len(instanceIDs(t, th, thresher.InstanceQuery{Stage: thresher.StageSettled})) == 2
 	}, 3*time.Second, 10*time.Millisecond, "both instances complete on their own arms")
 }
 
@@ -314,7 +314,7 @@ func TestParallelStarterSkipsUnderivableKey(t *testing.T) {
 		Name: "order A", Payload: "CONV-X"}))
 
 	require.Never(t, func() bool {
-		return len(th.Instances(thresher.InstancesAll)) != 0
+		return len(instanceIDs(t, th, thresher.InstanceQuery{})) != 0
 	}, 600*time.Millisecond, 50*time.Millisecond,
 		"an underivable key must not instantiate (BPMN §10.6.6)")
 }
@@ -343,7 +343,7 @@ func TestParallelStartArmFiresOnce(t *testing.T) {
 	case <-time.After(400 * time.Millisecond):
 	}
 
-	require.Len(t, th.Instances(thresher.InstancesAll), 1,
+	require.Len(t, instanceIDs(t, th, thresher.InstanceQuery{}), 1,
 		"the duplicate must not spawn another instance")
 
 	// the other arm still completes the one instance.
@@ -354,5 +354,5 @@ func TestParallelStartArmFiresOnce(t *testing.T) {
 	st, err := h.WaitCompletion(ctx)
 	require.NoError(t, err)
 	require.Equal(t, thresher.StateCompleted, st)
-	require.Len(t, th.Instances(thresher.InstancesAll), 1)
+	require.Len(t, instanceIDs(t, th, thresher.InstanceQuery{}), 1)
 }

@@ -9,10 +9,13 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -104,14 +107,17 @@ func TestReceiveTaskProcessThenExec(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("captured payload is bound into scope on resume",
+	t.Run("the delivery's payload is bound into scope on resume",
 		func(t *testing.T) {
 			rt, err := activities.NewReceiveTask("await", recvMessage(t),
 				activities.WithoutParams())
 			require.NoError(t, err)
 
-			require.NoError(t, rt.ProcessEvent(ctx, firedDef(t, "ORD-5")))
-
+			// NOTE: ProcessEvent is deliberately NOT called here. The
+			// payload must reach Exec through the ENVIRONMENT alone —
+			// calling the node's notification first would let the
+			// retired node-stateful implementation satisfy this test
+			// too, which is exactly how it passed before (SRD-085 FR-1).
 			var put data.Data
 
 			re := mockrenv.NewMockRuntimeEnvironment(t)
@@ -123,7 +129,12 @@ func TestReceiveTaskProcessThenExec(t *testing.T) {
 					return nil
 				})
 
-			flows, err := rt.Exec(ctx, re)
+			env := &receivedEnv{
+				RuntimeEnvironment: re,
+				item:               msgflow.CaptureItem(firedDef(t, "ORD-5")),
+			}
+
+			flows, err := rt.Exec(ctx, env)
 			require.NoError(t, err)
 			require.Empty(t, flows)
 
@@ -139,7 +150,8 @@ func TestReceiveTaskProcessThenExec(t *testing.T) {
 
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 
-			flows, err := rt.Exec(ctx, re)
+			flows, err := rt.Exec(ctx,
+				&receivedEnv{RuntimeEnvironment: re})
 			require.NoError(t, err)
 			require.Empty(t, flows)
 		})
@@ -156,7 +168,7 @@ func TestReceiveTaskProcessThenExec(t *testing.T) {
 
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 
-			_, err = rt.Exec(ctx, re)
+			_, err = rt.Exec(ctx, &receivedEnv{RuntimeEnvironment: re})
 			require.NoError(t, err)
 		})
 
@@ -176,14 +188,17 @@ func TestReceiveTaskProcessThenExec(t *testing.T) {
 				activities.WithoutParams())
 			require.NoError(t, err)
 
-			require.NoError(t, rt.ProcessEvent(ctx, firedDef(t, "x")))
-
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().
 				Put(mock.Anything).
 				Return(fmt.Errorf("commit failed"))
 
-			_, err = rt.Exec(ctx, re)
+			env := &receivedEnv{
+				RuntimeEnvironment: re,
+				item:               msgflow.CaptureItem(firedDef(t, "x")),
+			}
+
+			_, err = rt.Exec(ctx, env)
 			require.Error(t, err)
 		})
 }
@@ -213,4 +228,88 @@ func TestReceiveTaskInstantiate(t *testing.T) {
 	cl, ok := cn.(*activities.ReceiveTask)
 	require.True(t, ok)
 	require.True(t, cl.Instantiate())
+}
+
+// receivedEnv wraps a runtime environment with the delivery-payload
+// capability the receiving execution provides (SRD-085 FR-1).
+type receivedEnv struct {
+	renv.RuntimeEnvironment
+	item *data.ItemDefinition
+}
+
+func (e *receivedEnv) ReceivedItem() *data.ItemDefinition { return e.item }
+
+// TestReceiveTaskIterationCorrelation pins the SRD-086 FR-4 option:
+// the declared pair, the empty answer, the half-pair refusal, and
+// clone survival.
+func TestReceiveTaskIterationCorrelation(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	expr := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable("v"), nil
+		})
+
+	rt, err := activities.NewReceiveTask("await", recvMessage(t),
+		activities.WithoutParams(),
+		activities.WithIterationCorrelation("k", expr))
+	require.NoError(t, err)
+
+	name, e := rt.IterationCorrelation()
+	require.Equal(t, "k", name)
+	require.NotNil(t, e)
+
+	cl, err := rt.Clone()
+	require.NoError(t, err)
+
+	crt, ok := cl.(*activities.ReceiveTask)
+	require.True(t, ok)
+
+	name, e = crt.IterationCorrelation()
+	require.Equal(t, "k", name)
+	require.NotNil(t, e)
+
+	plain, err := activities.NewReceiveTask("await", recvMessage(t),
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	name, e = plain.IterationCorrelation()
+	require.Empty(t, name)
+	require.Nil(t, e)
+
+	_, err = activities.NewReceiveTask("await", recvMessage(t),
+		activities.WithoutParams(),
+		activities.WithIterationCorrelation("k", nil))
+	require.ErrorContains(t, err, "both the key name and the expression")
+}
+
+// TestReceiveTaskBlankIterationKey pins the blank-key refusal of the
+// iteration-correlation declaration (SRD-086 FR-4).
+func TestReceiveTaskBlankIterationKey(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	expr := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable("v"), nil
+		})
+
+	_, err := activities.NewReceiveTask("await", recvMessage(t),
+		activities.WithoutParams(),
+		activities.WithIterationCorrelation("   ", expr))
+	require.ErrorContains(t, err, "blank key name")
+}
+
+// TestReceiveTaskRefusesPayloadBlindEnv pins SRD-085 FR-1's guard: an
+// environment that cannot carry a delivery payload is a wiring error,
+// refused loudly — never a silently dropped message.
+func TestReceiveTaskRefusesPayloadBlindEnv(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	rt, err := activities.NewReceiveTask("await", recvMessage(t),
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	_, err = rt.Exec(context.Background(),
+		mockrenv.NewMockRuntimeEnvironment(t))
+	require.ErrorContains(t, err, "carries no delivery payload")
 }

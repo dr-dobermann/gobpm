@@ -2,6 +2,7 @@ package checkpoint
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -59,7 +60,8 @@ func TestSchemaFourRoundTrip(t *testing.T) {
 
 	back, err := Unmarshal(raw)
 	require.NoError(t, err)
-	require.Equal(t, 4, back.Schema, "Marshal stamps the current schema")
+	require.Equal(t, CurrentSchema, back.Schema,
+		"Marshal stamps the current schema")
 	require.Equal(t, doc.Calls, back.Calls)
 	require.Equal(t, doc.MIGroups, back.MIGroups)
 	require.Equal(t, doc.Sweeps, back.Sweeps)
@@ -67,11 +69,14 @@ func TestSchemaFourRoundTrip(t *testing.T) {
 }
 
 func TestFutureSchemaStillRefused(t *testing.T) {
-	raw := []byte(`{"instance_id":"i","process_id":"p","schema":5}`)
+	raw := fmt.Appendf(nil,
+		`{"instance_id":"i","process_id":"p","schema":%d}`,
+		CurrentSchema+1)
 
 	_, err := Unmarshal(raw)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "schema 1..4")
+	require.Contains(t, err.Error(),
+		fmt.Sprintf("schema 1..%d", CurrentSchema))
 }
 
 // TestEncodeDecodeValue pins the staging codec (SRD-082 FR-1): a

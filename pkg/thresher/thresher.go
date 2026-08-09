@@ -940,6 +940,30 @@ func (t *Thresher) UnregisterEvent(
 	return t.eventHub.UnregisterEvent(ep, eDefID)
 }
 
+// AddEventKey grows a live message waiter's broker subscription with a
+// newly-learned correlation value (SRD-017 §4.5, SRD-085 FR-3) — the
+// engine-level passthrough of the EventHub's optional capability. The
+// correlator reaches it structurally through the instance's parent
+// EventProducer; without this forward, an instance running under the
+// engine could never extend a live subscription (the probe silently
+// no-opped — the parked sibling-iteration case SRD-085 surfaced).
+func (t *Thresher) AddEventKey(eDefID, key string) error {
+	if strings.TrimSpace(eDefID) == "" {
+		return errs.New(
+			errs.M("AddEventKey: an empty event definition id isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	ka, ok := t.eventHub.(interface {
+		AddEventKey(eDefID, key string) error
+	})
+	if !ok {
+		return nil
+	}
+
+	return ka.AddEventKey(eDefID, key)
+}
+
 // PropagateEvent sends a fired throw event's eventDefinition
 // up to chain of EventProducers
 func (t *Thresher) PropagateEvent(

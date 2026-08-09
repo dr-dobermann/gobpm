@@ -35,12 +35,23 @@ import (
 // payload on fire; the captured datum is bound into scope on resume by Exec
 // (ADR-014 v.1).
 type ReceiveTask struct {
-	message        *bpmncommon.Message
-	eDef           *events.MessageEventDefinition
-	received       *data.ItemDefinition
+	message *bpmncommon.Message
+	eDef    *events.MessageEventDefinition
+	// iterExpr/iterKeyName are the declared iteration-correlation pair
+	// (SRD-086 FR-4, ADR-006 v.5 §2.9.3) — immutable configuration,
+	// carried across per-instance clones.
+	iterExpr       data.FormalExpression
 	implementation string
+	iterKeyName    string
 	task
 	instantiate bool
+}
+
+// IterationCorrelation returns the declared iteration-correlation
+// pair, or ("", nil) — the capability the registering execution probes
+// (SRD-085 FR-3).
+func (rt *ReceiveTask) IterationCorrelation() (string, data.FormalExpression) {
+	return rt.iterKeyName, rt.iterExpr
 }
 
 // NewReceiveTask builds a ReceiveTask that waits for msg. A nil msg is rejected.
@@ -89,11 +100,17 @@ func NewReceiveTask(
 		return nil, err
 	}
 
+	if err := rc.Validate(); err != nil {
+		return nil, err
+	}
+
 	return &ReceiveTask{
 			task:        *t,
 			message:     msg,
 			eDef:        eDef,
 			instantiate: rc.instantiate,
+			iterKeyName: rc.iterKeyName,
+			iterExpr:    rc.iterExpr,
 		},
 		nil
 }
@@ -153,6 +170,8 @@ func (rt *ReceiveTask) Clone() (flow.Node, error) {
 		task:           t,
 		implementation: rt.implementation,
 		instantiate:    rt.instantiate,
+		iterKeyName:    rt.iterKeyName,
+		iterExpr:       rt.iterExpr,
 		message:        clonedMsg,
 		eDef:           eDef,
 	}, nil
@@ -170,15 +189,16 @@ func (rt *ReceiveTask) EventClass() flow.EventClass {
 	return flow.IntermediateEventClass
 }
 
-// ProcessEvent captures the payload carried by the fired event definition so
-// Exec can bind it into scope on resume. Implements eventproc.EventProcessor;
-// ReceiveTask is the first model node to handle a fired event.
+// ProcessEvent is the node's delivery notification (implements
+// eventproc.EventProcessor). Since SRD-085 the payload does NOT land
+// here: a node is a runtime-immutable definition shared by every
+// execution of its instance, so the delivery's item is captured by the
+// RECEIVING execution and read back through the runtime environment
+// (ADR-006 v.5 §2.9.1). Nothing is left to do at this seam.
 func (rt *ReceiveTask) ProcessEvent(
 	_ context.Context,
-	eDef flow.EventDefinition,
+	_ flow.EventDefinition,
 ) error {
-	rt.received = msgflow.CaptureItem(eDef)
-
 	return nil
 }
 
@@ -196,7 +216,27 @@ func (rt *ReceiveTask) Exec(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if err := msgflow.Bind(ctx, re, rt.received); err != nil {
+	// THIS delivery's payload comes from the execution environment —
+	// the receiving execution captured it (SRD-085 FR-1). An
+	// environment that cannot carry one is a WIRING error, not an
+	// empty payload: binding nil here would drop a received message
+	// silently, which is the failure this whole path exists to prevent.
+	rp, ok := re.(interface {
+		ReceivedItem() *data.ItemDefinition
+	})
+	if !ok {
+		return nil,
+			errs.New(
+				errs.M("the runtime environment of %q carries no delivery "+
+					"payload (no ReceivedItem) — a received message would "+
+					"be dropped silently", rt.Name()),
+				errs.C(errorClass, errs.InvalidObject),
+				errs.D(observability.AttrNodeID, rt.ID()))
+	}
+
+	received := rp.ReceivedItem()
+
+	if err := msgflow.Bind(ctx, re, received); err != nil {
 		return nil,
 			errs.New(
 				errs.M("couldn't bind the received message payload"),

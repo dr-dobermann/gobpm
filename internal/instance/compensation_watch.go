@@ -35,6 +35,12 @@ func newCompensationDone() *compensationDone {
 	return &compensationDone{}
 }
 
+// GetItemsList reports no payload: the sentinel embeds a nil
+// flow.EventDefinition, so without this override the promoted method
+// nil-derefs the moment anything asks — and since SRD-085 the delivery
+// path asks every definition for its item (track.deliver's capture).
+func (*compensationDone) GetItemsList() []*data.ItemDefinition { return nil }
+
 // Type implements flow.EventDefinition for the sentinel.
 func (*compensationDone) Type() flow.EventTrigger {
 	return compensationDoneTrigger

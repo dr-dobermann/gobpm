@@ -36,6 +36,12 @@ const (
 	// completionCondition fired (SRD-082 FR-2) — the one decorator
 	// decision the loop cannot observe from the open/drain protocol.
 	scopeNote
+	// scopeLeafPass advances the loop's iteration mirror for a
+	// SEQUENTIAL LEAF Multi-Instance (SRD-086 FR-5): a leaf opens no
+	// scope, so the mirror can't ride the open/drain protocol — the
+	// runner posts each completed pass instead (n carries the count);
+	// the roundtrip is the fence that makes the miState reads safe.
+	scopeLeafPass
 	// scopeReAttach is a RESTORED parallel runner re-joining its adopted
 	// group (SRD-082 FR-4): the loop lifts the entries' awaitAttach
 	// holds — the roundtrip is the fence — and completes any drains
@@ -137,6 +143,17 @@ func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 		}
 
 		req.reply <- scopeReply{}
+	case scopeLeafPass:
+		m := ls.ensureIterMirror(req.host)
+		m.completed = req.n
+
+		req.reply <- scopeReply{}
+
+		// a completed leaf pass IS the observable transition (ADR-033
+		// §2.2): the whole N-pass run is one step execution emitting no
+		// track events, so without this the position never persists
+		// (SRD-086 FR-5).
+		ls.checkpointNow(ctx)
 	case scopeReAttach:
 		ls.handleReAttach(ctx, req)
 	default:

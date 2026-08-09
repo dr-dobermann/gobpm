@@ -12,9 +12,11 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -470,4 +472,79 @@ func TestSnapshotHasConditionals(t *testing.T) {
 	clone, err := s.Clone()
 	require.NoError(t, err)
 	require.True(t, clone.HasConditionals)
+}
+
+// TestIteratedWaitingLeafRefused pins the interim refusal (#313): a
+// leaf that both iterates and PARKS is rejected at snapshot build,
+// because its passes after the first would run without waiting. An
+// iterated COMPOSITE is unaffected — its body re-opens per iteration.
+func TestIteratedWaitingLeafRefused(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	mi, err := activities.NewMultiInstance(
+		activities.WithInputCollection("items", "item"))
+	require.NoError(t, err)
+
+	t.Run("a ReceiveTask under MI is refused", func(t *testing.T) {
+		p, err := process.New("wl-refuse")
+		require.NoError(t, err)
+
+		start, err := events.NewStartEvent("start")
+		require.NoError(t, err)
+
+		recv, err := activities.NewReceiveTask("await",
+			bpmncommon.MustMessage("m", data.MustItemDefinition(
+				values.NewVariable(""), foundation.WithID("m_in"))),
+			activities.WithoutParams(), activities.WithLoop(mi))
+		require.NoError(t, err)
+
+		end, err := events.NewEndEvent("end")
+		require.NoError(t, err)
+
+		for _, e := range []flow.Element{start, recv, end} {
+			require.NoError(t, p.Add(e))
+		}
+
+		_, err = flow.Link(start, recv)
+		require.NoError(t, err)
+		_, err = flow.Link(recv, end)
+		require.NoError(t, err)
+
+		_, err = snapshot.New(p)
+		require.ErrorContains(t, err, "both iterates and waits")
+	})
+
+	t.Run("a non-waiting leaf under MI is fine", func(t *testing.T) {
+		p, err := process.New("wl-ok")
+		require.NoError(t, err)
+
+		start, err := events.NewStartEvent("start")
+		require.NoError(t, err)
+
+		op, err := gooper.New("op",
+			func(_ context.Context, _ service.DataReader,
+				_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+				return nil, nil
+			})
+		require.NoError(t, err)
+
+		work, err := activities.NewServiceTask("work", op,
+			activities.WithoutParams(), activities.WithLoop(mi))
+		require.NoError(t, err)
+
+		end, err := events.NewEndEvent("end")
+		require.NoError(t, err)
+
+		for _, e := range []flow.Element{start, work, end} {
+			require.NoError(t, p.Add(e))
+		}
+
+		_, err = flow.Link(start, work)
+		require.NoError(t, err)
+		_, err = flow.Link(work, end)
+		require.NoError(t, err)
+
+		_, err = snapshot.New(p)
+		require.NoError(t, err)
+	})
 }

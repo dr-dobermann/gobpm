@@ -32,6 +32,23 @@ func newExecEnv(inst *Instance, f *scope.Frame, t *track) *execEnv {
 	}
 }
 
+// ReceivedItem returns THIS delivery's captured payload for the
+// executing node (ADR-006 v.5 §2.9.1, SRD-085 FR-1) — the capability a
+// message-consuming executor (ReceiveTask) probes to bind the payload
+// of ITS OWN delivery, never a node-resident slot. nil when this
+// execution carries none.
+func (e *execEnv) ReceivedItem() *data.ItemDefinition {
+	if e.track != nil && e.track.receivedItem != nil {
+		return e.track.receivedItem
+	}
+
+	if e.frame != nil {
+		return e.frame.Received()
+	}
+
+	return nil
+}
+
 // reporterFunc adapts a function to observability.Reporter.
 type reporterFunc func(observability.Fact)
 

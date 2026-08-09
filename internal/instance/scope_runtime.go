@@ -469,6 +469,17 @@ func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 					errs.C(errorClass, errs.InvalidState))
 			}
 
+			// a LEAF instance scope's restored track sits at the GROUP
+			// NODE itself (SRD-086 FR-2): re-mark it for plain
+			// execution, or its executeStep would re-enter the MI
+			// decorator and fan out from inside the fan-out.
+			for _, tr := range initial {
+				if tr.scopePath == path &&
+					tr.steps[len(tr.steps)-1].node == node {
+					tr.leafPlain = true
+				}
+			}
+
 			ls.scopes[path] = &scopeEntry{
 				host:        host,
 				group:       grp,

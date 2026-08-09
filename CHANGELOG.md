@@ -7,7 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: instance discovery queries compose** (SRD-084, closes
+  #306). `Thresher.Instances` now takes an `InstanceQuery` — four
+  ANDed axes (`Kind`, `Stage`, `ProcessID`, `ParentID`; the zero value
+  lists everything) — and returns `([]string, error)`; the single-axis
+  `InstanceFilter` enum and its five constants are removed. Migration:
+  `InstancesAll` → `InstanceQuery{}`, `InstancesRunning/Completed` →
+  `InstanceQuery{Stage: StageRunning/StageSettled}`,
+  `InstancesRoots/Children` → `InstanceQuery{Kind: KindRoots/
+  KindChildren}`. An out-of-range axis value now refuses instead of
+  silently listing everything, and handles gain `ProcessID()`.
+
 ### Added
+
+- **Leaf-activity Multi-Instance execution** (SRD-086). A sequential
+  leaf runs its passes in place (fresh frame each, split item +
+  loopCounter bound); a parallel leaf fans out per-instance scopes
+  each running one track at the task; both restore at their position
+  over the existing checkpoint schema. A leaf that **waits** stays
+  unsupported and is now **refused at build time** rather than run
+  wrongly: an activity that both iterates and parks on execution (a
+  ReceiveTask or other catching event node, a user task, an external
+  worker) fails `snapshot.New` with a message naming it and pointing at
+  the workaround — model the wait inside an iterated Sub-Process. The
+  decorator that would make it work natively is tracked in #313.
+
+
+- **In-instance event delivery: per-delivery payload binding and
+  iteration-correlated routing** (ADR-006 v.5 §2.9, SRD-085, closes
+  #305). A fired definition's payload now travels with the DELIVERY —
+  captured by the receiving execution and bound from its own frame —
+  and `events.WithIterationCorrelation(keyName, expr)` routes a
+  message to exactly the matching parallel-MI iteration; a second
+  keyless concurrent waiter on one definition refuses loudly.
+
+
+- **Ad-Hoc Sub-Process checkpoint fidelity** (SRD-083, closes #307).
+  The checkpoint document (schema 5) records each open container's
+  routing state — completed counts, a manual container's pending
+  offer, a fired completion condition — and the routed tracks'
+  activity assignments; restore rebuilds the container at that
+  position, so the next Router decision sees the true cross-crash
+  progress and completed activities never re-run.
 
 - **Checkpoint fidelity for composite constructs** (SRD-082, closes
   #277). The checkpoint document (schema 4) records every composite
@@ -160,6 +203,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offending attributes, and cites Table 10.101 where the standard is the reason.
 
 ### Fixed
+
+- **A recovering engine could half-recover a call tree** (SRD-087). In
+  a multi-engine group, recovery claimed instance by instance, so a
+  caller and the child it awaits could land on different engines: each
+  recovered correctly and then the caller's re-attach — engine-local —
+  refused, leaving the child running and the caller never resuming. A
+  call tree is now the unit of a claim: a child is never revived on
+  its own, and a caller's claim walks its recorded call links
+  transitively before restoring.
+- **A child whose caller had already finished was revived** —
+  recovery checked that the caller's record existed, never that it was
+  still in flight, so the child came back and ran into a caller that
+  completed long ago. Such a child is the unfinished half of a cancel
+  cascade: recovery now writes its terminal record and reports it.
+
+
+- **A leaf task decorated with Multi-Instance silently ran ONCE** —
+  executeStep had no leaf-MI branch, so a 3-item collection completed
+  with a single execution and no complaint.
+
+
+- **A shared catch node's payload slot crossed iterations.** All
+  parallel-MI iterations bound from ONE mutable cell on the shared
+  node (mutex-guarded but single), so an iteration could bind its
+  sibling's message; the slot (and the ReceiveTask's twin of it) is
+  designed out — the frame carries each delivery's payload.
+- **A second same-definition message waiter was silently
+  overwritten** — the routing index mapped a definition to one track,
+  making the earlier iteration undeliverable.
+- **The engine never forwarded the hub's `AddEventKey`**, so no
+  instance under the engine could extend a live broker subscription
+  (the conversation flow's lazy secondary-key association silently
+  no-opped); and the subscription-extension walk visited only
+  top-level nodes, missing every message catch inside a composite
+  body.
+
+
+- **An in-flight Ad-Hoc container restored silently corrupt.** The
+  routing state was never captured (and, unlike the other composites,
+  no guard deferred the capture): after a restore the Router was
+  never consulted again, the progress counts were false, a manual
+  container's pending offer hung forever, and a stopped container
+  re-routed work past its fired completion condition. The state now
+  rides the checkpoint; a pre-fidelity document (schema ≤ 4) with an
+  in-flight container refuses to restore loudly instead.
 
 - **The checkpoint codec refused nil** — but a parallel MI's staging
   is pre-sized with nil holes, and an early-stopped group *publishes*

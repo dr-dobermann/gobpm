@@ -47,6 +47,22 @@ and "examples assert their own outcome" as plain commits on
   `SubscriptionKey()` pay off. Link landed as a static graph redirect (SRD-057),
   so Signal remains the only name-matched subscription and the abstraction has
   no second consumer. Revisit only if a genuinely name-keyed event type appears.
+- **The loop/MI decorator as the single event processor** — [#313]. A
+  multi-instance or looped activity that both iterates *and* parks on an event
+  needs the decorator to own the node's event registration: one
+  `EventProcessor` for all iterations, substituting the Instance on the node's
+  registration calls, so the node never learns whether it runs bare or
+  decorated. Until it lands, `snapshot.New` **refuses** such a model at build
+  time with a message pointing at the sub-process workaround (SRD-086) — the
+  refusal is the placeholder, not a fix.
+- **A restore racing a previous incarnation's teardown** — [#314]. Restoring a
+  message-routing instance while the instance it was captured from is still
+  draining trips `-race` between `loopState.stopAll` and the new loop's first
+  checkpoint. Refuted as a general property of capture-then-restore (the ad-hoc
+  family is clean over 15 `-race` runs), so the trigger is narrower and unnamed.
+  It blocks a multi-iteration restore test for correlated routing (SRD-085
+  covers only the single-remaining-iteration shortcut), and if the shared state
+  is real it is a recovery-window defect rather than a test one.
 - **Audit findings** — disposition in
   [`audit/remediation-status.md`](audit/remediation-status.md), design deferrals
   in [`audit/audit-backlog.md`](audit/audit-backlog.md). Both maintain their own
@@ -54,3 +70,6 @@ and "examples assert their own outcome" as plain commits on
   row (`memrepo` can evict an Active instance after a terminal→Active re-save)
   was deferred *"until persistence lands"*, and persistence has since landed
   (ADR-033) — it belongs to the durable-Repository work in **E2**.
+
+[#313]: https://github.com/dr-dobermann/gobpm/issues/313
+[#314]: https://github.com/dr-dobermann/gobpm/issues/314

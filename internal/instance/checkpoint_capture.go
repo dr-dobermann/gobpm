@@ -215,10 +215,49 @@ func (ls *loopState) captureDocument(
 
 	doc.Sweeps = sweeps
 	doc.Calls = ls.callRecords()
+	doc.AdHoc = ls.adHocRecords()
 	doc.Boundaries = ls.boundaryRecords()
 	doc.Incidents = inst.incidentRecords()
 
 	return doc, ""
+}
+
+// adHocRecords captures every open Ad-Hoc container's routing state
+// (SRD-083 FR-2). All of it — the progress maps, the offer, the flags
+// — is loop-owned, so the capture is a consistent cut by construction.
+// The running counts are deliberately absent: each routed track's
+// record carries its AdHocActivity, and restore rebuilds the counts
+// from the track table rather than trusting two tables to agree.
+func (ls *loopState) adHocRecords() []checkpoint.AdHocRecord {
+	var out []checkpoint.AdHocRecord
+
+	for path, entry := range ls.scopes {
+		if entry.adHoc == nil {
+			continue
+		}
+
+		rec := checkpoint.AdHocRecord{
+			HostTrack:  entry.host.ID(),
+			ScopePath:  string(path),
+			Completed:  copyCounts(entry.adHoc.completed),
+			StopReason: entry.adHoc.stopReason,
+			Stopped:    entry.adHoc.stopped,
+		}
+
+		for _, n := range entry.adHoc.offered {
+			rec.Offered = append(rec.Offered, n.ID())
+		}
+
+		out = append(out, rec)
+	}
+
+	// scope paths are unique, so the sort makes the document
+	// deterministic (the miGroupRecords discipline).
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ScopePath < out[j].ScopePath
+	})
+
+	return out
 }
 
 // miGroupRecords captures the parallel Multi-Instance open sets
@@ -455,15 +494,20 @@ func trackRecord(
 	}
 
 	rec := checkpoint.TrackRecord{
-		ID:          t.ID(),
-		State:       t.state.String(),
-		NodeID:      t.steps[len(t.steps)-1].node.ID(),
-		ScopePath:   string(t.scopePath),
-		ScopeSeg:    t.scopeSeg,
-		TaskID:      t.taskID,
-		Prev:        append([]string{}, t.prev...),
-		MsgDefIDs:   append([]string{}, t.msgDefIDs...),
-		LoopCounter: t.loopCounter,
+		ID:        t.ID(),
+		State:     t.state.String(),
+		NodeID:    t.steps[len(t.steps)-1].node.ID(),
+		ScopePath: string(t.scopePath),
+		ScopeSeg:  t.scopeSeg,
+		TaskID:    t.taskID,
+		// the routed-activity assignment is set pre-spawn on the loop
+		// (spawnAdHoc) and never rewritten, so the read is safe here;
+		// restore rebuilds the container's running counts from it
+		// (SRD-083 FR-2).
+		AdHocActivity: t.adHocActivity,
+		Prev:          append([]string{}, t.prev...),
+		MsgDefIDs:     append([]string{}, t.msgDefIDs...),
+		LoopCounter:   t.loopCounter,
 	}
 
 	if t.state == TrackWaitForEvent && !t.timerDeadline.IsZero() {

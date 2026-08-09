@@ -76,7 +76,7 @@ func TestTaskAuthorizationDoesNotHoldTheEngineLock(t *testing.T) {
 	go func() {
 		defer close(done)
 
-		_ = th.Instances(InstancesAll) // any operation needing t.m
+		_, _ = th.Instances(InstanceQuery{}) // any operation needing t.m
 	}()
 
 	select {

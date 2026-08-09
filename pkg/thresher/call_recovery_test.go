@@ -376,7 +376,7 @@ func TestCallDiscoverySeparation(t *testing.T) {
 	var childID string
 
 	require.Eventually(t, func() bool {
-		children := th.Instances(thresher.InstancesChildren)
+		children := instanceIDs(t, th, thresher.InstanceQuery{Kind: thresher.KindChildren})
 		if len(children) != 1 {
 			return false
 		}
@@ -387,7 +387,7 @@ func TestCallDiscoverySeparation(t *testing.T) {
 	}, 3*time.Second, 10*time.Millisecond)
 
 	require.Equal(t, []string{parentID},
-		th.Instances(thresher.InstancesRoots),
+		instanceIDs(t, th, thresher.InstanceQuery{Kind: thresher.KindRoots}),
 		"roots list the caller only")
 
 	ch, ok := th.Instance(childID)

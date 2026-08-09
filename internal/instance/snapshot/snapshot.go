@@ -3,6 +3,8 @@ package snapshot
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/interactor"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
@@ -11,6 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 const errorClass = "SNAPSHOT_ERRORS"
@@ -129,7 +132,7 @@ func New(
 	for _, n := range p.Nodes() {
 		srcNodes[n.ID()] = n
 
-		cn, cerr := cloneNode(n)
+		cn, cerr := cloneAfterCheck(n)
 		if cerr != nil {
 			return nil, cerr
 		}
@@ -299,6 +302,101 @@ func correlationKeys(p *process.Process) []*bpmncommon.CorrelationKey {
 	}
 
 	return keys
+}
+
+// cloneAfterCheck validates the node for the snapshot and returns its
+// clone. The only check here is the iterated-waiting-leaf refusal
+// (#313); everything else the snapshot rejects is structural and
+// belongs to the whole-process passes below.
+func cloneAfterCheck(n flow.Node) (flow.Node, error) {
+	// A WAITING leaf under Multi-Instance or a Standard Loop is refused
+	// until the iteration decorator owns the node's event registration
+	// (#313): the engine would otherwise run the iteration without ever
+	// waiting past its first pass.
+	if err := checkIteratedWaitingLeaf(n); err != nil {
+		return nil, err
+	}
+
+	return cloneNode(n)
+}
+
+// checkIteratedWaitingLeaf refuses a LEAF activity that both iterates
+// (Multi-Instance or Standard Loop) and PARKS when it executes — a
+// ReceiveTask, a User Task, an external-worker Service Task, or an
+// event catch on a non-Conditional trigger.
+//
+// Such a node cannot iterate correctly today: a wait is armed when a
+// track ARRIVES at the node, so passes after the first would execute
+// without waiting at all — the iteration would consume one trigger and
+// run the rest through. Closing that needs the iteration decorator to
+// become the node's single EventProcessor and interpose on its event
+// registration, which is its own design work (#313). Until then the
+// model is refused at registration rather than run wrong: a silent
+// wrong answer is the one outcome worse than an unsupported one.
+//
+// A COMPOSITE that iterates is unaffected — its body re-opens per
+// iteration, so each pass arrives at its inner nodes afresh.
+func checkIteratedWaitingLeaf(n flow.Node) error {
+	if !iterates(n) {
+		return nil
+	}
+
+	// a composite iterates by re-opening its child scope; only leaves
+	// are affected.
+	if _, composite := n.(interface{ Nodes() []flow.Node }); composite {
+		return nil
+	}
+
+	if !parksOnExecution(n) {
+		return nil
+	}
+
+	return errs.New(
+		errs.M("activity %q both iterates and waits: a Multi-Instance or "+
+			"Standard Loop over a WAITING leaf (a ReceiveTask, a User "+
+			"Task, an external-worker Service Task or an event catch) "+
+			"is not supported yet — its passes after the first would "+
+			"run without waiting (#313). Model it as an iterated "+
+			"Sub-Process containing the wait.", n.Name()),
+		errs.C(errorClass, errs.InvalidObject),
+		errs.D(observability.AttrNodeID, n.ID()))
+}
+
+// iterates reports whether the node carries loop characteristics —
+// the same capability probe the runtime uses (multiInstanceOf /
+// standardLoopOf).
+func iterates(n flow.Node) bool {
+	lch, ok := n.(interface {
+		LoopCharacteristics() activities.LoopCharacteristics
+	})
+
+	return ok && lch.LoopCharacteristics() != nil
+}
+
+// parksOnExecution reports whether executing this node parks its track.
+func parksOnExecution(n flow.Node) bool {
+	if _, human := n.(interactor.HumanTask); human {
+		return true
+	}
+
+	if ew, ok := n.(tasks.ExternalWorker); ok {
+		if _, isWorker := ew.WorkerTopic(); isWorker {
+			return true
+		}
+	}
+
+	en, isEvent := n.(flow.EventNode)
+	if !isEvent {
+		return false
+	}
+
+	for _, d := range en.Definitions() {
+		if d.Type() != flow.TriggerConditional {
+			return true
+		}
+	}
+
+	return false
 }
 
 // isInstantiatingTask reports whether n is a no-incoming instantiate

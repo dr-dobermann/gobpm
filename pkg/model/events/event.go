@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
-	"sync"
+	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
@@ -278,38 +278,86 @@ func (e Event) NodeType() flow.NodeType {
 
 type catchEvent struct {
 	dataOutputs map[string]*data.Parameter
+	// iterCorr is the declared iteration-correlation pair (SRD-085
+	// FR-3, ADR-006 v.5 §2.9.3): immutable configuration, shared by
+	// reference across per-instance clones; nil when the catch declares
+	// none.
+	iterCorr *iterationCorrelation
 	Event
-	// received holds the payload item captured from a fired message event
-	// definition, bound into scope on resume (ADR-014 v.1 §2.2). It is
-	// per-instance runtime state, nil until a payload-carrying event fires.
-	// Guarded by the package recvMu — see its comment.
-	received           *data.ItemDefinition
 	outputAssociations []*data.Association
 	parallelMultiple   bool
 }
 
-// recvMu guards every catchEvent's received field: N parallel
-// Multi-Instance bodies SHARE their catch node, so concurrent fires
-// write it from different track goroutines (surfaced by SRD-082's
-// parallel-restore tests). A package-level mutex, because the model
-// layer copies event structs by value at build time — an embedded
-// mutex would be copied with them (govet copylocks). The
-// payload-routing semantics of that node sharing are a follow-up
-// issue; the mutex makes the access safe, not the ordering fair.
-var recvMu sync.Mutex
+// iterationCorrelation pairs a DECLARED process-level correlation key
+// (whose payload-side retrieval the model already carries) with the
+// subscription-side expression a registering execution evaluates over
+// its own scope (SRD-085 FR-3): the two halves of one value, matched
+// at delivery.
+type iterationCorrelation struct {
+	expr    data.FormalExpression
+	keyName string
+}
 
-// ProcessEvent captures the payload carried by a fired event definition, so a
-// catch event can bind it into scope on resume (the consumer side of ADR-014
-// v.1 §2.2). A definition fired without a payload captures nothing. Implements
-// eventproc.EventProcessor for every catch event (StartEvent, IntermediateCatchEvent).
+// CatchOption configures a catch event at construction (SRD-085).
+type CatchOption func(*catchEvent) error
+
+// Option marks CatchOption as an options.Option.
+func (CatchOption) Option() {}
+
+// WithIterationCorrelation declares how a concurrently-waiting
+// execution of this catch (a parallel-MI iteration) is addressed by an
+// arriving message (ADR-006 v.5 §2.9.3): keyName names a declared
+// process CorrelationKey — its retrieval expressions derive the
+// envelope-side value — and expr, evaluated at registration over the
+// registering execution's scope (where the iteration's split item is
+// bound), produces the subscription-side value. Equal values route the
+// delivery to exactly that execution.
+func WithIterationCorrelation(
+	keyName string, expr data.FormalExpression,
+) CatchOption {
+	return CatchOption(func(ce *catchEvent) error {
+		if strings.TrimSpace(keyName) == "" {
+			return errs.New(
+				errs.M("WithIterationCorrelation: an empty correlation "+
+					"key name isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		if expr == nil {
+			return errs.New(
+				errs.M("WithIterationCorrelation: a nil expression "+
+					"isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		ce.iterCorr = &iterationCorrelation{keyName: keyName, expr: expr}
+
+		return nil
+	})
+}
+
+// IterationCorrelation returns the declared iteration-correlation pair,
+// or ("", nil) when the catch declares none — the capability the
+// registering execution probes (SRD-085 FR-3).
+func (ce *catchEvent) IterationCorrelation() (string, data.FormalExpression) {
+	if ce.iterCorr == nil {
+		return "", nil
+	}
+
+	return ce.iterCorr.keyName, ce.iterCorr.expr
+}
+
+// ProcessEvent is the node's delivery notification (implements
+// eventproc.EventProcessor for every catch event). Since SRD-085 the
+// payload does NOT land here: a node is a runtime-immutable definition
+// shared by every execution of its instance (parallel MI iterations
+// included), so the delivery's item is captured by the RECEIVING
+// execution and carried to UploadData in its frame (ADR-006 v.5
+// §2.9.1). Nothing is left to do at this seam.
 func (ce *catchEvent) ProcessEvent(
 	_ context.Context,
-	eDef flow.EventDefinition,
+	_ flow.EventDefinition,
 ) error {
-	recvMu.Lock()
-	ce.received = msgflow.CaptureItem(eDef)
-	recvMu.Unlock()
-
 	return nil
 }
 
@@ -360,17 +408,44 @@ func newCatchEvent(
 	parallel bool,
 	baseOpts ...options.Option,
 ) (*catchEvent, error) {
-	e, err := newEvent(name, props, defs, baseOpts...)
+	// catch-level options apply to the built catchEvent; everything
+	// else rides down to newEvent (the propCollector discipline).
+	catchOpts := make([]CatchOption, 0, len(baseOpts))
+	eventOpts := make([]options.Option, 0, len(baseOpts))
+
+	for _, o := range baseOpts {
+		if co, ok := o.(CatchOption); ok {
+			catchOpts = append(catchOpts, co)
+
+			continue
+		}
+
+		eventOpts = append(eventOpts, o)
+	}
+
+	e, err := newEvent(name, props, defs, eventOpts...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &catchEvent{
+	ce := &catchEvent{
 		Event:              *e,
 		outputAssociations: []*data.Association{},
 		dataOutputs:        map[string]*data.Parameter{},
 		parallelMultiple:   e.triggers.Count() > 1 && parallel,
-	}, nil
+	}
+
+	for _, co := range catchOpts {
+		if err := co(ce); err != nil {
+			return nil, errs.New(
+				errs.M("newCatchEvent: couldn't apply a catch option to "+
+					"event %q", name),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+		}
+	}
+
+	return ce, nil
 }
 
 // clone returns a per-instance copy of the catchEvent: the embedded Event is
@@ -386,6 +461,7 @@ func (ce *catchEvent) clone() (catchEvent, error) {
 		Event:              e,
 		dataOutputs:        ce.dataOutputs,
 		outputAssociations: ce.outputAssociations,
+		iterCorr:           ce.iterCorr,
 		parallelMultiple:   ce.parallelMultiple,
 	}, nil
 }
@@ -421,9 +497,11 @@ func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
 			errs.E(err))
 	}
 
-	recvMu.Lock()
-	received := ce.received
-	recvMu.Unlock()
+	// THIS delivery's payload rides the frame (ADR-006 v.5 §2.9.1,
+	// SRD-085 FR-1): the receiving execution captured it from the fired
+	// definition and staged it here — never node state, so concurrent
+	// deliveries into sibling executions cannot cross payloads.
+	received := f.Received()
 
 	outs := map[string]*data.Parameter{}
 	for _, o := range f.Outputs() {
