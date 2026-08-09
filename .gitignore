@@ -91,3 +91,8 @@ examples/incident-retry/incident-retry
 
 # Python bytecode (scripts/mkdocs_hooks.py)
 __pycache__/
+
+# The gate's own record of itself (FIX-039): the last run's verdict and a
+# machine-local timing baseline. Not source — and a baseline from a 24-core box
+# is false on a 2-core runner, so it is never shared.
+.ci/

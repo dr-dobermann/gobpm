@@ -345,6 +345,19 @@ build-all:
 # use the host default, or set another number to experiment.
 TEST_CPUS ?= 4
 
+# CI_DIR holds the gate's own record of itself (FIX-039): the verdict of the
+# last run and a local, machine-specific timing baseline. Both are gitignored —
+# a verdict is not source, and timings that are true on 24 cores are false on a
+# 2-core runner, so a shared baseline would be wrong nearly everywhere.
+CI_DIR ?= .ci
+
+# MAKE_BIN carries the same value as $(MAKE), under a name make does not
+# recognise. GNU make executes any recipe line containing the literal $(MAKE)
+# even under -n, so `make -n ci` used to RUN the driver — which then invoked
+# each step with -n inherited, got 14 instant successes, and recorded a PASS
+# for a run that executed nothing (FIX-039 §1.5). A dry run must print, not do.
+MAKE_BIN := $(MAKE)
+
 test-all:
 	@set -e; for dir in $(MODULES); do \
 		echo "::group::test $$dir (TEST_CPUS=$(TEST_CPUS))"; \
@@ -474,10 +487,26 @@ run-examples:
 # the core `vuln` scan already covers the shared dependency graph; scanning it
 # 35 more times added minutes of CI for no new signal). Runs as CI's parallel
 # non-blocking job AND inside the local `make ci`.
+CI_EXAMPLE_STEPS = examples-tidy examples-lint examples-build run-examples
+
+# Four announced steps rather than two opaque $(MAKE) calls — the run phase
+# alone executes 49 modules and used to report nothing but ::group:: lines.
 ci-examples:
-	@$(MAKE) tidy-check-all lint-all-modules build-all MODULES="$(EXAMPLE_MODULES)"
-	@$(MAKE) run-examples
+	@MAKE="$(MAKE_BIN)" CI_DIR="$(CI_DIR)" ./scripts/ci-run.sh examples \
+		$(CI_EXAMPLE_STEPS)
 .PHONY: ci-examples
+
+examples-tidy:
+	@$(MAKE) tidy-check-all MODULES="$(EXAMPLE_MODULES)"
+.PHONY: examples-tidy
+
+examples-lint:
+	@$(MAKE) lint-all-modules MODULES="$(EXAMPLE_MODULES)"
+.PHONY: examples-lint
+
+examples-build:
+	@$(MAKE) build-all MODULES="$(EXAMPLE_MODULES)"
+.PHONY: examples-build
 
 # examples-module-check guards the run sweep's completeness: an example
 # directory without a go.mod is invisible to EXAMPLE_MODULES, so it is built
@@ -499,12 +528,37 @@ examples-module-check:
 	fi; \
 	echo "example-module check: all $(words $(EXAMPLE_DIRS)) example directories are modules"
 
-# The core gate — everything the REQUIRED CI job runs, in the same order.
-ci-core: mock-check link-check examples-module-check tidy-check-core lint-core build-core consumer-smoke test-core cover-check vuln-core
+# The ten core steps, in the order the REQUIRED CI job runs them. Named once
+# here so the list, the banners and the workflow cannot drift apart.
+CI_CORE_STEPS = mock-check link-check examples-module-check tidy-check-core \
+                lint-core build-core consumer-smoke test-core cover-check \
+                vuln-core
+
+# The core gate. It runs through scripts/ci-run.sh, which announces each step
+# with its ordinal and elapsed time, heartbeats inside the long ones, and writes
+# the run's verdict to $(CI_DIR)/last-run.json.
+#
+# READ THE VERDICT FROM THAT FILE, never from the exit code of whatever wrapped
+# this: a trailing `echo` masks it, a filtering wrapper can fabricate it, and a
+# killed process group destroys it. An ABSENT file means the run did not finish
+# and is never a pass.
+#
+# On GitHub each of these steps is its own workflow step (check.yml), so CI
+# already names and times them; this driver is what gives the same information
+# to a local run, where all ten happen inside one process.
+ci-core:
+	@MAKE="$(MAKE_BIN)" CI_DIR="$(CI_DIR)" ./scripts/ci-run.sh core $(CI_CORE_STEPS)
 .PHONY: ci-core
 
 # Umbrella target that runs the full local-equivalent of CI (BOTH CI jobs).
 # Use this before pushing to catch regressions before GitHub runs them.
 # test-core writes coverage.txt; cover-check consumes it (single test run).
-ci: ci-core ci-examples
+# One run, one verdict: `ci` drives all fourteen steps through a SINGLE driver
+# invocation rather than calling ci-core and ci-examples in turn. Two
+# invocations would write $(CI_DIR)/last-run.json twice, and the second would
+# overwrite the first — leaving a file that describes half the run while
+# looking like it describes all of it.
+ci:
+	@MAKE="$(MAKE_BIN)" CI_DIR="$(CI_DIR)" ./scripts/ci-run.sh full \
+		$(CI_CORE_STEPS) $(CI_EXAMPLE_STEPS)
 .PHONY: ci
