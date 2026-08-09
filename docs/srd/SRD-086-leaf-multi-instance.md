@@ -8,7 +8,7 @@
 | Implements | [ADR-025 v.2](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.2/§2.5/§2.6 (the leaf iteration mechanisms the accepted contract prescribes and the implementation never built) |
 | Upstream | [ADR-006 v.5](../design/ADR-006-events-and-subscriptions.md) §2.9 (the delivery contract a waiting leaf iteration rides), [ADR-033 v.4](../design/ADR-033-persistence-and-state.md) §2.10 (composite capture fidelity, which the parallel-leaf realization inherits) |
 | Related | [SRD-055](SRD-055-multi-instance-sequential.md) / [SRD-056.A](SRD-056.A-multi-instance-parallel.md) (the composite decorators this extends; frozen one-shots), [SRD-085](SRD-085-in-instance-delivery.md) (iteration-correlated delivery, which parallel leaf catches reuse) |
-| Tracking | #305 (the review thread that surfaced it) — the defect gets its own issue at the PR |
+| Tracking | #305 (the review thread that surfaced it); #313 (the loop/MI decorator — the iterated waiting leaf FR-4 refuses until it lands) |
 
 **A leaf task decorated with Multi-Instance silently runs ONCE.**
 `executeStep` routes MI to a decorator only for a `scopeHost`; a leaf
