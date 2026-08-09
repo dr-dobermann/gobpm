@@ -730,7 +730,11 @@ func (ls *loopState) addMsgSub(id string, t *track) {
 	keyName, value := t.msgIterKeyName, t.msgIterKey
 	t.m.RUnlock()
 
-	if len(subs) > 0 && (value == "" || subs[0].value == "") {
+	// keyless means NO DECLARATION (keyName empty) — never an
+	// evaluated value that happens to be "": an iteration whose split
+	// item is the empty string is correlated like any other, and
+	// reading it as keyless would fault a well-formed model.
+	if len(subs) > 0 && (keyName == "" || subs[0].keyName == "") {
 		ls.inst.fail(errs.New(
 			errs.M("message definition %q has %d concurrent waiters but "+
 				"no iteration correlation on every one of them — "+
@@ -761,7 +765,7 @@ func (ls *loopState) resolveMsgSub(
 		return nil
 	}
 
-	if len(subs) == 1 && subs[0].value == "" {
+	if len(subs) == 1 && subs[0].keyName == "" {
 		return subs[0].track
 	}
 
