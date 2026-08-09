@@ -313,14 +313,40 @@ ever re-executes, and no construct defers the capture:
 `CheckpointDeferred` now signals only a real failure (an unserializable
 payload, a failed save) — still loud, never a silent skip.
 
+## A call tree recovers as a unit
+
+Recovery claims a **call tree**, not an instance: a child is never
+revived on its own — an engine reaches it only through its caller's
+claim, which walks the recorded call links transitively before
+restoring anything. So in a multi-engine group two engines can no
+longer split a caller from the child it awaits, and no manual
+placement rule is needed: the caller resumes with its children already
+resident on the same engine.
+
+Two consequences worth knowing:
+
+- **A child whose caller is terminal is finished, not revived.** A
+  caller completes only after its call returns, and a terminating
+  caller terminates its children — so a terminal caller with a live
+  child means a cancel cascade that a crash interrupted. Recovery
+  writes that child's terminal record and reports it
+  (`InstanceState/Terminated`, `reason=caller-terminal`) rather than
+  running an instance whose outcome nothing will consume.
+- **A child genuinely live on another engine refuses loudly.** If a
+  record written before this rule (or a misbehaving store) leaves a
+  child running elsewhere, the caller's recovery fails with a fact
+  naming the child and its holder — and that child keeps running.
+  Tearing down another engine's work to satisfy a recovery would
+  destroy real state.
+
 ## Current limits (the next slices)
 
 The operator **suspend/resume** surface is the remaining ADR-033
-slice. One documented corner: in a **multi-engine group**, recovery
-may claim a caller and its called child on different engines — each
-recovers correctly, but the cross-engine re-link is future work
-(#308; keep call pairs on one engine, or in one solo group, until it
-lands).
+slice. One documented corner remains in the multi-engine picture:
+re-linking a caller and child that are *deliberately* placed on
+different engines — remote child handles, cross-engine completion
+delivery and cancel cascade — is distribution work, still open as
+#308. Recovery affinity means a healthy group never needs it.
 
 ## See also
 

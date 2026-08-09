@@ -200,6 +200,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A recovering engine could half-recover a call tree** (SRD-087). In
+  a multi-engine group, recovery claimed instance by instance, so a
+  caller and the child it awaits could land on different engines: each
+  recovered correctly and then the caller's re-attach — engine-local —
+  refused, leaving the child running and the caller never resuming. A
+  call tree is now the unit of a claim: a child is never revived on
+  its own, and a caller's claim walks its recorded call links
+  transitively before restoring.
+- **A child whose caller had already finished was revived** —
+  recovery checked that the caller's record existed, never that it was
+  still in flight, so the child came back and ran into a caller that
+  completed long ago. Such a child is the unfinished half of a cancel
+  cascade: recovery now writes its terminal record and reports it.
+
+
 - **A leaf task decorated with Multi-Instance silently ran ONCE** —
   executeStep had no leaf-MI branch, so a 3-item collection completed
   with a single execution and no complaint.
