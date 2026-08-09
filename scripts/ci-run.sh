@@ -38,10 +38,19 @@ timings="$CI_DIR/timings.tsv"
 # passes the dry-run flag down in MAKEFLAGS, so every step returned instantly
 # and successfully. The result was a verdict reading "PASS, 14 steps, 1s" for a
 # run that executed nothing: a forged pass produced by the machinery built to
-# make passes unforgeable. The Makefile no longer spells $(MAKE) literally in
-# these recipes, and this guard covers every other way -n could arrive.
-case "${MAKEFLAGS%% *}" in
-	*n*)
+# make passes unforgeable. The Makefile deliberately KEEPS $(MAKE) in these
+# recipes — hiding it stops -n from recursing but also closes make's jobserver,
+# so `make -j4 ci` warns "jobserver unavailable" on every step (measured) — and
+# this guard is what makes the dry run harmless instead.
+# ${MAKEFLAGS:-} because `set -u` makes a bare expansion fatal when the script
+# is run directly rather than through make — which its own usage line invites,
+# and which an independent review caught crashing on line one.
+#
+# Only the FIRST word carries short flags; long options are separate words
+# (verified: `s --no-print-directory`), so matching the first word alone cannot
+# be fooled by a long option that happens to contain an n.
+case "${MAKEFLAGS:-}" in
+	n*|*[[:space:]]n*)
 		echo "ci-run: dry run (-n) — executing nothing and recording no verdict"
 		exit 0
 		;;
@@ -87,6 +96,10 @@ typical_for() {
 # caller, so killing the caller cannot lose it; and it carries the HEAD sha and
 # start time so an older file cannot be read as this run's.
 write_status() {
+	# Disarm first: a signal arriving mid-write would otherwise re-enter this
+	# function through the trap and interleave two writers on one file.
+	trap '' INT TERM
+
 	local code="$1" failed="$2" note="$3"
 	local elapsed=$(($(date +%s) - run_start))
 	{
@@ -102,7 +115,12 @@ write_status() {
 		printf '  "seconds": %s,\n' "$elapsed"
 		printf '  "steps": {%s}\n' "$durations"
 		printf '}\n'
-	} > "$status"
+	} > "$status.tmp"
+
+	# Atomic: a reader polling this file must see either the previous verdict or
+	# the complete new one, never a half-written JSON document. rename(2) is the
+	# only way to promise that.
+	mv -f "$status.tmp" "$status"
 }
 
 # A signal that can be caught is recorded AND taken down with its children.
@@ -116,6 +134,14 @@ write_status() {
 # (`kill -TERM -<pgid>`), which this handler makes sufficient.
 on_signal() {
 	trap '' INT TERM                 # do not re-enter on our own group signal
+
+	# The heartbeat lives in its OWN process group (setsid, so that killing it
+	# takes its sleep along), which means the group kill below does NOT reach
+	# it. Without this line an interrupted run leaves a heartbeat printing into
+	# a log nobody is producing any more — measured, after the two fixes were
+	# applied separately and their interaction was not.
+	[ -n "${beat:-}" ] && kill -TERM -"$beat" 2>/dev/null
+
 	kill -TERM 0 2>/dev/null         # make, its shell, go test — the whole group
 	write_status 130 "$current_step" "interrupted by a signal"
 	echo "[$phase] INTERRUPTED during $current_step — verdict recorded as FAIL"
@@ -145,12 +171,17 @@ for step in "${steps[@]}"; do
 	# The heartbeat is what makes a silence readable. test-core emits one
 	# ::group:: line and then nothing until a whole race suite finishes, so a
 	# working step, a deadlocked step and a dead step look identical.
-	(
-		while sleep "$CI_HEARTBEAT"; do
-			printf '[%2d/%d] %-22s … %s elapsed\n' \
-				"$i" "$total" "$step" "$(human "$(($(date +%s) - step_start))")"
+	# setsid puts the heartbeat in its own process group, so killing it below
+	# takes its `sleep` with it. Killing the subshell alone leaves the sleep
+	# orphaned until its timer expires — up to one stray process per step.
+	setsid bash -c '
+		while sleep "$1"; do
+			e=$(( $(date +%s) - $5 ))
+			if [ "$e" -lt 60 ]; then el="${e}s"; else
+				el="$((e / 60))m$(printf %02d $((e % 60)))s"; fi
+			printf "[%2d/%d] %-22s … %s elapsed\n" "$2" "$3" "$4" "$el"
 		done
-	) &
+	' _ "$CI_HEARTBEAT" "$i" "$total" "$step" "$step_start" &
 	beat=$!
 
 	# The step runs in the BACKGROUND and is waited on, because bash defers a
@@ -164,7 +195,7 @@ for step in "${steps[@]}"; do
 	wait "$step_pid"
 	code=$?
 
-	kill "$beat" 2>/dev/null
+	kill -TERM -"$beat" 2>/dev/null || kill "$beat" 2>/dev/null
 	wait "$beat" 2>/dev/null
 
 	elapsed=$(($(date +%s) - step_start))

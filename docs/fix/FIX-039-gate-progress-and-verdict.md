@@ -118,6 +118,25 @@ found by running the thing rather than by reasoning about it:
   it did so in the most innocuous way imaginable, from a command whose entire
   purpose is not to do anything.
 
+### 1.6 What the independent review found
+
+`/pr-review` read the diff doc-blind (two lenses, a different model family) and
+returned nine notes; six survived verification and are fixed here. Three are
+worth naming because each is the document's own thesis turned on the fix:
+
+- **The driver crashed when run directly.** `${MAKEFLAGS%% *}` under `set -u` is
+  fatal when the variable is unset — which is exactly how the script's own usage
+  line says to invoke it. Reproduced: `MAKEFLAGS: unbound variable`.
+- **Hiding `$(MAKE)` broke the jobserver.** The `MAKE_BIN` trick that stopped
+  `-n` from executing the driver also stopped make from passing its jobserver,
+  so `make -j4` warned `jobserver unavailable: using -j1` on every step.
+  Measured. The guard alone is sufficient and keeps both properties.
+- **The verdict was written non-atomically.** Multiple `printf`s into one
+  redirect, while the file's whole purpose is to be read by someone else — the
+  session's own monitor polled it. A reader could see half a JSON document.
+
+Two notes were refuted and recorded in §8.3 rather than dropped.
+
 ## 2 Root cause analysis
 
 One cause with two faces: **the gate reports to its caller and to nobody else.**
@@ -232,6 +251,9 @@ Shell-level, run from the repo (a Makefile change cannot be pinned by `go test`)
 | T-6 | `git status --porcelain` after a run | clean — the timing baseline and status file are ignored, so the gate never dirties the tree |
 | T-7 | SIGTERM the driver mid-`test-core` | the verdict records `interrupted by a signal`, AND no `go test` survives the driver — an unstopped child is a gate that is still running after you stopped it |
 | T-8 | `make -n ci` | NO verdict is written and nothing executes — a dry run must never produce a pass. Also `MAKEFLAGS=n ./scripts/ci-run.sh …` directly, covering the guard independently of the Makefile |
+| T-9 | `make -j4 <target>` | no `jobserver unavailable` warning — the recipes stay recursive so make passes its jobserver, and the dry-run guard, not a hidden `$(MAKE)`, is what makes `-n` harmless |
+| T-10 | `env -u MAKEFLAGS ./scripts/ci-run.sh …` | the driver runs when invoked directly, as its usage line says it may be |
+| T-11 | `make workflow-check` | `CI_CORE_STEPS` and the ten `make <step>` invocations in `check.yml` agree — the list is duplicated by necessity, so something must compare them |
 
 ### 4.2 Gate
 
@@ -300,6 +322,7 @@ rejected work: the wait is 146s and the goal is predictability, not speed.
 | `Makefile` | `CI_DIR`, `CI_CORE_STEPS`, `CI_EXAMPLE_STEPS` named once; `ci-core`, `ci-examples` and `ci` drive through the script; `ci` is a SINGLE invocation over all 14 steps |
 | `.gitignore` | `.ci/` |
 | `CLAUDE.md` | "Reading a gate run" — judge by the status file, absent means unfinished, and the two observer traps by name |
+| `Makefile` (`workflow-check`) | compares `CI_CORE_STEPS` against the steps `check.yml` runs, so the duplicated list cannot drift silently |
 
 ### 8.2 Empirical findings
 
@@ -323,6 +346,27 @@ rejected work: the wait is 146s and the goal is predictability, not speed.
   in the design anticipated a command that is defined as doing nothing being
   able to record having done everything. It is now guarded twice and pinned by
   T-8.
+
+### 8.3 Review notes NOT acted on
+
+- **"`--no-print-directory` triggers a false dry-run."** Refuted by measurement:
+  GNU make puts long options in their own words, so `MAKEFLAGS` reads
+  `s --no-print-directory` and the first-word check never sees them. Only `-n`
+  places an `n` there. The line does carry a real bug — the unbound variable
+  above — but not this one.
+- **"Running a step directly leaves a stale FAIL verdict."** Rejected: the file
+  describes a gate RUN, not the state of the tree, and it carries that run's
+  HEAD sha and finish time. `make test-core` on its own is not a gate run and
+  must not claim to be one.
+
+### 8.4 A defect the review did not find, and the tests did
+
+Fixes #4 and #5 were each correct alone and wrong together. Putting the
+heartbeat in its own process group (so killing it takes its `sleep` along) also
+put it outside the group the signal handler kills — so an interrupted run left a
+heartbeat printing into a log nobody was writing. Neither lens saw it, because
+it exists only in the interaction; it appeared the first time T-7 was re-run
+after both landed. Verify the combination, not the changes.
 
 ## 9 Open questions
 

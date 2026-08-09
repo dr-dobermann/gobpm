@@ -351,12 +351,6 @@ TEST_CPUS ?= 4
 # 2-core runner, so a shared baseline would be wrong nearly everywhere.
 CI_DIR ?= .ci
 
-# MAKE_BIN carries the same value as $(MAKE), under a name make does not
-# recognise. GNU make executes any recipe line containing the literal $(MAKE)
-# even under -n, so `make -n ci` used to RUN the driver — which then invoked
-# each step with -n inherited, got 14 instant successes, and recorded a PASS
-# for a run that executed nothing (FIX-039 §1.5). A dry run must print, not do.
-MAKE_BIN := $(MAKE)
 
 test-all:
 	@set -e; for dir in $(MODULES); do \
@@ -492,7 +486,7 @@ CI_EXAMPLE_STEPS = examples-tidy examples-lint examples-build run-examples
 # Four announced steps rather than two opaque $(MAKE) calls — the run phase
 # alone executes 49 modules and used to report nothing but ::group:: lines.
 ci-examples:
-	@MAKE="$(MAKE_BIN)" CI_DIR="$(CI_DIR)" ./scripts/ci-run.sh examples \
+	@MAKE="$(MAKE)" CI_DIR="$(CI_DIR)" ./scripts/ci-run.sh examples \
 		$(CI_EXAMPLE_STEPS)
 .PHONY: ci-examples
 
@@ -528,8 +522,9 @@ examples-module-check:
 	fi; \
 	echo "example-module check: all $(words $(EXAMPLE_DIRS)) example directories are modules"
 
-# The ten core steps, in the order the REQUIRED CI job runs them. Named once
-# here so the list, the banners and the workflow cannot drift apart.
+# The ten core steps, in the order the REQUIRED CI job runs them. The workflow
+# runs each as its own job step, so the list exists in two places; workflow-check
+# below compares them rather than leaving the comment to assert it.
 CI_CORE_STEPS = mock-check link-check examples-module-check tidy-check-core \
                 lint-core build-core consumer-smoke test-core cover-check \
                 vuln-core
@@ -546,8 +541,30 @@ CI_CORE_STEPS = mock-check link-check examples-module-check tidy-check-core \
 # On GitHub each of these steps is its own workflow step (check.yml), so CI
 # already names and times them; this driver is what gives the same information
 # to a local run, where all ten happen inside one process.
+# workflow-check keeps CI_CORE_STEPS and .github/workflows/check.yml in step.
+# The workflow invokes each core step separately (`run: make <step>`), so the
+# list is duplicated by necessity — and a duplicated list that nothing compares
+# is a list that drifts. An independent review pointed out that the comment
+# above used to claim drift was impossible; this makes the claim true.
+workflow-check:
+	@tmp=$$(mktemp -d); \
+	grep -v '^[[:space:]]*#' .github/workflows/check.yml \
+		| grep -oE '\bmake [a-z-]+' | sed 's/make //' \
+		| grep -vxE 'ci|ci-core|ci-examples|tools' \
+		| sort -u > $$tmp/workflow; \
+	printf '%s\n' $(CI_CORE_STEPS) | sort -u > $$tmp/makefile; \
+	if ! diff -q $$tmp/workflow $$tmp/makefile >/dev/null 2>&1; then \
+		echo "ERROR: CI_CORE_STEPS and check.yml disagree"; \
+		echo "  < workflow-only   > Makefile-only"; \
+		diff $$tmp/workflow $$tmp/makefile; \
+		rm -rf $$tmp; exit 1; \
+	fi; \
+	rm -rf $$tmp; \
+	echo "workflow-check: check.yml runs exactly the $(words $(CI_CORE_STEPS)) core steps"
+.PHONY: workflow-check
+
 ci-core:
-	@MAKE="$(MAKE_BIN)" CI_DIR="$(CI_DIR)" ./scripts/ci-run.sh core $(CI_CORE_STEPS)
+	@MAKE="$(MAKE)" CI_DIR="$(CI_DIR)" ./scripts/ci-run.sh core $(CI_CORE_STEPS)
 .PHONY: ci-core
 
 # Umbrella target that runs the full local-equivalent of CI (BOTH CI jobs).
@@ -559,6 +576,6 @@ ci-core:
 # overwrite the first — leaving a file that describes half the run while
 # looking like it describes all of it.
 ci:
-	@MAKE="$(MAKE_BIN)" CI_DIR="$(CI_DIR)" ./scripts/ci-run.sh full \
+	@MAKE="$(MAKE)" CI_DIR="$(CI_DIR)" ./scripts/ci-run.sh full \
 		$(CI_CORE_STEPS) $(CI_EXAMPLE_STEPS)
 .PHONY: ci
