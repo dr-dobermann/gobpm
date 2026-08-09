@@ -47,11 +47,12 @@ This SRD makes a **call tree the unit of a claim**.
 
 ## §2 Requirements
 
-- **FR-1 — parents first, children deferred.** The sweep partitions
-  the listing before claiming: an id whose record names a `ParentID`
-  **within the same listing** is deferred — its parent's claim will
-  take it. A child whose parent is NOT in the listing (the parent is
-  live elsewhere, or terminal) is recovered on its own, as today.
+- **FR-1 — a child is never revived on its own.** The sweep drops
+  every id whose record names a `ParentID`, unconditionally: recovery
+  reaches a child only through its caller's claim (FR-2). This is
+  stronger than deferring only when the caller happens to be in the
+  same listing — the split class disappears instead of narrowing, and
+  no outcome depends on two ids coinciding in one listing.
 - **FR-2 — the claim is transitive over the call tree.** After
   claiming a parent record, recovery claims each `CallRecord.ChildID`
   the document names — and recursively theirs — **before** restoring
@@ -63,6 +64,18 @@ This SRD makes a **call tree the unit of a claim**.
   recovery fails with a message naming the child, the holding engine
   and the affinity rule — the same per-instance recovery failure
   (§2.5), never a silent half-recovery. The child itself is untouched.
+  Under FR-1 no engine claims a child on its own, so in a healthy
+  group this is unreachable; it stays as the **defensive guard** for
+  records written before affinity and for a misbehaving store.
+- **FR-6 — a terminal caller finishes the cascade.** A parent
+  completes only after its call returns, and a terminating parent
+  terminates its children (ADR-023 v.3 §2.7), so a **terminal** caller
+  with a live child is an interrupted cancel cascade. Recovery
+  finishes it: the child's record is written terminal
+  (`StatusTerminated`) with a loud fact naming the caller — never
+  revived (its outcome has no consumer), never left (a permanent
+  resident of every later listing). The pre-affinity behavior — the
+  child recovered and ran on — is the defect this closes.
 - **FR-4 — the restore order follows the claim order.** The claimed
   children are restored (and tracked) **before** the parent, so the
   parent's `reattachChild` finds a resident child rather than a
@@ -114,6 +127,14 @@ claims `P`, B's re-attach refuses — `C` runs on, `P` never resumes.
   instance doing legitimate work; tearing it down to satisfy a
   parent's recovery would destroy running state. The parent's
   recovery fails loud and the operator sees a real conflict.
+- **Finish the cascade rather than revive or leave (FR-6).** Reviving
+  a child whose caller is terminal — today's behavior, since
+  `recoverOne` checks the caller's EXISTENCE and not its state — runs
+  an instance whose completion nothing will consume. Leaving it makes
+  it a permanent listing resident re-reported on every sweep with
+  nothing for an operator to decide. Terminating it completes the
+  cascade the crash interrupted; recovery already mutates records (the
+  claim CAS), and the fact keeps it visible.
 - **No distribution policy.** Affinity does not balance, migrate or
   prefer engines — it only widens one claim. Anything else belongs to
   the distribution work (ADR-033 §5).
@@ -131,7 +152,7 @@ internal.
 | T-2 | child listed first (`pkg/thresher`) | FR-1: listing order does not decide — a child met first is deferred, not claimed |
 | T-3 | grandchild tree (`pkg/thresher`) | FR-2: the claim is transitive over two levels |
 | T-4 | unclaimable child (`pkg/thresher`) | FR-3: a live-leased child fails the parent's recovery loud, naming the child and the holder; the child keeps running |
-| T-5 | orphan child (`pkg/thresher`) | FR-1: a child whose parent is not in the listing recovers on its own, as today |
+| T-5 | terminal caller (`pkg/thresher`) | FR-6: a child whose caller is terminal is written terminal with its fact — never revived, never left in flight |
 | T-6 | cyclic document (`pkg/thresher`) | FR-5: a document naming its own ancestor terminates the walk |
 
 ## §7 Milestones
@@ -155,7 +176,7 @@ internal.
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-5 implemented; every §6 test exists and passes.
+- [ ] FR-1…FR-6 implemented; every §6 test exists and passes.
 - [ ] `make ci` green; diff-coverage ≥95% (aim 100%).
 - [ ] T-1 demonstrably fails with the affinity ordering reverted.
 - [ ] The persistence guide no longer tells operators to keep call

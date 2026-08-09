@@ -29,11 +29,10 @@ func (t *Thresher) recoverInstances(ctx context.Context) {
 		return
 	}
 
-	// recovery affinity (ADR-033 v.5 §2.10, SRD-087 FR-1): a child whose
-	// caller is in THIS listing is not claimed on its own — its parent's
-	// claim takes the whole call tree, so two engines of one group can
-	// never split a pair between them. A child whose parent is absent
-	// (live elsewhere, or terminal) recovers alone, as before.
+	// recovery affinity (ADR-033 v.5 §2.10, SRD-087 FR-1): a child is
+	// never revived on its own — recovery reaches it only through its
+	// caller's claim, so two engines of one group can never split a
+	// pair between them.
 	for _, id := range t.recoveryRoots(ctx, ids) {
 		if err := t.recoverOne(ctx, id); err != nil {
 			t.reportRecoveryFailure(id, err)
@@ -41,21 +40,19 @@ func (t *Thresher) recoverInstances(ctx context.Context) {
 	}
 }
 
-// recoveryRoots drops from ids every instance whose recorded caller is
-// itself in ids (SRD-087 FR-1), preserving the listing order of the
-// rest. An unreadable or undecodable record is kept: recoverOne is the
-// one place that reports such a failure, and silently skipping it here
-// would lose the instance AND the fact.
+// recoveryRoots drops every listed instance that names a caller
+// (SRD-087 FR-1), preserving the listing order of the rest: a child is
+// reached only through its caller's claim, never revived on its own —
+// so no outcome depends on a parent and a child coinciding in one
+// listing. A child whose caller is TERMINAL is finished here instead
+// (FR-6, the interrupted cascade). An unreadable or undecodable record
+// is kept as a root: recoverOne is the one place that reports such a
+// failure, and silently skipping it would lose the instance AND the
+// fact.
 func (t *Thresher) recoveryRoots(
 	ctx context.Context, ids []string,
 ) []string {
 	repo := t.cfg.Repository()
-	listed := make(map[string]struct{}, len(ids))
-
-	for _, id := range ids {
-		listed[id] = struct{}{}
-	}
-
 	roots := make([]string, 0, len(ids))
 
 	for _, id := range ids {
@@ -73,16 +70,70 @@ func (t *Thresher) recoveryRoots(
 			continue
 		}
 
-		if doc.ParentID != "" {
-			if _, parentListed := listed[doc.ParentID]; parentListed {
-				continue // the parent's claim takes it (FR-1)
-			}
+		if doc.ParentID == "" {
+			roots = append(roots, id)
+
+			continue
 		}
 
-		roots = append(roots, id)
+		// a child: its caller's claim revives it — unless that caller
+		// is terminal, when the cascade is finished here (FR-6).
+		if err := t.finishOrphanedChild(ctx, rec, doc.ParentID); err != nil {
+			t.reportRecoveryFailure(id, err)
+		}
 	}
 
 	return roots
+}
+
+// finishOrphanedChild completes an interrupted cancel cascade
+// (SRD-087 FR-6, ADR-033 v.5 §2.10): a parent completes only after its
+// call returns and a terminating parent terminates its children, so a
+// TERMINAL caller with a live child means the cascade did not finish
+// before the crash. The child's record is written terminal and
+// reported — never revived (its outcome has no consumer), never left
+// (a permanent resident of every later listing). A caller that is
+// still in flight, or unreadable, leaves the child untouched for its
+// caller's claim.
+func (t *Thresher) finishOrphanedChild(
+	ctx context.Context, rec repository.InstanceRecord, parentID string,
+) error {
+	repo := t.cfg.Repository()
+
+	prec, ok, err := repo.Load(ctx, parentID)
+	if err != nil {
+		return recoveryErr("the caller record isn't readable", err)
+	}
+
+	if !ok {
+		// the SRD-082 orphan refusal: a child never runs orphaned. The
+		// record stays for an operator; the fact is the report.
+		return recoveryErr("the caller record "+strconv.Quote(parentID)+
+			" is gone — a child never runs orphaned", nil)
+	}
+
+	if !prec.Status.IsTerminal() {
+		return nil // the caller lives: its claim revives this child
+	}
+
+	rec.Status = repository.StatusTerminated
+
+	if err := repo.Save(ctx, rec); err != nil {
+		return recoveryErr("couldn't finish the interrupted cancel "+
+			"cascade of caller "+strconv.Quote(parentID), err)
+	}
+
+	t.producer.Report(observability.Fact{
+		Kind:  observability.KindInstanceState,
+		Phase: observability.PhaseTerminated,
+		Details: map[string]string{
+			observability.AttrInstanceID: rec.ID,
+			"reason":                     "caller-terminal",
+			"caller":                     parentID,
+		},
+	})
+
+	return nil
 }
 
 // recoverOne claims and rehydrates a single instance.

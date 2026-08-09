@@ -36,9 +36,9 @@ func seedDoc(
 	}))
 }
 
-// TestRecoveryRootsDefersChildren pins SRD-087 FR-1: a child whose
-// caller is in the SAME listing is deferred to the parent's claim; a
-// child whose caller is absent stays a root; and an unreadable or
+// TestRecoveryRootsDefersChildren pins SRD-087 FR-1: EVERY child is
+// dropped from the roots — revived only through its caller's claim,
+// never on its own, whatever the listing holds; and an unreadable or
 // undecodable record is kept, so recoverOne reports it rather than the
 // partition silently swallowing both the instance and the fact.
 func TestRecoveryRootsDefersChildren(t *testing.T) {
@@ -61,8 +61,9 @@ func TestRecoveryRootsDefersChildren(t *testing.T) {
 		[]string{"C", "P", "orphan", "garbage", "missing"})
 
 	require.Equal(t,
-		[]string{"P", "orphan", "garbage", "missing"}, roots,
-		"only the child of a LISTED parent is deferred; order is kept")
+		[]string{"P", "garbage", "missing"}, roots,
+		"every child is dropped — even one whose caller isn't listed; "+
+			"order is kept")
 }
 
 // TestRecoverCallTreeCycleTerminates pins FR-5: a document naming its

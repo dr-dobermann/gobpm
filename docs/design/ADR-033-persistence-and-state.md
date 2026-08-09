@@ -398,8 +398,9 @@ a refusal because nothing signals it. Hence the rule set:
 - **A call tree recovers as a unit — recovery affinity (v.5).** A
   parent and the children it awaits are one recoverable unit: an
   engine that claims a parent claims that parent's recorded call tree
-  in the SAME sweep, transitively, and an engine that meets a child
-  first defers it to its parent's claim. Two engines of one group can
+  in the SAME sweep, transitively, and **a child is never revived on
+  its own** — recovery reaches a child only through its caller's
+  claim. Two engines of one group can
   therefore never split a call pair between them — the split that
   would leave a correctly-recovered parent unable to re-link a
   correctly-recovered child, failing a restore that nothing is
@@ -411,6 +412,16 @@ a refusal because nothing signals it. Hence the rule set:
   (a live engine still running it) is not claimable and the parent's
   recovery fails loud as above — affinity removes the self-inflicted
   split, not the legitimate conflict.
+
+  A child whose caller is **terminal** is therefore not revived
+  either: a parent completes only after its call returns, and a
+  terminating parent terminates its children, so a terminal caller
+  with a live child is an **interrupted cancel cascade** (§2.7's
+  restart contract read through ADR-023's cascade). Recovery
+  **finishes the cascade** — it writes the child's terminal record and
+  reports it — rather than reviving an instance whose outcome has no
+  consumer, or leaving a permanent resident of every future listing.
+  Never silent, either way.
 
   **Not decided here:** re-linking a parent and child that live on
   DIFFERENT engines — a remote child handle, cross-engine completion

@@ -153,10 +153,13 @@ func TestRecoveryAffinityIgnoresListingOrder(t *testing.T) {
 		"a child-first listing must still recover the tree as a unit")
 }
 
-// TestRecoveryAffinityOrphanChild is T-5: a child whose parent is NOT
-// in the listing (its record is terminal) recovers on its own, exactly
-// as before affinity.
-func TestRecoveryAffinityOrphanChild(t *testing.T) {
+// TestRecoveryAffinityTerminalCaller is T-5 (SRD-087 FR-6): a child
+// whose caller is TERMINAL is an interrupted cancel cascade — recovery
+// finishes it (the record is written terminal, with its fact) instead
+// of reviving an instance whose outcome nothing will consume. Before
+// this rule the child was happily revived: recoverOne checked the
+// caller's EXISTENCE, never its state.
+func TestRecoveryAffinityTerminalCaller(t *testing.T) {
 	repo := memrepo.New()
 
 	var gate atomic.Int32
@@ -178,18 +181,47 @@ func TestRecoveryAffinityOrphanChild(t *testing.T) {
 	require.NoError(t, repo.Save(ctx, prec))
 
 	time.Sleep(120 * time.Millisecond)
-	gate.Store(1)
+	gate.Store(1) // would let a REVIVED child run to completion
 
-	_, _, cancel := bootCallEngine(t, "engine-orph", repo,
+	_, fw, cancel := bootCallEngine(t, "engine-orph", repo,
 		time.Minute, parent, callee)
 	defer cancel()
 
 	require.Eventually(t, func() bool {
 		crec, cok, _ := repo.Load(ctx, childID)
 
-		return cok && crec.Status == repository.StatusCompleted
+		return cok && crec.Status == repository.StatusTerminated
 	}, 5*time.Second, 10*time.Millisecond,
-		"an orphan child recovers on its own")
+		"a terminal caller's child is terminated, not revived")
+
+	// the fan-out is asynchronous — poll, as the other fact assertions do.
+	require.Eventually(t, func() bool {
+		return sawTerminatedFor(fw, childID)
+	}, 3*time.Second, 5*time.Millisecond,
+		"the finished cascade is reported, never silent")
+
+	// and it was never run: no Recovered fact for it.
+	require.False(t, fw.saw(observability.KindInstanceState,
+		observability.PhaseRecovered),
+		"the child must not be revived")
+}
+
+// sawTerminatedFor reports whether the cascade-finish fact for id was
+// emitted (SRD-087 FR-6).
+func sawTerminatedFor(fw *factWatch, id string) bool {
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+
+	for _, f := range fw.facts {
+		if f.Kind == observability.KindInstanceState &&
+			f.Phase == observability.PhaseTerminated &&
+			f.Details[observability.AttrInstanceID] == id &&
+			f.Details["reason"] == "caller-terminal" {
+			return true
+		}
+	}
+
+	return false
 }
 
 // recoveryFailureNames reports whether a recovery-failure fact carries
