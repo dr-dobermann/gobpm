@@ -29,11 +29,60 @@ func (t *Thresher) recoverInstances(ctx context.Context) {
 		return
 	}
 
-	for _, id := range ids {
+	// recovery affinity (ADR-033 v.5 §2.10, SRD-087 FR-1): a child whose
+	// caller is in THIS listing is not claimed on its own — its parent's
+	// claim takes the whole call tree, so two engines of one group can
+	// never split a pair between them. A child whose parent is absent
+	// (live elsewhere, or terminal) recovers alone, as before.
+	for _, id := range t.recoveryRoots(ctx, ids) {
 		if err := t.recoverOne(ctx, id); err != nil {
 			t.reportRecoveryFailure(id, err)
 		}
 	}
+}
+
+// recoveryRoots drops from ids every instance whose recorded caller is
+// itself in ids (SRD-087 FR-1), preserving the listing order of the
+// rest. An unreadable or undecodable record is kept: recoverOne is the
+// one place that reports such a failure, and silently skipping it here
+// would lose the instance AND the fact.
+func (t *Thresher) recoveryRoots(
+	ctx context.Context, ids []string,
+) []string {
+	repo := t.cfg.Repository()
+	listed := make(map[string]struct{}, len(ids))
+
+	for _, id := range ids {
+		listed[id] = struct{}{}
+	}
+
+	roots := make([]string, 0, len(ids))
+
+	for _, id := range ids {
+		rec, ok, err := repo.Load(ctx, id)
+		if err != nil || !ok {
+			roots = append(roots, id)
+
+			continue
+		}
+
+		doc, derr := checkpoint.Unmarshal(rec.Payload)
+		if derr != nil {
+			roots = append(roots, id)
+
+			continue
+		}
+
+		if doc.ParentID != "" {
+			if _, parentListed := listed[doc.ParentID]; parentListed {
+				continue // the parent's claim takes it (FR-1)
+			}
+		}
+
+		roots = append(roots, id)
+	}
+
+	return roots
 }
 
 // recoverOne claims and rehydrates a single instance.
@@ -95,6 +144,14 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 		}
 	}
 
+	// affinity (SRD-087 FR-2/FR-4): claim and restore the awaited call
+	// tree BEFORE this instance, so its re-attach finds every child
+	// resident on this engine instead of live on another.
+	if terr := t.recoverCallTree(
+		ctx, doc, map[string]struct{}{id: {}}); terr != nil {
+		return terr
+	}
+
 	s := t.snapshotForVersionLocked(doc.ProcessID, doc.Version)
 	if s == nil {
 		return recoveryErr("the pinned process version isn't registered "+
@@ -145,6 +202,63 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 			"live_tracks":               strconv.Itoa(len(doc.Tracks)),
 		},
 	})
+
+	return nil
+}
+
+// recoverCallTree claims and restores every child the document awaits,
+// depth-first (SRD-087 FR-2/FR-4/FR-5): each child is recovered by the
+// same recoverOne — which recurses into ITS children — so a whole tree
+// lands on one engine before its root restores. seen guards a
+// malformed document naming its own ancestor. A child that is already
+// resident (recovered earlier in this sweep) is skipped; a child whose
+// lease is genuinely LIVE fails the tree loud, naming it and its
+// holder — tearing down another engine's running instance to satisfy
+// this recovery would destroy real state (§2.10).
+func (t *Thresher) recoverCallTree(
+	ctx context.Context,
+	doc *checkpoint.Document,
+	seen map[string]struct{},
+) error {
+	repo := t.cfg.Repository()
+	now := t.cfg.Clock().Now()
+
+	for _, call := range doc.Calls {
+		childID := call.ChildID
+
+		if _, visited := seen[childID]; visited {
+			continue
+		}
+
+		seen[childID] = struct{}{}
+
+		if _, resident := t.instanceByID(childID); resident == nil {
+			continue // already recovered in this sweep
+		}
+
+		rec, ok, err := repo.Load(ctx, childID)
+		if err != nil {
+			return recoveryErr("the awaited child record isn't readable", err)
+		}
+
+		if !ok || rec.Status.IsTerminal() {
+			// a vanished record is the SRD-082 refusal (raised by the
+			// re-attach itself); a terminal child needs no claim — its
+			// record IS the outcome the re-attach reads.
+			continue
+		}
+
+		if !rec.Lease.Expired(now) && rec.Lease.Owner != t.id {
+			return recoveryErr("the awaited child "+strconv.Quote(childID)+
+				" is live on engine "+strconv.Quote(rec.Lease.Owner)+
+				" — a call tree recovers as a unit (ADR-033 §2.10)", nil)
+		}
+
+		if err := t.recoverOne(ctx, childID); err != nil {
+			return recoveryErr("the awaited child "+strconv.Quote(childID)+
+				" doesn't recover", err)
+		}
+	}
 
 	return nil
 }
