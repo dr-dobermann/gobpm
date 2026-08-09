@@ -3,6 +3,7 @@ package thresher
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -14,7 +15,7 @@ import (
 // seedDoc stores a minimal document for id with the given linkage.
 func seedDoc(
 	t *testing.T, repo repository.Repository,
-	id, parentID string, children ...string,
+	group, id, parentID string, children ...string,
 ) {
 	t.Helper()
 
@@ -32,7 +33,7 @@ func seedDoc(
 	require.NoError(t, err)
 
 	require.NoError(t, repo.Save(t.Context(), repository.InstanceRecord{
-		ID: id, Payload: raw, Group: "g", Status: repository.StatusActive,
+		ID: id, Payload: raw, Group: group, Status: repository.StatusActive,
 	}))
 }
 
@@ -48,9 +49,9 @@ func TestRecoveryRootsDefersChildren(t *testing.T) {
 	th, err := New("roots", WithRepository(repo))
 	require.NoError(t, err)
 
-	seedDoc(t, repo, "P", "", "C")
-	seedDoc(t, repo, "C", "P")
-	seedDoc(t, repo, "orphan", "gone-parent")
+	seedDoc(t, repo, "g", "P", "", "C")
+	seedDoc(t, repo, "g", "C", "P")
+	seedDoc(t, repo, "g", "orphan", "gone-parent")
 
 	require.NoError(t, repo.Save(t.Context(), repository.InstanceRecord{
 		ID: "garbage", Payload: []byte("{not json"), Group: "g",
@@ -66,26 +67,46 @@ func TestRecoveryRootsDefersChildren(t *testing.T) {
 			"order is kept")
 }
 
-// TestRecoverCallTreeCycleTerminates pins FR-5: a document naming its
-// own ancestor cannot loop the walk.
+// TestRecoverCallTreeCycleTerminates pins FR-5 with a REAL cycle: A
+// calls B and B calls A, so the walk comes back to A and must stop on
+// the SHARED seen set threaded through the recursion.
+//
+// Its previous version pre-seeded seen={A} and handed the walk a
+// document whose only call was "A": it returned on the very first
+// check and never traversed a cycle, so it would have passed with no
+// guard at all.
 func TestRecoverCallTreeCycleTerminates(t *testing.T) {
 	repo := memrepo.New()
-	require.NoError(t, repo.RegisterGroup(t.Context(), "g"))
+	require.NoError(t, repo.RegisterGroup(t.Context(), "cycle"))
 
 	th, err := New("cycle", WithRepository(repo))
 	require.NoError(t, err)
 
-	// A calls B, B calls A — a malformed pair.
-	seedDoc(t, repo, "A", "", "B")
-	seedDoc(t, repo, "B", "A", "A")
+	// the records must carry the ENGINE's own group, or the walk stops
+	// at the cross-group refusal before it can recurse.
+	seedDoc(t, repo, "cycle", "A", "", "B")
+	seedDoc(t, repo, "cycle", "B", "A", "A")
 
 	doc := &checkpoint.Document{
 		InstanceID: "A", ProcessID: "p", Status: "Active",
-		Calls: []checkpoint.CallRecord{{ChildID: "A"}},
+		Calls: []checkpoint.CallRecord{{ChildID: "B"}},
 	}
 
-	// "A" is already in seen (the caller marks itself), so the walk
-	// terminates instead of recursing into itself.
-	require.NoError(t, th.recoverCallTree(context.Background(), doc,
-		map[string]struct{}{"A": {}}))
+	done := make(chan error, 1)
+
+	go func() {
+		done <- th.recoverCallTree(context.Background(), doc,
+			map[string]struct{}{"A": {}})
+	}()
+
+	select {
+	case err := <-done:
+		// B cannot finish recovering in this bare engine (its process
+		// version is not registered); what this pins is that the walk
+		// TERMINATED instead of recursing A→B→A without end.
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "B")
+	case <-time.After(3 * time.Second):
+		t.Fatal("the cyclic call tree did not terminate")
+	}
 }

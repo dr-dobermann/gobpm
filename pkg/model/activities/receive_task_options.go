@@ -13,12 +13,20 @@ type rcvTaskConfig struct {
 	iterExpr    data.FormalExpression
 	iterKeyName string
 	instantiate bool
+	// iterDeclared records that WithIterationCorrelation was CALLED,
+	// so a call with empty arguments refuses instead of silently
+	// leaving the task uncorrelated (the events twin refuses too).
+	iterDeclared bool
 }
 
 // Validate implements options.Configurator: an iteration-correlation
 // declaration must carry BOTH halves (the validation rule — a half
 // silently dropped would route nothing).
 func (c *rcvTaskConfig) Validate() error {
+	if !c.iterDeclared {
+		return nil
+	}
+
 	if (c.iterKeyName == "") != (c.iterExpr == nil) {
 		return errs.New(
 			errs.M("WithIterationCorrelation: both the key name and the "+
@@ -26,7 +34,7 @@ func (c *rcvTaskConfig) Validate() error {
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	if strings.TrimSpace(c.iterKeyName) == "" && c.iterKeyName != "" {
+	if strings.TrimSpace(c.iterKeyName) == "" {
 		return errs.New(
 			errs.M("WithIterationCorrelation: a blank key name isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
@@ -57,6 +65,7 @@ func WithIterationCorrelation(
 	keyName string, expr data.FormalExpression,
 ) RcvTaskOption {
 	return func(c *rcvTaskConfig) {
+		c.iterDeclared = true
 		c.iterKeyName = keyName
 		c.iterExpr = expr
 	}

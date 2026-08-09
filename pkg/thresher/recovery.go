@@ -34,7 +34,7 @@ func (t *Thresher) recoverInstances(ctx context.Context) {
 	// caller's claim, so two engines of one group can never split a
 	// pair between them.
 	for _, id := range t.recoveryRoots(ctx, ids) {
-		if err := t.recoverOne(ctx, id); err != nil {
+		if err := t.recoverOne(ctx, id, map[string]struct{}{}); err != nil {
 			t.reportRecoveryFailure(id, err)
 		}
 	}
@@ -113,7 +113,20 @@ func (t *Thresher) finishOrphanedChild(
 	}
 
 	if !prec.Status.IsTerminal() {
-		return nil // the caller lives: its claim revives this child
+		// the caller is in flight: normally its own claim revives this
+		// child in this same sweep. But a caller LIVE ON ANOTHER ENGINE
+		// is not in this sweep at all, so nobody would revive the child
+		// — report it rather than dropping it silently (SRD-087 FR-3's
+		// posture: a tree that cannot be recovered is said out loud).
+		if !prec.Lease.Expired(t.cfg.Clock().Now()) &&
+			prec.Lease.Owner != t.id {
+			return recoveryErr("its caller "+strconv.Quote(parentID)+
+				" is live on engine "+strconv.Quote(prec.Lease.Owner)+
+				" — that engine owns the call tree and this child is "+
+				"not revived here", nil)
+		}
+
+		return nil // the caller's own claim revives this child
 	}
 
 	rec.Status = repository.StatusTerminated
@@ -136,32 +149,36 @@ func (t *Thresher) finishOrphanedChild(
 	return nil
 }
 
-// recoverOne claims and rehydrates a single instance.
-func (t *Thresher) recoverOne(ctx context.Context, id string) error {
+// claimRecord loads one record and takes it under a HIGHER incarnation
+// — the fencing token every later save carries (ADR-033 §2.8). claimed
+// is false without an error when the record is legitimately not ours to
+// recover: another engine holds a live lease, or won the CAS race.
+func (t *Thresher) claimRecord(
+	ctx context.Context, id string,
+) (repository.InstanceRecord, bool, error) {
 	repo := t.cfg.Repository()
 	now := t.cfg.Clock().Now()
 
 	rec, ok, err := repo.Load(ctx, id)
 	if err != nil || !ok {
-		return recoveryErr("the record vanished before the claim", err)
+		return rec, false,
+			recoveryErr("the record vanished before the claim", err)
 	}
 
 	if !rec.Lease.Expired(now) {
-		return nil // another engine claimed it between list and load
+		// another engine claimed it between list and load
+		return rec, false, nil
 	}
 
 	// A cross-group record reached by id is a wiring mistake, not a
 	// race — refuse loud (SRD-078 FR-2; the listing is group-scoped, so
 	// this guards direct-id paths and misbehaving stores alike).
 	if rec.Group != t.group {
-		return recoveryErr("the instance belongs to engine group "+
+		return rec, false, recoveryErr("the instance belongs to engine group "+
 			strconv.Quote(rec.Group)+", this engine runs in "+
 			strconv.Quote(t.group), nil)
 	}
 
-	// The claim: our ownership under a HIGHER incarnation — the fencing
-	// token every later save carries (ADR-033 §2.8). A lost CAS race is
-	// not an error: someone else recovered it.
 	rec.Lease = repository.Lease{
 		Owner:       t.id,
 		Incarnation: rec.Lease.Incarnation + 1,
@@ -169,10 +186,34 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 	}
 
 	if saveErr := repo.Save(ctx, rec); saveErr != nil {
-		return nil //nolint:nilerr // a lost claim race is the normal outcome
+		return rec, false, nil // a lost claim race is the normal outcome
 	}
 
 	rec.RecVersion++ // Save advanced the stored version; continue from it
+
+	return rec, true, nil
+}
+
+// recoverOne claims and rehydrates a single instance. seen carries the
+// ids already visited by THIS recovery walk (SRD-087 FR-5): it is
+// threaded through the call-tree recursion, so a document naming its
+// own ancestor terminates on the guard rather than on the incidental
+// fact that a claimed lease is skipped.
+func (t *Thresher) recoverOne(
+	ctx context.Context, id string, seen map[string]struct{},
+) error {
+	if _, visited := seen[id]; visited {
+		return nil
+	}
+
+	seen[id] = struct{}{}
+
+	repo := t.cfg.Repository()
+
+	rec, claimed, err := t.claimRecord(ctx, id)
+	if err != nil || !claimed {
+		return err
+	}
 
 	doc, err := checkpoint.Unmarshal(rec.Payload)
 	if err != nil {
@@ -198,8 +239,7 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 	// affinity (SRD-087 FR-2/FR-4): claim and restore the awaited call
 	// tree BEFORE this instance, so its re-attach finds every child
 	// resident on this engine instead of live on another.
-	if terr := t.recoverCallTree(
-		ctx, doc, map[string]struct{}{id: {}}); terr != nil {
+	if terr := t.recoverCallTree(ctx, doc, seen); terr != nil {
 		return terr
 	}
 
@@ -277,11 +317,12 @@ func (t *Thresher) recoverCallTree(
 	for _, call := range doc.Calls {
 		childID := call.ChildID
 
+		// recoverOne owns the seen bookkeeping (it marks on entry and
+		// returns early for a revisit) — marking here too would make
+		// every child look already-visited and skip its recovery.
 		if _, visited := seen[childID]; visited {
 			continue
 		}
-
-		seen[childID] = struct{}{}
 
 		if _, resident := t.instanceByID(childID); resident == nil {
 			continue // already recovered in this sweep
@@ -305,7 +346,7 @@ func (t *Thresher) recoverCallTree(
 				" — a call tree recovers as a unit (ADR-033 §2.10)", nil)
 		}
 
-		if err := t.recoverOne(ctx, childID); err != nil {
+		if err := t.recoverOne(ctx, childID, seen); err != nil {
 			return recoveryErr("the awaited child "+strconv.Quote(childID)+
 				" doesn't recover", err)
 		}

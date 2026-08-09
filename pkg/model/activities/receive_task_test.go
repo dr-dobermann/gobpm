@@ -113,11 +113,11 @@ func TestReceiveTaskProcessThenExec(t *testing.T) {
 				activities.WithoutParams())
 			require.NoError(t, err)
 
-			// the node's notification stores nothing (SRD-085 FR-1) —
-			// the payload reaches Exec through the environment, carried
-			// by the RECEIVING execution.
-			require.NoError(t, rt.ProcessEvent(ctx, firedDef(t, "ORD-5")))
-
+			// NOTE: ProcessEvent is deliberately NOT called here. The
+			// payload must reach Exec through the ENVIRONMENT alone —
+			// calling the node's notification first would let the
+			// retired node-stateful implementation satisfy this test
+			// too, which is exactly how it passed before (SRD-085 FR-1).
 			var put data.Data
 
 			re := mockrenv.NewMockRuntimeEnvironment(t)
@@ -150,7 +150,8 @@ func TestReceiveTaskProcessThenExec(t *testing.T) {
 
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 
-			flows, err := rt.Exec(ctx, re)
+			flows, err := rt.Exec(ctx,
+				&receivedEnv{RuntimeEnvironment: re})
 			require.NoError(t, err)
 			require.Empty(t, flows)
 		})
@@ -167,7 +168,7 @@ func TestReceiveTaskProcessThenExec(t *testing.T) {
 
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 
-			_, err = rt.Exec(ctx, re)
+			_, err = rt.Exec(ctx, &receivedEnv{RuntimeEnvironment: re})
 			require.NoError(t, err)
 		})
 
@@ -296,4 +297,19 @@ func TestReceiveTaskBlankIterationKey(t *testing.T) {
 		activities.WithoutParams(),
 		activities.WithIterationCorrelation("   ", expr))
 	require.ErrorContains(t, err, "blank key name")
+}
+
+// TestReceiveTaskRefusesPayloadBlindEnv pins SRD-085 FR-1's guard: an
+// environment that cannot carry a delivery payload is a wiring error,
+// refused loudly — never a silently dropped message.
+func TestReceiveTaskRefusesPayloadBlindEnv(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	rt, err := activities.NewReceiveTask("await", recvMessage(t),
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	_, err = rt.Exec(context.Background(),
+		mockrenv.NewMockRuntimeEnvironment(t))
+	require.ErrorContains(t, err, "carries no delivery payload")
 }

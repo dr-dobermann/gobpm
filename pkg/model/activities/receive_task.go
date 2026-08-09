@@ -217,14 +217,24 @@ func (rt *ReceiveTask) Exec(
 	}
 
 	// THIS delivery's payload comes from the execution environment —
-	// the receiving execution captured it (SRD-085 FR-1); an
-	// environment without the capability carries none.
-	var received *data.ItemDefinition
-	if rp, ok := re.(interface {
+	// the receiving execution captured it (SRD-085 FR-1). An
+	// environment that cannot carry one is a WIRING error, not an
+	// empty payload: binding nil here would drop a received message
+	// silently, which is the failure this whole path exists to prevent.
+	rp, ok := re.(interface {
 		ReceivedItem() *data.ItemDefinition
-	}); ok {
-		received = rp.ReceivedItem()
+	})
+	if !ok {
+		return nil,
+			errs.New(
+				errs.M("the runtime environment of %q carries no delivery "+
+					"payload (no ReceivedItem) — a received message would "+
+					"be dropped silently", rt.Name()),
+				errs.C(errorClass, errs.InvalidObject),
+				errs.D(observability.AttrNodeID, rt.ID()))
 	}
+
+	received := rp.ReceivedItem()
 
 	if err := msgflow.Bind(ctx, re, received); err != nil {
 		return nil,
