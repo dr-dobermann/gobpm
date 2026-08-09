@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted (2026-08-09) |
 | Date | 2026-08-09 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-033 v.5](../design/ADR-033-persistence-and-state.md) §2.10 (recovery affinity) |
@@ -176,16 +176,42 @@ internal.
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-6 implemented; every §6 test exists and passes.
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%).
-- [ ] T-1 demonstrably fails with the affinity ordering reverted.
-- [ ] The persistence guide no longer tells operators to keep call
+- [x] FR-1…FR-6 implemented; every §6 test exists and passes.
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%).
+- [x] T-1 demonstrably fails with the affinity ordering reverted.
+- [x] The persistence guide no longer tells operators to keep call
       pairs on one engine by hand.
-- [ ] §10 filled.
+- [x] §10 filled.
 
 ## §10 Implementation summary
 
-*Post-landing placeholder.*
+Landed on `feat/composite-followups` — doc `7a90124`, M1 `db0ee95`
+(the partition and the transitive claim), **M1a `a2fb81c`** (the
+stronger rule and the defect it exposed), M2 `b158a99` (the guide and
+CHANGELOG).
+
+Verification: `make ci` exit 0 end to end; **diff-coverage 96.3% of
+592 changed coverable lines** (min 95%); suites race-clean;
+golangci-lint incl. tests 0 issues; `recoveryRoots` 100%,
+`finishOrphanedChild` 84.6%, `recoverCallTree` 84.2%.
+
+**The DoD's honesty check earned its place.** T-1's first version
+booted two engines in sequence and passed WITHOUT affinity — two
+sequential sweeps never interleave, so nothing split either way and
+the test proved nothing. Rewritten around the real discriminator (a
+listing that offers the caller but not the child) it fails with the
+transitive claim reverted — a 5.13s timeout on a lazy handle that
+never settles — and passes with it.
+
+**FR-1 and FR-6 are M1a, not the original draft.** M1 deferred a child
+only when its caller happened to be in the same listing; review made
+the rule unconditional (a child is never revived on its own), and that
+exposed a defect the weaker rule hid: `recoverOne` checked the
+caller's EXISTENCE and never its state, so a child whose caller had
+already finished was revived to run into a caller that completed long
+ago. Recovery now finishes that interrupted cancel cascade instead.
+T-5 was inverted accordingly — it had pinned the old behavior as
+correct.
 
 ## Open questions
 

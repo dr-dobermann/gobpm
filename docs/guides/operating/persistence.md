@@ -75,7 +75,7 @@ database". CI provides the same database as a service container.
 
 ## Engine groups
 
-Recovery is scoped to an **engine group** (ADR-033 v.4 §2.8): an
+Recovery is scoped to an **engine group** (ADR-033 v.5 §2.8): an
 engine lists, claims and recovers only its own group's instances.
 
 - **Ungrouped = solo.** Without options, an engine forms a
@@ -282,7 +282,7 @@ slice.
 ## Composite constructs restore at their position
 
 Every composite construct records its position in the checkpoint and
-restores **at that position** (ADR-033 v.4 §2.10) — nothing completed
+restores **at that position** (ADR-033 v.5 §2.10) — nothing completed
 ever re-executes, and no construct defers the capture:
 
 - A **composite scope** mid-body: the drained scope resumes its host
