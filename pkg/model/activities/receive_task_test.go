@@ -281,3 +281,19 @@ func TestReceiveTaskIterationCorrelation(t *testing.T) {
 		activities.WithIterationCorrelation("k", nil))
 	require.ErrorContains(t, err, "both the key name and the expression")
 }
+
+// TestReceiveTaskBlankIterationKey pins the blank-key refusal of the
+// iteration-correlation declaration (SRD-086 FR-4).
+func TestReceiveTaskBlankIterationKey(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	expr := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable("v"), nil
+		})
+
+	_, err := activities.NewReceiveTask("await", recvMessage(t),
+		activities.WithoutParams(),
+		activities.WithIterationCorrelation("   ", expr))
+	require.ErrorContains(t, err, "blank key name")
+}

@@ -322,3 +322,17 @@ func TestKeylessRoutingRefusedInInstance(t *testing.T) {
 	require.NotEqual(t, Completed, inst.State())
 	require.ErrorContains(t, inst.LastErr(), "delivery would be ambiguous")
 }
+
+// TestInstanceProcessID pins the discovery process axis on the
+// instance itself (SRD-084 FR-3).
+func TestInstanceProcessID(t *testing.T) {
+	got := make(chan string, 2)
+
+	s, _ := routedMIProcess(t, "mr-pid", got, true)
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
+		&recordingProducer{}, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, s.ProcessID, inst.ProcessID())
+}

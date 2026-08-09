@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted (2026-08-09) |
 | Date | 2026-08-08 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-025 v.2](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.2/§2.5/§2.6 (the leaf iteration mechanisms the accepted contract prescribes and the implementation never built) |
@@ -170,16 +170,41 @@ None. Behavioral: a leaf MI executes N times instead of silently once.
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-5 implemented; every §6 test exists and passes.
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%); touched
+- [x] FR-1…FR-5 implemented; every §6 test exists and passes.
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%); touched
       functions ≥80%.
-- [ ] The MI guide documents leaf execution; the CHANGELOG records the
+- [x] The MI guide documents leaf execution; the CHANGELOG records the
       fixed silent single-run.
-- [ ] §10 filled.
+- [x] §10 filled.
 
 ## §10 Implementation summary
 
-*Post-landing placeholder.*
+Landed on `feat/composite-followups` in three milestones — doc
+`19223c3`, M1 `66458aa` (the in-place sequential leaf), M2 `3d71bf3`
+(the parallel leaf's per-instance scopes), M3 `be4e0df` (the waiting
+leaf, checkpoint fidelity, docs) — plus a coverage round adding the
+`AddEventKey` passthrough, blank-iteration-key and instance-ProcessID
+pins.
+
+Verification: `make ci` exit 0 end to end; **diff-coverage 96.7% of
+511 changed coverable lines** (min 95%); all suites race-clean;
+golangci-lint incl. tests 0 issues. Every §6 scenario has its named
+test (T-1/T-8 `TestLeafMISequentialRunsAllPasses`, T-2
+`…CompletionStops`, T-3 `TestLeafMIParallelFansOut`, T-4
+`…CompletionCancels`, T-5 `TestLeafReceiveTaskMIRouting`, T-6
+`TestLeafMIParallelKillAndResume`, T-7
+`TestLeafMISequentialKillAndResume`), plus five error-path pins.
+
+Adjustments the implementation required, each folded here rather than
+deferred: `runMIParallel`'s exits ran `executeNode` to follow the
+outgoing flow — harmless for a composite host, but for a leaf that IS
+the activity (an extra execution at the host scope), so `miParallelExit`
+follows the declared flow directly; the fan-out's corrupt-graph guard,
+keyed on "not a composite", was re-keyed on the real corruption (a node
+with no MI decoration); the sequential leaf needed a persist point of
+its own (`scopeLeafPass` — a leaf opens no scope, so the run emitted
+none); restore re-marks a leaf instance track `leafPlain`; and the MI
+HOST must not register its waits (only the per-instance tracks do).
 
 ## Open questions
 
