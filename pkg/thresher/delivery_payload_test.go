@@ -112,7 +112,7 @@ func TestParallelMISignalPayloadPerDelivery(t *testing.T) {
 	// both iterations must be parked at the shared catch before the
 	// broadcast, or a late registration misses it (subscribe-before-
 	// publish, ADR-006 §2.4).
-	time.Sleep(200 * time.Millisecond)
+	awaitParked(t, h, 2)
 
 	firedSig, err := events.NewSignal("dp-go",
 		data.MustItemDefinition(values.NewVariable("PAY-7"),
@@ -131,6 +131,28 @@ func TestParallelMISignalPayloadPerDelivery(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, thresher.StateCompleted, st,
 		"ONE broadcast must wake BOTH iterations at the shared catch")
+}
+
+// awaitParked polls until n tokens of the instance are waiting for an
+// event. A fixed sleep here is timing-dependent in both directions: too
+// short and the delivery is published before the wait is armed (and
+// dropped by subscribe-before-publish), too long and the test pays for
+// it on every run.
+func awaitParked(t *testing.T, h *thresher.InstanceHandle, n int) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		parked := 0
+
+		for _, tk := range h.Tokens() {
+			if tk.State == thresher.TokenWaitForEvent {
+				parked++
+			}
+		}
+
+		return parked >= n
+	}, 5*time.Second, 5*time.Millisecond,
+		"%d token(s) must be parked before the trigger is published", n)
 }
 
 // iterCorrProcess builds the SRD-085 §3 worked trace: a parallel MI
@@ -288,7 +310,7 @@ func TestIterationCorrelatedRouting(t *testing.T) {
 	h, err := th.StartLatest(p.ID())
 	require.NoError(t, err)
 
-	time.Sleep(200 * time.Millisecond) // both iterations parked
+	awaitParked(t, h, 2)
 
 	ctx := context.Background()
 
@@ -438,7 +460,7 @@ func TestIterationRoutingKillAndResume(t *testing.T) {
 
 	instID := h.ID()
 
-	time.Sleep(200 * time.Millisecond) // both iterations parked
+	awaitParked(t, h, 2)
 
 	ctx := context.Background()
 
@@ -492,7 +514,7 @@ func TestIterationRoutingKillAndResume(t *testing.T) {
 	got2 := make(chan string, 2)
 	p2 := iterCorrProcess(t, "dr-kr", got2, true)
 
-	_, fw2, cancel2 := iterCorrEngine(t, "engine-2", repo, broker,
+	th2, fw2, cancel2 := iterCorrEngine(t, "engine-2", repo, broker,
 		time.Minute, p2)
 	defer cancel2()
 
@@ -502,7 +524,24 @@ func TestIterationRoutingKillAndResume(t *testing.T) {
 	}, 2*time.Second, 5*time.Millisecond,
 		"engine-2 must claim and recover the abandoned instance")
 
-	time.Sleep(200 * time.Millisecond) // the restored iteration re-registers
+	// the restored iteration must re-register its wait before the
+	// envelope is published — poll the recovered instance's tokens
+	// rather than guessing a duration.
+	require.Eventually(t, func() bool {
+		rh, ok := th2.Instance(instID)
+		if !ok {
+			return false
+		}
+
+		for _, tk := range rh.Tokens() {
+			if tk.State == thresher.TokenWaitForEvent {
+				return true
+			}
+		}
+
+		return false
+	}, 5*time.Second, 5*time.Millisecond,
+		"the recovered iteration must re-arm its wait")
 
 	require.NoError(t, broker.Publish(ctx, messaging.Envelope{
 		Name: "confirm", Payload: "a", CorrelationKey: "a"}))

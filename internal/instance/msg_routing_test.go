@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -277,25 +278,52 @@ func TestIterationRoutingInInstance(t *testing.T) {
 }
 
 // failingAdder is a parent EventProducer whose subscription-extension
-// capability always fails — the extendNode degradation branch.
-type failingAdder struct{ recordingProducer }
+// capability always fails, counting the receivers it was asked about —
+// the extendNode degradation branch.
+type failingAdder struct {
+	*recordingProducer
 
-func (failingAdder) AddEventKey(_, _ string) error {
+	mu    sync.Mutex
+	asked []string
+}
+
+func (fa *failingAdder) AddEventKey(eDefID, _ string) error {
+	fa.mu.Lock()
+	fa.asked = append(fa.asked, eDefID)
+	fa.mu.Unlock()
+
 	return fmt.Errorf("adder boom")
 }
 
-// TestExtendReceiversLogsFailure: a failing AddEventKey is degradation
-// — logged, never fatal (ADR-022 v.1 §2.3(2)).
-func TestExtendReceiversLogsFailure(t *testing.T) {
+func (fa *failingAdder) askedCount() int {
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+
+	return len(fa.asked)
+}
+
+// TestExtendReceiversSurvivesAdderFailure: a failing AddEventKey is
+// DEGRADATION, not a fault (ADR-022 v.1 §2.3(2)) — the walk continues
+// past the failure and still visits every message receiver, including
+// the ones nested inside a composite body.
+func TestExtendReceiversSurvivesAdderFailure(t *testing.T) {
 	got := make(chan string, 2)
 
 	s, _ := routedMIProcess(t, "mr-ext", got, true)
 
+	adder := &failingAdder{recordingProducer: &recordingProducer{}}
+
 	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
-		&failingAdder{}, nil)
+		adder, nil)
 	require.NoError(t, err)
 
-	inst.corr.extendReceivers("v1") // must not panic; the error is logged
+	inst.corr.extendReceivers("v1")
+
+	// the catch lives INSIDE the MI body: a walk that stopped at the
+	// first failure — or never descended into composites — would ask
+	// about nothing.
+	require.Positive(t, adder.askedCount(),
+		"every message receiver is offered the new key despite the failure")
 }
 
 // TestKeylessRoutingRefusedInInstance is SRD-085 T-3's in-instance

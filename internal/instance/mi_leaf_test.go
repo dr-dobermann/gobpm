@@ -579,7 +579,16 @@ func TestLeafMIParallelCompletionCancels(t *testing.T) {
 			foundation.WithID("outs")),
 		data.ReadyDataState)
 
-	// ordinal 0 returns at once; the siblings park until canceled.
+	// the siblings must be PROVABLY blocked before "a" completes and
+	// fires the condition — otherwise the test would pass even if they
+	// had never started, and it would be asserting nothing about
+	// cancellation.
+	var blocked sync.WaitGroup
+
+	blocked.Add(2)
+
+	// ordinal 0 waits for both siblings to block, then returns; the
+	// siblings stay parked until canceled.
 	op, err := gooper.New("lm-can-op",
 		func(ctx context.Context, r service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
@@ -590,10 +599,13 @@ func TestLeafMIParallelCompletionCancels(t *testing.T) {
 
 			v := fmt.Sprint(item.Value().Get(ctx))
 			if v != "a" {
+				blocked.Done()
 				<-ctx.Done() // parked until the cancel
 
 				return nil, ctx.Err()
 			}
+
+			blocked.Wait() // both siblings are in flight and blocked
 
 			return data.MustItemDefinition(
 				values.NewVariable("R:"+v),
@@ -771,7 +783,10 @@ func TestLeafMISequentialKillAndResume(t *testing.T) {
 		return rec != nil && rec.Completed == 1
 	})
 
-	require.Equal(t, int32(2), count.Load(),
+	// the checkpoint lands as pass a completes, so pass b may not have
+	// entered its op yet — poll instead of asserting the instant.
+	require.Eventually(t, func() bool { return count.Load() == 2 },
+		3*time.Second, 5*time.Millisecond,
 		"pass a completed, pass b started and blocked")
 
 	gate.Store(1)
@@ -779,7 +794,8 @@ func TestLeafMISequentialKillAndResume(t *testing.T) {
 	restored := restoreToDone(t, doc, s)
 
 	require.Equal(t, int32(4), count.Load(),
-		"pass b re-runs (at-least-once), pass c runs, pass a NEVER re-runs")
+		"pass b re-runs (at-least-once), pass c runs, pass a NEVER "+
+			"re-runs — the run is finished, so this count is final")
 
 	outs := leafOuts(t, restored, "/lm-skr")
 	require.Equal(t, []any{"R:a", "R:b", "R:c"}, normalized(outs),
@@ -814,7 +830,8 @@ func TestLeafMIParallelKillAndResume(t *testing.T) {
 		return len(d.MIGroups) == 1 && len(d.MIGroups[0].Open) == 2
 	})
 
-	require.Equal(t, int32(3), count.Load(),
+	require.Eventually(t, func() bool { return count.Load() == 3 },
+		3*time.Second, 5*time.Millisecond,
 		"all three started; a completed, b and c blocked in flight")
 
 	gate.Store(1)
@@ -822,7 +839,8 @@ func TestLeafMIParallelKillAndResume(t *testing.T) {
 	restored := restoreToDone(t, doc, s)
 
 	require.Equal(t, int32(5), count.Load(),
-		"b and c re-run (at-least-once), a NEVER re-runs")
+		"b and c re-run (at-least-once), a NEVER re-runs — the run is "+
+			"finished, so this count is final")
 
 	outs := leafOuts(t, restored, "/lm-pkr")
 	require.Equal(t, []any{"R:a", "R:b", "R:c"}, normalized(outs),
