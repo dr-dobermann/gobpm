@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.4 |
+| Status | Draft |
+| Version | v.5 |
 | Date | 2026-08-06 |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §10 (save/restore as P0: "goroutines are the execution medium, persistence is the state of record"), [ADR-001 v.6](ADR-001-execution-model.md) (the runtime whose state this makes durable), [ADR-007 v.2](ADR-007-in-memory-long-waits.md) (the in-memory long-wait model — dehydration & wake-on-trigger — whose durable half this owns) |
@@ -395,6 +395,28 @@ a refusal because nothing signals it. Hence the rule set:
   or a child whose parent vanished — fails its restore loudly (the
   per-instance recovery failure of §2.5), never silently re-launches
   the call.
+- **A call tree recovers as a unit — recovery affinity (v.5).** A
+  parent and the children it awaits are one recoverable unit: an
+  engine that claims a parent claims that parent's recorded call tree
+  in the SAME sweep, transitively, and an engine that meets a child
+  first defers it to its parent's claim. Two engines of one group can
+  therefore never split a call pair between them — the split that
+  would leave a correctly-recovered parent unable to re-link a
+  correctly-recovered child, failing a restore that nothing is
+  actually wrong with. Affinity is a **claiming rule, not a
+  distribution policy**: which engine gets the tree is still whoever
+  reaches it first (§2.8's claim-first semantics, the group scoping
+  unchanged); only the *granularity* of a claim grows from an instance
+  to a call tree. A child whose lease is genuinely held elsewhere
+  (a live engine still running it) is not claimable and the parent's
+  recovery fails loud as above — affinity removes the self-inflicted
+  split, not the legitimate conflict.
+
+  **Not decided here:** re-linking a parent and child that live on
+  DIFFERENT engines — a remote child handle, cross-engine completion
+  delivery and cancel cascade. That is a distribution concern (§5) and
+  needs its own decision; affinity's contract is that a healthy group
+  never *needs* it.
 
 ## 3. Grounding
 
@@ -463,6 +485,7 @@ finalized); then suspend/resume and the engine pause.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.5 | 2026-08-09 | Ruslan Gabitov | **Draft** — §2.10 gains **recovery affinity**: a parent and the children it awaits are ONE recoverable unit, so an engine claiming a parent claims its recorded call tree transitively in the same sweep, and an engine meeting a child first defers it to the parent's claim. This closes the multi-engine split that left a correctly-recovered parent unable to re-link a correctly-recovered child (#308): the failure was self-inflicted by claim granularity, not by anything wrong with either instance. Affinity is a claiming rule, not a distribution policy — §2.8's claim-first semantics and group scoping are unchanged, only the granularity of one claim grows. A child whose lease is genuinely held by a live engine stays unclaimable and the loud refusal stands. Cross-engine re-link proper (remote child handles, cross-engine completion and cancel) is explicitly NOT decided here and stays a §5 distribution concern. Implementation by the accompanying SRD. |
 | v.4 | 2026-08-06 | Ruslan Gabitov | **Composite-construct fidelity** (new §2.10, motivated by the capture-deferral stopgap and its silent siblings): faithful capture is the norm — a composite scope, sequential/parallel multi-instance, a Standard Loop, a resolving compensation sweep and an in-flight Call Activity all record their position in the document, and hydration rebuilds each at that position (never re-executing completed work); the deferral posture is retired (refusal remains only for unserializable data, loud). **Child instances are durable and symmetrically linked**: every instance — root or called child — checkpoints under the same repository/group; the parent records the call descriptor, the child the reverse linkage; recovery restores both ends (completion watch re-established, cancel cascade survives); a missing counterpart fails the restore loud — a child instance is state, not an effect, so duplicating one is designed out. §2.1 grows: item 5 covers both iteration strategies, item 6 adds the sweep position, new item 7 the call linkage; §2.2 clarifies re-enter applies to steps, not recorded composites. New §5 deferral: ledger nesting fidelity (flattening preserves sweep order; nesting/names cosmetic); the incident-store deferral refreshed to current truth — incidents are durable per instance since the incidents landing, what stays deferred is the cross-instance queryable surface. |
 | v.3 | 2026-08-04 | Ruslan Gabitov | Two partitioning principles, motivated by the first durable Repository adapter (postgres) — partitioning must be in the port's contract before a second implementation freezes it. **Engine groups** (§2.8): the group is part of the engine's configured identity (not storage wiring); records carry their creator's group and the recovery listing / wake claims are group-scoped, so several clusters may share one database without interference; an unnamed engine forms a single-engine group under its own id — clustering is explicit opt-in, never accidental (zero-config restart recovery unchanged); deployment parity becomes a per-group contract. **Tenant linkage** (§2.7): tenants partition data ownership orthogonally to groups — one instance belongs to exactly one tenant, one engine may serve many; unspecified → the default tenant (flag-designated in the registry, exactly one per engine group — never a reserved id); storage keeps a tenant registry (tenants table) that records reference; only the durable linkage lands here — tenant-scoped APIs, enforcement and lifecycle are a future Multi-tenancy ADR (new §5 deferral). §2.7's skeleton-growth list adds the group and the tenant to the record. |
 | v.2 | 2026-07-27 | Ruslan Gabitov | Pin refresh: ADR-007 authored in full and Accepted (v.2 — the in-memory dehydration & wake-on-trigger mechanism this ADR's §2.4/§2.5 delegated to), so the §Refines and §3-grounding pins move v.1 → v.2. No content change to the durable model. |
