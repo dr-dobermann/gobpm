@@ -131,6 +131,37 @@ gate that way. The check lives in the REQUIRED core gate rather than the
 non-blocking examples job on purpose — a regression here is a hole in *that* job,
 and a guard in the half that can go red unnoticed guards nothing.
 
+### Reading a gate run (FIX-039)
+
+`make ci` announces every step and records its own verdict, because an exit code
+alone did not survive the trip to whoever asked for it.
+
+```
+[ 8/14] test-core              started 23:31:35 (typically 1m05s)
+[ 8/14] test-core              … 30s elapsed
+[ 8/14] test-core              ok 1m05s
+[full] verdict: PASS — 14/14 steps in 2m22s (see .ci/last-run.json)
+```
+
+**Judge a run by `.ci/last-run.json`, never by the exit code of whatever wrapped
+it.** That file names the failing step, times every step, and carries the HEAD
+sha and start time so a stale one cannot pass for the current one.
+
+- **Absent means the run did not finish** — never a pass. It is deleted when a
+  run starts and written only when one ends, so a killed run leaves nothing.
+- A trailing `echo` masks the real status (`make ci; echo $?` reports *echo's*),
+  and an output-filtering wrapper can truncate the log and return its own
+  status. Both happened on 2026-08-08; one produced a false pass for a run that
+  had failed at 91.7% diff-coverage.
+- Do not detect liveness with `pgrep -f 'make ci'` — the pattern matches the
+  checking command itself, which once reported a dead run as alive for 18
+  minutes. Use the heartbeat lines, or the status file.
+
+The per-step baseline in `.ci/timings.tsv` is machine-local and gitignored: 146s
+on a 24-core box is not what a 2-core runner does, and a wrong estimate is worse
+than none. On GitHub each core step is its own workflow step, so CI already
+names and times them; the driver gives a local run the same information.
+
 ```bash
 # One-time per machine: install the Go dev tools at the versions CI pins
 # (mockery, golangci-lint, govulncheck, covercheck). Versions live in Makefile.
