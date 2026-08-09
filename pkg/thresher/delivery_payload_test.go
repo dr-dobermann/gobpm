@@ -533,15 +533,23 @@ func TestIterationRoutingKillAndResume(t *testing.T) {
 			return false
 		}
 
+		// count BOTH iterations, never "any one token": the kill lands
+		// before either delivery, so both re-arm on restore. Returning
+		// on the FIRST parked token would let the envelope keyed "a" be
+		// published while the "a" iteration is still un-armed — and a
+		// point-to-point message with no subscriber is dropped, which
+		// makes the test fail by timeout somewhere unrelated.
+		parked := 0
+
 		for _, tk := range rh.Tokens() {
 			if tk.State == thresher.TokenWaitForEvent {
-				return true
+				parked++
 			}
 		}
 
-		return false
+		return parked == 2
 	}, 5*time.Second, 5*time.Millisecond,
-		"the recovered iteration must re-arm its wait")
+		"both restored iterations must re-arm their waits")
 
 	require.NoError(t, broker.Publish(ctx, messaging.Envelope{
 		Name: "confirm", Payload: "a", CorrelationKey: "a"}))

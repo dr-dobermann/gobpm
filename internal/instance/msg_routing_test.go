@@ -295,6 +295,13 @@ func (fa *failingAdder) AddEventKey(eDefID, _ string) error {
 	return fmt.Errorf("adder boom")
 }
 
+func (fa *failingAdder) askedNames() []string {
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+
+	return append([]string(nil), fa.asked...)
+}
+
 func (fa *failingAdder) askedCount() int {
 	fa.mu.Lock()
 	defer fa.mu.Unlock()
@@ -302,11 +309,18 @@ func (fa *failingAdder) askedCount() int {
 	return len(fa.asked)
 }
 
-// TestExtendReceiversSurvivesAdderFailure: a failing AddEventKey is
-// DEGRADATION, not a fault (ADR-022 v.1 §2.3(2)) — the walk continues
-// past the failure and still visits every message receiver, including
-// the ones nested inside a composite body.
-func TestExtendReceiversSurvivesAdderFailure(t *testing.T) {
+// TestExtendReceiversDescendsDespiteAdderFailure: a failing AddEventKey
+// is DEGRADATION, not a fault (ADR-022 v.1 §2.3(2)) — the walk reaches
+// the message receiver NESTED inside the composite body and reports no
+// error to the caller.
+//
+// It asserts the EXACT number of receivers asked, not a positive count:
+// the
+// fixture holds exactly ONE message receiver, so "every receiver was
+// visited" is not observable here and this test does not claim it. What
+// a broken walk looks like is zero asks — a walk that never descends
+// into composites, which is the defect this pins.
+func TestExtendReceiversDescendsDespiteAdderFailure(t *testing.T) {
 	got := make(chan string, 2)
 
 	s, _ := routedMIProcess(t, "mr-ext", got, true)
@@ -319,11 +333,11 @@ func TestExtendReceiversSurvivesAdderFailure(t *testing.T) {
 
 	inst.corr.extendReceivers("v1")
 
-	// the catch lives INSIDE the MI body: a walk that stopped at the
-	// first failure — or never descended into composites — would ask
-	// about nothing.
-	require.Positive(t, adder.askedCount(),
-		"every message receiver is offered the new key despite the failure")
+	// the catch lives INSIDE the MI body, so a walk that never descended
+	// into composites asks about nothing.
+	require.Len(t, adder.askedNames(), 1,
+		"the ONE nested message receiver is offered the new key despite "+
+			"the adder's failure")
 }
 
 // TestKeylessRoutingRefusedInInstance is SRD-085 T-3's in-instance

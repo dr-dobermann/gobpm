@@ -2,6 +2,7 @@ package thresher
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	gerrs "github.com/dr-dobermann/gobpm/pkg/errs"
@@ -34,7 +35,7 @@ func (t *Thresher) recoverInstances(ctx context.Context) {
 	// caller's claim, so two engines of one group can never split a
 	// pair between them.
 	for _, id := range t.recoveryRoots(ctx, ids) {
-		if err := t.recoverOne(ctx, id, map[string]struct{}{}); err != nil {
+		if _, err := t.recoverOne(ctx, id, map[string]struct{}{}); err != nil {
 			t.reportRecoveryFailure(id, err)
 		}
 	}
@@ -186,7 +187,17 @@ func (t *Thresher) claimRecord(
 	}
 
 	if saveErr := repo.Save(ctx, rec); saveErr != nil {
-		return rec, false, nil // a lost claim race is the normal outcome
+		// ONLY a CAS mismatch is a lost race — the Repository contract
+		// classifies it errs.ConcurrentUpdate, and every adapter mirrors
+		// that. Any other failure (an unreachable store, a broken
+		// connection) must not masquerade as one: swallowing it would
+		// abandon a recoverable instance without a word.
+		var ae *gerrs.ApplicationError
+		if errors.As(saveErr, &ae) && ae.HasClass(gerrs.ConcurrentUpdate) {
+			return rec, false, nil
+		}
+
+		return rec, false, recoveryErr("the claim doesn't save", saveErr)
 	}
 
 	rec.RecVersion++ // Save advanced the stored version; continue from it
@@ -201,9 +212,11 @@ func (t *Thresher) claimRecord(
 // fact that a claimed lease is skipped.
 func (t *Thresher) recoverOne(
 	ctx context.Context, id string, seen map[string]struct{},
-) error {
+) (bool, error) {
+	// a revisit reports CLAIMED: this walk already owns the id, and the
+	// caller's affinity check must not read "someone else holds it".
 	if _, visited := seen[id]; visited {
-		return nil
+		return true, nil
 	}
 
 	seen[id] = struct{}{}
@@ -212,12 +225,12 @@ func (t *Thresher) recoverOne(
 
 	rec, claimed, err := t.claimRecord(ctx, id)
 	if err != nil || !claimed {
-		return err
+		return false, err
 	}
 
 	doc, err := checkpoint.Unmarshal(rec.Payload)
 	if err != nil {
-		return recoveryErr("the checkpoint doesn't decode", err)
+		return false, recoveryErr("the checkpoint doesn't decode", err)
 	}
 
 	// a recovered CHILD whose caller record vanished fails loud — a
@@ -226,11 +239,11 @@ func (t *Thresher) recoverOne(
 	if doc.ParentID != "" {
 		_, ok, perr := repo.Load(ctx, doc.ParentID)
 		if perr != nil {
-			return recoveryErr("the caller record isn't readable", perr)
+			return false, recoveryErr("the caller record isn't readable", perr)
 		}
 
 		if !ok {
-			return recoveryErr("the caller record "+
+			return false, recoveryErr("the caller record "+
 				strconv.Quote(doc.ParentID)+" is gone — a child never "+
 				"runs orphaned", nil)
 		}
@@ -240,12 +253,12 @@ func (t *Thresher) recoverOne(
 	// tree BEFORE this instance, so its re-attach finds every child
 	// resident on this engine instead of live on another.
 	if terr := t.recoverCallTree(ctx, doc, seen); terr != nil {
-		return terr
+		return false, terr
 	}
 
 	s := t.snapshotForVersionLocked(doc.ProcessID, doc.Version)
 	if s == nil {
-		return recoveryErr("the pinned process version isn't registered "+
+		return false, recoveryErr("the pinned process version isn't registered "+
 			"(process "+doc.ProcessID+" v"+strconv.Itoa(doc.Version)+
 			") — register it before Run", nil)
 	}
@@ -262,17 +275,17 @@ func (t *Thresher) recoverOne(
 		instance.WithCheckpointing(t.id, t.group, t.cfg.leaseTTL),
 		instance.WithCheckpointCursor(rec.RecVersion, rec.Lease.Incarnation))
 	if err != nil {
-		return recoveryErr("the instance doesn't restore", err)
+		return false, recoveryErr("the instance doesn't restore", err)
 	}
 
 	runCtx, cancel, err := t.instanceContext("recovery")
 	if err != nil {
-		return recoveryErr("the engine context is gone", err)
+		return false, recoveryErr("the engine context is gone", err)
 	}
 	if err := inst.Run(runCtx); err != nil {
 		cancel()
 
-		return recoveryErr("the restored instance doesn't run", err)
+		return false, recoveryErr("the restored instance doesn't run", err)
 	}
 
 	_, displaced := t.trackInstanceLocked(inst, cancel, t.settledFor(id))
@@ -294,7 +307,7 @@ func (t *Thresher) recoverOne(
 		},
 	})
 
-	return nil
+	return true, nil
 }
 
 // recoverCallTree claims and restores every child the document awaits,
@@ -324,8 +337,11 @@ func (t *Thresher) recoverCallTree(
 			continue
 		}
 
-		if _, resident := t.instanceByID(childID); resident == nil {
-			continue // already recovered in this sweep
+		// instanceByID reports ObjectNotFound when the child is NOT
+		// resident; a nil error therefore means it already recovered in
+		// this sweep and needs no claim.
+		if _, lookupErr := t.instanceByID(childID); lookupErr == nil {
+			continue
 		}
 
 		rec, ok, err := repo.Load(ctx, childID)
@@ -346,9 +362,21 @@ func (t *Thresher) recoverCallTree(
 				" — a call tree recovers as a unit (ADR-033 §2.10)", nil)
 		}
 
-		if err := t.recoverOne(ctx, childID, seen); err != nil {
+		claimed, err := t.recoverOne(ctx, childID, seen)
+		if err != nil {
 			return recoveryErr("the awaited child "+strconv.Quote(childID)+
 				" doesn't recover", err)
+		}
+
+		// the lease check above is not enough: another engine can claim
+		// the child in the window between it and our own CAS. An
+		// unclaimed child is NOT recovered, and letting the parent
+		// restore anyway trades the affinity message for whatever its
+		// re-attach happens to say (SRD-087 FR-3).
+		if !claimed {
+			return recoveryErr("the awaited child "+strconv.Quote(childID)+
+				" was claimed by another engine mid-sweep — a call tree "+
+				"recovers as a unit (ADR-033 §2.10)", nil)
 		}
 	}
 
