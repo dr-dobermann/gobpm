@@ -1014,8 +1014,10 @@ type armHookHub struct {
 	mu         sync.Mutex
 	onRegister func()
 	withdrawn  map[string]int // eDefID → successful withdrawals
+	armedIDs   []string       // starter ids of the successful arms, in order
 	registered int            // total successful arms
-	armErr     error          // when set, every persistent arm fails with it
+	armErr     error          // when set, the next armFails persistent arms fail
+	armFails   int            // how many arms still fail (negative = all)
 }
 
 // hookOnce installs a one-shot callback run at the start of the next arm.
@@ -1048,13 +1050,23 @@ func (h *armHookHub) RegisterEvent(
 
 // RegisterPersistentEvent counts the arms of the instance-STARTER path, which
 // is the one T-8 watches: a starter subscription is persistent by nature.
-// failArms makes every later starter arm fail, so a test can break the hub
-// under a RUNNING engine without racing the eventHub field.
-func (h *armHookHub) failArms(err error) {
+// failArms makes the next n starter arms fail, so a test can break the hub
+// under a RUNNING engine without racing the eventHub field. n < 0 fails every
+// later arm; n == 0 clears the fault.
+// armedStarters returns the starter ids armed so far, in order.
+func (h *armHookHub) armedStarters() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return append([]string{}, h.armedIDs...)
+}
+
+func (h *armHookHub) failArms(err error, n int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	h.armErr = err
+	h.armFails = n
 }
 
 func (h *armHookHub) RegisterPersistentEvent(
@@ -1062,16 +1074,27 @@ func (h *armHookHub) RegisterPersistentEvent(
 ) error {
 	h.mu.Lock()
 	armErr := h.armErr
-	h.mu.Unlock()
 
-	if armErr != nil {
+	if armErr != nil && h.armFails != 0 {
+		if h.armFails > 0 {
+			h.armFails--
+		}
+
+		h.mu.Unlock()
+
 		return armErr
 	}
+
+	h.mu.Unlock()
 
 	err := h.EventHub.RegisterPersistentEvent(ep, eDef)
 	if err == nil {
 		h.mu.Lock()
 		h.registered++
+		// WHICH starter was armed, not just how many: a rollback that re-armed
+		// the failed version's starters instead of the previous version's
+		// raises the count exactly as the correct one does.
+		h.armedIDs = append(h.armedIDs, ep.ID())
 		h.mu.Unlock()
 	}
 
@@ -1249,7 +1272,7 @@ func TestPromoteFailureSurfaces(t *testing.T) {
 	v2, err := th.RegisterProcess(proc)
 	require.NoError(t, err)
 
-	hub.failArms(errors.New("arm boom"))
+	hub.failArms(errors.New("arm boom"), -1)
 
 	require.ErrorContains(t, th.UnregisterVersion(v2), "arm boom",
 		"a failed promotion is the caller's error, not a silent half-removal")
@@ -1550,4 +1573,115 @@ func TestReportRefusedArm(t *testing.T) {
 
 	require.NotPanics(t, func() { th.reportRefusedArm("i-1", "t-1") },
 		"a refused arm is a Debug fact, never a failure")
+}
+
+// TestFailedRegisterRestoresThePreviousStarters is FIX-038 T-5. RegisterProcess
+// withdraws the previous version's starters to make way for the new ones. When
+// the second call failed it returned with NEITHER on the hub — nothing
+// auto-started — and left the failed version sitting as `latest`, so every
+// later RegisterProcess for that key tried to unregister starters that were
+// never registered, got ObjectNotFound, and failed too. The key was dead.
+//
+// The retry is the assertion that matters: a failed registration must leave the
+// key exactly as it was, not merely fail politely.
+func TestFailedRegisterRestoresThePreviousStarters(t *testing.T) {
+	th, hub, cancel := hookedWakeEngine(t, "engine-register-rollback")
+	defer cancel()
+
+	proc := msgStartProcess(t, "p-rollback", "order placed")
+
+	v1, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	armsAfterV1 := hub.arms()
+	require.Positive(t, armsAfterV1, "v1's starter is on the hub")
+	require.Len(t, hub.armedStarters(), armsAfterV1)
+
+	// v2's arm fails: the supersede has already withdrawn v1's starters.
+	hub.failArms(errors.New("hub refuses"), 1) // only v2's own arm
+
+	_, err = th.RegisterProcess(proc)
+	require.Error(t, err, "the failing registration is reported")
+
+	// the failed version must be gone, leaving v1 as latest again
+	th.m.Lock()
+	regs := th.registrations[proc.ID()]
+	th.m.Unlock()
+
+	require.Len(t, regs, 1, "the failed version is removed from the registry")
+	require.Equal(t, v1.Version(), regs[0].Version(), "v1 is latest again")
+
+	// and V1'S starters are back on the hub — the identity matters, not the
+	// count: re-arming the FAILED version's starters would raise the count
+	// just the same, and leave the key serving a version that never landed.
+	armed := hub.armedStarters()
+	require.Greater(t, len(armed), armsAfterV1,
+		"the rollback arms something")
+	require.Equal(t, armed[:armsAfterV1], armed[len(armed)-armsAfterV1:],
+		"the restored arms are the SAME starters v1 armed, not the failed"+
+			" version's")
+
+	// the key is not bricked: with the hub healthy again, a retry succeeds
+	hub.failArms(nil, 0)
+
+	v2, err := th.RegisterProcess(proc)
+	require.NoError(t, err,
+		"a retry after a failed registration must behave like a first attempt")
+	require.Greater(t, v2.Version(), v1.Version())
+}
+
+// TestFirstRegistrationFailureLeavesNoTrace is the other half of T-5: when the
+// FAILING registration is a key's first, there is no previous version to
+// restore. The rollback must still undo its own bookkeeping and return the
+// original cause unwrapped — a caller retrying the very first registration of a
+// key must find it as untouched as if the call had never happened.
+func TestFirstRegistrationFailureLeavesNoTrace(t *testing.T) {
+	th, hub, cancel := hookedWakeEngine(t, "engine-first-register-fails")
+	defer cancel()
+
+	proc := msgStartProcess(t, "p-first-fails", "order placed")
+
+	hub.failArms(errors.New("hub refuses"), 1)
+
+	_, err := th.RegisterProcess(proc)
+	require.Error(t, err, "the failing registration is reported")
+	require.ErrorContains(t, err, "hub refuses",
+		"with no previous version there is nothing to join to the cause")
+
+	th.m.Lock()
+	regs := th.registrations[proc.ID()]
+	th.m.Unlock()
+
+	require.Empty(t, regs, "the failed version leaves no registration behind")
+
+	// the key is usable: a retry against a healthy hub is a first attempt
+	hub.failArms(nil, 0)
+
+	v1, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+	require.NotNil(t, v1)
+}
+
+// TestRollbackFailureJoinsTheCause is T-5's worst case: the registration fails
+// AND restoring the previous version's starters fails too. The caller must
+// learn both — that its registration did not land, and that the key is now
+// without auto-start (ADR-022 v.2 §2.2). Reporting only one of the two leaves
+// an operator repairing the wrong thing.
+func TestRollbackFailureJoinsTheCause(t *testing.T) {
+	th, hub, cancel := hookedWakeEngine(t, "engine-rollback-fails")
+	defer cancel()
+
+	proc := msgStartProcess(t, "p-rollback-fails", "order placed")
+
+	_, err := th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	// two arms fail: v2's own, and the re-arm of v1's starters in the rollback
+	hub.failArms(errors.New("hub refuses"), 2)
+
+	_, err = th.RegisterProcess(proc)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "hub refuses", "the original cause survives")
+	require.ErrorContains(t, err, "no auto-start",
+		"and the failed rollback is reported beside it")
 }

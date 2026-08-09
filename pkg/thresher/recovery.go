@@ -187,17 +187,19 @@ func (t *Thresher) claimRecord(
 	}
 
 	if saveErr := repo.Save(ctx, rec); saveErr != nil {
-		// ONLY a CAS mismatch is a lost race — the Repository contract
-		// classifies it errs.ConcurrentUpdate, and every adapter mirrors
-		// that. Any other failure (an unreachable store, a broken
-		// connection) must not masquerade as one: swallowing it would
-		// abandon a recoverable instance without a word.
-		var ae *gerrs.ApplicationError
-		if errors.As(saveErr, &ae) && ae.HasClass(gerrs.ConcurrentUpdate) {
+		// A LOST CAS is the normal outcome — another engine recovered it — and
+		// is silence. Anything else is not: a connection reset, a timeout or a
+		// store outage used to be read the same way, so a transient failure
+		// abandoned an in-flight instance at startup and reported success, with
+		// nothing logged anywhere (FIX-038 §1.4). The Repository contract makes
+		// the two distinguishable: a version mismatch MUST carry
+		// errs.ConcurrentUpdate, and every adapter implements it identically.
+		if lostClaim(saveErr) {
 			return rec, false, nil
 		}
 
-		return rec, false, recoveryErr("the claim doesn't save", saveErr)
+		return rec, false,
+			recoveryErr("couldn't claim the record for recovery", saveErr)
 	}
 
 	rec.RecVersion++ // Save advanced the stored version; continue from it
@@ -288,8 +290,9 @@ func (t *Thresher) recoverOne(
 		return false, recoveryErr("the restored instance doesn't run", err)
 	}
 
-	_, displaced := t.trackInstanceLocked(inst, cancel, t.settledFor(id))
+	h, displaced := t.trackInstanceLocked(inst, cancel, t.settledFor(id))
 	stopDisplaced(displaced)
+	h.reattachObservers()
 
 	// A recovered conversation re-takes its correlation reservation (FIX-036
 	// §1.2): the reservation map does not survive the process, so without this
@@ -416,6 +419,15 @@ func (t *Thresher) ensureGroup(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// lostClaim reports whether err is the compare-and-set conflict that means
+// another engine claimed this instance first — the one Save failure that is a
+// normal outcome rather than a fault.
+func lostClaim(err error) bool {
+	var ae *gerrs.ApplicationError
+
+	return errors.As(err, &ae) && ae.HasClass(gerrs.ConcurrentUpdate)
 }
 
 // recoveryErr builds one classified recovery error.

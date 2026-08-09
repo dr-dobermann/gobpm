@@ -210,22 +210,43 @@ func (t *Thresher) gateComplete(taskID string, actor hi.Actor) error {
 }
 
 // completeVerdict renders the pre-hydration verdict and the reason to report it
-// under. It holds the lock for the whole decision so the answer cannot be stale by
-// the time it is returned.
+// under.
+//
+// The OWNERSHIP decision is taken under the lock, on a freshly read record, so
+// the answer cannot be stale by the time it is returned. Eligibility is
+// authorized BEFORE that, outside the lock: Authorize is host code — a
+// directory or database lookup is the normal implementation — and running it
+// under t.m stalled every registration, launch and discovery call in the engine
+// behind one embedder call (FIX-038 §1.2). The eligibility policy is written
+// once at registration and read-only afterwards, so reading it separately
+// cannot go stale.
 func (t *Thresher) completeVerdict(
 	taskID string,
 	actor hi.Actor,
 ) (string, error) {
 	t.m.Lock()
-	defer t.m.Unlock()
-
 	rec, ok := t.tasks[taskID]
+
+	var eligible interactor.Eligibility
+	if ok {
+		eligible = rec.eligible
+	}
+	t.m.Unlock()
+
 	if !ok {
 		return "", errUnknownTask(taskID)
 	}
 
-	if err := rec.eligible.Authorize(taskID, actor); err != nil {
+	if err := eligible.Authorize(taskID, actor); err != nil {
 		return "unauthorized", err
+	}
+
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	rec, ok = t.tasks[taskID]
+	if !ok {
+		return "", errUnknownTask(taskID)
 	}
 
 	if rec.owner == "" {
@@ -267,7 +288,7 @@ func (t *Thresher) Claim(
 		return err
 	}
 
-	if err := t.setOwner(taskID, actor.UserID(), claimGuard(actor)); err != nil {
+	if err := t.setOwner(taskID, actor.UserID(), actor, claimGuard(actor)); err != nil {
 		return err
 	}
 
@@ -290,7 +311,7 @@ func (t *Thresher) Unclaim(
 		return err
 	}
 
-	if err := t.setOwner(taskID, "", ownerOnlyGuard(actor)); err != nil {
+	if err := t.setOwner(taskID, "", actor, ownerOnlyGuard(actor)); err != nil {
 		return err
 	}
 
@@ -325,11 +346,13 @@ func (t *Thresher) Reassign(
 
 	var from string
 
-	err := t.setOwner(taskID, nomineeUserID,
-		func(id string, rec *taskRecord) error {
+	// The NOMINEE is the actor authorized here, not the caller: a reassignment
+	// may only move a task to someone already eligible for it.
+	err := t.setOwner(taskID, nomineeUserID, userIDActor(nomineeUserID),
+		func(_ string, rec *taskRecord) error {
 			from = rec.owner
 
-			return rec.eligible.Authorize(id, userIDActor(nomineeUserID))
+			return nil
 		})
 	if err != nil {
 		return err
@@ -349,17 +372,47 @@ func (t *Thresher) Reassign(
 // concurrent claims on the same task cannot both succeed (SRD-073 NFR-3).
 func (t *Thresher) setOwner(
 	taskID, owner string,
-	guard func(string, *taskRecord) error,
+	actor hi.Actor,
+	admit func(string, *taskRecord) error,
 ) error {
+	// PHASE 1 — read the eligibility policy under the lock. It is written once
+	// at registration and read-only afterwards (see taskRecord), so one read is
+	// enough and it cannot go stale.
+	t.m.Lock()
+
+	rec, ok := t.tasks[taskID]
+	if !ok {
+		t.m.Unlock()
+
+		return errUnknownTask(taskID)
+	}
+
+	eligible := rec.eligible
+
+	t.m.Unlock()
+
+	// PHASE 2 — HOST policy, outside the lock. Authorize is embedder code and a
+	// directory or database lookup is the normal implementation; running it
+	// under t.m stalled every registration, launch and discovery call in the
+	// engine behind it (FIX-038 §1.2). This function used to run it inside a
+	// `guard` CALLBACK invoked under the lock, which is the shape locked.go
+	// forbids by construction — and is why it went unnoticed.
+	if err := eligible.Authorize(taskID, actor); err != nil {
+		return err
+	}
+
+	// PHASE 3 — the ownership decision and the mutation, under the lock and on
+	// a FRESHLY read record: the answer must not be stale by the time it is
+	// applied, and phase 2 released the lock.
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	rec, ok := t.tasks[taskID]
+	rec, ok = t.tasks[taskID]
 	if !ok {
 		return errUnknownTask(taskID)
 	}
 
-	if err := guard(taskID, rec); err != nil {
+	if err := admit(taskID, rec); err != nil {
 		return err
 	}
 
@@ -380,11 +433,8 @@ func (t *Thresher) setOwner(
 // Camunda draws the line the same way: its claim fails only when the existing
 // assignee is a different user.
 func claimGuard(actor hi.Actor) func(string, *taskRecord) error {
-	return func(taskID string, rec *taskRecord) error {
-		if err := rec.eligible.Authorize(taskID, actor); err != nil {
-			return err
-		}
-
+	return func(_ string, rec *taskRecord) error {
+		// Eligibility is authorized by setOwner, outside the lock.
 		if rec.owner != "" && rec.owner != actor.UserID() {
 			return errs.New(
 				errs.M("user task is already held by %q", rec.owner),

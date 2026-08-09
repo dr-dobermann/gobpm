@@ -2,7 +2,6 @@ package thresher
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -180,53 +179,13 @@ func (fr *failingSaveRepo) Save(
 	return fr.Repository.Save(ctx, rec)
 }
 
-// TestClaimSurfacesStoreFailure: only a CAS mismatch is a lost race.
-// The Repository contract classifies one errs.ConcurrentUpdate; anything
-// else is a store that is not working, and swallowing it would abandon a
-// recoverable instance silently.
-func TestClaimSurfacesStoreFailure(t *testing.T) {
-	base := memrepo.New()
-	require.NoError(t, base.RegisterGroup(t.Context(), "store"))
-	seedDoc(t, base, "store", "A", "")
-
-	repo := &failingSaveRepo{
-		Repository: base,
-		id:         "A",
-		err:        errors.New("the store is unreachable"),
-	}
-
-	th, err := New("store", WithRepository(repo))
-	require.NoError(t, err)
-
-	claimed, err := th.recoverOne(context.Background(), "A",
-		map[string]struct{}{})
-	require.False(t, claimed)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "the claim doesn't save")
-}
-
-// TestClaimLostRaceIsSilent is the other half: a CAS mismatch IS the
-// normal outcome of two engines sweeping at once, and reports nothing.
-func TestClaimLostRaceIsSilent(t *testing.T) {
-	base := memrepo.New()
-	require.NoError(t, base.RegisterGroup(t.Context(), "race"))
-	seedDoc(t, base, "race", "A", "")
-
-	repo := &failingSaveRepo{
-		Repository: base,
-		id:         "A",
-		err: gerrs.New(gerrs.M("someone else got there first"),
-			gerrs.C(errorClass, gerrs.ConcurrentUpdate)),
-	}
-
-	th, err := New("race", WithRepository(repo))
-	require.NoError(t, err)
-
-	claimed, err := th.recoverOne(context.Background(), "A",
-		map[string]struct{}{})
-	require.NoError(t, err)
-	require.False(t, claimed, "a lost CAS race leaves the record alone")
-}
+// NOTE: the two halves of a rejected claim — a store failure surfaces,
+// a CAS mismatch stays silent — are pinned by TestLostClaimClassification
+// and TestRecoveryReportsATransportError in recovery_internal_test.go
+// (FIX-038 §1.4), which landed on master
+// while this branch was in flight. The window BELOW is what that test
+// cannot see: a child lost between the tree walk's lease check and the
+// claim's own CAS.
 
 // TestCallTreeFailsOnLostChildClaim pins SRD-087 FR-3 through the window
 // the lease check cannot cover: the child's lease reads expired, and

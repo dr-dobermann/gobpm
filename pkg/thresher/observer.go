@@ -82,7 +82,7 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 	// Asserted once here at registration; absent ⇒ pass-through.
 	filter, _ := h.current().AuthorizationProvider().(observability.ObservationFilter)
 
-	cancelReg := h.current().AddObserver(func(f observability.Fact) {
+	fanout := func(f observability.Fact) {
 		if filter != nil {
 			filtered, ok := filter.FilterObservation(o, f)
 			if !ok {
@@ -97,7 +97,32 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 		default:
 			dropped.Add(1)
 		}
-	})
+	}
+
+	// Record on the HANDLE, then attach to the instance it currently speaks
+	// for. Registering only on the instance object meant the subscription died
+	// silently at the first dehydration, because a rebuild replaces that object
+	// (FIX-038 §1.8); the handle re-attaches this entry on every adopt.
+	ho := &handleObserver{fanout: fanout}
+
+	h.obsMu.Lock()
+
+	if h.observers == nil {
+		h.observers = map[uint64]*handleObserver{}
+	}
+
+	h.nextObs++
+	obsID := h.nextObs
+	h.observers[obsID] = ho
+
+	// Record WHICH object it landed on, under the same lock reattachObservers
+	// takes: this call can be racing a rebuild, and a re-attach that cannot
+	// tell it already sits on the new object registers it a second time.
+	on := h.current()
+	ho.on = on
+	ho.cancel = on.AddObserver(fanout)
+
+	h.obsMu.Unlock()
 
 	var once sync.Once
 
@@ -110,7 +135,15 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 				// observer write-lock, which fences any in-flight fan-out, so no
 				// send is in progress once it returns — making close(ch) safe (no
 				// send-on-closed-channel). Then drain to completion.
-				cancelReg()
+				h.obsMu.Lock()
+				delete(h.observers, obsID)
+				cancelReg := ho.cancel
+				h.obsMu.Unlock()
+
+				if cancelReg != nil {
+					cancelReg()
+				}
+
 				close(ch)
 				<-done
 			})

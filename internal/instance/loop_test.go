@@ -202,6 +202,54 @@ func TestLoopStateApplyMergedGhost(t *testing.T) {
 	})
 }
 
+// TestApplyPendingCancel is FIX-038 T-10 at the level the mechanism lives: a
+// cancel aimed at a DEHYDRATED instance has no loop to receive it, so it rides
+// the rebuild and the fresh loop must apply it BEFORE its park decision.
+//
+// stopAll is what makes it stick — it sets ls.stopping, which maybeDehydrate
+// checks, so the instance cannot park again before observing the request. A
+// bare context cancel would race the re-park and be lost exactly as the
+// pre-rebuild cancel was.
+func TestApplyPendingCancel(t *testing.T) {
+	inst := newBareLoopInstance()
+	inst.td = interactor.NopDistributor()
+
+	resp := make(chan error, 1)
+
+	// the option is the carrier: it is what a rebuild is handed.
+	cfg := newConfig{}
+	WithPendingCancel(resp)(&cfg)
+	require.NotNil(t, cfg.pendingCancel, "the option arms the rebuild")
+
+	inst.pendingCancel = cfg.pendingCancel
+
+	ls := newLoopState(inst)
+	ls.applyPendingOps(t.Context())
+
+	require.True(t, ls.stopping,
+		"the cancel tears the instance down, so it cannot park again")
+	require.Equal(t, Terminating, inst.State())
+	require.Nil(t, inst.pendingCancel, "a pending cancel is consumed once")
+
+	select {
+	case err := <-resp:
+		require.NoError(t, err, "the caller is answered")
+
+	default:
+		t.Fatal("the cancel verdict never reached the caller")
+	}
+}
+
+// TestApplyPendingOpsWithNothingPending: a rebuild carrying neither operator
+// request leaves the loop alone — the ordinary wake must not be torn down.
+func TestApplyPendingOpsWithNothingPending(t *testing.T) {
+	ls := newLoopState(newBareLoopInstance())
+
+	ls.applyPendingOps(t.Context())
+
+	require.False(t, ls.stopping, "an ordinary rebuild is not a cancel")
+}
+
 // TestLoopStateApplySequences (SRD-040 T-5): a loopState driven directly with
 // evMoved/evParked sequences maintains the position and parked views per the
 // SRD-028 semantics — the unit-level access the loopState extraction unlocks.

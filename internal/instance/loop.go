@@ -249,13 +249,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	// root scope — they guard the whole instance's window (SRD-052 FR-5).
 	ls.armScopeHandlers(ctx, rootNodes(inst), inst.sc.root)
 
-	// An operator op that rode a rebuild (SRD-079 §3.6) applies BEFORE the
-	// park decision: a retry/resolve spawns tracks that keep the loop alive,
-	// a drop parks again — either way the op is never lost to the re-park.
-	if req := inst.pendingIncidentOp; req != nil {
-		inst.pendingIncidentOp = nil
-		ls.handleIncidentRequest(ctx, *req)
-	}
+	ls.applyPendingOps(ctx)
 
 	if !ls.loopPreflight() {
 		return
@@ -434,6 +428,35 @@ func (ls *loopState) spawn(ctx context.Context, t *track) {
 
 		ls.inst.emit(trackEvent{kind: trackEndKind(t), track: t})
 	}(t)
+}
+
+// applyPendingOps runs the operator requests that rode a rebuild, BEFORE the
+// park decision — so neither is lost to an immediate re-park (SRD-079 §3.6,
+// FIX-038 §1.10). A parked instance has no loop to receive them, which is why
+// they travel with the rebuild instead of being delivered to one.
+func (ls *loopState) applyPendingOps(ctx context.Context) {
+	inst := ls.inst
+
+	// An incident op: a retry/resolve spawns tracks that keep the loop alive,
+	// a drop parks again — either way the op is applied first.
+	if req := inst.pendingIncidentOp; req != nil {
+		inst.pendingIncidentOp = nil
+		ls.handleIncidentRequest(ctx, *req)
+	}
+
+	// A cancel. stopAll — not inst.Cancel — is what makes it stick: it sets
+	// ls.stopping, which maybeDehydrate checks, so the instance cannot park
+	// again before observing the request. Canceling the context alone would
+	// race the re-park and be lost exactly as the pre-rebuild cancel was.
+	if req := inst.pendingCancel; req != nil {
+		inst.pendingCancel = nil
+
+		ls.stopAll()
+
+		if req.resp != nil {
+			req.resp <- nil
+		}
+	}
 }
 
 // stopAll moves the instance to Terminating (once) and signals every live

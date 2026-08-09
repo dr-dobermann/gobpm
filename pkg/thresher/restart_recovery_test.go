@@ -82,6 +82,24 @@ func (fw *factWatch) OnFact(f observability.Fact) {
 	fw.facts = append(fw.facts, f)
 }
 
+// count reports how many facts of this kind+phase have been seen. A test that
+// must show something did NOT happen asserts on this rather than on a
+// downstream side effect: the fact is the engine's own statement that it acted.
+func (fw *factWatch) count(k observability.Kind, p observability.Phase) int {
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+
+	n := 0
+
+	for _, f := range fw.facts {
+		if f.Kind == k && f.Phase == p {
+			n++
+		}
+	}
+
+	return n
+}
+
 func (fw *factWatch) saw(k observability.Kind, p observability.Phase) bool {
 	fw.mu.Lock()
 	defer fw.mu.Unlock()

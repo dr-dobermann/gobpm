@@ -27,15 +27,18 @@ a diff to whole packages.
 | `pkg/thresher` | 5 971 | 3 / 3 | 16 |
 | `internal/scope` | 1 217 | 3 / 3 | 14 |
 | `internal/eventproc/eventhub` (+ `waiters`) | 2 132 | 3 / 3 | 9 |
-| `internal/instance` | 14 034 | **1 / 3** | 2 |
+| `internal/instance` | 14 034 | **3 / 3** (4-way split, round 2) | 28 |
 | `pkg/model/activities` · `events` · `data` · `gateways` | 15 562 | maintainer audit | 0 confirmed |
 
-**`internal/instance` is under-covered and must be re-run.** At 584 KB of
-source the reviewer fell back to a shell command to page through the prompt,
-was auto-denied in headless mode, and returned `status: SUCCESS` with an **empty
-body**. Only the architecture lens completed. A naive collector reads that as a
-clean package; ours flags it. Splitting the unit in half (330 KB) did not help —
-it needs four or more parts, or a different feeding strategy.
+**`internal/instance` was re-run in round 2 and is now fully covered.** The
+first attempt fed 584 KB in one prompt; the reviewer fell back to a shell
+command to page through it, was auto-denied in headless mode, and returned
+`status: SUCCESS` with an **empty body** — which a naive collector reads as a
+clean package. Halving it (330 KB) did not help. **Four parts did**: all eight
+lenses returned real output, and the package went from 2 findings to 28.
+
+Two thirds of the largest package in the engine had been invisible, and the
+signal that it was invisible was a *successful* exit code.
 
 **The model packages were audited by the maintainer, not by `agy`**, on the
 reasoning that an external reviewer buys the most where the author's belief is
@@ -57,6 +60,18 @@ invented. Never route a finding by its line number; find the construct.
 **Three lenses duplicate.** `internal/scope`'s non-atomic `SnapshotAt` appears
 four times under three titles. Duplication across lenses is a signal of
 salience, not of three separate defects — dedupe before counting.
+
+**And convergence is NOT evidence of correctness.** Two independent lenses
+reported `restore.go:391` as an inverted correlation check — "missing negation",
+"valid triggers rejected" — with high confidence. The function's signature is
+`validateAndAssociate(...) (mismatch bool)`: `true` means *belongs to another
+conversation*, so refusing on `true` is right. Both lenses reasoned from the
+function's NAME, which reads like it returns "valid", and neither read the named
+return value.
+
+When lenses share a misleading cue they agree confidently and wrongly. Agreement
+raises how much attention a finding deserves; it does nothing for how likely it
+is to be true. Only reading the code settles that.
 
 Neither property is a reason to stop using the reviewer. Both are reasons the
 skill requires verification before a finding is allowed into this document.
@@ -93,66 +108,123 @@ else that shape occurs, and neither the FIX process nor the review gate asks it.
 defect. Complexity — and defects — cluster in `internal/`, not in the
 spec-grounded model layer.
 
-## 5 Pending verification
+## 5 Round-2 verification
 
-The remaining findings are **unverified model output** and must not be treated
-as defects until checked. Recorded here so the next pass starts from the list
-rather than re-running the sweep. Deduplicated across lenses.
+Round 2 re-ran `internal/instance` to completion and verified the §5 backlog
+against the source. Verdicts below; every finding carries one, including the
+refuted.
 
-### 5.1 `pkg/thresher`
+### 5.1 Confirmed — defect track
 
-| Sev | Construct | Claim |
+| # | Construct | Confirmed defect |
 |---|---|---|
-| blocker | `handle.go` `InstanceHandle.Cancel` | Cancelling a dehydrated instance has no effect and is lost on the next hydration |
-| blocker | `tasks.go` task authorization | The engine mutex is held across authorization, serialising task actions under load |
-| blocker | `thresher.go` task registry | Parked human tasks are in-memory only, so they are orphaned across a restart |
-| blocker/major | `thresher.go` `RegisterProcess` | A failed `registerStarters` after a successful `unregisterStarters` leaves the key with no starters, and the retry fails on the unwired version — bricking the key |
-| major | `observer.go` | Instance-scoped observers are orphaned when an instance dehydrates and rebuilds |
-| major | `locked.go` `UnregisterProcess` | Deletes snapshots that dehydrated instances still need in order to wake |
-| major | `recovery.go` `recoverOne` | A `Save` transport error is treated as a lost CAS, abandoning the instance |
+| C-6 | `scope.SnapshotAt` | Not atomic: `namesFrom` locks and unlocks, then each `GetData` locks and unlocks. `track.go:1496` states the snapshot runs *"on the track goroutine"* and that *"commits bypass the loop"*, so concurrent mutation is reachable. It defeats the invariant the snapshot exists to provide — "a handler reads the world as the completed activity saw it". |
+| C-7 | `scope.GetDataByID` | Resolves by iterating a map, so two scope variables sharing an ItemDefinition ID resolve at random. Reachable: `events/event.go:790` resolves by ID and a model may reuse an ItemDefinition. |
+| C-8 | `eventhub.registerWaiter` | Holds the hub's **global lock** across `w.Service(ctx)`, which for a message waiter calls `MessageBroker().Subscribe` (`message.go:222`). A slow or remote broker stalls every hub operation. |
+| C-9 | `eventhub.UnregisterEvent` | Releases the lock after its lookup, then check-then-acts (`len(EventProcessors())==0` → `Stop` → `RemoveWaiter`). A concurrent `registerWaiter` can attach a processor in that window; the registration lands on a stopped, unmapped waiter and silently never fires. |
+| C-10 | `recovery.recoverOne:71` | Returns `nil` on ANY `Save` error, commented "a lost claim race is the normal outcome". A transport error is indistinguishable from a lost CAS, so a transient failure silently abandons an in-flight instance at startup — and reports success, so nothing logs it. `claimForWake` retries the identical failure; the two paths disagree. |
+| C-11 | `InstanceHandle.Cancel` | Calls `h.current().Cancel()` with no durable path. On a dehydrated instance the loop is gone, so the cancel is lost and a later wake resumes as if nothing happened. Incident ops solved this with `WithPendingIncidentOp`; Cancel never got it. |
+| C-12 | `RegisterProcess` (`thresher.go:1066-1082`) | If `unregisterStarters(prevLatest)` succeeds and `registerStarters(new)` then fails, the previous version's starters are off the hub and the new version's never went on — **the key has no live starters**. The failed version stays in the registry as latest, so a retry tries to unregister starters that were never registered, gets `ObjectNotFound`, and fails. **The process key is permanently bricked.** |
+| C-13 | `tasks.go:219` task authorization | `t.m` is held across `rec.eligible.Authorize(...)`, a host-supplied authorizer. A directory or database lookup there stalls the engine's global registry lock. |
+| C-14 | `InstanceHandle.Observe` (`observer.go:85`) | Registers on `h.current()`, the current instance OBJECT. On rebuild the handle is re-pointed but the registration is not carried, so a host observer silently stops receiving facts after the first dehydration while its `Subscription` still looks live. |
+| C-15 | `loop.go:681` `msgIdx` | Keyed by message-definition id alone, so two tracks parked on one definition overwrite each other and one never receives. Same class as the "shared catch node" follow-up master filed with SRD-082. |
 
-### 5.2 `internal/scope`
+**C-8, C-13 and FIX-036 §1.5 are one shape in three subsystems**: host code
+called while an engine lock is held. Fixing it in the producer did not prompt
+anyone to look in the hub or the task path.
 
-| Sev | Construct | Claim |
+**C-12 is a blind spot of FIX-036 M6**, which added the wiring-claim bookkeeping
+on exactly this path and never asked what happens to the hub state when the
+second call fails.
+
+### 5.2 Refuted — with reasons, so they are not re-investigated
+
+| Finding | Verdict |
+|---|---|
+| `restore.go:391` inverted correlation check ("missing negation"), reported by **two** lenses | **Refuted.** The signature is `validateAndAssociate(...) (mismatch bool)` — `true` means the trigger belongs to another conversation, so refusing on `true` is correct. Both lenses reasoned from the function's name, not its named return. |
+| `DataPath` lacks canonicalization → split-brain scopes | **Refuted as a live defect.** `NewDataPath` does validate the trimmed string and store the untrimmed one, but `Append` trims its tail and every production path goes through `Append`. Only a direct `NewDataPath(" /a ")` reaches it, and nothing does. Latent trap, not a defect. |
+
+### 5.3 Contract track — `audit-backlog.md`, not a FIX
+
+| Finding | Why it is not a defect patch |
+|---|---|
+| `UnregisterProcess` strands dehydrated instances | It drops every version, while `UnregisterVersion` documents "running instances are unaffected — they keep executing against their own frozen snapshot". True for a RESIDENT instance; a dehydrated one holds no object and needs the registry to rebuild. Deciding whether unregister refuses, retains snapshots, or evicts instances is a contract change. |
+| Human tasks are in-memory only, orphaned across a restart | Durable task state is a persistence-model decision (ADR-020 / ADR-033 territory), not a patch. |
+
+### 5.4 Plausible — mechanism credible, not yet settled
+
+Recorded so the next pass starts from the analysis, not from zero.
+
+| Finding | What was established |
+|---|---|
+| `adhoc.go:208` Ad-Hoc double resume (3 lenses) | The `aborting` guard at `decScope:571` does NOT cover this path — it is set only by the Transaction-abort sweep (`compensation_watch.go:380`). That removes the guard the code might have relied on and makes the mechanism credible. Whether cancelled tracks re-enter `decScope` is untraced. |
+| `calls.go:150` unguarded send to `entry.track.evtCh` | `evtCh` IS buffered (`restore.go:359`) and `loop.go:448` shows the loop CLOSES it to wake a parked track — so the likely failure is a panic on send-to-closed, not the reported deadlock. `onWaiting` guards against exactly that hazard elsewhere. The mechanism is real; the reviewer's failure mode is wrong. |
+
+### 5.5 `internal/instance` — 28 findings, unverified
+
+The round-2 re-run produced 28 findings (13 blocker, 15 major) across 8 lenses,
+deduplicated. Three cite lines that cannot exist — `escalation_watch.go:1347`
+(225-line file), `incident.go:2410` (967), `loop.go:4713` (1361) — the same ~11%
+fabrication rate as round 1, so route by construct and never by line.
+
+Two were examined above (§5.2 `restore.go:391` refuted, §5.4 `calls.go:150`
+partly). The remaining 25 are **unverified model output** and must not be
+treated as defects until checked:
+
+`boundary_watch.go` error catch on an MI host orphaning siblings ·
+`loop.go:1151` join re-evaluation deadlock · `escalation_watch.go` multiple
+exception tokens, and root-level Event Sub-Processes missed ·
+`scope_decorator.go` cancellation leaking requests, and loop-condition
+re-evaluation orphaning child scopes · `tasks.go:170` Complete succeeding on a
+cancelled track · `transaction.go:25` live tracks running during abort ·
+`tasks.go:446` `withdrawAllTasks` blocking the loop · `track.go:721`
+`stashTimerPlan` overwriting a node's second timer · `correlation.go:170`
+TOCTOU in `validateAndAssociate` · `checkpoint_capture.go` TOCTOU and
+non-deterministic payload ordering · `incident.go:490` concurrent retries
+duplicating tracks · `mi.go` / `mi_parallel.go` restore-count and fan-out gaps ·
+`track.go:287/1021/1045` history race, subscription leak, cancellation
+misreported as failure · `std_loop.go:93` `loopCounter` collision.
+
+## 6 Disposition
+
+Landed by [FIX-038](../fix/FIX-038-locks-across-host-calls-and-lost-registrations.md).
+
+| Finding | Route | Where |
 |---|---|---|
-| blocker | `scope.go` `SnapshotAt` | Not atomic — `namesFrom` then per-name `GetData`, each taking the lock separately; a concurrent `CloseScope` aborts or tears the snapshot |
-| blocker | `scope.go` | The plane mutex is held across a call into the host's `RuntimeVarsSupplier` |
-| major | `scope.go` `GetDataByID`, `frame.go` | Resolution by ItemDefinition ID iterates a map, so two variables of one type resolve non-deterministically |
-| major | `datapath.go` `NewDataPath` | Validates a trimmed path but stores the untrimmed one, so a padded path becomes a distinct map key and breaks `DropTail` |
-| major | `scope.go` `getData` | O(N) scan under the global mutex where the map key would serve |
-| major | `scope.go` `cloneDatum` | Type-switch on concrete `Clone` signatures — the shape behind the `Property`/`DataObject` bug fixed during SRD-079 |
-| minor | `frame.go` `Commit` | `outputs` and `puts` are appended without dedup, emitting an intermediate value that never durably existed |
+| C-6 `SnapshotAt` not atomic | fixed | FIX-038 §1.6 |
+| C-7 `GetDataByID` non-deterministic | fixed | FIX-038 §1.7 |
+| C-8 hub lock across `Service` | fixed | FIX-038 §1.1 |
+| C-9 `UnregisterEvent` TOCTOU | fixed | FIX-038 §1.3 |
+| C-10 recovery abandons an instance | fixed | FIX-038 §1.4 |
+| C-11 `Cancel` on a parked instance | fixed | FIX-038 §1.10 |
+| C-12 a failed registration bricks the key | fixed | FIX-038 §1.5 |
+| C-13 engine lock across `Authorize` | fixed | FIX-038 §1.2 |
+| C-14 `Observe` on the instance object | fixed | FIX-038 §1.8 |
+| C-15 `msgIdx` keyed by definition alone | filed | issue #305, with SRD-082 |
 
-### 5.3 `internal/eventproc/eventhub`
+Three defects not in this audit were found while fixing the ones that were, and
+landed with them: the plane lock spanning the runtime-variable supplier and
+`Shutdown` reporting under the hub lock (§1.9), the incident path dropping the
+handle's observers (§1.11), and an operator request reporting success after
+shutdown (§1.12).
 
-| Sev | Construct | Claim |
-|---|---|---|
-| blocker | `eventhub.go` | The hub lock is held across unbounded external operations, including `MessageBroker.Subscribe` |
-| blocker | `eventhub.go` | TOCTOU between waiter removal and concurrent registration orphans a registration |
-| blocker | `waiters/message.go` | A message that fails processing terminally halts a persistent instance-starter |
-| major | `waiters/timer.go` | Cancelled timers are retained until expiry; `time.After` in the loop retains stopped waiters; a delivery failure leaks the registry entry |
+## 7 Next actions
 
-### 5.4 `internal/instance`
-
-| Sev | Construct | Claim |
-|---|---|---|
-| blocker | `adhoc.go` | Double host resume when an Ad-Hoc completion condition fires with `CancelsRemaining` |
-| major | `activation.go` `guardEval` | The Complex Gateway guard opens a scope frame per evaluation and never discards it |
-
-Both from the architecture lens alone — the other two lenses did not run.
-
-## 6 Next actions
-
-1. **FIX-037 has landed C-1…C-5** on branch `fix/wake-residency-races`
-   (`96fbffb`, `67a6b82`, `3a64fdb`, `d15191b`, `901ba11`), rebased onto
-   `cdafd20`.
-2. **Re-run `internal/instance`** with four-or-more-way splitting; two thirds of
-   the largest package in the engine is currently unaudited.
-3. **Verify §5 in unit-sized batches**, routing each to a FIX or to
-   `audit-backlog.md` — several §5 items (the in-memory task registry, snapshot
-   deletion vs dehydrated instances) change a contract and are backlog-track,
-   not defect-track.
-4. **Ask the shape question on every FIX.** Two of the five confirmed defects
-   were halves of FIX-036 left behind. Neither `/check-srd` nor `/pr-review`
-   asks "where else does this shape occur"; that question belongs in the FIX
+1. ~~**FIX-038 for the confirmed defect track** — C-6…C-15.~~ Landed; see §6. They group naturally:
+   the host-code-under-an-engine-lock shape (C-8, C-13), the hub's registration
+   TOCTOU (C-9), the silently-abandoned recovery (C-10), the bricked process key
+   (C-12), and the identity-vs-object leaks (C-11, C-14).
+2. **Verify the 25 `internal/instance` findings** (§5.5) in unit-sized batches,
+   routing each to a FIX or to `audit-backlog.md`.
+3. **File the contract-track items** (§5.3) as backlog entries with their
+   governing docs named.
+4. **Ask the shape question on every FIX.** Three of this round's confirmed
+   findings are the same shape as a defect already fixed elsewhere — host code
+   under an engine lock (FIX-036 §1.5 → C-8, C-13) — and C-12 is a blind spot of
+   FIX-036 M6, which touched that exact path. Neither `/check-srd` nor
+   `/pr-review` asks "where else does this shape occur"; it belongs in the FIX
    template.
+5. **Read a finding's signature before its name.** The one refutation that cost
+   real time (§5.2) fooled two lenses because `validateAndAssociate` reads like
+   it returns "valid" while its named return is `mismatch`. Convergence across
+   lenses is salience, never correctness.
