@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -236,3 +237,47 @@ type receivedEnv struct {
 }
 
 func (e *receivedEnv) ReceivedItem() *data.ItemDefinition { return e.item }
+
+// TestReceiveTaskIterationCorrelation pins the SRD-086 FR-4 option:
+// the declared pair, the empty answer, the half-pair refusal, and
+// clone survival.
+func TestReceiveTaskIterationCorrelation(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	expr := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable("v"), nil
+		})
+
+	rt, err := activities.NewReceiveTask("await", recvMessage(t),
+		activities.WithoutParams(),
+		activities.WithIterationCorrelation("k", expr))
+	require.NoError(t, err)
+
+	name, e := rt.IterationCorrelation()
+	require.Equal(t, "k", name)
+	require.NotNil(t, e)
+
+	cl, err := rt.Clone()
+	require.NoError(t, err)
+
+	crt, ok := cl.(*activities.ReceiveTask)
+	require.True(t, ok)
+
+	name, e = crt.IterationCorrelation()
+	require.Equal(t, "k", name)
+	require.NotNil(t, e)
+
+	plain, err := activities.NewReceiveTask("await", recvMessage(t),
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	name, e = plain.IterationCorrelation()
+	require.Empty(t, name)
+	require.Nil(t, e)
+
+	_, err = activities.NewReceiveTask("await", recvMessage(t),
+		activities.WithoutParams(),
+		activities.WithIterationCorrelation("k", nil))
+	require.ErrorContains(t, err, "both the key name and the expression")
+}

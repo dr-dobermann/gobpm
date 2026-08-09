@@ -35,11 +35,23 @@ import (
 // payload on fire; the captured datum is bound into scope on resume by Exec
 // (ADR-014 v.1).
 type ReceiveTask struct {
-	message        *bpmncommon.Message
-	eDef           *events.MessageEventDefinition
+	message *bpmncommon.Message
+	eDef    *events.MessageEventDefinition
+	// iterExpr/iterKeyName are the declared iteration-correlation pair
+	// (SRD-086 FR-4, ADR-006 v.5 §2.9.3) — immutable configuration,
+	// carried across per-instance clones.
+	iterExpr       data.FormalExpression
 	implementation string
+	iterKeyName    string
 	task
 	instantiate bool
+}
+
+// IterationCorrelation returns the declared iteration-correlation
+// pair, or ("", nil) — the capability the registering execution probes
+// (SRD-085 FR-3).
+func (rt *ReceiveTask) IterationCorrelation() (string, data.FormalExpression) {
+	return rt.iterKeyName, rt.iterExpr
 }
 
 // NewReceiveTask builds a ReceiveTask that waits for msg. A nil msg is rejected.
@@ -88,11 +100,17 @@ func NewReceiveTask(
 		return nil, err
 	}
 
+	if err := rc.Validate(); err != nil {
+		return nil, err
+	}
+
 	return &ReceiveTask{
 			task:        *t,
 			message:     msg,
 			eDef:        eDef,
 			instantiate: rc.instantiate,
+			iterKeyName: rc.iterKeyName,
+			iterExpr:    rc.iterExpr,
 		},
 		nil
 }
@@ -152,6 +170,8 @@ func (rt *ReceiveTask) Clone() (flow.Node, error) {
 		task:           t,
 		implementation: rt.implementation,
 		instantiate:    rt.instantiate,
+		iterKeyName:    rt.iterKeyName,
+		iterExpr:       rt.iterExpr,
 		message:        clonedMsg,
 		eDef:           eDef,
 	}, nil

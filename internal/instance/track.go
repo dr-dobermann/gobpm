@@ -508,6 +508,16 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		return nil
 	}
 
+	// a Multi-Instance HOST doesn't wait — its decorator drives the
+	// iteration, and only the per-instance leaf tracks (leafPlain) or
+	// the serial passes register (SRD-086 FR-4). Registering the host
+	// would evaluate iteration correlation at the HOST scope, where no
+	// split item exists.
+	if mi := multiInstanceOf(node); mi != nil &&
+		!mi.IsSequential() && !t.leafPlain {
+		return nil
+	}
+
 	// Record the Message catch-definition ids so the loop can index them → this track
 	// (SRD-027 FR-8): carried in the evWaiting emit below for a mid-run wait, and read by
 	// spawn for a track that starts parked before the loop drains events. Conditional

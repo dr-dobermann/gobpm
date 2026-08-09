@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Leaf-activity Multi-Instance execution** (SRD-086). A sequential
+  leaf runs its passes in place (fresh frame each, split item +
+  loopCounter bound); a parallel leaf fans out per-instance scopes
+  each running one track at the task — waiting leaves included (a
+  ReceiveTask under parallel MI routes by
+  `activities.WithIterationCorrelation`); both restore at their
+  position over the existing checkpoint schema.
+
+
 - **In-instance event delivery: per-delivery payload binding and
   iteration-correlated routing** (ADR-006 v.5 §2.9, SRD-085, closes
   #305). A fired definition's payload now travels with the DELIVERY —
@@ -190,6 +199,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offending attributes, and cites Table 10.101 where the standard is the reason.
 
 ### Fixed
+
+- **A leaf task decorated with Multi-Instance silently ran ONCE** —
+  executeStep had no leaf-MI branch, so a 3-item collection completed
+  with a single execution and no complaint.
+
 
 - **A shared catch node's payload slot crossed iterations.** All
   parallel-MI iterations bound from ONE mutable cell on the shared

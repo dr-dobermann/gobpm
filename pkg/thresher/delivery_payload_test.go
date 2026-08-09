@@ -523,3 +523,110 @@ func TestIterationRoutingKillAndResume(t *testing.T) {
 	}, 3*time.Second, 10*time.Millisecond,
 		"the recovered instance must complete on engine-2")
 }
+
+// TestLeafReceiveTaskMIRouting is SRD-086 T-5 — the literal "MI event
+// node": a ReceiveTask IS the parallel Multi-Instance activity; each
+// iteration parks its own leaf track at the shared node, and
+// out-of-order envelopes serve exactly the matching iterations.
+func TestLeafReceiveTaskMIRouting(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	broker := membroker.New()
+
+	p, err := process.New("dr-leaf", foundation.WithID("dr-leaf"),
+		data.WithProperties(
+			data.MustProperty("items",
+				data.MustItemDefinition(values.NewArray("a", "b"),
+					foundation.WithID("items")),
+				data.ReadyDataState)))
+	require.NoError(t, err)
+
+	mp := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			d, err := ds.Find(ctx, "confirm_in")
+			if err != nil {
+				return nil, err
+			}
+
+			return values.NewVariable(fmt.Sprint(d.Value().Get(ctx))), nil
+		})
+
+	re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(mp,
+		bpmncommon.MustMessage("confirm", data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID("confirm_in"))))
+	require.NoError(t, err)
+
+	prop, err := bpmncommon.NewCorrelationProperty("iterProp", "string",
+		[]bpmncommon.CorrelationPropertyRetrievalExpression{*re})
+	require.NoError(t, err)
+
+	iterKey, err := bpmncommon.NewCorrelationKey("iterKey",
+		[]bpmncommon.CorrelationProperty{*prop})
+	require.NoError(t, err)
+
+	p.CorrelationSubscriptions = []*bpmncommon.CorrelationSubscription{
+		{Key: iterKey},
+	}
+
+	iterExpr := goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			d, err := ds.Find(ctx, "item")
+			if err != nil {
+				return nil, err
+			}
+
+			return values.NewVariable(fmt.Sprint(d.Value().Get(ctx))), nil
+		})
+
+	mi, err := activities.NewMultiInstance(
+		activities.WithInputCollection("items", "item"))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start",
+		foundation.WithID("dr-leaf-start"))
+	require.NoError(t, err)
+
+	recv, err := activities.NewReceiveTask("await",
+		bpmncommon.MustMessage("confirm", data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID("confirm_in"))),
+		activities.WithoutParams(), activities.WithLoop(mi),
+		activities.WithIterationCorrelation("iterKey", iterExpr),
+		foundation.WithID("dr-leaf-await"))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end", foundation.WithID("dr-leaf-end"))
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, recv, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, recv)
+	link(t, recv, end)
+
+	th, _, cancel := msgEngine(t, "engine-LF", memrepo.New(), broker, p)
+	defer cancel()
+
+	h, err := th.StartLatest(p.ID())
+	require.NoError(t, err)
+
+	time.Sleep(200 * time.Millisecond) // both iterations parked
+
+	ctx := context.Background()
+
+	// out of order: "b" first — without routing it could land on
+	// iteration a's track.
+	require.NoError(t, broker.Publish(ctx, messaging.Envelope{
+		Name: "confirm", Payload: "b", CorrelationKey: "b"}))
+	require.NoError(t, broker.Publish(ctx, messaging.Envelope{
+		Name: "confirm", Payload: "a", CorrelationKey: "a"}))
+
+	wctx, cc := context.WithTimeout(ctx, 3*time.Second)
+	defer cc()
+
+	st, err := h.WaitCompletion(wctx)
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, st,
+		"both iterations must receive their envelopes and complete")
+}

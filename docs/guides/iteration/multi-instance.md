@@ -224,6 +224,18 @@ Behavior worth knowing:
 > the barrier lifts. An Event Sub-Process cannot carry Multi-Instance: it is
 > instantiated by its trigger, not reached by a token and iterated.
 
+## Leaf activities under Multi-Instance
+
+MI decorates ANY activity, and since SRD-086 a leaf means what it
+declares: a **sequential leaf** re-runs the task in place — each pass
+in a fresh frame with its split item and `loopCounter` — and a
+**parallel leaf** fans out per-instance scopes, each running one track
+at the task. A waiting leaf (a ReceiveTask — the "MI event node")
+parks one track per iteration; declare
+`activities.WithIterationCorrelation(keyName, expr)` on it so each
+arriving message serves exactly the matching iteration. Before
+SRD-086 a leaf MI silently executed ONCE.
+
 ## Events in a parallel body
 
 Parallel iterations execute over ONE shared node graph, so a catch

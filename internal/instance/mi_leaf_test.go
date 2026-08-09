@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -636,4 +638,274 @@ func TestLeafMIParallelCompletionCancels(t *testing.T) {
 	require.Len(t, all, 3)
 	require.Nil(t, all[1], "a canceled slot keeps its pre-run nil")
 	require.Nil(t, all[2], "a canceled slot keeps its pre-run nil")
+}
+
+// gatedLeafMISnapshot builds the kill-and-resume leaf shape: pass "a"
+// returns at once, passes "b"/"c" block until the gate opens — the
+// crash window. count counts every op START (a re-run counts again:
+// re-entering a step is at-least-once, SRD-070).
+func gatedLeafMISnapshot(
+	t *testing.T, key string, sequential bool,
+	gate *atomic.Int32, count *atomic.Int32,
+) *snapshot.Snapshot {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	opts := []activities.MultiInstanceOption{
+		activities.WithInputCollection("items", "item"),
+		activities.WithOutputCollection("outs", "res"),
+	}
+	if sequential {
+		opts = append(opts, activities.WithSequential())
+	}
+
+	mi, err := activities.NewMultiInstance(opts...)
+	require.NoError(t, err)
+
+	items := data.MustProperty("items",
+		data.MustItemDefinition(values.NewArray("a", "b", "c"),
+			foundation.WithID("items")),
+		data.ReadyDataState)
+
+	outs := data.MustProperty("outs",
+		data.MustItemDefinition(values.NewArray[any](),
+			foundation.WithID("outs")),
+		data.ReadyDataState)
+
+	op, err := gooper.New(key+"-op",
+		func(ctx context.Context, r service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			item, err := r.GetData("item")
+			if err != nil {
+				return nil, err
+			}
+
+			v := fmt.Sprint(item.Value().Get(ctx))
+
+			count.Add(1)
+
+			if v != "a" {
+				for gate.Load() == 0 {
+					select {
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					case <-time.After(2 * time.Millisecond):
+					}
+				}
+			}
+
+			return data.MustItemDefinition(
+				values.NewVariable("R:"+v),
+				foundation.WithID("res")), nil
+		})
+	require.NoError(t, err)
+
+	p, err := process.New(key, foundation.WithID(key),
+		data.WithProperties(items, outs))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start",
+		foundation.WithID(key+"-start"))
+	require.NoError(t, err)
+
+	work, err := activities.NewServiceTask("work", op,
+		activities.WithoutParams(), activities.WithLoop(mi),
+		foundation.WithID(key+"-work"))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end", foundation.WithID(key+"-end"))
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, work, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, work)
+	link(t, work, end)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	return s
+}
+
+// leafMIRec finds the recorded iteration position of the leaf node.
+func leafMIRec(
+	d *checkpoint.Document, nodeID string,
+) *checkpoint.MIRecord {
+	for i := range d.Tracks {
+		if d.Tracks[i].NodeID == nodeID {
+			return d.Tracks[i].MI
+		}
+	}
+
+	return nil
+}
+
+// leafOuts reads the assembled output collection of a finished run.
+func leafOuts(t *testing.T, inst *Instance, path string) []any {
+	t.Helper()
+
+	od, err := inst.sc.plane.GetData(scope.DataPath(path), "outs")
+	require.NoError(t, err)
+
+	col, ok := od.Value().(data.Collection)
+	require.True(t, ok, "outs value is %T", od.Value())
+
+	return col.GetAll(context.Background())
+}
+
+// TestLeafMISequentialKillAndResume is T-7 (SRD-086 FR-5): the
+// sequential leaf's position rides TrackRecord.MI via the pass-posted
+// mirror — the restored run resumes at pass 2, never re-running the
+// completed pass.
+func TestLeafMISequentialKillAndResume(t *testing.T) {
+	var gate, count atomic.Int32
+
+	s := gatedLeafMISnapshot(t, "lm-skr", true, &gate, &count)
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		rec := leafMIRec(d, "lm-skr-work")
+
+		return rec != nil && rec.Completed == 1
+	})
+
+	require.Equal(t, int32(2), count.Load(),
+		"pass a completed, pass b started and blocked")
+
+	gate.Store(1)
+
+	restored := restoreToDone(t, doc, s)
+
+	require.Equal(t, int32(4), count.Load(),
+		"pass b re-runs (at-least-once), pass c runs, pass a NEVER re-runs")
+
+	outs := leafOuts(t, restored, "/lm-skr")
+	require.Equal(t, []any{"R:a", "R:b", "R:c"}, normalized(outs),
+		"the assembled output survives the crash in order")
+}
+
+// normalized unwraps any codec-wrapped elements so pre-kill (decoded)
+// and post-kill (raw) slots compare uniformly.
+func normalized(elems []any) []any {
+	out := make([]any, 0, len(elems))
+
+	for _, el := range elems {
+		if v, ok := el.(data.Value); ok {
+			el = v.Get(context.Background())
+		}
+
+		out = append(out, el)
+	}
+
+	return out
+}
+
+// TestLeafMIParallelKillAndResume is T-6 (SRD-086 FR-5): the parallel
+// leaf restores over the EXISTING schema — the group record plus one
+// leaf track per open instance scope, re-marked for plain execution.
+func TestLeafMIParallelKillAndResume(t *testing.T) {
+	var gate, count atomic.Int32
+
+	s := gatedLeafMISnapshot(t, "lm-pkr", false, &gate, &count)
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		return len(d.MIGroups) == 1 && len(d.MIGroups[0].Open) == 2
+	})
+
+	require.Equal(t, int32(3), count.Load(),
+		"all three started; a completed, b and c blocked in flight")
+
+	gate.Store(1)
+
+	restored := restoreToDone(t, doc, s)
+
+	require.Equal(t, int32(5), count.Load(),
+		"b and c re-run (at-least-once), a NEVER re-runs")
+
+	outs := leafOuts(t, restored, "/lm-pkr")
+	require.Equal(t, []any{"R:a", "R:b", "R:c"}, normalized(outs),
+		"outputs stay positional across the crash")
+}
+
+// TestLeafMISequentialMissingOutput: an MI declaring an output
+// collection whose pass produces no output item is a loud fault —
+// captureLeafOutput's lookup fails (SRD-086 FR-1).
+func TestLeafMISequentialMissingOutput(t *testing.T) {
+	var (
+		mu  sync.Mutex
+		log []string
+	)
+
+	_ = log
+
+	s := leafMISnapshot(t, "lm-noout2", &mu, &log)
+
+	// the harness op returns "res"; rebuild with an op that doesn't.
+	require.NoError(t, data.CreateDefaultStates())
+
+	mi, err := activities.NewMultiInstance(
+		activities.WithSequential(),
+		activities.WithInputCollection("items", "item"),
+		activities.WithOutputCollection("outs", "res"))
+	require.NoError(t, err)
+
+	items := data.MustProperty("items",
+		data.MustItemDefinition(values.NewArray("x"),
+			foundation.WithID("items")),
+		data.ReadyDataState)
+
+	outs := data.MustProperty("outs",
+		data.MustItemDefinition(values.NewArray[any](),
+			foundation.WithID("outs")),
+		data.ReadyDataState)
+
+	op, err := gooper.New("lm-noout2-op",
+		func(_ context.Context, _ service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			return nil, nil // declared output never produced
+		})
+	require.NoError(t, err)
+
+	p, err := process.New("lm-noout2b", foundation.WithID("lm-noout2b"),
+		data.WithProperties(items, outs))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	work, err := activities.NewServiceTask("work", op,
+		activities.WithoutParams(), activities.WithLoop(mi))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, work, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, work)
+	link(t, work, end)
+
+	s, err = snapshot.New(p)
+	require.NoError(t, err)
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
+		&recordingProducer{}, nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	select {
+	case <-inst.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("did not finish")
+	}
+
+	require.NotEqual(t, Completed, inst.State(),
+		"a declared-but-missing output item faults the pass loud")
 }
