@@ -34,9 +34,17 @@ func (s *slowOperator) Bind(t *thresher.Thresher) { s.eng = t }
 // Distribute is the engine's announcement that a UserTask is waiting. It
 // returns immediately — the engine must not be blocked by a human — and does
 // the work on its own goroutine.
+//
+// The goroutine deliberately does NOT inherit Distribute's context. The engine
+// derives that context with a timeout and cancels it as soon as Distribute
+// returns (internal/instance/tasks.go), so a human-paced task that adopted it
+// would be canceled before it ever took the task. That is the whole point of
+// returning immediately.
 func (s *slowOperator) Distribute(
 	_ context.Context, task interactor.TaskInfo,
 ) error {
+	//nolint:gosec // G118 wants the request-scoped context here; see above —
+	// it is canceled on return, which would abort the work this starts.
 	go s.workOn(task.TaskID)
 
 	return nil

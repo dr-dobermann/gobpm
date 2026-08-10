@@ -125,8 +125,15 @@ func wire(split, join *gateways.InclusiveGateway, b branches) error {
 			opts = append(opts, flow.WithCondition(l.cond))
 		}
 
-		src := l.from.(flow.SequenceSource)
-		trg := l.to.(flow.SequenceTarget)
+		src, ok := l.from.(flow.SequenceSource)
+		if !ok {
+			return fmt.Errorf("%q is not a sequence source", l.from.Name())
+		}
+
+		trg, ok := l.to.(flow.SequenceTarget)
+		if !ok {
+			return fmt.Errorf("%q is not a sequence target", l.to.Name())
+		}
 
 		if _, err := flow.Link(src, trg, opts...); err != nil {
 			return fmt.Errorf("link: %w", err)

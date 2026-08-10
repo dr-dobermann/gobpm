@@ -71,10 +71,29 @@ func wire(c adder, elems []flow.Element, pairs ...[2]flow.Element) error {
 	}
 
 	for _, p := range pairs {
-		if _, err := flow.Link(
-			p[0].(flow.SequenceSource), p[1].(flow.SequenceTarget)); err != nil {
-			return fmt.Errorf("link flow: %w", err)
+		if err := link(p[0], p[1]); err != nil {
+			return err
 		}
+	}
+
+	return nil
+}
+
+// link connects two flow elements with a sequence flow, reporting an element
+// that cannot carry one rather than panicking on the assertion.
+func link(src, trg flow.Element) error {
+	s, ok := src.(flow.SequenceSource)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence source", src.Name())
+	}
+
+	t, ok := trg.(flow.SequenceTarget)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence target", trg.Name())
+	}
+
+	if _, err := flow.Link(s, t); err != nil {
+		return fmt.Errorf("link: %w", err)
 	}
 
 	return nil

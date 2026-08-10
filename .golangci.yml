@@ -166,6 +166,21 @@ linters:
       - linters:
           - lll
         source: '^//go:generate '
+      # gocyclo measures the wrong property in an example's model builder.
+      # Those functions are linear — construct an element, check its error,
+      # construct the next — so every point of "complexity" is an error check,
+      # not a decision. Splitting them to satisfy the threshold needs either a
+      # struct of flow.Element (which cannot then feed flow.Link, since that
+      # wants SequenceSource/SequenceTarget) or an error-accumulating builder,
+      # which makes an example about BPMN spend its first screen teaching error
+      # accumulation instead (SRD-088 §4.8).
+      #
+      # This exempts complexity, NOT length: funlen still applies, and it is
+      # the check that actually measures "this function is too long to scan".
+      # An example needing real branching is an example doing too much.
+      - linters:
+          - gocyclo
+        path: '^examples/'
     paths:
       - generated
       - .generated

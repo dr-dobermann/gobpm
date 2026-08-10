@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -96,13 +98,33 @@ func singleTaskProc(name string, task flow.Node) (*process.Process, error) {
 		}
 	}
 
-	if _, err := flow.Link(start, task.(flow.SequenceTarget)); err != nil {
+	if err := link(start, task); err != nil {
 		return nil, err
 	}
 
-	if _, err := flow.Link(task.(flow.SequenceSource), end); err != nil {
+	if err := link(task, end); err != nil {
 		return nil, err
 	}
 
 	return p, nil
+}
+
+// link connects two flow elements with a sequence flow, reporting an element
+// that cannot carry one rather than panicking on the assertion.
+func link(src, trg flow.Element) error {
+	s, ok := src.(flow.SequenceSource)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence source", src.Name())
+	}
+
+	t, ok := trg.(flow.SequenceTarget)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence target", trg.Name())
+	}
+
+	if _, err := flow.Link(s, t); err != nil {
+		return fmt.Errorf("link: %w", err)
+	}
+
+	return nil
 }
