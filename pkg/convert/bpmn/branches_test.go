@@ -280,7 +280,7 @@ func TestImporterDefensiveConstructorBranches(t *testing.T) {
 	})
 
 	t.Run("exclusive gateway constructor error", func(t *testing.T) {
-		_, err := (&parser{}).parseGateway(
+		_, err := parseGateway(
 			&assembly{},
 			bpmnStartElement(tagExclusiveGateway, ""),
 			"",

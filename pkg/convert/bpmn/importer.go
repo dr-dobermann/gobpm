@@ -11,7 +11,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/convert"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
-	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
@@ -190,28 +189,17 @@ func (p *parser) handleDefinitionsChild(
 	se xml.StartElement,
 	asm *assembly,
 ) (*assembly, error) {
-	if se.Name.Space != nsBPMN || isSkippableAnnotation(se.Name.Local) {
-		// Foreign-namespace (bpmndi/dc/di, SRD-051 §FR-7 §4.5) or
-		// non-executable annotation — skip the whole subtree.
+	if se.Name.Space != nsBPMN {
+		// Foreign namespace — diagram interchange, a vendor dialect — is
+		// out of execution scope and skipped whole (ADR-024 v.4 §2.7).
 		return nil, p.skipElement()
 	}
 
-	switch se.Name.Local {
-	case tagInterface:
-		// Definitions-level service catalog (SRD-051 §4.6). Collected before
-		// process wiring so serviceTask@operationRef resolves.
-		return nil, p.parseInterface(se)
-
-	case tagProcess:
-		if asm != nil {
-			return nil, unsupported(se)
-		}
-
-		return p.parseProcess(se)
-
-	default:
-		return nil, unsupported(se)
+	if parse, ok := definitionsParsers[se.Name.Local]; ok {
+		return parse(p, asm, se)
 	}
+
+	return nil, p.settle(ctxDefinitions, se)
 }
 
 // parseProcess parses one <bpmn:process> element into an assembly.
@@ -273,32 +261,14 @@ func (p *parser) parseProcess(se xml.StartElement) (*assembly, error) {
 	}
 }
 
-// parseFlowElement dispatches one child of <bpmn:process> over the SRD-051
-// §FR-8 element set.
+// parseFlowElement dispatches one child of <bpmn:process> through the
+// process parser table (SRD-089.A §FR-1).
 func (p *parser) parseFlowElement(asm *assembly, se xml.StartElement) error {
-	switch se.Name.Local {
-	case tagStartEvent, tagEndEvent, tagTask, tagManualTask, tagUserTask,
-		tagServiceTask, tagExclusiveGateway, tagParallelGateway:
-		return p.parseNode(asm, se)
-
-	case tagSequenceFlow:
-		fs, err := p.parseSequenceFlow(se)
-		if err != nil {
-			return err
-		}
-
-		asm.flows = append(asm.flows, *fs)
-
-		return nil
-
-	case tagDocumentation, tagExtensionElems:
-		// non-executable annotations — skipped (see package doc /
-		// isSkippableAnnotation)
-		return p.skipElement()
-
-	default:
-		return unsupported(se)
+	if parse, ok := processParsers[se.Name.Local]; ok {
+		return parse(p, asm, se)
 	}
+
+	return p.settle(ctxProcess, se)
 }
 
 // parseNode parses a single flow node element (event, task or gateway),
@@ -318,36 +288,16 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 
 	name := attrValue(se, "name")
 
-	var node flow.Node
-
-	switch se.Name.Local {
-	case tagStartEvent:
-		node, err = events.NewStartEvent(name, foundation.WithID(id))
-
-	case tagEndEvent:
-		node, err = events.NewEndEvent(name, foundation.WithID(id))
-
-	case tagTask, tagManualTask:
-		node, err = activities.NewManualTask(name, foundation.WithID(id))
-
-	case tagUserTask:
-		// gobpm's UserTask demands at least one output resource parameter
-		// (bpmncommon.NewResource rejects an empty parameter list), while the
-		// MVP subset carries no ioSpecification — so import synthesizes one
-		// optional placeholder output; it is model plumbing, not BPMN
-		// content, and is not written back on export (SRD-051 §FR-8).
-		node, err = activities.NewUserTask(name,
-			foundation.WithID(id),
-			activities.WithoutParams(),
-			activities.WithOutput("result", typeBool, false))
-
-	case tagServiceTask:
-		node, err = p.parseServiceTask(asm, se, id, name)
-
-	case tagExclusiveGateway, tagParallelGateway:
-		node, err = p.parseGateway(asm, se, id, name)
+	build, ok := nodeBuilders[se.Name.Local]
+	if !ok {
+		// Unreachable through the process table, which only routes names
+		// this table also carries — a guard against the two drifting.
+		return errs.New(
+			errs.M("bpmn: no constructor mapping for %q", se.Name.Local),
+			errs.C(errorClass, errs.InvalidObject))
 	}
 
+	node, err := build(p, asm, se, id, name)
 	if err != nil {
 		// Do not re-wrap already-classified converter errors (unknown
 		// operationRef, invalid gatewayDirection, …) — preserve class for
@@ -356,12 +306,6 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 			fmt.Sprintf("bpmn: couldn't create %s %q", se.Name.Local, id),
 			errs.BulidingFailed,
 			err)
-	}
-
-	if node == nil {
-		return errs.New(
-			errs.M("bpmn: no constructor mapping for %q", se.Name.Local),
-			errs.C(errorClass, errs.InvalidObject))
 	}
 
 	// node bodies: wiring duplicates (incoming/outgoing) and non-executable
@@ -420,16 +364,11 @@ func (p *parser) parseInterfaceChild(interfaceID string, se xml.StartElement) er
 		return p.skipElement()
 	}
 
-	switch se.Name.Local {
-	case tagOperation:
-		return p.parseOperation(interfaceID, se)
-	default:
-		if isSkippableAnnotation(se.Name.Local) {
-			return p.skipElement()
-		}
-
-		return unsupported(se)
+	if parse, ok := interfaceParsers[se.Name.Local]; ok {
+		return parse(p, interfaceID, se)
 	}
+
+	return p.settle(ctxInterface, se)
 }
 
 // parseOperation parses one <bpmn:operation> under an interface.
@@ -474,39 +413,21 @@ func (p *parser) parseOperation(interfaceID string, se xml.StartElement) error {
 	}
 }
 
-// parseOperationChild handles one child of <bpmn:operation>. Unknown
-// in-namespace children (errorRef, …) are skipped as catalog detail rather
-// than aborting the import — only id/name matter for this slice.
+// parseOperationChild handles one child of <bpmn:operation>. The
+// standard gives the element exactly three children — inMessageRef,
+// outMessageRef and errorRef — so every one of them is declared: the
+// first two are parsed, errorRef is a skip this slice does not bind, and
+// anything else is refused rather than swallowed by a lenient default.
 func (p *parser) parseOperationChild(spec *opSpec, se xml.StartElement) error {
 	if se.Name.Space != nsBPMN {
 		return p.skipElement()
 	}
 
-	switch se.Name.Local {
-	case tagInMessageRef:
-		body, err := p.readText(se)
-		if err != nil {
-			return err
-		}
-
-		spec.inMsgRef = strings.TrimSpace(body)
-
-		return nil
-
-	case tagOutMessageRef:
-		body, err := p.readText(se)
-		if err != nil {
-			return err
-		}
-
-		spec.outMsgRef = strings.TrimSpace(body)
-
-		return nil
-
-	default:
-		// documentation / extensionElements / errorRef / …
-		return p.skipElement()
+	if parse, ok := operationParsers[se.Name.Local]; ok {
+		return parse(p, spec, se)
 	}
+
+	return p.settle(ctxOperation, se)
 }
 
 // parseServiceTask builds a ServiceTask bound to a definitions-level
@@ -515,7 +436,6 @@ func (p *parser) parseOperationChild(spec *opSpec, se xml.StartElement) error {
 // engine; the host supplies a real implementor (or gooper) after import
 // (SRD-051 §4.6).
 func (p *parser) parseServiceTask(
-	_ *assembly,
 	se xml.StartElement,
 	id, name string,
 ) (flow.Node, error) {
@@ -563,7 +483,7 @@ func (p *parser) resolveOperation(
 // parseGateway builds an exclusive or parallel gateway node, applying the
 // name, gatewayDirection and (exclusive only) recording the default flow id
 // for pass 2.
-func (*parser) parseGateway(
+func parseGateway(
 	asm *assembly,
 	se xml.StartElement,
 	id, name string,
@@ -645,7 +565,7 @@ func (p *parser) parseSequenceFlow(se xml.StartElement) (*flowSpec, error) {
 }
 
 // parseSequenceFlowChild handles one child of <bpmn:sequenceFlow>: a
-// conditionExpression (kept as inert text), documentation (skipped), or
+// conditionExpression (kept as inert text), an annotation (skipped), or
 // foreign-namespace content (skipped). Anything else in the BPMN namespace
 // is unsupported.
 func (p *parser) parseSequenceFlowChild(fs *flowSpec, se xml.StartElement) error {
@@ -653,29 +573,11 @@ func (p *parser) parseSequenceFlowChild(fs *flowSpec, se xml.StartElement) error
 		return p.skipElement()
 	}
 
-	switch se.Name.Local {
-	case tagConditionExpr:
-		body, err := p.readText(se)
-		if err != nil {
-			return err
-		}
-
-		if body = strings.TrimSpace(body); body != "" {
-			fs.condID = attrValue(se, "id")
-			fs.condLang = attrValue(se, "language")
-			fs.condBody = body
-			fs.hasCond = true
-		}
-
-		return nil
-
-	default:
-		if isSkippableAnnotation(se.Name.Local) {
-			return p.skipElement()
-		}
-
-		return unsupported(se)
+	if parse, ok := sequenceFlowParsers[se.Name.Local]; ok {
+		return parse(p, fs, se)
 	}
+
+	return p.settle(ctxSequenceFlow, se)
 }
 
 // consumeNodeBody swallows a node's children: incoming/outgoing (redundant
@@ -708,16 +610,11 @@ func (p *parser) consumeNodeChild(se xml.StartElement) error {
 		return p.skipElement()
 	}
 
-	switch se.Name.Local {
-	case tagIncoming, tagOutgoing:
-		return p.skipElement()
-	default:
-		if isSkippableAnnotation(se.Name.Local) {
-			return p.skipElement()
-		}
-
-		return unsupported(se)
-	}
+	// A flow node has no children this slice builds: incoming/outgoing
+	// duplicate the sequence-flow wiring, annotations carry no semantics,
+	// and everything else — event definitions, io specifications, loop
+	// characteristics — is a later stage's element.
+	return p.settle(ctxNode, se)
 }
 
 // build is pass 2 of SRD-051 §3.3: nodes are added to the process, flows are
@@ -942,46 +839,7 @@ func unsupported(se xml.StartElement) error {
 	return &convert.UnsupportedElementError{
 		Tag:     se.Name.Local,
 		ID:      attrValue(se, "id"),
-		Section: sectionFor(se.Name.Local),
-	}
-}
-
-// sectionFor pins BPMN 2.0 spec sections for known unmapped elements so
-// UnsupportedElementError carries actionable modeler feedback (SRD-051
-// §FR-3 / SAD-001 §5). Empty when the tag is not in the pin table.
-func sectionFor(tag string) string {
-	switch tag {
-	case "sendTask", "receiveTask", "scriptTask", "businessRuleTask", "callActivity":
-		return "§13.3.3"
-	case "subProcess", "adHocSubProcess", "transaction":
-		return "§13.3.4"
-	case "inclusiveGateway":
-		return "§13.4.3"
-	case "eventBasedGateway", "complexGateway":
-		return "§13.4"
-	case "intermediateCatchEvent", "intermediateThrowEvent":
-		return "§13.5"
-	case "boundaryEvent":
-		return "§13.5.5"
-	case "messageEventDefinition", "timerEventDefinition",
-		"signalEventDefinition", "errorEventDefinition",
-		"escalateEventDefinition", "compensateEventDefinition",
-		"conditionalEventDefinition", "linkEventDefinition",
-		"terminateEventDefinition", "cancelEventDefinition":
-		return "§13.5"
-	case "laneSet", "lane":
-		return "§10.5"
-	case "dataObject", "dataObjectReference", "dataStoreReference":
-		return "§10.3"
-	case "collaboration", "participant", "messageFlow":
-		return "§10.1"
-	case "ioSpecification", "property", "dataInput", "dataOutput",
-		"dataInputAssociation", "dataOutputAssociation":
-		return "§10.3"
-	case "multiInstanceLoopCharacteristics", "standardLoopCharacteristics":
-		return "§13.3.5"
-	default:
-		return ""
+		Section: sections[se.Name.Local],
 	}
 }
 
