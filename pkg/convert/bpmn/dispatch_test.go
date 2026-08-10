@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/convert"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 )
 
 // TestDispositionForEveryContext pins the disposition of every element
@@ -108,4 +109,75 @@ func TestOperationChildIsDeclaredNotLenient(t *testing.T) {
 			t.Fatalf("Import with a foreign operation child: %v", err)
 		}
 	})
+}
+
+// TestDeferredRefDiagnostics covers SRD-089.A §6 T-8/T-9: a forward
+// reference that cannot be resolved names both ends and the attribute,
+// and a reference whose target exists but is the WRONG KIND says so
+// rather than claiming the id is missing.
+func TestDeferredRefDiagnostics(t *testing.T) {
+	doc := func(def string) string {
+		return fmt.Sprintf(`<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="%s">
+  <bpmn:process id="P" name="P">
+    <bpmn:startEvent id="s"/>
+    <bpmn:exclusiveGateway id="g" default="%s"/>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:endEvent id="e2"/>
+    <bpmn:sequenceFlow id="f0" sourceRef="s" targetRef="g"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="g" targetRef="e1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="g" targetRef="e2"/>
+  </bpmn:process>
+</bpmn:definitions>`, nsBPMN, def)
+	}
+
+	t.Run("an undeclared target names both ends", func(t *testing.T) {
+		_, err := importer{}.Import(context.Background(), strings.NewReader(doc("ghost")))
+		if err == nil {
+			t.Fatal("Import with an undeclared default: want an error")
+		}
+
+		for _, want := range []string{"exclusiveGateway g", `"default"`, `"ghost"`, "no such element is declared"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+
+		assertClass(t, err, errs.ObjectNotFound)
+	})
+
+	t.Run("a target of the wrong kind is not reported as missing", func(t *testing.T) {
+		// "s" IS declared — as a start event. Telling the author it does
+		// not exist would send them hunting a typo that is not there.
+		_, err := importer{}.Import(context.Background(), strings.NewReader(doc("s")))
+		if err == nil {
+			t.Fatal("Import with a default naming a node: want an error")
+		}
+
+		if strings.Contains(err.Error(), "no such element is declared") {
+			t.Errorf("error %q reports a declared id as missing", err)
+		}
+
+		if !strings.Contains(err.Error(), "is a flow node") {
+			t.Errorf("error %q does not say the target is a flow node", err)
+		}
+
+		assertClass(t, err, errs.TypeCastingError)
+	})
+}
+
+// assertClass fails unless err is a converter ApplicationError carrying
+// class — the class is what a host branches on, so an error whose text
+// improved but whose class drifted is still a break.
+func assertClass(t *testing.T, err error, class string) {
+	t.Helper()
+
+	var ae *errs.ApplicationError
+	if !errors.As(err, &ae) {
+		t.Fatalf("error is %T, want *errs.ApplicationError", err)
+	}
+
+	if !ae.HasClass(errorClass) || !ae.HasClass(class) {
+		t.Errorf("error classes = %v, want %s and %s", ae, errorClass, class)
+	}
 }

@@ -316,7 +316,7 @@ func TestImportGatewayBranches(t *testing.T) {
 		},
 		"default names an unknown flow": {
 			doc:  branch(`default="nope"`),
-			want: "unknown default flow",
+			want: `references sequence flow "nope" in "default"`,
 		},
 	})
 }
@@ -401,7 +401,7 @@ func TestImportGatewayDefaultNotOutgoing(t *testing.T) {
 				`<bpmn:sequenceFlow id="f1" sourceRef="g" targetRef="e1"/>` +
 				`<bpmn:sequenceFlow id="f2" sourceRef="g" targetRef="e2"/>` +
 				`</bpmn:process>`),
-			want: "couldn't set default flow",
+			want: `references "f0" in "default", and the model refused it`,
 		},
 	})
 }

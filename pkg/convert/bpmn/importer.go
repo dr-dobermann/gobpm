@@ -82,9 +82,8 @@ type opSpec struct {
 // The slices trail the pointer-and-map fields for govet/fieldalignment: a
 // slice header carries its pointer first and two non-pointer words after it.
 type assembly struct {
-	proc       *process.Process
-	byID       map[string]flow.Node
-	gwDefaults map[*gateways.ExclusiveGateway]string // gateway → default flow id
+	proc *process.Process
+	byID map[string]flow.Node
 	// interfaces is the definitions-level catalog (id → name) for export
 	// reconstruction when ServiceTask.Operation() is available.
 	interfaces map[string]string
@@ -92,6 +91,9 @@ type assembly struct {
 	ops   map[string]opSpec
 	nodes []flow.Node // document order
 	flows []flowSpec
+	// refs are the forward references pass 1 could not resolve because
+	// their target had not been parsed yet (SRD-089.A §FR-2).
+	refs []pendingRef
 }
 
 // parser wraps the xml.Decoder token stream with import state.
@@ -228,7 +230,6 @@ func (p *parser) parseProcess(se xml.StartElement) (*assembly, error) {
 	asm := &assembly{
 		proc:       proc,
 		byID:       make(map[string]flow.Node),
-		gwDefaults: make(map[*gateways.ExclusiveGateway]string),
 		interfaces: p.interfaces,
 		ops:        p.ops,
 	}
@@ -516,8 +517,14 @@ func parseGateway(
 		return nil, err
 	}
 
+	// The default names a sequence flow that almost never exists yet —
+	// modelers emit gateways before the flows leaving them — so it is
+	// deferred to pass 2 like every other forward reference.
 	if def := attrValue(se, "default"); def != "" {
-		asm.gwDefaults[gw] = def
+		asm.refs = append(asm.refs, flowRef{
+			refSite: refSite{from: "exclusiveGateway " + id, attr: "default", target: def},
+			apply:   gw.UpdateDefaultFlow,
+		})
 	}
 
 	return gw, nil
@@ -617,9 +624,9 @@ func (p *parser) consumeNodeChild(se xml.StartElement) error {
 	return p.settle(ctxNode, se)
 }
 
-// build is pass 2 of SRD-051 §3.3: nodes are added to the process, flows are
-// linked through the complete id→node table, exclusive-gateway defaults are
-// re-resolved by flow id, and the graph is validated.
+// build is pass 2: nodes are added to the process, flows are linked
+// through the complete id→node table, every deferred reference is
+// resolved against the finished index, and the graph is validated.
 func build(asm *assembly) (*process.Process, error) {
 	for _, n := range asm.nodes {
 		if err := asm.proc.Add(n); err != nil {
@@ -641,7 +648,7 @@ func build(asm *assembly) (*process.Process, error) {
 		flowByID[fs.id] = sf
 	}
 
-	if err := applyGatewayDefaults(asm, flowByID); err != nil {
+	if err := resolveRefs(asm.refs, newRefIndex(asm, flowByID)); err != nil {
 		return nil, err
 	}
 
@@ -714,31 +721,6 @@ func linkFlow(asm *assembly, fs flowSpec) (*flow.SequenceFlow, error) {
 	}
 
 	return sf, nil
-}
-
-// applyGatewayDefaults re-resolves each exclusive gateway's default attribute
-// to a linked SequenceFlow by id (pass 2 of SRD-051 §3.3).
-func applyGatewayDefaults(
-	asm *assembly,
-	flowByID map[string]*flow.SequenceFlow,
-) error {
-	for gw, flowID := range asm.gwDefaults {
-		df, ok := flowByID[flowID]
-		if !ok {
-			return errs.New(
-				errs.M("bpmn: exclusiveGateway %q: unknown default flow %q", gw.ID(), flowID),
-				errs.C(errorClass, errs.ObjectNotFound))
-		}
-
-		if err := gw.UpdateDefaultFlow(df); err != nil {
-			return errs.New(
-				errs.M("bpmn: exclusiveGateway %q: couldn't set default flow %q", gw.ID(), flowID),
-				errs.C(errorClass, errs.BulidingFailed),
-				errs.E(err))
-		}
-	}
-
-	return nil
 }
 
 // token reads the next token, honoring ctx cancellation and converting
