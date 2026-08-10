@@ -56,9 +56,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
-	"github.com/dr-dobermann/gobpm/pkg/rules"
 	"github.com/dr-dobermann/gobpm/pkg/script"
-	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 const (
@@ -328,43 +326,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 	t.producer = newProducer(cfg.Logger(), cfg.AuthorizationProvider())
 	t.cfg.reporter = t.producer
 
-	// Bind the producer to the dispatcher (when it accepts one) so the
-	// dispatcher's job-lifecycle events land on the same seam (SRD-041 §3.2). A
-	// dispatcher without the binder simply does not emit.
-	if ob, ok := cfg.WorkerDispatcher().(tasks.ReporterBinder); ok {
-		ob.BindReporter(t.producer)
-	}
-
-	// Bind the engine as the worker dispatcher's completion sink (when it accepts
-	// one) so a worker's Complete/Fail routes back to the owning instance by the id
-	// embedded in the job id (SRD-036 §4.5). A dispatcher that reaches the engine
-	// another way (a remote adapter) need not implement SinkBinder.
-	if binder, ok := cfg.WorkerDispatcher().(tasks.SinkBinder); ok {
-		binder.BindSink(t)
-	}
-
-	// Bind the engine's configured logger so the dispatcher's own lifecycle logging
-	// uses the embedder's logger rather than its private default (SRD-037). Done
-	// after all options are applied, so a WithLogger override is honored.
-	if lb, ok := cfg.WorkerDispatcher().(tasks.LoggerBinder); ok {
-		lb.BindLogger(cfg.Logger())
-	}
-
-	// Bind the engine's expression engine so the dispatcher can run a Job's
-	// ErrorMapper when it classifies a raw fault engine-side (EngineAuthoritative,
-	// SRD-038). A dispatcher that never classifies engine-side need not implement
-	// ExpressionEngineBinder.
-	if eb, ok := cfg.WorkerDispatcher().(tasks.ExpressionEngineBinder); ok {
-		eb.BindExpressionEngine(cfg.ExpressionEngine())
-	}
-
-	// Bind the sink into the rule engine's registrar surfaces (SRD-069
-	// FR-3): once bound, register/deploy calls on the live engine emit
-	// their KindRules audit facts. An engine without the capability
-	// simply doesn't emit.
-	if rb, ok := cfg.RuleEngine().(rules.ReporterBinder); ok {
-		rb.BindReporter(t.producer)
-	}
+	t.bindCapabilities()
 
 	// The EventHub receives the engine's resolved runtime (&t.cfg implements
 	// renv.EngineRuntime) so the waiters it builds reach Clock / ExpressionEngine
@@ -381,6 +343,8 @@ func New(id string, opts ...Option) (*Thresher, error) {
 	t.eventHub = eh
 
 	t.logStartupConfig()
+
+	t.shareRuntime()
 
 	return t, nil
 }

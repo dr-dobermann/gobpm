@@ -17,6 +17,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
+	"github.com/dr-dobermann/gobpm/pkg/observability/memmetrics"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
 	"github.com/stretchr/testify/require"
@@ -494,7 +496,7 @@ func (j *journal) entries() []string {
 
 // lifecycleRepo is a Repository that also implements Starter and Stopper. It
 // embeds the real in-memory default, so it is a Repository in full and only its
-// lifecycle behaviour is fake.
+// lifecycle behavior is fake.
 type lifecycleRepo struct {
 	repository.Repository
 
@@ -685,4 +687,73 @@ func TestSeamWithoutHooksIsUntouched(t *testing.T) {
 
 	require.NoError(t, th.Run(ctx), "a seam with no hooks does not fail the run")
 	require.NoError(t, th.Shutdown(context.Background()))
+}
+
+// runtimeAwareRepo captures the runtime the engine hands it, so a test can
+// check WHICH runtime arrived rather than merely that one did.
+type runtimeAwareRepo struct {
+	repository.Repository
+
+	got renv.EngineRuntime
+}
+
+func (r *runtimeAwareRepo) UseRuntime(rt renv.EngineRuntime) { r.got = rt }
+
+// healthRepo reports the health it is told to.
+type healthRepo struct {
+	repository.Repository
+
+	err error
+}
+
+func (h *healthRepo) HealthCheck(context.Context) error { return h.err }
+
+// TestUseRuntimeReceivesTheResolvedRuntime is T-7. The point of Pattern C is
+// that an adapter can default a dependency from the engine and emit through the
+// engine's own observability — which only works if what arrives is the RESOLVED
+// runtime, carrying the configured recorder rather than a bundled default.
+func TestUseRuntimeReceivesTheResolvedRuntime(t *testing.T) {
+	repo := &runtimeAwareRepo{Repository: memrepo.New()}
+	rec := memmetrics.New()
+
+	_ = lifecycleEngine(t, "runtime-aware",
+		WithRepository(repo), WithMetricsRecorder(rec))
+
+	require.NotNil(t, repo.got, "the seam received a runtime during New")
+	require.Same(t, rec, repo.got.MetricsRecorder(),
+		"and it is the CONFIGURED recorder, not a default — an adapter emitting "+
+			"through it reaches the same stream as the engine")
+	require.NotNil(t, repo.got.Logger())
+}
+
+// TestHealthCheckerIsReachable is T-8: a host can ask the engine whether its
+// extensions are usable right now, and a failing seam is named.
+func TestHealthCheckerIsReachable(t *testing.T) {
+	t.Run("healthy", func(t *testing.T) {
+		th := lifecycleEngine(t, "health-ok",
+			WithRepository(&healthRepo{Repository: memrepo.New()}))
+
+		require.NoError(t, th.HealthCheck(context.Background()))
+	})
+
+	t.Run("a failing seam is named", func(t *testing.T) {
+		th := lifecycleEngine(t, "health-bad",
+			WithRepository(&healthRepo{
+				Repository: memrepo.New(),
+				err:        errors.New("the pool is exhausted"),
+			}))
+
+		err := th.HealthCheck(context.Background())
+		require.Error(t, err)
+		require.ErrorContains(t, err, "Repository")
+		require.ErrorContains(t, err, "the pool is exhausted")
+	})
+
+	t.Run("a seam without the capability is not asked", func(t *testing.T) {
+		th := lifecycleEngine(t, "health-absent",
+			WithRepository(&plainRepo{Repository: memrepo.New()}))
+
+		require.NoError(t, th.HealthCheck(context.Background()),
+			"silence from a seam that never opted in is not a failure")
+	})
 }

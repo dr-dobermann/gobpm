@@ -51,3 +51,29 @@ type Starter interface {
 type Stopper interface {
 	Stop(ctx context.Context) error
 }
+
+// HealthChecker is the optional capability an adapter implements to answer, on
+// demand, whether it is presently usable — a pool that can still reach its
+// database, a broker whose connection is live.
+//
+// It is a PULL, and that is why it exists alongside the observation stream
+// rather than duplicating it: facts and metrics report what has already
+// happened, and a readiness probe needs to know the state right now. A host
+// aggregates the engine's answer through Thresher.HealthCheck.
+type HealthChecker interface {
+	HealthCheck(ctx context.Context) error
+}
+
+// RuntimeAware is the optional capability an adapter implements to receive the
+// engine's resolved services (ADR-002 v.2 §8.3 Pattern C). The engine calls it
+// once during New, after every option has been applied — an adapter handed a
+// half-built runtime would silently default a dependency to nil.
+//
+// It is also how an adapter publishes its own operational statistics and inner
+// state: rt.MetricsRecorder(), rt.Tracer() and rt.Logger() are the same path
+// every engine component emits through, so an adapter's pool exhaustion or
+// retry count lands beside the engine's own facts rather than in a private
+// channel nobody is watching.
+type RuntimeAware interface {
+	UseRuntime(rt EngineRuntime)
+}
