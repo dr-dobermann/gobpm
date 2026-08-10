@@ -55,12 +55,31 @@ linters:
               desc: "core MUST NOT import runtime (ADR-003 §4.4)"
             - pkg: "github.com/dr-dobermann/gobpm/adapters"
               desc: "core MUST NOT import adapters (ADR-003 §4.4)"
+        # Redundant with Go itself — each example is its own module, so the
+        # language blocks an internal/ import before depguard is consulted
+        # (verified: the probe fails as typecheck, not depguard). Kept because
+        # it states the intent, not because it is load-bearing.
         examples-no-internal:
           files:
             - "**/examples/**/*.go"
           deny:
             - pkg: "github.com/dr-dobermann/gobpm/internal"
               desc: "examples demonstrate public API only (ADR-003 §4.4)"
+        # An example shows how to embed the LIBRARY. Reaching into runtime/
+        # would demonstrate the server, which is a different product with its
+        # own examples (ADR-003 §4.4).
+        #
+        # adapters/ is deliberately NOT denied here, though §4.4 as written
+        # forbids it: decision-table demonstrates adapters/dtable and
+        # script-task demonstrates adapters/lua, and an adapter nobody
+        # demonstrates is an adapter nobody can learn to wire. ADR-003 v.2
+        # amends §4.4 to permit it (SRD-088 FR-6).
+        examples-no-runtime:
+          files:
+            - "**/examples/**/*.go"
+          deny:
+            - pkg: "github.com/dr-dobermann/gobpm/runtime"
+              desc: "examples demonstrate the embedded library; the server has its own examples (ADR-003 §4.4)"
         # Everything under pkg/ is a public contract an outside author must be
         # able to implement — a port, its bundled battery, or a model type — so
         # none of it may reach into internal/. That is what lets a battery serve
@@ -184,7 +203,6 @@ linters:
     paths:
       - generated
       - .generated
-      - examples
       - third_party
       - builtin
       - mock_.*\.go$
