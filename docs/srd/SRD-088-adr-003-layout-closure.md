@@ -93,7 +93,25 @@ Two consequences shape §3:
   entries, §4.1) **and gains the battery-vs-adapter criterion** (§4.6), carried
   by an ADR-003 v.1 → v.2 amendment.
 - **FR-5 — the four conformance helpers named by §4.2 exist**: `messagingtest`,
-  `expressiontest`, `taskstest`, `authtest`.
+  `expressiontest`, `taskstest`, `authtest`. Each publishes its port's contract
+  as a `Conformance(t, factory)` an adapter calls in one line, in the shape
+  `repositorytest` already established, and each carries a negative control
+  (T-9).
+
+  Two of the four could not take a bare factory, and the reason is worth
+  recording because it is a property of the ports rather than of the suites.
+  An expression's body is written in the **engine's own language**, and which
+  requests an authorization provider permits is **its policy** — neither is
+  knowable to a generic suite. Those two take a `Subject` carrying the
+  caller's own fixture and expected verdicts, and assert unaided only what is
+  genuinely universal.
+
+  §4.2's row for `taskstest` says it helps test "`TaskDistributor` /
+  `WorkerDispatcher`". Only `WorkerDispatcher` lives in `pkg/tasks`;
+  `TaskDistributor` is in `pkg/interactor` (§9's promotion). `taskstest`
+  therefore covers `WorkerDispatcher`, and the catalogue row is corrected by
+  the same ADR-003 v.2 amendment as FR-4's three stale entries — a
+  `TaskDistributor` suite, if wanted, belongs in `pkg/interactor/`.
 - **FR-6 — depguard denies `examples/* → runtime/*`.** §4.4 also forbids
   `examples/* → adapters/*`, but two examples demonstrate adapters today
   (`decision-table` → `dtable`, `script-task` → `lua`) and an adapter nobody
@@ -509,7 +527,7 @@ user copies.
 | T-6 | `TestSeamWithoutHooksIsUntouched` | an adapter implementing none of the four is neither started nor stopped, and does not fail the run |
 | T-7 | `TestUseRuntimeReceivesTheResolvedRuntime` | a `RuntimeAware` adapter receives an `EngineRuntime` whose `MetricsRecorder()` is the configured one |
 | T-8 | `TestHealthCheckerIsReachable` | a host can reach `HealthCheck` on a configured adapter |
-| T-9 | conformance-helper self-tests (×4) | each new `<pkg>test` helper passes against its in-repo default and **fails** against a deliberately broken fake — a helper that cannot fail proves nothing |
+| T-9 | conformance-helper self-tests (×4) | each new `<pkg>test` helper passes against its in-repo default **and fails against a deliberately broken fake** — a helper that cannot fail proves nothing. `TestMembrokerConformance` / `TestSuiteRejectsABrokenBroker` (a broker that accepts every publish and delivers nothing), `TestLite`+`TestGoExprConformance` / `TestSuiteRejectsABrokenEngine` (no kind, no language claim), `TestLocalDispatcherConformance` / `TestSuiteRejectsABrokenDispatcher` (a queue that hands out no work), `TestAllowAll`+`TestDenyingProviderConformance` / `TestSuiteRejectsAPermissiveProvider` (allows a request its own Subject declares denied). Each negative control runs the suite in a **child process** and requires a non-zero exit — a failed subtest marks its parent failed, so "assert this fails" cannot be written in-process |
 | T-11 | `TestScriptTaskGoFuncBattery` | a Script Task naming a registered Go function executes end to end on a one-line-wired `gofunc` engine, and the observability fact attributes the run to `##GoFunc` — the battery's whole point (FR-8) |
 | T-12 | `TestScriptTaskGoFuncUnknownName` | the format IS claimed, so registration passes and the name resolves only at execution; the failure lists the registered names. Plus `TestGoFuncIdentity`, `TestGoFuncBadRegistration`, `TestGoFuncExecute` at the unit level (empty/nil/duplicate registration, nil reader, the body's own error) |
 | T-13 | `TestScriptTaskNoEngine`, `TestScriptTaskUnclaimedFormat` | `RegisterProcess` refuses a model demanding an unclaimed format, naming the task, the format, the registered claims and `WithScriptEngine` — under both the `##None` default and a non-empty registry that simply does not claim it (FR-8) |
