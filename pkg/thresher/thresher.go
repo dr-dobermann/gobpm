@@ -714,6 +714,21 @@ func (t *Thresher) Run(ctx context.Context) error {
 			errs.E(err))
 	}
 
+	// Extension startup (ADR-002 v.2 §8.3, SRD-088 FR-2): every wired seam
+	// implementing renv.Starter is started before the engine accepts work, in
+	// the order lifecycleSeams fixes. It precedes the migration hook below
+	// because an adapter that cannot start must not then be asked to prepare
+	// its storage.
+	if err := t.startSeams(runCtx); err != nil {
+		ec.cancel()
+		t.state.Store(uint32(NotStarted))
+
+		return errs.New(
+			errs.M("an extension refused to start"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
 	// The storage migration hook (SRD-078 FR-3, ADR-033 §2.7): a
 	// Repository that implements renv.Migrator prepares its own objects
 	// BEFORE the group registry is touched and recovery lists anything —
@@ -838,7 +853,14 @@ func (t *Thresher) Shutdown(ctx context.Context) error {
 	}
 
 	// Drain the event machinery: stop waiters and wait for their goroutines.
-	return t.eventHub.Shutdown(ctx)
+	hubErr := t.eventHub.Shutdown(ctx)
+
+	// Extension teardown (ADR-002 v.2 §8.3, SRD-088 FR-2), last and in reverse
+	// start order. It follows the hub drain because waiters hold the broker's
+	// subscriptions, and it follows drainInstances because a draining instance
+	// still checkpoints through the Repository — stopping either first would
+	// pull the floor out from under work that is still finishing.
+	return errors.Join(hubErr, t.stopSeams(ctx))
 }
 
 // drainInstances awaits every instance the engine tracks, bounded by ctx.

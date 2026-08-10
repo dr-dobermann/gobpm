@@ -32,19 +32,24 @@ import (
 // thresherConfig holds the resolved engine-level extensions (ADR-002 §4.3).
 // EventHub is NOT here — it stays internal and the Thresher builds it itself.
 type thresherConfig struct {
-	exprEngines         []expression.Engine
-	exprRegistry        *expression.Registry
-	logger              observability.Logger
-	workerErrorMapper   tasks.ErrorMapper
-	ruleEngine          rules.Engine
-	clock               clock.Clock
-	repository          repository.Repository
-	msgBroker           messaging.MessageBroker
-	tracer              observability.Tracer
-	dispatcher          tasks.WorkerDispatcher
-	reporter            observability.Reporter
-	metrics             observability.MetricsRecorder
-	dataStores          *memstore.Registry
+	exprEngines       []expression.Engine
+	exprRegistry      *expression.Registry
+	logger            observability.Logger
+	workerErrorMapper tasks.ErrorMapper
+	ruleEngine        rules.Engine
+	clock             clock.Clock
+	repository        repository.Repository
+	msgBroker         messaging.MessageBroker
+	tracer            observability.Tracer
+	dispatcher        tasks.WorkerDispatcher
+	reporter          observability.Reporter
+	metrics           observability.MetricsRecorder
+	dataStores        *memstore.Registry
+	// registeredStores is what WithDataStore put in dataStores, kept in
+	// registration order. datastore.Registry resolves a ref to a store and
+	// does not enumerate, so this is how Shutdown reaches the stores it must
+	// stop (SRD-088 §3.2).
+	registeredStores    []datastore.DataStore
 	authz               auth.AuthorizationProvider
 	workerRetryPolicy   tasks.RetryPolicy
 	incidentRetryPolicy tasks.RetryPolicy
@@ -291,7 +296,13 @@ func WithScriptEngine(e script.Engine) Option {
 // memstore, or a durable adapter. Registering an already-used ref replaces it.
 func WithDataStore(ref string, store datastore.DataStore) Option {
 	return func(c *thresherConfig) error {
-		return c.dataStores.Register(ref, store)
+		if err := c.dataStores.Register(ref, store); err != nil {
+			return err
+		}
+
+		c.registeredStores = append(c.registeredStores, store)
+
+		return nil
 	}
 }
 

@@ -27,3 +27,27 @@ type Migrator interface {
 	// idempotently: a second run over an up-to-date backend is a no-op.
 	Migrate(ctx context.Context) error
 }
+
+// Starter is the optional capability an adapter implements to learn that the
+// engine is starting, before it accepts any work. The engine detects it by type
+// assertion on each wired seam (ADR-002 v.2 §8.3) — an adapter that does not
+// implement it is simply not asked, which is not an error.
+//
+// A returned error ABORTS the start: an extension that cannot start is not a
+// degraded mode, and an engine that ran on top of one would fail later, further
+// from the cause.
+type Starter interface {
+	Start(ctx context.Context) error
+}
+
+// Stopper is the optional capability an adapter implements to release what it
+// holds — a connection pool, a subscription, a goroutine. The engine calls it
+// during Shutdown, after the work that depends on that seam has drained.
+//
+// It MUST be idempotent: a second call is a no-op returning nil. The engine
+// stops what it holds, while a host that constructed the adapter (or a server
+// that started it before the engine existed, ADR-004 v.1 §4.3) may stop it too.
+// Idempotency is what makes that overlap safe rather than a double release.
+type Stopper interface {
+	Stop(ctx context.Context) error
+}
