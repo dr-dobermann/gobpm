@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -377,4 +378,81 @@ func TestInstanceProcessID(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, s.ProcessID, inst.ProcessID())
+}
+
+// TestIterationRoutingSurvivesRestore closes SRD-085's restore gap
+// (FIX-040 §1.3): T-7 publishes ONE envelope after its restore, so a
+// rebuilt subscription index could be present without being right.
+// Here BOTH iterations are parked when the checkpoint is taken and BOTH
+// keys are delivered afterwards, so the restored instance must rebuild
+// two distinct subscriptions and route each delivery to its own.
+//
+// It is also the regression pin for the Stringer (see stringer.go).
+// Before it, this test could not exist: the capturing instance stays
+// live while the restored one runs, both register message waits, and
+// the mock EventProducer's argument matcher formatted the live Instance
+// with %v on the registering goroutine — a reflective read of the
+// correlator's maps and mutexes racing the engine's own writes. The
+// test reported a data race in engine code that was innocent.
+func TestIterationRoutingSurvivesRestore(t *testing.T) {
+	got := make(chan string, 2)
+
+	s, catchID := routedMIProcess(t, "mr-restore", got, true)
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		parked := 0
+
+		for _, tr := range d.Tracks {
+			if tr.NodeID == catchID && tr.State == "TrackWaitForEvent" {
+				parked++
+			}
+		}
+
+		return parked >= 2
+	})
+
+	restored, err := Restore(doc, s, scope.EmptyDataPath,
+		cpRuntime(t), laxEP(t), nil, nil)
+	require.NoError(t, err)
+
+	// read the registered definition id BEFORE Run: the node graph is
+	// engine-owned once tracks are walking it.
+	defID := registeredConfirmID(t, restored, catchID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, restored.Run(ctx))
+
+	require.NotEqual(t, Terminated, restored.State(),
+		"two restored correlated iterations must not trip the ambiguity "+
+			"guard")
+
+	require.Eventually(t, func() bool {
+		parked := 0
+
+		for _, tk := range restored.GetTokens() {
+			if tk.State == TokenWaitForEvent {
+				parked++
+			}
+		}
+
+		return parked >= 2
+	}, 3*time.Second, 5*time.Millisecond,
+		"both restored iterations must re-arm their waits")
+
+	// out of order, as in the pre-restore half: routing must depend on
+	// the correlation value, never on arrival order.
+	for _, want := range []string{"b=b", "a=a"} {
+		key := want[:1]
+
+		require.NoError(t, restored.ProcessEvent(ctx,
+			firedConfirm(t, defID, key)))
+
+		select {
+		case pair := <-got:
+			require.Equal(t, want, pair)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("the %q delivery reached no restored iteration", key)
+		}
+	}
 }
