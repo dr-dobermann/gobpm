@@ -759,7 +759,19 @@ Added in v.4:
   business-rule language policies (§2.10–§2.12), the global-task refusal
   (§2.13), the Camunda 7 dialect (§2.14) and the `DocumentImporter` capability
   (§2.15) — plus the converter defects the coverage audit surfaced in the code
-  this slice rewrites. Import only; the accompanying SRD lands it.
+  this slice rewrites. Import only.
+
+  The slice lands as **five linked SRDs**, and that needs reconciling with §2.9,
+  which rejects slicing. The two are not in conflict, but only because they
+  govern different things. §2.9 / row H governs the **released fence**: the
+  converter must not *settle* at a subset, which is exactly what the abandoned
+  "slice 2+" list did. A landing sequence is a different question, and the rule
+  it must satisfy is that each stage completes a coherent **tier** — the parser
+  spine, then the languages every later tier consumes, then the flow graph, then
+  typed events and composites, then data and the document contract — rather than
+  one element of a tier, which is the shape that imports nothing from a file
+  containing its neighbour. The fence therefore widens in **announced** stages
+  and is not final until the last of the five.
 - **Slice 3 — export catches up.** Export the same element set, closing the
   asymmetry §5 accepts and restoring §2.8's round-trip guarantee to the full
   fence. This is the immediate successor, not an open-ended future: the cost
