@@ -2,13 +2,25 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.3 |
-| Date | 2026-08-02 |
+| Status | Draft |
+| Version | v.4 |
+| Date | 2026-08-10 |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §4 N7 / §5 / §9 / §14, [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md), [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning.md), [ADR-003 v.1 Module Layout](ADR-003-module-layout.md) |
 
-> **Accepted** — decides how a process definition crosses the boundary between
+> **v.4 (Draft)** — the fence moves. v.1–v.3 fixed the seam and a deliberately
+> small MVP element subset; v.4 decides that **import** covers the whole
+> execution-conformance element set (§2.9), states the policy for the three
+> pluggable languages a definition can carry — expressions (§2.10), scripts
+> (§2.11), business rules (§2.12) — refuses the reuse-by-reference family
+> outright (§2.13), admits a **recognized vendor dialect** so a real modeler
+> file arrives whole (§2.14), and widens the seam with one optional capability
+> so a document carrying several processes, or constructs the converter chose
+> not to map, has somewhere to land (§2.15). Export deliberately stays on the
+> v.1 subset for this slice, which narrows §2.8's round-trip guarantee — stated
+> as a cost in §5. The accompanying SRD lands it.
+
+> **Accepted (v.1–v.3)** — decides how a process definition crosses the boundary between
 > an **external interchange format** and gobpm's **in-memory model**, in both
 > directions, without coupling either to the engine. The decision is a
 > **format-agnostic converter seam** — two small interfaces (`Importer`,
@@ -29,14 +41,21 @@
 
 ## 1. Context & problem
 
-gobpm builds a process definition exactly one way today: **programmatically**,
-through `process.New(name, …opts)` + `p.Add(node)` + `flow.Link(src, trg)`
-(`pkg/model/process/process.go:47,175`, `pkg/model/flow/sequenceflow.go:62`).
-There is **no serialization layer of any kind** — a whole-repo search finds no
-`encoding/xml`, no `MarshalXML`/`UnmarshalXML`, and no `json:` tags on any model
-type. The engine "accepts pre-built models" and nothing else.
+> **Reading note (v.4).** This section is the **v.1 baseline** — the state that
+> motivated the ADR — kept verbatim because it is why the seam exists. It is no
+> longer a description of today: the seam and a BPMN converter landed with v.2,
+> so the engine now reads and writes BPMN over the §2.6 subset. The problem v.4
+> addresses is the *successor* one, stated at the end of this section.
 
-That is a deliberate 0.1.0 shape, but it blocks adoption. The governing SAD
+**As of v.1**, gobpm built a process definition exactly one way:
+**programmatically**, through `process.New(name, …opts)` + `p.Add(node)` +
+`flow.Link(src, trg)` (`pkg/model/process/process.go:47,175`,
+`pkg/model/flow/sequenceflow.go:62`). There was **no serialization layer of any
+kind** — a whole-repo search found no `encoding/xml`, no
+`MarshalXML`/`UnmarshalXML`, and no `json:` tags on any model type. The engine
+"accepts pre-built models" and nothing else.
+
+That was a deliberate 0.1.0 shape, but it blocked adoption. The governing SAD
 names the gap in three places:
 
 - **[SAD-001 v.1 §4 N7](SAD-001-vision-and-architecture.md):** *"BPMN XML
@@ -67,6 +86,17 @@ The problem this ADR solves: **define the converter contract and its home in
 the module graph, decide the BPMN 2.0 XML mapping and its conformance fence,
 and keep every choice consistent with SAD-001 §4/§9 (core stays clean) and
 ADR-019 (imported definitions must version correctly).**
+
+**The v.4 problem.** The seam and its BPMN converter exist; the fence does not
+hold. The engine executes the whole element set of
+[conformance.md](../bpmn-spec/conformance.md), while the converter reads nine
+elements of it — so the file a modeller produces is, in the ordinary case, a
+file this engine refuses, and refuses at the first unmapped element rather than
+partially. Three further gaps are structural rather than incremental: a
+definition's expressions, scripts and rule references arrive in languages the
+ADR never chose a policy for; a document carrying more than one process has no
+representable result; and the vendor configuration that real files carry is
+discarded without a word. v.4 decides all four.
 
 ## 2. Decision
 
@@ -121,9 +151,11 @@ tops the maps:
 func RegisterImporter(f Format, imp Importer) error
 func RegisterExporter(f Format, exp Exporter) error
 
-// MustRegisterImporter / MustRegisterExporter panic on error — for use from
-// a converter package's init() (documented Must* panic, per the public-API
-// validation rule).
+// RegisterImporterAtInit / RegisterExporterAtInit are the init()-time
+// twins: an init() has nowhere to return an error to, so a bad registration
+// is recorded and surfaced on first use (v.4 correction — v.1 named these
+// MustRegisterImporter / MustRegisterExporter and no such function was
+// built).
 
 func Import(ctx context.Context, f Format, r io.Reader) (*process.Process, error)
 func Export(ctx context.Context, f Format, w io.Writer, p *process.Process) error
@@ -205,6 +237,11 @@ elements), not a silent auto-id.
 
 ### 2.6 MVP element subset and the conformance fence
 
+> **Superseded for import by §2.9 (v.4).** This subset was the v.1–v.3 fence and
+> remains the fence **export** observes. Incoming pins to "§2.6" from v.2/v.3-era
+> documents keep their meaning: they name the MVP subset, which is exactly what
+> this section still describes.
+
 The MVP maps the **executable core** of the engine's own scope
 ([docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md)) — the elements
 BPMN 2.0.2 Clause 13 animates, which is the same fence the engine's conformance
@@ -272,6 +309,236 @@ round-trip is a non-goal for MVP (§14.1-style deliberate deviation) and noted
 for future work. This is an **engine choice**, stated as such: the standard does
 not require a lossless textual round-trip for Process Execution Conformance.
 
+### 2.9 Import covers the whole execution-conformance element set
+
+**Import maps every element the engine executes** — the "In scope" list of
+[conformance.md](../bpmn-spec/conformance.md), which enumerates what Clause 13
+animates plus the supporting classes it consumes. There is no longer an import
+subset inside that list: a file the engine could run is a file the converter can
+read.
+
+The reason the fence has to move rather than creep is that a partial importer is
+worth less than the sum of its elements. A definition is a *graph*: an importer
+that reads eight of a file's nine element kinds imports nothing at all, because
+the ninth aborts the document. Element-at-a-time slicing therefore delivers no
+usable increment until the last slice — which is the opposite of how the rest of
+this engine was built, and the reason §7's "slice 2+" list never started.
+
+Everything outside that list keeps an **explicit disposition**, because "not
+mapped" and "not present" must not look alike:
+
+| Family | Disposition on import | Why |
+|---|---|---|
+| Lane / LaneSet | **parse and preserve**, attach no behaviour | model-only per [conformance.md](../bpmn-spec/conformance.md); §2.3.1 lets execution ignore lanes, §2.3.2 obliges an importer to keep them |
+| Visual artifacts — `textAnnotation`, `group`, `category` | **skip silently** | "pure visual" in the out-of-scope table; they carry no semantics, and erroring on them rejects ordinary modeler files for a comment |
+| `association` | **map** | kept in scope because it carries compensation semantics, not because it is drawn |
+| Diagram interchange (`bpmndi:` / `dc:` / `di:`) | skip silently (unchanged) | not part of execution conformance |
+| `relationship`, `import` | skip silently | not execution-related |
+| Choreography / Conversation families | **refuse** | separate conformance sub-classes — a Choreography is not a Process, and silently dropping one would import a different diagram than the modeller drew |
+| Collaboration family | **definitional only** — see §2.15 | §2.3.2 names the "definitional Collaboration" as part of the import obligation |
+
+The distinction that decides each row is *representation vs. semantics*: an
+element the engine will not act on may still be skipped only when dropping it
+leaves the imported definition **meaning the same thing**. A text annotation
+passes that test; a Choreography does not.
+
+### 2.10 Expressions: one supported language, one translated dialect
+
+A definition carries expressions in conditions, timers, multi-instance
+cardinality, completion conditions, correlation retrieval and data assignments.
+The standard makes the language a **per-expression attribute**
+(`FormalExpression.language`, 0..1) over a **document-level default**
+(`Definitions.expressionLanguage`, 0..1, defaulting to
+`http://www.w3.org/1999/XPath`), and says nothing about which languages a tool
+must implement. So the choice is entirely the engine's, and it is:
+
+| Language on the wire | Import behaviour |
+|---|---|
+| the engine's own text language | **passthrough** — carried as the text expression kind, evaluated by the routed engine |
+| **JUEL** (`${…}` / `#{…}`, the Camunda idiom) | **translated** into the engine's text language, source to source |
+| **FEEL** | **refused**, classified, naming the language |
+| XPath (including by way of the schema default) | **refused**, classified |
+| anything else | **refused**, classified |
+
+Three parts of that need their reasoning on the record.
+
+**Why translate JUEL rather than run it.** The engine already routes expressions
+by language claim, and its own text language is a C-like infix grammar over the
+same data model JUEL addresses — comparison, boolean composition, member and
+index access, a small builtin set. The overlap is large enough that translation
+is a rewrite of *syntax*, not an interpreter: delimiter stripping, `&&`/`||`/`!`
+to their word forms, and the variable-access idioms. Adding a second evaluator
+for a language whose semantics we would then own — coercions, `null` handling,
+bean property resolution — buys nothing the rewrite does not, and costs a
+permanent second implementation of every expression semantic the engine has.
+
+**Why translation must fail loudly, never partially.** A JUEL construct with no
+counterpart — a method invocation on a host bean, anything reaching outside the
+process's own data — is **refused by name**. A translator that silently drops
+what it cannot express produces a condition that parses, evaluates, and routes
+the token the wrong way; the failure surfaces as a mis-executed process, far from
+the import. Refusal at import is the only place the error is still cheap.
+
+**What the rewrite looks like.** The engine's text language keeps boolean
+composition as words (`and` / `or` / `not`) and shares JUEL's comparison,
+member and index syntax, so the translation is mechanical over a small set of
+forms — and the last row is the whole point of the refuse-by-name rule:
+
+| JUEL on the wire | Translated | Note |
+|---|---|---|
+| `${total > 100}` | `total > 100` | delimiter stripped |
+| `${total > 100 && tier == "gold"}` | `total > 100 and tier == "gold"` | `&&` → `and` |
+| `${!approved \|\| blocked}` | `not approved or blocked` | `!` → `not`, `\|\|` → `or` |
+| `${order.customer.tier == 'vip'}` | `order.customer.tier == "vip"` | member access unchanged |
+| `${items[0] == "sku-1"}` | `items[0] == "sku-1"` | index access unchanged |
+| `${execution.getVariable("total") > 0}` | `total > 0` | the variable-access idiom collapses to the name |
+| `${myBean.check(order)}` | — | **refused by name**: a host-bean invocation has no counterpart, and guessing one would route tokens on a fiction |
+
+**Why the schema default is not honoured.** `expressionLanguage` defaults to
+XPath, and XPath is refused — so a literal reading rejects every document that
+omits the attribute, which is nearly all of them, including files whose
+expressions are plainly `${…}`. The default is a *schema* default asserting what
+an unmarked expression **is**, and in practice it describes almost no real file.
+Language is therefore resolved by: the expression's own `language`, else the
+document's `expressionLanguage`, else the **syntactic tell** (`${…}`/`#{…}` is
+JUEL), else refusal. This is an **engine choice** and a deliberate divergence,
+recorded as such in §3.
+
+### 2.11 Scripts: Lua only, and no silent fallback
+
+`ScriptTask` carries `scriptFormat` (a MIME hint, 0..1) and its source; the
+standard mandates no script language. The engine routes scripts by that format
+through its script-engine seam, and ships exactly one battery — **Lua**.
+
+Import therefore accepts a script task whose `scriptFormat` names Lua and
+**refuses every other format by name**, including an *absent* format: with
+nothing to route on, the alternative to refusing is guessing, and a guessed
+language runs someone else's syntax through Lua. The refusal is a
+**deferral, not a rejection of the file's validity** — the same script task
+imports the moment the host registers an engine claiming that format, which is
+what the seam exists for.
+
+### 2.12 Business rules: an opaque decision reference, never a DMN parser
+
+`BusinessRuleTask` in the standard carries **only** `implementation` — there is
+no `decisionRef` attribute, and the spec mandates no rule-engine binding, noting
+only that the typical wiring is DMN. gobpm's permanent non-goal is that it will
+never embed a DMN engine ([SAD-001](SAD-001-vision-and-architecture.md) N2); its
+business-rule task holds an **opaque reference** that the host's configured rule
+engine resolves, and the shipped battery is a decision-table engine covering the
+DMN-shaped subset the engine implements.
+
+Import follows that exactly: it lifts the decision reference — which, having no
+home in the standard's attribute set, arrives through the vendor dialect (§2.14)
+or `implementation` — into the opaque reference, and **parses no DMN**. A
+business rule task whose decision reference cannot be found is refused rather
+than imported inert, because a rule task with no decision is a task that will
+fail at its first execution with far less context than the importer has now.
+
+What "DMN is supported" means here is therefore precise and worth stating so it
+is not over-read: the **reference** round-trips and the **engine** decides. A
+decision the shipped table engine cannot express is not a converter failure and
+not a converter concern.
+
+### 2.13 Global tasks are refused, and say "yet"
+
+The `GlobalTask` family (`globalTask`, `globalUserTask`, `globalManualTask`,
+`globalScriptTask`, `globalBusinessRuleTask`) is reuse **by reference**: a task
+defined once at `definitions` level and invoked through `CallActivity`. Resolving
+a reference needs a registry of callable definitions, and that registry is a
+product concern of the server tier, not the library
+([conformance.md](../bpmn-spec/conformance.md) — the family is listed exactly
+that way).
+
+Import **refuses** every member of the family, and refuses a `callActivity` whose
+`calledElement` resolves to one, with an error that says **not supported yet** —
+distinct from the unsupported-element error, because the two mean different
+things to whoever reads them. An unsupported element is a shape this converter
+does not map; a global task is a shape that is *waiting on a subsystem*, and the
+day the registry lands the same file imports unchanged.
+
+### 2.14 A recognized vendor dialect, mapped where the model has a home
+
+The converter has, until now, skipped every foreign namespace in silence, which
+is correct for layout and wrong for configuration: a Camunda file's assignee, its
+external-task topic and its decision reference are not decoration, they are the
+executable content, and the engine has a model home for each. Worse, two of this
+ADR's own decisions are unreachable without the dialect — a decision reference
+(§2.12) and, in practice, JUEL (§2.10) have no standard-BPMN carrier at all.
+
+So the converter **recognizes one dialect** (Camunda 7) and maps every construct
+that has a home in the engine's model. Three rules bound it:
+
+1. **Map only what already exists.** The dialect never motivates a new model
+   type. A construct with no home is not mapped, and the model is not bent to
+   receive it.
+2. **Never silently drop a recognized construct.** Anything in a recognized
+   namespace that is not mapped is **reported** (§2.15) — the vendor-namespace
+   half of the SAD-001 §5 feedback requirement, which the flow-element error has
+   always served and extension content never did.
+3. **An unrecognized namespace stays silent.** Skipping an unknown vendor's
+   subtree without comment remains right; the converter cannot report on a
+   vocabulary it does not know, and pretending otherwise would make every foreign
+   annotation noise.
+
+Constructs whose meaning is the *host engine's* rather than the process's — job
+executor and transaction-boundary hints, listener classes, history controls — are
+by rule 1 not mapped and by rule 2 reported. They describe how a different engine
+schedules work, and gobpm's answer to them is that it schedules differently, not
+that it will pretend to obey.
+
+### 2.15 One optional seam capability: a document yields a set, and a report
+
+Two facts do not fit `Import(ctx, r) (*process.Process, error)`.
+
+**A document carries more than one process.** §2.3.2 obliges an importer to
+support Process diagrams *"including its definitional Collaboration"*, and a
+collaboration binds participants to several processes. gobpm has no Collaboration
+type and needs none — the standard's own inter-process mechanism is message
+events, which the engine executes, and each participant process is registered and
+versioned on its own. But a single return value cannot carry them.
+
+**Constructs are dropped on purpose.** §2.14 requires reporting what a recognized
+dialect carried and the model does not hold. There is nowhere in the signature to
+say so.
+
+Both are answered by **one optional capability** beside the existing interfaces —
+the Go idiom of a capability interface the façade probes for and falls back
+without, as `io.ReaderFrom` is to `io.Reader`:
+
+```go
+// package convert
+
+// Result is everything one source document yielded.
+type Result struct {
+	// Processes are the definitions the document carried, in document order.
+	Processes []*process.Process
+	// Dropped names each recognized construct the converter did not map.
+	Dropped []Dropped
+}
+
+// DocumentImporter is the optional capability of an Importer whose format
+// can carry more than one definition per document, or can knowingly drop
+// content. The convert façade uses it when the registered Importer
+// implements it and falls back to Import otherwise.
+type DocumentImporter interface {
+	ImportDocument(ctx context.Context, r io.Reader) (*Result, error)
+}
+```
+
+`Import` keeps its meaning and its signature — **the** process of the document —
+and becomes precise about the ambiguous cases: a document with exactly one
+executable process returns it; a document with none, or with several, is an error
+naming what it found and pointing at the document-level call. Nothing existing
+breaks, no format is forced to implement it, and the collaboration obligation is
+met without modelling Collaboration.
+
+**Collaboration is consumed, not represented.** `<collaboration>` is read for its
+definitional content only — which participants exist and which process each
+refers to — and `<messageFlow>` is reported as dropped: it is the *drawing* of a
+message exchange whose execution the engine performs through message events and
+correlation. The graph the engine runs is unchanged by its presence.
+
 ## 3. Standard grounding
 
 All claims cite the vendored KB ([docs/bpmn-spec/](../bpmn-spec/index.md)), which carries
@@ -318,11 +585,67 @@ the OMG §-refs.
   `di:*` | Visual layout metamodel; not part of execution conformance"*
   ([conformance.md:155](../bpmn-spec/conformance.md)).
 
+Added in v.4:
+
+- **Element scope of the import.** The obligation is §2.3.2 — *"MUST support
+  import of BPMN Process diagram types including its definitional
+  Collaboration"* — and the element set it applies to is
+  [conformance.md](../bpmn-spec/conformance.md)'s in-scope list (§13's
+  operational elements plus the supporting classes they consume). §2.9 adopts
+  that list verbatim rather than a subset of it.
+- **Lanes are representation, not semantics.** §2.3.1 permits ignoring
+  non-operational elements *at run time*; it does not permit dropping them from
+  the model, and §2.3.2 obliges an importer to support the modeller's diagram
+  ([conformance.md](../bpmn-spec/conformance.md), boundary cases).
+- **Visual artifacts carry nothing.** `TextAnnotation`, `Group` and `Category`
+  are listed out of scope as *"pure visual"*, while `Association` is explicitly
+  kept *"because it carries compensation semantics"*
+  ([conformance.md](../bpmn-spec/conformance.md)) — which is precisely the line
+  §2.9 draws between skipping and mapping.
+- **Expression language is per-expression over a document default.**
+  `FormalExpression.language` is 0..1
+  ([elements/foundation.md:254](../bpmn-spec/elements/foundation.md)) and
+  `Definitions.expressionLanguage` is 0..1 defaulting to
+  `http://www.w3.org/1999/XPath`
+  ([elements/foundation.md:19](../bpmn-spec/elements/foundation.md)). The
+  standard nowhere requires a tool to implement any particular one.
+- **Script language is unmandated.** `ScriptTask.scriptFormat` is 0..1
+  ([elements/activities.md:211](../bpmn-spec/elements/activities.md)) and *"the
+  spec does not mandate a script language"*
+  ([semantics/tasks.md:65](../bpmn-spec/semantics/tasks.md)).
+- **Business rules carry no decision reference.** `BusinessRuleTask`'s only own
+  property is `implementation`
+  ([elements/activities.md:253](../bpmn-spec/elements/activities.md)), and *"the
+  spec does not mandate a rule engine binding. Typical wiring is to DMN."*
+  ([semantics/tasks.md:58](../bpmn-spec/semantics/tasks.md)). A `decisionRef`
+  is therefore vendor vocabulary by construction, not by our omission — which is
+  why §2.12 depends on §2.14.
+- **Global tasks are reuse by reference.** The family derives from
+  `CallableElement` and is invoked through `CallActivity.calledElement` (a
+  `String` reference, 0..1 —
+  [elements/activities.md:518](../bpmn-spec/elements/activities.md)); resolving
+  it needs a definition registry, which
+  [conformance.md](../bpmn-spec/conformance.md) places in the server tier.
+- **Collaboration is out of the library's execution scope but inside the
+  importer's obligation.** *"Not animated by Clause 13; inter-process messaging
+  is covered by Message events. Note §2.3.2 names the 'definitional
+  Collaboration' for import — that is a server/converter concern"*
+  ([conformance.md](../bpmn-spec/conformance.md)). §2.15 takes both halves of
+  that sentence at face value.
+
 **Engine notes (deliberate divergences):** semantic-only round-trip (§2.8);
 BPMN `id` treated as durable versioning identity (§2.5 — a gobpm/ADR-019 choice,
 the standard is silent on registry versioning); unsupported in-scope-namespace
 elements are a hard import error rather than a lenient skip (§2.7 — stricter
-than the standard requires, to serve the SAD-001 §5 feedback need).
+than the standard requires, to serve the SAD-001 §5 feedback need). Added in
+v.4: the **`expressionLanguage` schema default is not honoured** (§2.10 — the
+standard says an unmarked expression is XPath; the converter resolves by
+syntactic tell instead, because honouring the default would reject nearly every
+real file); a **refused script format and a refused expression language are
+engine choices**, since the standard mandates neither (§2.10, §2.11); and
+**recognizing a vendor dialect** (§2.14) is outside the standard entirely — the
+standard supplies the `extensionElements` mechanism and assigns its content no
+meaning.
 
 ## 4. Alternatives considered
 
@@ -335,6 +658,20 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 | E | Imported ids | (a) auto-generate; (b) preserve BPMN `id` | **(b)** — ADR-019 keys versions on the process `id`; auto-ids would make every import a singleton v1 (§2.5). |
 | F | Round-trip fidelity | (a) byte-lossless / DI-preserving; (b) semantic-only | **(b)** for MVP — DI is out of execution scope; textual losslessness is not a conformance requirement and would balloon MVP scope (§2.8). |
 | G | "Batteries-included" delivery | (a) blank-import (image-style); (b) core-default (no import) | **(a)** for MVP — (b) contradicts SAD-001 N7 (BPMN in core) and would need a SAD revision. Surfaced in Open Questions. |
+
+Added in v.4:
+
+| # | Decision point | Options | Chosen — why |
+|---|---|---|---|
+| H | Import fence | (a) keep slicing element families per SRD; (b) the whole execution-conformance set at once | **(b)** — a definition is a graph, so a partial importer imports *nothing* from any file containing the one kind it lacks. Slicing delivers no usable increment until the final slice, which is why §7's "slice 2+" list stood untouched. The cost is one large landing; the alternative is several landings that each ship zero working imports (§2.9). |
+| I | JUEL support | (a) a JUEL engine registered under its own language claim; (b) source-to-source translation into the engine's text language; (c) unsupported | **(b)** — the grammars overlap almost completely, so (a) buys a second permanent implementation of every expression semantic (coercion, null, member access) to gain nothing (b) lacks. (c) was rejected because JUEL is what Camunda files actually contain — refusing it refuses the corpus. Untranslatable constructs are refused by name, never partially rewritten (§2.10). |
+| J | Unmarked expression language | (a) honour the XPath schema default; (b) resolve by syntactic tell | **(b)** — (a) is the literal standard reading and rejects nearly every real document, since modelers omit `expressionLanguage` and write `${…}`. Recorded as a deliberate divergence rather than taken quietly (§2.10, §3). |
+| K | Unroutable script format | (a) refuse; (b) default to the one shipped engine | **(a)** — (b) runs another language's syntax through Lua and reports the resulting parse error from inside the engine at execution time, blaming the script rather than the missing format. Refusal names the real cause at import (§2.11). |
+| L | DMN | (a) parse DMN XML in the converter; (b) carry an opaque decision reference | **(b)** — (a) contradicts SAD-001 N2 (never embed a DMN engine) and would put a second standard's parser inside a BPMN converter. The rule-engine seam already resolves references; the converter's job ends at carrying one (§2.12). |
+| M | Global tasks | (a) synthesize an inline task per global definition; (b) refuse with a "not supported yet" error | **(b)** — (a) silently converts reuse-by-reference into duplication, so a file with one global task called from three places imports as three unrelated tasks and edits to the original stop propagating. The refusal is honest and reverses cleanly when the registry lands (§2.13). |
+| N | Vendor extensions | (a) keep skipping silently; (b) recognize Camunda 7 and map what has a home; (c) generic passthrough into a model carrier | **(b)** — (a) is the status quo and loses the executable content of every migrated file, and it cannot deliver §2.12's decision reference at all. (c) needs a new model type to hold arbitrary foreign XML and re-raises "what does it mean at execution?", which is the question (b) answers by only mapping what the model already understands (§2.14). |
+| O | Multi-process documents | (a) refuse collaboration; (b) import the first process and drop the rest; (c) an optional document-level capability | **(c)** — (a) contradicts §2.3.2's explicit words; (b) drops definitions **silently**, the exact failure this ADR's feedback requirement exists to prevent. (c) is additive, leaves `Import` and every existing caller untouched, and needs no Collaboration model type (§2.15). |
+| P | Reporting dropped constructs | (a) a second return value on `Import`; (b) a logger on the seam; (c) fold into the document-level `Result` | **(c)** — (a) breaks every existing caller; (b) makes the report a side effect that a library consumer cannot inspect, only observe. One capability covering both multi-process and diagnostics keeps the seam at two interfaces plus one optional third (§2.15). |
 
 ## 5. Consequences
 
@@ -357,6 +694,30 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 - The converter rides the root module's existing CI, adding no module to the
   per-module matrix — but its ~1 600 lines now count toward the `cover-check`
   diff gate, so every later element slice must clear `COVER_MIN` too.
+
+Added in v.4:
+
+- **Import and export are no longer the same fence, and §2.8's round-trip
+  guarantee narrows to the export subset.** This is the honest cost of §2.9:
+  after this slice a file can import cleanly and then fail to export, which is a
+  worse asymmetry than the symmetric-but-tiny subset it replaces. It is accepted
+  deliberately — import is what §2.3.2 obliges and what adoption needs — and it
+  is temporary by plan (§7), not by hope. Until export catches up, "round-trip"
+  means *the MVP subset round-trips*, and every document outside it is one-way.
+- **The converter now owns a translator.** JUEL→text-language rewriting (§2.10)
+  is a parser and a code generator living inside an import path, with its own
+  correctness surface and its own failure mode (a wrong rewrite routes tokens
+  wrongly, silently). The refuse-by-name rule bounds it, but the cost is real and
+  belongs on this list rather than in a footnote.
+- **Recognizing a dialect is a standing commitment.** §2.14 admits Camunda 7;
+  Camunda 7 will keep changing, and every construct it adds becomes a mapping
+  question the converter must answer or report. The bound is rule 1 — the
+  dialect never motivates a model type — which keeps the commitment to mapping
+  work, not to design work.
+- **Refusals are now a documented interface.** "Not supported yet" (§2.13), a
+  refused expression language, a refused script format and a refused decision
+  reference are outcomes a host will branch on, so their identity is API surface
+  that cannot be reshuffled casually.
 
 ## 6. Enterprise-readiness recommendations
 
@@ -382,11 +743,29 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
   subset (including `serviceTask`); unsupported-element feedback; semantic
   round-trip test corpus; the `examples/bpmn-convert/` example; README/guide +
   changelog.
-- **Slice 2+ (own SRDs).** Gateways (inclusive/complex/event-based); events
+- **Slice 2+ (own SRDs).** ~~Gateways (inclusive/complex/event-based); events
   (timer/message/signal/error) + boundary events; sub-process & call activity
   (composes with ADR-023); lanes (parse-and-preserve); extension-element
-  passthrough; XSD strict mode; additional formats behind the same seam.
+  passthrough~~ — **superseded by v.4**: element-at-a-time slicing delivers no
+  working import until the last slice (§2.9, alternative H), so these land
+  together as the full-import slice below. XSD strict mode and additional
+  formats behind the same seam remain future slices.
 - **Post-Slice-1:** `/check-srd`, SRD-051 → Accepted, ADR-024 → Accepted.
+
+Added in v.4:
+
+- **Slice 2 — full import (this ADR's v.4 landing).** The whole
+  execution-conformance element set (§2.9), the expression / script /
+  business-rule language policies (§2.10–§2.12), the global-task refusal
+  (§2.13), the Camunda 7 dialect (§2.14) and the `DocumentImporter` capability
+  (§2.15) — plus the converter defects the coverage audit surfaced in the code
+  this slice rewrites. Import only; the accompanying SRD lands it.
+- **Slice 3 — export catches up.** Export the same element set, closing the
+  asymmetry §5 accepts and restoring §2.8's round-trip guarantee to the full
+  fence. This is the immediate successor, not an open-ended future: the cost
+  recorded in §5 is only bounded if it is paid.
+- **Slice 4+.** Diagram-interchange preservation (a round-trip a modeller would
+  recognize); XSD strict mode; a second format behind the same seam.
 
 ## 8. References
 
@@ -395,6 +774,13 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 - [ADR-002 v.2](ADR-002-extension-architecture.md) — interfaces + compile-time wiring; the extension idiom the seam follows.
 - [ADR-019 v.1](ADR-019-definition-versioning.md) — version key = process id; the identity-preservation constraint (§2.5).
 - [ADR-003 v.1](ADR-003-module-layout.md) — module boundaries and import-direction rules; the converter stays inside the root module (§4-A).
+
+Added in v.4 (sideways — the seams whose vocabulary §2.10–§2.14 map onto):
+- [ADR-032 v.1](ADR-032-language-routed-expression-engines.md) — expressions are routed by language claim; the text kind carries a language URI and a body. §2.10's translation target and its refusals are stated in that vocabulary.
+- [ADR-031 v.1](ADR-031-script-task-and-script-engine-seam.md) — scripts are routed by `scriptFormat` through a registry of engines. §2.11's Lua-only rule is a statement about which engine ships, not about the seam.
+- [ADR-027 v.1](ADR-027-business-rule-task-and-rule-engine-seam.md) — the rule-engine seam and the opaque decision reference §2.12 carries.
+- [ADR-020 v.3](ADR-020-human-interaction-execution-model.md) — the human-interaction model whose assignee / candidate-user / candidate-group vocabulary §2.14 maps the dialect onto.
+- [ADR-023 v.3](ADR-023-sub-process-and-call-activity.md) — sub-process and call-activity semantics; §2.13's `calledElement` refusal is a statement about what a call may resolve to.
 
 > **Note — Draft parents.** SAD-001 v.1 and ADR-003 v.1 are themselves **Draft**;
 > their prescriptions may shift before Accepted, so these pins track a moving
@@ -436,6 +822,12 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
   (`runtime/cmd/gobpm-server/`), never in core's `cmd/`, since core's dependency
   budget is stdlib + uuid only (SAD-001 §9.1).
 
+**v.4 adds no open questions.** Every decision point it opened is resolved in
+§2.9–§2.15 with its rejected alternatives recorded in §4 (rows H–P). The two
+items it leaves for later — export catching up to the import fence, and
+diagram-interchange preservation — are **scheduled slices** in §7 with a stated
+trigger, not questions awaiting an answer.
+
 ## Document History
 
 | Version | Date | Change |
@@ -443,3 +835,4 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 | v.1 | 2026-07-17 | Initial draft — converter seam (`pkg/convert`), BPMN as the batteries-included separate-module converter, MVP element subset, semantic round-trip. |
 | v.2 | 2026-07-30 | Accepted on the SRD-051 slice-1 landing. §4-A reversed: the converter is the package `pkg/convert/bpmn`, not a top-level module — the stdlib parser costs core no dependency, and a module would have stayed invisible to the diff-coverage gate (§2.3). Q1 (module rename) withdrawn; the SAD-001 §9 `doc-source/` reservation retired. §2.6: `serviceTask` restored to the MVP set with the new `ServiceTask.Operation()` accessor, and the `documentation`/`extensionElements` silent-skip carve-out recorded. |
 | v.3 | 2026-08-02 | Accepted. **Correction only — no contract change.** This ADR defined the MVP fence by reference to *"the Common Executable Subclass (§2.1.3)"*, in §2.6, §3 and §8. That basis does not exist and never applied. There is no §2.1.3 — §2.1 is *General*, §2.2 is Process **Modeling** Conformance, Process **Execution** Conformance is **§2.3** — and the Common Executable Subclass is a **Modeling** sub-class (§2.2.1) for tools that *emit* executable models, mandating XML Schema, WSDL and XPath, none of which gobpm uses. The fence is re-based on the elements **Clause 13 animates**, which is what the engine's scope list enumerates; the MVP element set itself is **unchanged**, so §FR-8's mapping, §2.8's semantic-round-trip guarantee and every incoming pin to v.2 stand. The correction also **sharpens this ADR's standing**: §2.3.2 obliges a tool claiming Process Execution Conformance to "support import of BPMN Process diagram types", so the converter is not an interchange nicety beside conformance — it *is* the second of the two requirements, and it belongs to the `gobpm-server` product rather than the library ([SAD-001](SAD-001-vision-and-architecture.md) §14). One consequence worth carrying into future slices: `Lane`/`LaneSet` must round-trip, so the model has to hold them even though execution ignores them (conformance-status.md row 14). |
+| v.4 | 2026-08-10 | **Draft — the import fence moves.** v.1–v.3 fixed the seam and a deliberately small MVP element subset, and §7's "slice 2+" element list never started, because element-at-a-time slicing delivers no working import until the last slice: a definition is a graph, so an importer missing one element kind imports *nothing* from any file containing it (§2.9, alternative H). v.4 therefore takes the whole execution-conformance element set for **import**, with an explicit disposition for every family outside it (lanes preserved, visual artifacts skipped, choreography refused). It settles the three pluggable languages a definition can carry: expressions — the engine's own text language passes through, **JUEL is translated into it source-to-source** and untranslatable constructs are refused by name, FEEL and XPath are refused, and the XPath *schema default* is deliberately not honoured (§2.10, rows I/J); scripts — **Lua only**, an absent or foreign `scriptFormat` refused rather than guessed (§2.11, row K); business rules — an **opaque decision reference**, never a DMN parser, per the SAD-001 N2 non-goal (§2.12, row L). The `GlobalTask` family is refused with a distinct **"not supported yet"** error, since reuse-by-reference needs the server tier's definition registry and inlining it would silently turn one definition into many (§2.13, row M). A **recognized vendor dialect** (Camunda 7) is admitted under three rules — map only what the model already holds, never silently drop a recognized construct, stay silent on unrecognized namespaces — because two of this ADR's own decisions have no standard-BPMN carrier at all (§2.14, row N). Finally the seam gains **one optional capability**, `DocumentImporter`, returning the document's process set plus a report of dropped constructs: it satisfies §2.3.2's "including its definitional Collaboration" without a Collaboration model type, and gives §2.14's reporting rule somewhere to land, while `Import` and every existing caller stay untouched (§2.15, rows O/P). **Export deliberately stays on the v.1 subset**, which narrows §2.8's round-trip guarantee to that subset — recorded as an accepted cost in §5 and scheduled for closure as slice 3 in §7. §2.6 is superseded for import and retained as the export fence, so incoming v.2/v.3 pins to it keep their meaning. |
