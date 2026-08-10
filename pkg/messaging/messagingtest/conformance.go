@@ -24,14 +24,35 @@ import (
 // hang-breaker, not a latency assertion — an adapter over a real queue may
 // deliver asynchronously, and no part of this contract promises speed — so it
 // is generous and costs nothing when delivery is prompt.
-const deliveryWait = 5 * time.Second
+//
+// It is a var rather than a const only so this package's own negative tests
+// can shrink it: they drive assertions against a broker that never delivers,
+// and each would otherwise wait out the full hang-breaker to prove a failure
+// it already knows how to force. Nothing outside this package can reach it.
+var deliveryWait = 5 * time.Second
 
 // silenceWait is how long a message that must NOT arrive is given to arrive
 // anyway. Unlike deliveryWait it cannot be generous: the whole assertion is
 // that nothing comes, so the test pays this in full every time it runs. It is
 // therefore a genuine trade-off — long enough to catch a broker that
 // mis-routes promptly, short enough to keep the suite usable.
-const silenceWait = 150 * time.Millisecond
+var silenceWait = 150 * time.Millisecond
+
+// tb is the slice of *testing.T the individual contract assertions use. It
+// exists so the suite's OWN failure branches can be driven in-process by a
+// recording fake: those branches only run against a broken implementation, and
+// an assertion that is never executed is an assertion nobody has checked —
+// an inverted comparison would silently pass every adapter it was meant to
+// reject.
+//
+// Conformance still takes a real *testing.T, because subtests need one.
+type tb interface {
+	Helper()
+	Cleanup(func())
+	Fatal(args ...any)
+	Fatalf(format string, args ...any)
+	Skip(args ...any)
+}
 
 // Factory builds a fresh, empty MessageBroker under test. It is called once
 // per subtest, so implementations must return isolated brokers (for a shared
@@ -59,7 +80,7 @@ func Conformance(t *testing.T, factory Factory) {
 }
 
 // conformanceTests is the contract as a declarative table.
-var conformanceTests = map[string]func(*testing.T, messaging.MessageBroker){
+var conformanceTests = map[string]func(tb, messaging.MessageBroker){
 	"SubscribeThenPublishDelivers": testSubscribeThenPublishDelivers,
 	"PublishThenSubscribeDrains":   testPublishThenSubscribeDrains,
 	"WildcardMatchesAnyKey":        testWildcardMatchesAnyKey,
@@ -87,7 +108,7 @@ func env(name, key string) messaging.Envelope {
 // unsubscribes at cleanup so one subtest's subscriber cannot claim the next
 // one's messages on a shared backend.
 func subscribe(
-	t *testing.T, b messaging.MessageBroker, name string, keys ...string,
+	t tb, b messaging.MessageBroker, name string, keys ...string,
 ) messaging.Subscription {
 	t.Helper()
 
@@ -103,7 +124,7 @@ func subscribe(
 }
 
 // publish submits msg, failing the test on error.
-func publish(t *testing.T, b messaging.MessageBroker, msg messaging.Envelope) {
+func publish(t tb, b messaging.MessageBroker, msg messaging.Envelope) {
 	t.Helper()
 
 	if err := b.Publish(context.Background(), msg); err != nil {
@@ -113,7 +134,7 @@ func publish(t *testing.T, b messaging.MessageBroker, msg messaging.Envelope) {
 
 // expectEnvelope waits for one delivery and checks its name and key.
 func expectEnvelope(
-	t *testing.T, s messaging.Subscription, name, key string,
+	t tb, s messaging.Subscription, name, key string,
 ) messaging.Envelope {
 	t.Helper()
 
@@ -134,7 +155,7 @@ func expectEnvelope(
 }
 
 // expectSilence checks that nothing reaches s within silenceWait.
-func expectSilence(t *testing.T, s messaging.Subscription, why string) {
+func expectSilence(t tb, s messaging.Subscription, why string) {
 	t.Helper()
 
 	select {
@@ -147,7 +168,7 @@ func expectSilence(t *testing.T, s messaging.Subscription, why string) {
 }
 
 func testSubscribeThenPublishDelivers(
-	t *testing.T, b messaging.MessageBroker,
+	t tb, b messaging.MessageBroker,
 ) {
 	s := subscribe(t, b, "order", "k1")
 
@@ -158,28 +179,28 @@ func testSubscribeThenPublishDelivers(
 // testPublishThenSubscribeDrains: a message with no subscriber is buffered and
 // reaches the subscription that appears afterwards. Without this, every
 // subscribe-before-publish race in the engine would silently lose a message.
-func testPublishThenSubscribeDrains(t *testing.T, b messaging.MessageBroker) {
+func testPublishThenSubscribeDrains(t tb, b messaging.MessageBroker) {
 	publish(t, b, env("order", "k1"))
 
 	s := subscribe(t, b, "order", "k1")
 	expectEnvelope(t, s, "order", "k1")
 }
 
-func testWildcardMatchesAnyKey(t *testing.T, b messaging.MessageBroker) {
+func testWildcardMatchesAnyKey(t tb, b messaging.MessageBroker) {
 	s := subscribe(t, b, "order")
 
 	publish(t, b, env("order", "whatever"))
 	expectEnvelope(t, s, "order", "whatever")
 }
 
-func testKeyedMatchesOnlyItsKeys(t *testing.T, b messaging.MessageBroker) {
+func testKeyedMatchesOnlyItsKeys(t tb, b messaging.MessageBroker) {
 	s := subscribe(t, b, "order", "k1")
 
 	publish(t, b, env("order", "k2"))
 	expectSilence(t, s, "a keyed subscription must not receive another key")
 }
 
-func testMultiKeySetMatchesAny(t *testing.T, b messaging.MessageBroker) {
+func testMultiKeySetMatchesAny(t tb, b messaging.MessageBroker) {
 	s := subscribe(t, b, "order", "k1", "k2")
 
 	publish(t, b, env("order", "k2"))
@@ -189,7 +210,7 @@ func testMultiKeySetMatchesAny(t *testing.T, b messaging.MessageBroker) {
 	expectEnvelope(t, s, "order", "k1")
 }
 
-func testNameMismatchNotDelivered(t *testing.T, b messaging.MessageBroker) {
+func testNameMismatchNotDelivered(t tb, b messaging.MessageBroker) {
 	s := subscribe(t, b, "order")
 
 	publish(t, b, env("invoice", "k1"))
@@ -199,7 +220,7 @@ func testNameMismatchNotDelivered(t *testing.T, b messaging.MessageBroker) {
 // testKeyedBeatsWildcard pins the most-specific rule the MessageBroker doc
 // states outright: with both a keyed and a wildcard subscription live for one
 // name, the keyed one takes the message.
-func testKeyedBeatsWildcard(t *testing.T, b messaging.MessageBroker) {
+func testKeyedBeatsWildcard(t tb, b messaging.MessageBroker) {
 	wild := subscribe(t, b, "order")
 	keyed := subscribe(t, b, "order", "k1")
 
@@ -209,7 +230,7 @@ func testKeyedBeatsWildcard(t *testing.T, b messaging.MessageBroker) {
 	expectSilence(t, wild, "the wildcard must not also receive a keyed message")
 }
 
-func testKeylessGoesToWildcard(t *testing.T, b messaging.MessageBroker) {
+func testKeylessGoesToWildcard(t tb, b messaging.MessageBroker) {
 	wild := subscribe(t, b, "order")
 	keyed := subscribe(t, b, "order", "k1")
 
@@ -222,7 +243,7 @@ func testKeylessGoesToWildcard(t *testing.T, b messaging.MessageBroker) {
 // testPointToPointSingleDelivery: a message is consumed once, not fanned out.
 // Two equally-specific subscribers means exactly one delivery in total —
 // otherwise two instances would each act on the same incoming message.
-func testPointToPointSingleDelivery(t *testing.T, b messaging.MessageBroker) {
+func testPointToPointSingleDelivery(t tb, b messaging.MessageBroker) {
 	s1 := subscribe(t, b, "order", "k1")
 	s2 := subscribe(t, b, "order", "k1")
 
@@ -247,7 +268,7 @@ func testPointToPointSingleDelivery(t *testing.T, b messaging.MessageBroker) {
 // testAddKeyExtendsAndDrains covers the lazy secondary key: a conversation
 // that learns a key becomes reachable by it, INCLUDING for a message that was
 // already buffered when the key was unknown.
-func testAddKeyExtendsAndDrains(t *testing.T, b messaging.MessageBroker) {
+func testAddKeyExtendsAndDrains(t tb, b messaging.MessageBroker) {
 	s := subscribe(t, b, "order", "k1")
 
 	// buffered while nothing claims k2
@@ -261,7 +282,7 @@ func testAddKeyExtendsAndDrains(t *testing.T, b messaging.MessageBroker) {
 	expectEnvelope(t, s, "order", "k2")
 }
 
-func testAddKeyEmptyRejected(t *testing.T, b messaging.MessageBroker) {
+func testAddKeyEmptyRejected(t tb, b messaging.MessageBroker) {
 	s := subscribe(t, b, "order", "k1")
 
 	if err := s.AddKey(""); err == nil {
@@ -270,7 +291,7 @@ func testAddKeyEmptyRejected(t *testing.T, b messaging.MessageBroker) {
 	}
 }
 
-func testUnsubscribeStopsDelivery(t *testing.T, b messaging.MessageBroker) {
+func testUnsubscribeStopsDelivery(t tb, b messaging.MessageBroker) {
 	s := subscribe(t, b, "order", "k1")
 
 	if err := s.Unsubscribe(); err != nil {
@@ -281,7 +302,7 @@ func testUnsubscribeStopsDelivery(t *testing.T, b messaging.MessageBroker) {
 	expectSilence(t, s, "an unsubscribed subscription must receive nothing")
 }
 
-func testUnsubscribeIsIdempotent(t *testing.T, b messaging.MessageBroker) {
+func testUnsubscribeIsIdempotent(t tb, b messaging.MessageBroker) {
 	s := subscribe(t, b, "order", "k1")
 
 	if err := s.Unsubscribe(); err != nil {

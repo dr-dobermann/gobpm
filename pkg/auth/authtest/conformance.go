@@ -43,6 +43,22 @@ type Subject struct {
 	Denied []auth.Request
 }
 
+// tb is the slice of *testing.T the individual contract assertions use. It
+// exists so the suite's OWN failure branches can be driven in-process by a
+// recording fake: those branches only run against a broken implementation, and
+// an assertion that is never executed is an assertion nobody has checked —
+// an inverted comparison would silently pass every adapter it was meant to
+// reject.
+//
+// Conformance still takes a real *testing.T, because subtests need one.
+type tb interface {
+	Helper()
+	Cleanup(func())
+	Fatal(args ...any)
+	Fatalf(format string, args ...any)
+	Skip(args ...any)
+}
+
 // Factory builds a fresh Subject. It is called once per subtest.
 type Factory func(t *testing.T) Subject
 
@@ -71,7 +87,7 @@ func Conformance(t *testing.T, factory Factory) {
 }
 
 // conformanceTests is the contract as a declarative table.
-var conformanceTests = map[string]func(*testing.T, Subject){
+var conformanceTests = map[string]func(tb, Subject){
 	"AnswersEveryDeclaredAction": testAnswersEveryDeclaredAction,
 	"AnswersTheZeroRequest":      testAnswersTheZeroRequest,
 	"AllowsWhatItMustAllow":      testAllowsWhatItMustAllow,
@@ -90,7 +106,7 @@ var declaredActions = []auth.Action{
 	auth.ActionCancelInstance,
 }
 
-func testAnswersEveryDeclaredAction(t *testing.T, s Subject) {
+func testAnswersEveryDeclaredAction(t tb, s Subject) {
 	ctx := context.Background()
 
 	for _, a := range declaredActions {
@@ -110,7 +126,7 @@ func testAnswersEveryDeclaredAction(t *testing.T, s Subject) {
 // returning. Recovering here rather than letting the panic escape is the
 // difference between "the provider refuses action usertask.claim by panicking"
 // and a bare stack trace out of the engine's authorization call.
-func answers(t *testing.T, what string, ask func() error) {
+func answers(t tb, what string, ask func() error) {
 	t.Helper()
 
 	defer func() {
@@ -127,13 +143,13 @@ func answers(t *testing.T, what string, ask func() error) {
 // testAnswersTheZeroRequest: an empty request is malformed, and refusing it is
 // a perfectly good answer — but it must be an ANSWER. A provider that indexes
 // into an empty Subject and panics turns a bad call into a crash.
-func testAnswersTheZeroRequest(t *testing.T, s Subject) {
+func testAnswersTheZeroRequest(t tb, s Subject) {
 	answers(t, "the zero Request", func() error {
 		return s.Provider.Authorize(context.Background(), auth.Request{})
 	})
 }
 
-func testAllowsWhatItMustAllow(t *testing.T, s Subject) {
+func testAllowsWhatItMustAllow(t tb, s Subject) {
 	if len(s.Allowed) == 0 {
 		t.Skip("Subject.Allowed is empty — nothing is claimed to be permitted")
 	}
@@ -148,7 +164,7 @@ func testAllowsWhatItMustAllow(t *testing.T, s Subject) {
 	}
 }
 
-func testDeniesWhatItMustDeny(t *testing.T, s Subject) {
+func testDeniesWhatItMustDeny(t tb, s Subject) {
 	if len(s.Denied) == 0 {
 		t.Skip("Subject.Denied is empty — this provider denies nothing " +
 			"(allow-all is a legitimate policy)")
@@ -167,7 +183,7 @@ func testDeniesWhatItMustDeny(t *testing.T, s Subject) {
 // testDenialsExplainThemselves: the interface says the error "describes the
 // denial". An empty message reaches an operator as a bare refusal with no way
 // to tell a policy decision from a broken IAM connection.
-func testDenialsExplainThemselves(t *testing.T, s Subject) {
+func testDenialsExplainThemselves(t tb, s Subject) {
 	if len(s.Denied) == 0 {
 		t.Skip("Subject.Denied is empty — no denial to inspect")
 	}
@@ -195,23 +211,33 @@ func testDenialsExplainThemselves(t *testing.T, s Subject) {
 // It is checked only against the caller's own declared fixtures, so a provider
 // that legitimately varies — rate-limited, time-windowed — simply declares no
 // fixture whose verdict it cannot promise to repeat.
-func testRepeatsItsVerdict(t *testing.T, s Subject) {
+func testRepeatsItsVerdict(t tb, s Subject) {
 	if len(s.Allowed) == 0 && len(s.Denied) == 0 {
 		t.Skip("no declared verdicts to repeat")
 	}
 
 	ctx := context.Background()
 
+	// Both calls happen HERE. Relying on an earlier subtest to have made the
+	// first one would test nothing: Conformance builds a fresh Subject per
+	// subtest, so this assertion's provider has never been asked before.
 	for _, r := range s.Allowed {
-		if err := s.Provider.Authorize(ctx, r); err != nil {
-			t.Fatalf("Authorize(%s) allowed then denied on a repeat: %v",
-				r.Action, err)
+		first := s.Provider.Authorize(ctx, r)
+
+		if second := s.Provider.Authorize(ctx, r); (first == nil) !=
+			(second == nil) {
+			t.Fatalf("Authorize(%s) answered %v then %v on identical calls",
+				r.Action, first, second)
 		}
 	}
 
 	for _, r := range s.Denied {
-		if err := s.Provider.Authorize(ctx, r); err == nil {
-			t.Fatalf("Authorize(%s) denied then allowed on a repeat", r.Action)
+		first := s.Provider.Authorize(ctx, r)
+
+		if second := s.Provider.Authorize(ctx, r); (first == nil) !=
+			(second == nil) {
+			t.Fatalf("Authorize(%s) denied then allowed on a repeat: %v, %v",
+				r.Action, first, second)
 		}
 	}
 }

@@ -56,6 +56,22 @@ type Subject struct {
 	SourceRequired bool
 }
 
+// tb is the slice of *testing.T the individual contract assertions use. It
+// exists so the suite's OWN failure branches can be driven in-process by a
+// recording fake: those branches only run against a broken implementation, and
+// an assertion that is never executed is an assertion nobody has checked —
+// an inverted comparison would silently pass every adapter it was meant to
+// reject.
+//
+// Conformance still takes a real *testing.T, because subtests need one.
+type tb interface {
+	Helper()
+	Cleanup(func())
+	Fatal(args ...any)
+	Fatalf(format string, args ...any)
+	Skip(args ...any)
+}
+
 // Factory builds a fresh Subject. It is called once per subtest, so an engine
 // carrying state must return an isolated one.
 type Factory func(t *testing.T) Subject
@@ -86,7 +102,7 @@ func Conformance(t *testing.T, factory Factory) {
 }
 
 // conformanceTests is the contract as a declarative table.
-var conformanceTests = map[string]func(*testing.T, Subject){
+var conformanceTests = map[string]func(tb, Subject){
 	"TypeIsNamed":            testTypeIsNamed,
 	"LanguagesAreClaimed":    testLanguagesAreClaimed,
 	"LanguagesAreStable":     testLanguagesAreStable,
@@ -97,7 +113,7 @@ var conformanceTests = map[string]func(*testing.T, Subject){
 
 // testTypeIsNamed: Type is the kind the startup config and the routing table
 // print. An engine with no name cannot be reported or diagnosed.
-func testTypeIsNamed(t *testing.T, s Subject) {
+func testTypeIsNamed(t tb, s Subject) {
 	if strings.TrimSpace(s.Engine.Type()) == "" {
 		t.Fatal("Type() is empty — the engine kind names the engine in the " +
 			"startup config and the routing table")
@@ -107,7 +123,7 @@ func testTypeIsNamed(t *testing.T, s Subject) {
 // testLanguagesAreClaimed: the interface calls the claim "never empty for a
 // real engine". The Registry routes on it, so an engine claiming nothing is
 // unreachable — wired, reported, and never called.
-func testLanguagesAreClaimed(t *testing.T, s Subject) {
+func testLanguagesAreClaimed(t tb, s Subject) {
 	langs := s.Engine.Languages()
 	if len(langs) == 0 {
 		t.Fatal("Languages() is empty — the Registry routes on this claim, " +
@@ -125,7 +141,7 @@ func testLanguagesAreClaimed(t *testing.T, s Subject) {
 // testLanguagesAreStable: two calls must agree. The Registry reads the claim
 // once at construction and routes on it forever, so an engine whose answer
 // changes is routed by a table that no longer describes it.
-func testLanguagesAreStable(t *testing.T, s Subject) {
+func testLanguagesAreStable(t tb, s Subject) {
 	first, second := s.Engine.Languages(), s.Engine.Languages()
 
 	if len(first) != len(second) {
@@ -143,7 +159,7 @@ func testLanguagesAreStable(t *testing.T, s Subject) {
 
 // testEvaluatesItsOwnSubject: the caller's expression round-trips. This is the
 // only positive path the suite can check without knowing the language.
-func testEvaluatesItsOwnSubject(t *testing.T, s Subject) {
+func testEvaluatesItsOwnSubject(t tb, s Subject) {
 	if s.Expr == nil || s.Source == nil {
 		t.Fatal("Subject.Expr and Subject.Source are required — without them " +
 			"the suite cannot check that the engine evaluates anything at all")
@@ -174,7 +190,7 @@ func testEvaluatesItsOwnSubject(t *testing.T, s Subject) {
 // testNilExpressionRejected: a nil expression is the caller's bug, and the
 // engine is the public boundary that must name it rather than panic deep
 // inside evaluation.
-func testNilExpressionRejected(t *testing.T, s Subject) {
+func testNilExpressionRejected(t tb, s Subject) {
 	if _, err := s.Engine.Evaluate(
 		context.Background(), nil, s.Source,
 	); err == nil {
@@ -184,7 +200,7 @@ func testNilExpressionRejected(t *testing.T, s Subject) {
 
 // testNilSourceRejected runs only for an engine that declared it needs a
 // source. See Subject.SourceRequired for why this is not universal.
-func testNilSourceRejected(t *testing.T, s Subject) {
+func testNilSourceRejected(t tb, s Subject) {
 	if !s.SourceRequired {
 		t.Skip("SourceRequired is false — this engine may evaluate without " +
 			"a caller-supplied source")

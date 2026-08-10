@@ -33,12 +33,33 @@ import (
 // fetchWait bounds a FetchAndLock that must return. It is a hang-breaker, not
 // a latency assertion: an adapter over a remote queue may take a network round
 // trip, and waiting costs nothing when the job is already queued.
-const fetchWait = 5 * time.Second
+//
+// It is a var rather than a const only so this package's own negative tests
+// can shrink it: they drive assertions against a dispatcher that is KNOWN to
+// hand out no work, which does not need five seconds to prove. Nothing
+// outside this package can reach it.
+var fetchWait = 5 * time.Second
 
 // settleWait is how long a terminal report is given to reach the sink. A
 // dispatcher may deliver asynchronously, so the suite polls rather than
 // assuming the outcome has landed by the time the report call returns.
-const settleWait = 2 * time.Second
+var settleWait = 2 * time.Second
+
+// tb is the slice of *testing.T the individual contract assertions use. It
+// exists so the suite's OWN failure branches can be driven in-process by a
+// recording fake: those branches only run against a broken implementation, and
+// an assertion that is never executed is an assertion nobody has checked —
+// an inverted comparison would silently pass every adapter it was meant to
+// reject.
+//
+// Conformance still takes a real *testing.T, because subtests need one.
+type tb interface {
+	Helper()
+	Cleanup(func())
+	Fatal(args ...any)
+	Fatalf(format string, args ...any)
+	Skip(args ...any)
+}
 
 // Factory builds a fresh, empty WorkerDispatcher under test. It is called once
 // per subtest, so implementations must return isolated queues (for a shared
@@ -70,7 +91,7 @@ func Conformance(t *testing.T, factory Factory) {
 }
 
 // conformanceTests is the contract as a declarative table.
-var conformanceTests = map[string]func(*testing.T, tasks.WorkerDispatcher){
+var conformanceTests = map[string]func(tb, tasks.WorkerDispatcher){
 	"EnqueueThenFetchLocks":      testEnqueueThenFetchLocks,
 	"FetchOnlyRequestedTopics":   testFetchOnlyRequestedTopics,
 	"FetchWakesOnEnqueue":        testFetchWakesOnEnqueue,
@@ -112,7 +133,7 @@ func (s *recordSink) all() []*tasks.WorkerOutcome {
 // bindSink attaches a recording sink, skipping the subtest when the dispatcher
 // has no sink seam — there is nothing to observe then, and failing would
 // reject a dispatcher that legitimately routes completions another way.
-func bindSink(t *testing.T, d tasks.WorkerDispatcher) *recordSink {
+func bindSink(t tb, d tasks.WorkerDispatcher) *recordSink {
 	t.Helper()
 
 	binder, ok := d.(tasks.SinkBinder)
@@ -128,7 +149,7 @@ func bindSink(t *testing.T, d tasks.WorkerDispatcher) *recordSink {
 }
 
 // awaitOutcome polls until one outcome lands, or fails.
-func awaitOutcome(t *testing.T, s *recordSink) *tasks.WorkerOutcome {
+func awaitOutcome(t tb, s *recordSink) *tasks.WorkerOutcome {
 	t.Helper()
 
 	deadline := time.Now().Add(settleWait)
@@ -153,7 +174,7 @@ func awaitOutcome(t *testing.T, s *recordSink) *tasks.WorkerOutcome {
 
 // enqueueAndLock queues one job on topic and locks it to worker w1.
 func enqueueAndLock(
-	t *testing.T, d tasks.WorkerDispatcher, id tasks.JobID, topic tasks.Topic,
+	t tb, d tasks.WorkerDispatcher, id tasks.JobID, topic tasks.Topic,
 ) tasks.LockedJob {
 	t.Helper()
 
@@ -178,7 +199,7 @@ func enqueueAndLock(
 	return jobs[0]
 }
 
-func testEnqueueThenFetchLocks(t *testing.T, d tasks.WorkerDispatcher) {
+func testEnqueueThenFetchLocks(t tb, d tasks.WorkerDispatcher) {
 	got := enqueueAndLock(t, d, "j1", "charge")
 
 	if got.ID != "j1" {
@@ -194,7 +215,7 @@ func testEnqueueThenFetchLocks(t *testing.T, d tasks.WorkerDispatcher) {
 
 // testFetchOnlyRequestedTopics: a worker subscribed to one topic must not
 // receive another's job, or workers steal each other's work.
-func testFetchOnlyRequestedTopics(t *testing.T, d tasks.WorkerDispatcher) {
+func testFetchOnlyRequestedTopics(t tb, d tasks.WorkerDispatcher) {
 	ctx := context.Background()
 
 	if err := d.Enqueue(ctx, tasks.Job{ID: "j1", Topic: "other"}); err != nil {
@@ -215,7 +236,7 @@ func testFetchOnlyRequestedTopics(t *testing.T, d tasks.WorkerDispatcher) {
 // testFetchWakesOnEnqueue: FetchAndLock blocks until a job is available, so a
 // fetcher parked on an empty topic must be woken by a later Enqueue rather
 // than waiting out its context.
-func testFetchWakesOnEnqueue(t *testing.T, d tasks.WorkerDispatcher) {
+func testFetchWakesOnEnqueue(t tb, d tasks.WorkerDispatcher) {
 	ctx, cancel := context.WithTimeout(context.Background(), fetchWait)
 	defer cancel()
 
@@ -259,7 +280,7 @@ func testFetchWakesOnEnqueue(t *testing.T, d tasks.WorkerDispatcher) {
 // testFetchHonorsContextCancel: a fetch on an empty queue must return when its
 // context ends. A dispatcher that ignores it strands the worker goroutine on
 // shutdown.
-func testFetchHonorsContextCancel(t *testing.T, d tasks.WorkerDispatcher) {
+func testFetchHonorsContextCancel(t tb, d tasks.WorkerDispatcher) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan struct{})
@@ -282,7 +303,7 @@ func testFetchHonorsContextCancel(t *testing.T, d tasks.WorkerDispatcher) {
 
 // testLockedJobNotRefetched: a locked job is exclusive for its lock duration,
 // or two workers run the same service task.
-func testLockedJobNotRefetched(t *testing.T, d tasks.WorkerDispatcher) {
+func testLockedJobNotRefetched(t tb, d tasks.WorkerDispatcher) {
 	enqueueAndLock(t, d, "j1", "charge")
 
 	ctx, cancel := context.WithTimeout(
@@ -297,7 +318,7 @@ func testLockedJobNotRefetched(t *testing.T, d tasks.WorkerDispatcher) {
 	}
 }
 
-func testEnqueueRejectsEmptyID(t *testing.T, d tasks.WorkerDispatcher) {
+func testEnqueueRejectsEmptyID(t tb, d tasks.WorkerDispatcher) {
 	if err := d.Enqueue(
 		context.Background(), tasks.Job{Topic: "charge"},
 	); err == nil {
@@ -308,7 +329,7 @@ func testEnqueueRejectsEmptyID(t *testing.T, d tasks.WorkerDispatcher) {
 
 // testExtendLockIsHolderOnly: only the holder may extend, or any worker can
 // keep another's job locked.
-func testExtendLockIsHolderOnly(t *testing.T, d tasks.WorkerDispatcher) {
+func testExtendLockIsHolderOnly(t tb, d tasks.WorkerDispatcher) {
 	enqueueAndLock(t, d, "j1", "charge")
 
 	if err := d.ExtendLock(
@@ -318,7 +339,7 @@ func testExtendLockIsHolderOnly(t *testing.T, d tasks.WorkerDispatcher) {
 	}
 }
 
-func testCompleteReachesSink(t *testing.T, d tasks.WorkerDispatcher) {
+func testCompleteReachesSink(t tb, d tasks.WorkerDispatcher) {
 	s := bindSink(t, d)
 	enqueueAndLock(t, d, "j1", "charge")
 
@@ -336,7 +357,7 @@ func testCompleteReachesSink(t *testing.T, d tasks.WorkerDispatcher) {
 	}
 }
 
-func testReportBpmnErrorReachesSink(t *testing.T, d tasks.WorkerDispatcher) {
+func testReportBpmnErrorReachesSink(t tb, d tasks.WorkerDispatcher) {
 	s := bindSink(t, d)
 	enqueueAndLock(t, d, "j1", "charge")
 
@@ -355,7 +376,7 @@ func testReportBpmnErrorReachesSink(t *testing.T, d tasks.WorkerDispatcher) {
 	}
 }
 
-func testReportStatusReachesSink(t *testing.T, d tasks.WorkerDispatcher) {
+func testReportStatusReachesSink(t tb, d tasks.WorkerDispatcher) {
 	s := bindSink(t, d)
 	enqueueAndLock(t, d, "j1", "charge")
 
@@ -371,7 +392,7 @@ func testReportStatusReachesSink(t *testing.T, d tasks.WorkerDispatcher) {
 	}
 }
 
-func testFailReachesSink(t *testing.T, d tasks.WorkerDispatcher) {
+func testFailReachesSink(t tb, d tasks.WorkerDispatcher) {
 	s := bindSink(t, d)
 	enqueueAndLock(t, d, "j1", "charge")
 
@@ -390,7 +411,7 @@ func testFailReachesSink(t *testing.T, d tasks.WorkerDispatcher) {
 // testReportsAreHolderOnly: a terminal report from a worker that does not hold
 // the lock must be rejected, or a stale worker can complete a job another
 // worker is actively running.
-func testReportsAreHolderOnly(t *testing.T, d tasks.WorkerDispatcher) {
+func testReportsAreHolderOnly(t tb, d tasks.WorkerDispatcher) {
 	enqueueAndLock(t, d, "j1", "charge")
 
 	if err := d.Complete(context.Background(), "j1", "w2", nil); err == nil {
