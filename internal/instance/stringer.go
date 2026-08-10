@@ -25,11 +25,24 @@ import "fmt"
 
 // String renders the instance as its id — immutable, so it is safe to
 // call from any goroutine.
+//
+// The nil guard is for a DIRECT call. fmt does not need it: measured,
+// it prints "<nil>" for a nil pointer without invoking String at all.
+// A caller reaching for the method itself gets the same answer instead
+// of a panic.
 func (inst *Instance) String() string {
+	if inst == nil {
+		return "<nil>"
+	}
+
 	return fmt.Sprintf("instance %s", inst.ID())
 }
 
 // String renders the track as its id, on the same terms as Instance's.
 func (t *track) String() string {
+	if t == nil {
+		return "<nil>"
+	}
+
 	return fmt.Sprintf("track %s", t.ID())
 }

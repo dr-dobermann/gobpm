@@ -423,10 +423,6 @@ func TestIterationRoutingSurvivesRestore(t *testing.T) {
 	t.Cleanup(cancel)
 	require.NoError(t, restored.Run(ctx))
 
-	require.NotEqual(t, Terminated, restored.State(),
-		"two restored correlated iterations must not trip the ambiguity "+
-			"guard")
-
 	require.Eventually(t, func() bool {
 		parked := 0
 
@@ -455,4 +451,16 @@ func TestIterationRoutingSurvivesRestore(t *testing.T) {
 			t.Fatalf("the %q delivery reached no restored iteration", key)
 		}
 	}
+
+	// the ambiguity guard would have faulted the instance; assert the
+	// terminal state AFTER the loop has settled, not the instant after
+	// Run — the loop is a goroutine, so an immediate read observes the
+	// state before any guard could have fired and passes on broken code.
+	select {
+	case <-restored.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the restored instance did not finish")
+	}
+
+	require.Equal(t, Completed, restored.State())
 }

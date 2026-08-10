@@ -1,7 +1,7 @@
 # FIX-040 — formatting a live engine object reflects across it, and the race detector blames the engine
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft.
+**Status:** Accepted.
 **Date:** 2026-08-10.
 **Author:** Руслан Габитов.
 **Branch:** `feat/loop-mi-decorator`.
@@ -146,7 +146,7 @@ construction, so `String()` needs no lock and cannot itself race.
 | # | Option | Verdict |
 |---|---|---|
 | 1 | Replace `laxEP`'s testify mock with a hand-written stub | Rejected as the primary fix. It repairs `laxEP`'s 18 call sites and leaves the other four `EXPECT().RegisterEvent(mock.Anything, …)` sites plus every future one exposed. It also treats the symptom's venue (one helper) rather than its cause (the type is reflectable). Measured: with a stub, the same scenario is clean — which is what proves the diagnosis, not what fixes it. |
-| 2 | Pass a narrow processor handle instead of the whole `*Instance` | Rejected here, though it is the better long-term shape. Changing what `track.go:659` registers is an ADR-006 §2.9 contract change — who the message processor IS decides who receives the delivery — and #313's decorator work is about to redefine exactly that. Doing it now would be a second, conflicting answer to a question that work must settle. |
+| 2 | Pass a narrow processor handle instead of the whole `*Instance` | Rejected here, though it is the better long-term shape. Changing what `track.go:659` registers is an ADR-006 v.5 §2.9 contract change — who the message processor IS decides who receives the delivery — and #313's decorator work is about to redefine exactly that. Doing it now would be a second, conflicting answer to a question that work must settle. |
 | 3 | Mark the fields with `//nolint` / suppress the detector | Rejected. The report is accurate; suppressing it discards a real signal, and the next genuine race in the same struct would be indistinguishable from the noise. |
 | 4 | Keep the test out of the suite and document the limitation | Rejected — this is what `feat/composite-followups` did, and it left a real coverage gap open for the sake of a defect that turned out not to be in the engine at all. |
 | 5 | `String()` on `*Instance` and `*track` | **Chosen.** Nine lines, fixes every formatter at once, and yields better diagnostics: `instance <id>` rather than a page of internals. |
@@ -236,7 +236,40 @@ not anything about checkpointing.
 
 ## 8 Implementation summary
 
-*Filled at landing.*
+### 8.1 Stage commits
+
+| Stage | Commit | Scope |
+|---|---|---|
+| Doc | `4f5ae05` | this document |
+| M1 | `adb817c6` | `internal/instance/stringer.go` (new, 2 functions) + `TestIterationRoutingSurvivesRestore` |
+
+### 8.2 Verification (measured)
+
+- **T-2, the honesty check.** With `stringer.go` moved aside, T-1 reports
+  **5 data races** and fails; restored, **0** and passes. The pin fails on the
+  pre-fix code.
+- **T-3.** `go test -race ./internal/instance/... ./pkg/thresher/` — clean
+  across two full sweeps.
+- **Gate.** `make ci` at `adb817c6`: `verdict: PASS`, 14/14 steps, 125s;
+  **diff-coverage 100.0% of 4 changed coverable lines** (min 95); examples
+  run end-to-end (step 14/14 `run-examples ok`); govulncheck clean;
+  `golangci-lint` incl. tests 0 issues.
+- **Touched functions.** Both `String()` implementations at **100.0%**
+  (`go tool cover -func`).
+
+The gate was run twice on purpose. The first run, before the commit, reported
+`100.0% of 0 changed coverable lines` — covercheck is HEAD-based, so on a
+dirty tree it measures nothing and that number means "nothing was measured",
+not "everything is covered". The figure above is from the run against the
+committed tree.
+
+### 8.3 What this fix deliberately leaves alone
+
+`laxEP` remains a testify mock (§3.2 alternative 1: redundant once nothing
+reflects), and `RegisterEvent` still receives the whole `*Instance` for a
+message trigger (§3.2 alternative 2: an ADR-006 v.5 §2.9 contract question
+belonging to #313). Neither is a deferral of this defect — both are recorded
+positions with reasons, and the defect itself is closed.
 
 ## 9 Open questions
 
