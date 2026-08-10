@@ -9,22 +9,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
-	"time"
 
-	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
-	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
-	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
-	"github.com/dr-dobermann/gobpm/pkg/model/events"
-	"github.com/dr-dobermann/gobpm/pkg/model/flow"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
-	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
-	"github.com/dr-dobermann/gobpm/pkg/model/process"
-	"github.com/dr-dobermann/gobpm/pkg/model/service"
-	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
 
@@ -41,6 +29,7 @@ func run() error {
                     └─> greet-b ─> end-b       (result-b DataObject)
 
 `)
+
 	if err := data.CreateDefaultStates(); err != nil {
 		return fmt.Errorf("create default states: %w", err)
 	}
@@ -50,220 +39,12 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	// the process property lands in the instance's root container scope at
-	// start; branch tasks resolve it through their frames' container walk.
-	proc, err := process.New("data-demo",
-		data.WithProperties(
-			data.MustProperty("user_name",
-				data.MustItemDefinition(
-					values.NewVariable("dr.Dobermann"),
-					foundation.WithID("user_name")),
-				data.ReadyDataState)))
-	if err != nil {
-		return fmt.Errorf("create process: %w", err)
-	}
-
 	done := make(chan string, 2)
 
-	start, err := events.NewStartEvent("start")
-	if err != nil {
-		return fmt.Errorf("create start: %w", err)
-	}
-
-	split, err := gateways.NewParallelGateway(
-		gateways.WithDirection(gateways.Diverging))
-	if err != nil {
-		return fmt.Errorf("create split: %w", err)
-	}
-
-	greetA, resultA, err := newGreeter("greet-a", "res-a", "Hello", done)
+	d, err := buildProcess(done)
 	if err != nil {
 		return err
 	}
 
-	greetB, resultB, err := newGreeter("greet-b", "res-b", "Welcome", done)
-	if err != nil {
-		return err
-	}
-
-	endA, err := events.NewEndEvent("end-a")
-	if err != nil {
-		return fmt.Errorf("create end-a: %w", err)
-	}
-
-	endB, err := events.NewEndEvent("end-b")
-	if err != nil {
-		return fmt.Errorf("create end-b: %w", err)
-	}
-
-	// Register the DataObjects on the Process too, so each instance seeds them
-	// into its own scope and the branch results flow into the per-instance
-	// objects (SRD-063).
-	for _, e := range []flow.Element{
-		start, split, greetA, greetB, endA, endB, resultA, resultB,
-	} {
-		if err = proc.Add(e); err != nil {
-			return fmt.Errorf("add element: %w", err)
-		}
-	}
-
-	for _, l := range [][2]flow.Element{
-		{start, split},
-		{split, greetA}, {split, greetB},
-		{greetA, endA}, {greetB, endB},
-	} {
-		if err = link(l[0], l[1]); err != nil {
-			return err
-		}
-	}
-
-	if _, err = engine.RegisterProcess(proc); err != nil {
-		return fmt.Errorf("register process: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err = engine.Run(ctx); err != nil {
-		return fmt.Errorf("run engine: %w", err)
-	}
-
-	h, err := engine.StartLatest(proc.ID())
-	if err != nil {
-		return fmt.Errorf("start process: %w", err)
-	}
-
-	ran := map[string]bool{}
-	for len(ran) < 2 {
-		select {
-		case name := <-done:
-			ran[name] = true
-		case <-ctx.Done():
-			return fmt.Errorf("timed out waiting for branches (ran: %v)", ran)
-		}
-	}
-
-	// brief grace for the producer stages: outputs flow to the DataObjects
-	// and the frames commit.
-	time.Sleep(200 * time.Millisecond)
-
-	bg := context.Background()
-
-	for _, res := range []struct {
-		do   *dataobjects.DataObject
-		want string
-	}{
-		{resultA, "Hello, dr.Dobermann!"},
-		{resultB, "Welcome, dr.Dobermann!"},
-	} {
-		// read the result from THIS instance's scope, by the DataObject's name,
-		// through the instance handle's data reader (SRD-063).
-		d, err := h.Data().GetData(res.do.Name())
-		if err != nil {
-			return fmt.Errorf("read data object %q: %w", res.do.Name(), err)
-		}
-
-		got, ok := d.Value().Get(bg).(string)
-		if !ok || got != res.want {
-			return fmt.Errorf("data object %q: want %q, got %v",
-				res.do.Name(), res.want, got)
-		}
-
-		fmt.Printf("  ✓ %s = %q\n", res.do.Name(), got)
-	}
-
-	fmt.Println("✓ data-demo completed: the property fed both branches " +
-		"through their frames; each result reached its per-instance DataObject " +
-		"in scope, read back by name")
-
-	return nil
-}
-
-// newGreeter builds a ServiceTask whose Go operation reads the user_name
-// process property (by plain name) and the engine's STARTED_AT runtime
-// variable (by its RUNTIME path) through the public data reader, produces a
-// greeting, and returns it — plus the DataObject its output association feeds.
-func newGreeter(
-	name, resID, greeting string,
-	done chan<- string,
-) (*activities.ServiceTask, *dataobjects.DataObject, error) {
-	op, err := gooper.New(
-		name+"-op",
-		func(ctx context.Context, r service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
-			// the process property, by plain name ...
-			who, err := r.GetData("user_name")
-			if err != nil {
-				return nil, fmt.Errorf("read user_name: %w", err)
-			}
-
-			// ... and an engine runtime variable, by its RUNTIME path.
-			started, err := r.GetData("RUNTIME/STARTED_AT")
-			if err != nil {
-				return nil, fmt.Errorf("read RUNTIME/STARTED_AT: %w", err)
-			}
-
-			res := fmt.Sprintf("%s, %s!", greeting, who.Value().Get(ctx))
-
-			fmt.Printf("  ▶ %s produced %q (instance started %v)\n",
-				name, res, started.Value().Get(ctx))
-			done <- name
-
-			return data.MustItemDefinition(
-					values.NewVariable(res),
-					foundation.WithID(resID)),
-				nil
-		})
-	if err != nil {
-		return nil, nil, fmt.Errorf("create %s operation: %w", name, err)
-	}
-
-	// declare the task output the operation result fills (the producer
-	// stage copies the frame put into this output's per-execution instance).
-	outParam := data.MustParameter(name+" result",
-		data.MustItemAwareElement(
-			data.MustItemDefinition(
-				values.NewVariable(""),
-				foundation.WithID(resID)),
-			data.UnavailableDataState))
-
-	st, err := activities.NewServiceTask(name, op,
-		activities.WithParameters(data.Output, outParam))
-	if err != nil {
-		return nil, nil, fmt.Errorf("create %s task: %w", name, err)
-	}
-
-	// the DataObject the branch result lands in via the output association.
-	resDO, err := dataobjects.New(name+"-result",
-		data.MustItemDefinition(
-			values.NewVariable(""),
-			foundation.WithID(resID)),
-		nil)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create %s result object: %w", name, err)
-	}
-
-	if err := resDO.AssociateSource(st, []string{resID}, nil); err != nil {
-		return nil, nil, fmt.Errorf("bind %s result object: %w", name, err)
-	}
-
-	return st, resDO, nil
-}
-
-// link connects two flow elements with a sequence flow.
-func link(src, trg flow.Element) error {
-	s, ok := src.(flow.SequenceSource)
-	if !ok {
-		return fmt.Errorf("%q is not a sequence source", src.Name())
-	}
-
-	t, ok := trg.(flow.SequenceTarget)
-	if !ok {
-		return fmt.Errorf("%q is not a sequence target", trg.Name())
-	}
-
-	if _, err := flow.Link(s, t); err != nil {
-		return fmt.Errorf("link: %w", err)
-	}
-
-	return nil
+	return runProcess(engine, d, done)
 }

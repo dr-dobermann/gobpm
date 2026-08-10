@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
@@ -48,23 +47,7 @@ func run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err = th.Run(ctx); err != nil {
-		return err
-	}
-
-	if _, err = th.RegisterProcess(p); err != nil {
-		return err
-	}
-
-	h, err := th.StartLatest(p.ID())
-	if err != nil {
-		return err
-	}
-
-	wctx, wc := context.WithTimeout(context.Background(), 30*time.Second)
-	defer wc()
-
-	state, err := h.WaitCompletion(wctx)
+	state, err := runProcess(ctx, th, p)
 	if err != nil {
 		return err
 	}

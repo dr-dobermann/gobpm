@@ -8,10 +8,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/interactor/console"
-	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
 
@@ -63,43 +61,13 @@ func run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err = th.Run(ctx); err != nil {
-		return err
-	}
-
-	if _, err = th.RegisterProcess(p); err != nil {
-		return err
-	}
-
-	h, err := th.StartLatest(p.ID())
+	state, err := runProcess(ctx, th, p)
 	if err != nil {
 		return err
 	}
 
-	wctx, wc := context.WithTimeout(context.Background(), 5*time.Second)
-	defer wc()
-
-	state, err := h.WaitCompletion(wctx)
-	if err != nil {
+	if err := check(state, watch); err != nil {
 		return err
-	}
-
-	if state != thresher.StateCompleted {
-		return fmt.Errorf("process finished %s, want %s",
-			state, thresher.StateCompleted)
-	}
-
-	// The point of the example is the ownership flow: the task is announced to
-	// the distributor, the driver takes exclusive hold, and only then completes.
-	// Assert all three — a driver that quietly skipped the claim would otherwise
-	// look identical from the outside.
-	if absent := watch.missing(
-		2*time.Second,
-		observability.PhaseAnnounced,
-		observability.PhaseClaimed,
-		observability.PhaseCompleted,
-	); len(absent) > 0 {
-		return fmt.Errorf("user task never reached %v", absent)
 	}
 
 	fmt.Println("process finished:", state)
