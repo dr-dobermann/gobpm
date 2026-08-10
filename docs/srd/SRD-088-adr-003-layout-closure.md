@@ -94,8 +94,11 @@ Two consequences shape §3:
   by an ADR-003 v.1 → v.2 amendment.
 - **FR-5 — the four conformance helpers named by §4.2 exist**: `messagingtest`,
   `expressiontest`, `taskstest`, `authtest`.
-- **FR-6 — depguard denies `examples/* → runtime/*` and `examples/* →
-  adapters/*`**, which §4.4 forbids and no rule covers today.
+- **FR-6 — depguard denies `examples/* → runtime/*`.** §4.4 also forbids
+  `examples/* → adapters/*`, but two examples demonstrate adapters today
+  (`decision-table` → `dtable`, `script-task` → `lua`) and an adapter nobody
+  demonstrates is an adapter nobody can learn to wire. ADR-003 v.2 amends §4.4
+  to permit it; only the server boundary stays closed.
 - **FR-7 — ADR-003 §5's departure table is closed row by row**, and the document
   moves `Draft` → `Accepted`.
 - **FR-8 — the `script` port ships a battery**: `pkg/script/gofunc`, a registry
@@ -103,12 +106,18 @@ Two consequences shape §3:
   expression batteries and suppressible by `WithoutDefaultScriptEngines()`. A
   model containing a Script Task must execute on a stock engine.
 
-- **FR-9 — ports and their batteries are provably internal-free.** depguard
-  denies `internal/` from every port package and its subpackages, generalizing
-  the `model-no-internal` rule that already does this for `pkg/model/**`. The
-  property holds today by coincidence across all 25 packages (§4.6); the rule
-  makes it a guarantee, which is what lets a battery serve as the reference
-  implementation an outside author copies.
+- **FR-9 — everything gobpm publishes is provably implementable from outside.**
+  One depguard rule: `pkg/**` denies `internal/`, excepting `pkg/thresher/**`.
+  Measured at `10467bb`, `pkg/thresher` is the **only** non-test package under
+  `pkg/` that imports `internal/` (49 imports; every other package, 0) — it is
+  the engine facade, so it wires internals rather than implementing a port. The
+  property holds today by coincidence; the rule makes it a guarantee, which is
+  what lets a battery serve as the reference implementation an outside author
+  copies. It subsumes the existing `model-no-internal` rule.
+- **FR-10 — the examples are actually linted.** `exclusions.paths` carries
+  `examples`, so every issue in every example module is discarded: `ci-examples`
+  runs the linter over 49 modules and reports "0 issues" unconditionally
+  (§4.7). The entry is removed and the 198 issues it hides are fixed.
 ### Non-functional
 
 - **NFR-1 — no public API breaks, and no seam loses structural satisfaction.**
@@ -366,6 +375,41 @@ The partition already exists — ports and batteries are outsider-writable, the
 facade is the engine — but nothing enforces it, so a battery could import
 `internal/` tomorrow and silently stop being copyable. FR-9 is that rule.
 
+### 4.7 The examples are not linted, and have not been
+
+`.golangci.yml`'s `exclusions.paths` lists `examples`, which discards every
+issue found in an example module. `make ci-examples` runs
+`lint-all-modules MODULES="$(EXAMPLE_MODULES)"` and CI has a job for it, so the
+gate *intends* to lint them; it reports "0 issues" for all 49 regardless. This
+is the FIX-034 / FIX-039 class — a step that checks nothing while looking
+green.
+
+Two consequences, both measured by removing the entry at `10467bb`:
+
+- **No depguard rule has ever fired on an example.** The existing
+  `examples-no-internal` rule is dead, which is why `script-task` imports
+  `adapters/lua` unchallenged. A probe rule denying `adapters` reported 0
+  issues with the entry present and 1 with it removed.
+- **198 issues are hidden across all 49 modules**, while the core module passes
+  the same configuration with 0 — so example quality has drifted silently:
+
+| Linter | Count |
+|---|---|
+| `govet: shadow` | 108 |
+| `misspell` | 23 |
+| `forcetypeassert` | 22 |
+| `revive` | 17 |
+| `gocyclo` | 10 |
+| `gocritic` | 8 |
+| `fieldalignment`, `unused`, `prealloc`, `gosec` | 10 |
+
+**Decision: examples are held to the library standard** — the entry is removed
+and all 198 are fixed (FR-10). The alternative considered was an
+examples-specific subset excluding `shadow` and `forcetypeassert` (130 of the
+198, both arguably fighting teaching clarity); it was rejected because a second
+standard is a second thing to keep true, and an example is the first code a
+user copies.
+
 ## 5 Tests
 
 | # | Test | Asserts |
@@ -383,7 +427,8 @@ facade is the engine — but nothing enforces it, so a battery could import
 | T-12 | `TestUnregisteredScriptNamesTheRegistered` | an unknown name fails loud and the error lists the registered names |
 | T-13 | `TestWithoutDefaultScriptEnginesIsEmpty` | the suppression option leaves the registry `##None`, preserving today's fail-loud posture for hosts that want it |
 | T-14 | `make depguard-check` | a throwaway file in a battery package importing `internal/` is denied (FR-9); `pkg/thresher` importing `internal/` still passes, since the facade legitimately does |
-| T-10 | `make depguard-check` | a throwaway file under `examples/` importing `runtime/` is denied. Not a committed fixture: `examples/` is linted (`Makefile:436`), so a permanent violating file would keep the gate red — the check mirrors `consumer-smoke`, which builds a throwaway module for the same reason |
+| T-15 | `make lint-all-modules MODULES="$(EXAMPLE_MODULES)"` | reports real issues rather than an unconditional 0 — verified by the probe that returns 1 issue with the exclusion removed and 0 with it present (FR-10) |
+| T-10 | `make depguard-check` | a throwaway file under `examples/` importing `runtime/` is denied (FR-6). Not a committed fixture: once FR-10 lands the examples are genuinely linted, so a permanent violating file would keep the gate red — the check mirrors `consumer-smoke`, which builds a throwaway module for the same reason |
 
 ## 6 Follow-ups (filed, not deferred)
 
