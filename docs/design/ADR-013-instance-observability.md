@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.2 |
-| Date | 2026-07-11 |
+| Status | Draft (v.3 — flips back to Accepted when the v.3 changes land) |
+| Version | v.3 |
+| Date | 2026-08-10 (v.2 accepted 2026-07-11) |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md) |
 | Siblings | [ADR-022 v.1 Error Propagation and Logging Policy](ADR-022-error-propagation-and-logging-policy.md) — the log channel this ADR's single producer echoes into |
@@ -51,7 +51,11 @@ progress. An embeddable engine must instead let the host:
 This is not BPMN-normative (an embedding API is engine-defined), so it is a
 product/architecture decision grounded in embeddability.
 
-### 1.2 What the engine has today
+### 1.2 What the engine had at v.2's authoring
+
+*(Re-tensed at v.3: this section is the baseline that motivated v.2, whose
+§2.6 taxonomy closed the gaps it lists. It is kept as the record of why the
+taxonomy exists, not as a description of the current engine.)*
 
 **v.1's mechanism landed**: the `InstanceHandle` (state, tokens, data reader,
 `WaitCompletion`, `Cancel`), the per-instance observer stream with its
@@ -136,7 +140,8 @@ host's window into one instance:
   (§2.4), read lock-free.
 - **Token view** — a snapshot of where execution is (which nodes hold tokens)
   and a stream of **token-movement** events through the channel (§2.2), so the
-  host can follow progress, not just sample it.
+  host can follow progress, not just sample it. A token resting on an
+  **iterated** activity also carries what its instances are doing (§2.11).
 - **Node execution progress** — which nodes are active and their progress
   (entered → executing → left), reported by the nodes themselves (§2.2).
 - **Data read** — process properties + runtime variables, **read-only**, via
@@ -464,6 +469,48 @@ names and signatures are confirmed by the wiring SRD.
   the engine-scope observer) — a natural consumer of this contract, deferred
   to its own work.
 
+### 2.11 The token view carries iteration state (v.3)
+
+A token resting on an activity that carries loop characteristics also carries
+an **iteration view**: the kind (Standard Loop, sequential Multi-Instance,
+parallel Multi-Instance), the instance count fixed at activation (absent for a
+Standard Loop, whose count is not known ahead), how many instances have
+completed, and one entry per live instance giving its **ordinal** and what that
+instance is doing — executing, waiting for an event, or held by an incident.
+
+The field is **optional and absent for every non-iterated node**, so a host
+that ignores it sees one token per activity and nothing changes for it.
+
+**Why this rather than a token per instance.** Before v.3 a parallel
+Multi-Instance over three items appeared in this view as three tokens, because
+the projection was derived from the runtime objects executing the instances.
+That reported the engine's mechanism rather than the model — an iterated
+activity holds one token (ADR-025 v.3 §2.9.1) — and it observed badly in both
+directions: three tokens said how many instances were parked but never *which*,
+with no ordinal and no counts, while a sequential Multi-Instance or a Standard
+Loop showed a single token that looked identical on pass 1 and pass 7. The
+information a host actually wants was the information the shape could not
+carry.
+
+**One vocabulary, three surfaces.** The same iteration shape is what the
+durable record persists and what an incident carries when one instance fails
+(ADR-036's iteration section). A host reading the token view and then querying
+an incident does not translate between two descriptions of the same thing, and
+the projection cannot disagree with the record — a divergence the previous
+shape allowed, since a restart rebuilt the token count as a side effect of
+rebuilding execution rather than from anything recorded.
+
+**Ordinals are stable and are the join key.** An instance's ordinal is fixed at
+activation and is what the incident record, the durable record and this view
+all name. "Instance 3 of 5 is waiting", "instance 3 failed", "retry instance 3"
+are the same 3.
+
+**This does not add a lifecycle event kind.** §2.6's taxonomy is unchanged;
+iteration state rides the *snapshot*, not the stream. A host that wants to
+follow an instance's progress within an iterated activity still does so through
+node-progress events, which name the activity — the iteration view answers
+"what is it doing right now", which is a sampling question.
+
 ## 3. Consequences
 
 - **The public API stops being write-only.** A host follows state, token
@@ -614,3 +661,4 @@ Advisory, not gating — for the implementing SRD(s):
 |---|---|---|---|
 | v.2 | 2026-07-11 | Ruslan Gabitov | Accepted (landed by the accompanying wiring SRD). **Observability completeness — one event seam, engine-wide.** v.1's landed form was deliberately minimal (two observer-event kinds, instance scope only); a two-channel completeness audit showed the observer stream and the ADR-022 operator logs each covering a different half of the engine, with some transitions (gateway decisions, task-taken, boundary arm/disarm, boundary-**caught** faults) silent on both. v.2 adds: the **canonical observable-event taxonomy** (§2.6 — 13 kinds across engine/hub/process/instance/node/gateway/event/correlation/job/task/boundary/fault/data, each with an open phase set, a scope, a log-echo level, and ⏳ reserved slots for pause/resume/incident/dehydration) with the **emission-completeness rule** (an unemitted catalog transition is a defect); the **single producer** — one `Report(fact)`-style call per transition that writes the log echo AND feeds the observer stream, refining ADR-022 §2.7 to *separate channels, single producer* (rejects the two-independent-emissions "mirroring rule" that let the channels drift); the **engine-scope observer registry** (receives everything, incl. all instances' events — one consistent view of gobpm) alongside v.1's instance scope; the **details map** keyed by the ADR-022 §2.5 canonical attribute vocabulary (one vocabulary across both channels; masking intact — ids/names/codes, never payload values); and three **corrections to the landed minimum** — un-collapsed node-progress phases (the 3-value token projection stays on the handle, not in the stream), first-class `Fault` (Thrown/Caught/Uncaught — a boundary-caught error becomes visible), and `DataChange` (⏳ deferred to the ADR-011 data-plane rework — its vocabulary is landed, its wiring rides that rework; observer-stream-only, no log echo when it lands). Adds the **visibility-policy seam** (§2.11): optional capabilities on the authorization extension — log redaction (working name `LogRedactor`) and per-recipient observation filtering (`ObservationFilter`), discovered by type assertion at wiring; unimplemented ⇒ pass-through (events reach the log/observers as-is, zero cost); the policy model (identities/tenants/classifications) deferred to the multi-tenancy/IAM work on the same extension. Non-goals updated (god-object split landed; OTel bridge + the policy model deferred); references re-pinned (ADR-001 v.5→v.6, ADR-006 v.1→v.2, ADR-022 v.1 added). Conception; the taxonomy wiring rides the accompanying SRD. |
 | v.1 | 2026-06-18 | Ruslan Gabitov | Accepted. Fixes audit 2.2 by building the observation-**and-control** mechanism: a public `InstanceHandle` (state, token movement, node execution progress, read-only data via the public reader (ADR-011 v.5), `WaitCompletion`, `Cancel` now / `Suspend`·`Resume` reserved), **one lifecycle channel that nodes/tasks publish progress into** (the seam future node/task work plugs into), and the engine lifecycle (`Shutdown`, `UnregisterProcess`, fixing the snapshots leak). Reconciles the unsettled-state concern: the **mechanism** is the stable contract while the **state/node vocabulary is named per the BPMN standard but kept an open set** — align names now, extend additively as `Failing`/`Paused`/`Compensating` subsystems land (no public-API churn; consumers forward-compatible). Observers are read-only over data/flow (no mutating listeners — hidden control, ADR-011); lifecycle control is coarse, explicit, engine-mediated. **Async delivery** (stdlib): best-effort lossy per-observer buffered channel + drain goroutine + non-blocking send + drop counter — the track never blocks on an observer; only terminal completion is a guaranteed, blockable signal (a closed `done` channel via `WaitCompletion`). Phased core: deferred lifecycle states/subsystems, fine-grained step control, waiter-shutdown mechanics (2.5 → ADR-006), persistence/history, and the Instance god-object split (2.3) are out of scope. Refines ADR-002 v.2; siblings ADR-001 v.5, ADR-006 v.1 (Accepted), ADR-010 v.2, ADR-011 v.5, ADR-012 v.1, ADR-014 v.1. Accepted at v.1 with pin/standard-claim corrections at acceptance: ADR-002 v.1→v.2; activity-lifecycle §13.2.2→§13.3.2 (the KB attributes it to §13.3.2, p428–429). Conception; implementation rides the SRD. |
+| v.3 | 2026-08-10 | Ruslan Gabitov | **Draft.** Adds §2.11 — the token view carries an optional **iteration view** for a token resting on an activity with loop characteristics: kind, the count fixed at activation (absent for a Standard Loop), the completed count, and one entry per live instance giving its ordinal and what it is doing (executing, waiting, or held by an incident). Absent for every non-iterated node, so a host that ignores it is unaffected. This realizes ADR-025 v.3 §2.9.1: an iterated activity holds ONE token, and iteration state is a property of it — where before, a parallel Multi-Instance over three items appeared as three tokens because the projection derived from the runtime objects executing the instances, reporting the engine's mechanism rather than the model, saying how many instances were parked but never which, and saying nothing at all for a sequential loop. The same shape is used by the durable record and by an incident's iteration section (ADR-036), so the three surfaces share one vocabulary and cannot disagree; the ordinal is the join key across them. §2.6's taxonomy is untouched — iteration state rides the snapshot, not the stream. §1.2 "What the engine has today" is re-tensed to "What the engine had at v.2's authoring": it is the baseline that motivated the v.2 taxonomy, and its complaints (two event kinds, a three-value token projection) were closed by §2.6, so a present-tense title made it read as a current gap. |
