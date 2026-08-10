@@ -101,10 +101,31 @@ Two consequences shape §3:
   to permit it; only the server boundary stays closed.
 - **FR-7 — ADR-003 §5's departure table is closed row by row**, and the document
   moves `Draft` → `Accepted`.
-- **FR-8 — the `script` port ships a battery**: `pkg/script/gofunc`, a registry
-  of named Go functions, wired by default in `internal/enginert` alongside the
-  expression batteries and suppressible by `WithoutDefaultScriptEngines()`. A
-  model containing a Script Task must execute on a stock engine.
+- **FR-8 — the `script` port ships a zero-dependency battery, and an
+  unrunnable model is refused at registration.** Two halves:
+
+  1. `pkg/script/gofunc` — a registry of named Go functions, the same move
+     `gooper` makes for Service Tasks (§4.5). It is **opt-in**, wired in one
+     line by `WithScriptEngine(gofunc.New(…))`, **not** auto-registered: unlike
+     the expression batteries, an auto-wired script engine would be empty, and
+     an engine whose registry can execute nothing is not a battery — it is the
+     `##None` default with a longer name. `##None` therefore remains the
+     zero-config default, and `adapters/lua` remains the right choice for
+     interpreted source.
+
+  2. **`RegisterProcess` refuses a model whose Script Task formats no
+     configured engine claims**, naming each task, its unclaimed format, the
+     formats that ARE registered, and the option to wire one. The walk is deep,
+     so a Script Task inside a Sub-Process is checked too.
+
+  The second half is what makes the first honest. Since the battery is opt-in,
+  a stock engine still cannot run a Script Task — so the engine must say so at
+  the moment the caller can act on it. Before this, such a model registered
+  successfully and failed later inside a running track, asynchronously, as an
+  incident. Refusing a script engine is a legitimate configuration (most
+  processes have no Script Task, and the closed-port model exists precisely so
+  nobody pays for a port they do not use); silently accepting a model that
+  configuration cannot run is not.
 
 - **FR-9 — everything gobpm publishes is provably implementable from outside.**
   One depguard rule: `pkg/**` denies `internal/`, excepting `pkg/thresher/**`.
@@ -232,10 +253,57 @@ unregistered name fails loud **listing the registered names** — the failure a
 modeller actually hits, so it must say what is available rather than only what
 is missing.
 
-Wiring mirrors the expression batteries exactly (`enginert.go:76-79`,
-`WithoutDefaultExpressionEngines`): `internal/enginert` builds a default script
-registry containing the `gofunc` engine, and `WithoutDefaultScriptEngines()`
-starts it empty for the "remove it from the runtime if unused" posture.
+**Wiring does NOT mirror the expression batteries**, and the difference is the
+point. `goexpr` and `lite` are auto-registered because they are useful the
+moment they exist — they carry their whole capability with them. A `gofunc`
+engine carries none: it is empty until the host registers a function, so
+auto-wiring one would advertise a script engine that can execute exactly
+nothing. It is one line to wire when wanted:
+
+```go
+th, err := thresher.New("engine",
+    thresher.WithScriptEngine(gofunc.New(
+        gofunc.WithScript("total", func(
+            ctx context.Context, r service.DataReader,
+        ) (script.Outputs, error) { … }))))
+```
+
+`##None` therefore stays the zero-config default, which leaves the question the
+next subsection answers: what happens to a model that needs a script engine
+nobody wired?
+
+### 3.5 Refusing an unrunnable model at registration
+
+`RegisterProcess` walks the snapshot — deep, so nested Sub-Processes count —
+and refuses any model carrying a Script Task whose `scriptFormat` no configured
+engine claims:
+
+```
+no script engine claims the format of 1 script task(s): "calc" (format
+"text/x-lua") — registered script formats: none; wire one with
+thresher.WithScriptEngine
+```
+
+The check belongs on the model, not on the engine's defaults. A thresher with
+no script engine is a legitimate engine and must stay buildable — most
+processes have no Script Task, and taxing every host to satisfy a port they
+never use is the outcome the closed-port model exists to prevent. What must not
+happen is the engine reporting a model registered and then discovering, inside
+an already-running track, that a token has arrived somewhere nothing can
+execute. Registration is where the caller still holds an error return and has
+changed nothing.
+
+This moves an existing failure earlier rather than inventing one: the
+`##None`-registry error already existed, at execution time, as an incident. Two
+consequences worth recording, because they are visible in the diff:
+
+- **The runtime unclaimed-format path is now unreachable through a registered
+  model**, so it keeps its guard (`Registry.Execute`) and its unit coverage in
+  `pkg/script` as defence for a custom engine whose `Formats()` under-reports.
+- **Three incident tests used an unrunnable Script Task purely as an incident
+  generator.** They now wire an engine that claims the format and fails
+  executing it — the same incident, reached honestly, and it keeps
+  `ScriptTask.Exec`'s failure path covered.
 
 ## 4 Analysis
 
@@ -276,7 +344,7 @@ third-party drivers loaded by blank import; gobpm has no such case, and none is
 planned. The server selects among known constructors from its config
 (ADR-004 §3.5) — a `switch`, not a registry.
 
-### 4.4 Batteries included — one port ships without one
+### 4.4 Batteries included — one port has no zero-dependency one
 
 ADR-002's bundled-default principle says every advertised port arrives with a
 working implementation, so a stock engine runs with no wiring. The audit at
@@ -294,7 +362,7 @@ working implementation, so a stock engine runs with no wiring. The audit at
 | `datastore` | `memstore` |
 | `interactor` | `console` |
 | `model/expression` | `goexpr`, `lite` |
-| **`script`** | **none** — `pkg/script/script.go:9`: "the in-core default is the empty Registry — `##None` — whose execution fails loud" |
+| **`script`** | **out-of-core only** — the in-core default is the empty Registry (`pkg/script/script.go:9`: "`##None`, whose execution fails loud"). A working engine exists, `adapters/lua` (SRD-065), but it is the one port whose only implementation sits outside the core and costs a third-party dependency (`github.com/yuin/gopher-lua`). |
 
 One advertised **adapter** is likewise empty: `adapters/sqlite` is a scaffold —
 one `doc.go`, no implementation — though ADR-002 §4.2 and ADR-003 §4.2 both
@@ -304,16 +372,23 @@ placeholder, and its implementation is filed as
 requires its `doc.go` to point there rather than read as though an
 implementation is imminent (FR-4).
 
-A model containing a **Script Task** — a standard BPMN element the conformance
-ledger counts as covered — therefore cannot execute on a stock engine; the user
-must wire `adapters/lua` or another engine first. Every other standard element
-runs out of the box.
+So the gap is narrower than "the port is unserved", and worth stating precisely:
+a model containing a **Script Task** — a standard BPMN element the conformance
+ledger counts as covered — cannot execute on a **stock** engine. The user must
+first wire `adapters/lua`, which means taking on `gopher-lua`. Every other
+standard element runs out of the box at zero dependency cost.
 
-The likely reason is that a script engine implies an interpreter, and the core
-holds to stdlib + `uuid` (SAD-001 G2). But the same constraint applies to
-Service Tasks, and those ship `pkg/model/service/gooper` — a Go-function
-implementation needing no dependency. The analogous battery for Script Tasks is
-a Go-function script registry, and it is the shape this gap wants.
+`adapters/lua` is not the defect and is not being second-guessed: an
+interpreted-source Script Task genuinely needs an interpreter, the dependency is
+real work the core should not carry, and §4.6's criterion puts it in `adapters/`
+for exactly that reason. The defect is that it is the port's **only** option, so
+"batteries included" holds for eight ports and not the ninth.
+
+The same constraint applies to Service Tasks, and those ship
+`pkg/model/service/gooper` — a Go-function implementation needing no dependency.
+The analogous battery for Script Tasks is a Go-function script registry, and it
+is the shape this gap wants. It does not replace Lua; it sits beside it, the way
+`gooper` sits beside a Service Task talking to a real system.
 
 **Decided at the doc gate: the port gains a `gofunc` battery, in this
 document** (FR-8, §3.4, §4.5).
@@ -346,12 +421,24 @@ actually fits, to be recorded in ADR-003 v.2:
 | **Test** | every user wants it compiled in | you opt into it |
 | **Lives in** | `pkg/<port>/<name>/` — a subpackage of its port | `adapters/<name>/` — its own Go module |
 | **Dependencies** | stdlib + `uuid` only (SAD-001 G2) | may take third-party ones |
-| **Wiring** | wired by `internal/enginert` with no user action | wired explicitly by the user |
-| **Examples** | `memrepo`, `allowall`, `syscl`, `membroker`, `gorules` | `postgres` (pgx), `lua` (gopher-lua), `dtable` (optional DMN capability) |
+| **Wiring** | available with no module dependency; auto-wired when it is complete on its own | wired explicitly by the user |
+| **Examples** | `memrepo`, `allowall`, `syscl`, `membroker`, `gorules`; `gooper` and `gofunc` for the host-content case | `postgres` (pgx), `lua` (gopher-lua), `dtable` (optional DMN capability) |
+
+Two clarifications the criterion needs, both of which the tree already
+demonstrates:
 
 It is *not* "needs a dependency → its own module": `dtable` needs none and is
 still an adapter, because a DMN decision-table engine is not something every
 build should carry.
+
+And **auto-wiring is a consequence of the battery test, not part of it.** A
+battery is auto-wired when it is useful the moment it exists — `memrepo` is a
+working repository as constructed. A battery whose content comes from the host
+is empty until the host fills it, so auto-wiring one would install a default
+that can do nothing: `gooper` (Service Tasks) and `gofunc` (Script Tasks, FR-8)
+are both constructed by the user for that reason, and both are unambiguously
+batteries — `pkg/`-located, dependency-free, and something every build should
+be able to reach for without adding a module.
 
 **Moving the batteries into `adapters/` was considered and rejected.** They are
 separate Go modules, so a battery there could not be wired by core without core
@@ -423,9 +510,9 @@ user copies.
 | T-7 | `TestUseRuntimeReceivesTheResolvedRuntime` | a `RuntimeAware` adapter receives an `EngineRuntime` whose `MetricsRecorder()` is the configured one |
 | T-8 | `TestHealthCheckerIsReachable` | a host can reach `HealthCheck` on a configured adapter |
 | T-9 | conformance-helper self-tests (×4) | each new `<pkg>test` helper passes against its in-repo default and **fails** against a deliberately broken fake — a helper that cannot fail proves nothing |
-| T-11 | `TestScriptTaskRunsOnAStockEngine` | a process with a Script Task naming a registered function executes end to end on `thresher.New` with no engine wiring — the battery's whole point (FR-8) |
-| T-12 | `TestUnregisteredScriptNamesTheRegistered` | an unknown name fails loud and the error lists the registered names |
-| T-13 | `TestWithoutDefaultScriptEnginesIsEmpty` | the suppression option leaves the registry `##None`, preserving today's fail-loud posture for hosts that want it |
+| T-11 | `TestScriptTaskGoFuncBattery` | a Script Task naming a registered Go function executes end to end on a one-line-wired `gofunc` engine, and the observability fact attributes the run to `##GoFunc` — the battery's whole point (FR-8) |
+| T-12 | `TestScriptTaskGoFuncUnknownName` | the format IS claimed, so registration passes and the name resolves only at execution; the failure lists the registered names. Plus `TestGoFuncIdentity`, `TestGoFuncBadRegistration`, `TestGoFuncExecute` at the unit level (empty/nil/duplicate registration, nil reader, the body's own error) |
+| T-13 | `TestScriptTaskNoEngine`, `TestScriptTaskUnclaimedFormat` | `RegisterProcess` refuses a model demanding an unclaimed format, naming the task, the format, the registered claims and `WithScriptEngine` — under both the `##None` default and a non-empty registry that simply does not claim it (FR-8) |
 | T-14 | `make depguard-check` | a throwaway file in a battery package importing `internal/` is denied (FR-9); `pkg/thresher` importing `internal/` still passes, since the facade legitimately does |
 | T-15 | `make lint-all-modules MODULES="$(EXAMPLE_MODULES)"` | reports real issues rather than an unconditional 0 — verified by the probe that returns 1 issue with the exclusion removed and 0 with it present (FR-10) |
 | T-10 | `make depguard-check` | a throwaway file under `examples/` importing `runtime/` is denied (FR-6). Not a committed fixture: once FR-10 lands the examples are genuinely linted, so a permanent violating file would keep the gate red — the check mirrors `consumer-smoke`, which builds a throwaway module for the same reason |

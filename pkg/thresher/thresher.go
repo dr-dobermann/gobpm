@@ -1031,6 +1031,13 @@ func (t *Thresher) RegisterProcess(
 			errs.E(err))
 	}
 
+	// Refuse a model this engine cannot run: a Script Task whose format no
+	// configured engine claims would otherwise fail deep inside a running
+	// instance, long after the caller was told the process registered fine.
+	if err := t.validateScriptCoverage(s); err != nil {
+		return nil, err
+	}
+
 	// Serialize this whole key operation against a concurrent unregister of the
 	// same key: the per-key lock spans the registry mutation AND the hub work
 	// below, so an UnregisterVersion/UnregisterProcess cannot drop the new
