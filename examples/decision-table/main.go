@@ -1,3 +1,7 @@
+// Command decision-table demonstrates the Decision Table engine adapter
+// (adapters/dtable, ADR-029 / SRD-062) — the first out-of-core Business Rule
+// Engine: a JSON decision table deployed from an embedded artifact onto the
+// pluggable seam.
 package main
 
 import (

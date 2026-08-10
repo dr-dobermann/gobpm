@@ -5,7 +5,7 @@
 //
 //	start → [process-payment] ───────────────> end-paid
 //	             ╳ (timer boundary, 2s, interrupting)
-//	             └─> [cancel-order] ─────────> end-cancelled
+//	             └─> [cancel-order] ─────────> end-canceled
 //
 // The process build lives in process.go, the operations in handlers.go; this file is
 // the engine wiring + run.
@@ -32,7 +32,7 @@ func run() error {
   boundary-events:
     start → [process-payment] ───────────────> end-paid
                  ╳ (timer boundary, 2s, interrupting)
-                 └─> [cancel-order] ─────────> end-cancelled
+                 └─> [cancel-order] ─────────> end-canceled
 
 `)
 

@@ -17,7 +17,7 @@ import (
 //	               └─ process-payment ──> payment-done
 //
 // The fraud check finishes first and reaches a Terminate End Event, which abnormally
-// terminates the whole instance — cancelling the in-flight payment mid-charge.
+// terminates the whole instance — canceling the in-flight payment mid-charge.
 func buildProcess(ran *pathSet) (*process.Process, error) {
 	proc, err := process.New("terminate-end-event")
 	if err != nil {

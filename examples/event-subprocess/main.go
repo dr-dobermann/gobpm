@@ -1,3 +1,6 @@
+// Command event-subprocess demonstrates an interrupting Event Sub-Process
+// (ADR-023 v.2 / SRD-052): a scope-armed handler — a SubProcess marked
+// triggeredByEvent — that interrupts its enclosing scope when it fires.
 package main
 
 import (

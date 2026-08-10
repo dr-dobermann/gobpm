@@ -31,7 +31,7 @@ import (
 
 // timerDelay is how long the start event's timer waits before instantiating
 // the process. The timer definition and the example's own assertion both read
-// it, so the check can never drift away from the behaviour it is checking.
+// it, so the check can never drift away from the behavior it is checking.
 const timerDelay = 3 * time.Second
 
 func main() {
@@ -67,7 +67,7 @@ func main() {
 	timeExpr := goexpr.Must(
 		nil,
 		data.MustItemDefinition(values.NewVariable(time.Now().Add(timerDelay))),
-		func(ctx context.Context, ds data.Source) (data.Value, error) {
+		func(_ context.Context, _ data.Source) (data.Value, error) {
 			return values.NewVariable(time.Now().Add(timerDelay)), nil
 		},
 		foundation.WithID("timer-3s"),

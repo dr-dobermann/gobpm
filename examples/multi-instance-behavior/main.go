@@ -1,3 +1,6 @@
+// Command multi-instance-behavior demonstrates a BPMN Multi-Instance behavior
+// (§13.3.7, ADR-025 §2.8, SRD-056.B): an activity throws a boundary-catchable
+// event as its instances complete, so a model can react to progress.
 package main
 
 import (
@@ -44,9 +47,9 @@ func run() error {
 	}
 
 	// Records votes and the notification in order, so the quorum claim holds.
-	log := newRunLog()
+	runLog := newRunLog()
 
-	proc, err := buildProcess(log)
+	proc, err := buildProcess(runLog)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -69,11 +72,11 @@ func run() error {
 	// would print the same line and finish the same way. It fires once per
 	// completion at or past the threshold, so the count is not fixed; what is
 	// checkable is that it never fires early.
-	if got := log.count("vote"); got != len(reviewers) {
+	if got := runLog.count("vote"); got != len(reviewers) {
 		return fmt.Errorf("%d reviewers voted, want %d", got, len(reviewers))
 	}
 
-	if err := log.precede("notify", "vote", quorumSize); err != nil {
+	if err := runLog.precede("notify", "vote", quorumSize); err != nil {
 		return fmt.Errorf("quorum: %w", err)
 	}
 

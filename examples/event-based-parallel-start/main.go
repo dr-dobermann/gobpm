@@ -1,3 +1,7 @@
+// Command event-based-parallel-start demonstrates a process started by an
+// event gateway (BPMN §13.2): two correlated messages instantiate one
+// instance through a parallel instantiating Event-Based gateway that has
+// neither an incoming flow nor a start event.
 package main
 
 import (

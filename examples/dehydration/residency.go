@@ -14,8 +14,8 @@ import (
 // goroutines; Hydrated says what woke it and whether the wake continued the
 // flow or finished the instance.
 type residency struct {
-	mu    sync.Mutex
 	seen  map[observability.Phase]int
+	mu    sync.Mutex
 	quiet bool
 }
 

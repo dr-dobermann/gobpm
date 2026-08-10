@@ -1,3 +1,6 @@
+// Command compensation-events demonstrates BPMN compensation (SRD-059,
+// ADR-026): undoing work a completed activity already did, driven by a
+// compensation throw that fires each registered handler in reverse order.
 package main
 
 import (
@@ -35,9 +38,9 @@ func run() error {
 	}
 
 	// Records the execution order, so the reverse-order claim is checked.
-	log := newRunLog()
+	runLog := newRunLog()
 
-	proc, err := buildProcess(log)
+	proc, err := buildProcess(runLog)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -65,7 +68,7 @@ func run() error {
 
 	// Reverse order is the claim: hotel and flight are booked forwards, and
 	// the Compensation End Event must undo the LAST completed activity first.
-	if err := log.check(
+	if err := runLog.check(
 		"book-hotel", "book-flight", "undo-flight", "undo-hotel",
 	); err != nil {
 		return fmt.Errorf("compensation order: %w", err)

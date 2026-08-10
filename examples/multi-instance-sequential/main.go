@@ -1,3 +1,6 @@
+// Command multi-instance-sequential demonstrates a BPMN sequential
+// Multi-Instance activity (§13.3.7, SRD-055): the activity runs once per
+// element of an input collection, the instances running one after another.
 package main
 
 import (

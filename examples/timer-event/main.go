@@ -26,7 +26,7 @@ import (
 
 // timerDelay is how long the start event's timer holds the token. The timer
 // definition and the example's own assertion both read it, so the check can
-// never drift away from the behaviour it is checking.
+// never drift away from the behavior it is checking.
 const timerDelay = 5 * time.Second
 
 func main() {
@@ -51,7 +51,7 @@ func main() {
 	timeExpr := goexpr.Must(
 		nil, // no data source needed for static time
 		data.MustItemDefinition(values.NewVariable(time.Now().Add(timerDelay))),
-		func(ctx context.Context, ds data.Source) (data.Value, error) {
+		func(_ context.Context, _ data.Source) (data.Value, error) {
 			return values.NewVariable(time.Now().Add(timerDelay)), nil
 		},
 		foundation.WithID("time-plus-5s"),

@@ -22,13 +22,13 @@ func intValue(v int) data.Value { return values.NewVariable(v) }
 // buildProcess assembles the order flow with the fulfillment fragment as
 // an embedded sub-process:
 //
-//	start → accept → fulfil[ start → pick → pack → end ] → notify → end
+//	start → accept → fulfill[ start → pick → pack → end ] → notify → end
 //
 // The fragment runs in its own scope: pick/pack read the parent's
 // order-id through the walk-up, their scratch data stays scoped, and the
 // parent resumes only when the fragment drains (BPMN §13.3.4).
 func buildProcess(saw *sightings) (*process.Process, error) {
-	fulfil, err := activities.NewSubProcess("fulfil")
+	fulfill, err := activities.NewSubProcess("fulfill")
 	if err != nil {
 		return nil, fmt.Errorf("create sub-process: %w", err)
 	}
@@ -54,8 +54,8 @@ func buildProcess(saw *sightings) (*process.Process, error) {
 	}
 
 	for _, e := range []flow.Element{fStart, pick, pack, fEnd} {
-		if err = fulfil.Add(e); err != nil {
-			return nil, fmt.Errorf("add into fulfil: %w", err)
+		if err = fulfill.Add(e); err != nil {
+			return nil, fmt.Errorf("add into fulfill: %w", err)
 		}
 	}
 
@@ -89,7 +89,7 @@ func buildProcess(saw *sightings) (*process.Process, error) {
 		return nil, fmt.Errorf("create end: %w", err)
 	}
 
-	for _, e := range []flow.Element{start, accept, fulfil, notify, end} {
+	for _, e := range []flow.Element{start, accept, fulfill, notify, end} {
 		if err := proc.Add(e); err != nil {
 			return nil, fmt.Errorf("add element: %w", err)
 		}
@@ -100,8 +100,8 @@ func buildProcess(saw *sightings) (*process.Process, error) {
 		func() error { _, e := flow.Link(pick, pack); return e },
 		func() error { _, e := flow.Link(pack, fEnd); return e },
 		func() error { _, e := flow.Link(start, accept); return e },
-		func() error { _, e := flow.Link(accept, fulfil); return e },
-		func() error { _, e := flow.Link(fulfil, notify); return e },
+		func() error { _, e := flow.Link(accept, fulfill); return e },
+		func() error { _, e := flow.Link(fulfill, notify); return e },
 		func() error { _, e := flow.Link(notify, end); return e },
 	}
 	for _, link := range links {

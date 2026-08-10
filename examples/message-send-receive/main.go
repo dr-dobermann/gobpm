@@ -195,7 +195,7 @@ func run() error {
 
 	fmt.Printf("  ✓ send-order published %q\n", orderID)
 	fmt.Printf("  ✓ receive-order bound it into received-order = %q\n", received)
-	fmt.Println("✓ message-demo completed: the message travelled the broker " +
+	fmt.Println("✓ message-demo completed: the message traveled the broker " +
 		"from the SendTask to the ReceiveTask")
 
 	return nil

@@ -19,8 +19,8 @@ import (
 // WaitCompletion returns, and an example that asserted on them would be flaky
 // for reasons that have nothing to do with timers.
 type notices struct {
-	mu   sync.Mutex
 	seen []string
+	mu   sync.Mutex
 }
 
 // mark appends one fired notification.

@@ -95,9 +95,11 @@ func waitOpenIncident(
 	deadline := time.Now().Add(10 * time.Second)
 
 	for time.Now().Before(deadline) {
-		for _, v := range h.Incidents() {
+		views := h.Incidents()
+		for i := range views {
+			v := &views[i]
 			if v.State == "open" && v.Attempts == 2 && v.RetryAt.IsZero() {
-				return v, nil
+				return *v, nil
 			}
 		}
 

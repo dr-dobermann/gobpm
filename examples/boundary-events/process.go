@@ -18,7 +18,7 @@ import (
 //
 //	start → [process-payment] ───────────────> end-paid
 //	             ╳ (timer boundary, 2s, interrupting)
-//	             └─> [cancel-order] ─────────> end-cancelled
+//	             └─> [cancel-order] ─────────> end-canceled
 //
 // The 2s interrupting timer boundary fires before the ~4s payment finishes, so the
 // engine cancels the payment track, discards its result, and routes a token onto the
@@ -50,9 +50,9 @@ func buildProcess(ran *pathSet) (*process.Process, error) {
 		return nil, fmt.Errorf("end-paid: %w", err)
 	}
 
-	endCancelled, err := events.NewEndEvent("end-cancelled")
+	endCancelled, err := events.NewEndEvent("end-canceled")
 	if err != nil {
-		return nil, fmt.Errorf("end-cancelled: %w", err)
+		return nil, fmt.Errorf("end-canceled: %w", err)
 	}
 
 	boundary, err := timerBoundary("payment-timeout", payment, 2*time.Second)

@@ -21,7 +21,7 @@ func (operator) Groups() []string { return nil }
 // That delay is the example's subject. The approval is meant to breach its SLA,
 // so every mark fires while the task is still open — which is exactly what a
 // NON-interrupting boundary is for. With an interrupting one the first mark
-// would have cancelled the very work it was warning about.
+// would have canceled the very work it was warning about.
 type slowOperator struct {
 	eng  *thresher.Thresher
 	hold time.Duration

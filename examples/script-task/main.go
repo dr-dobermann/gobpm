@@ -1,3 +1,6 @@
+// Command script-task demonstrates the Script Task on the multi-engine Script
+// Engine seam (ADR-031 / SRD-064) with the Lua interpreter adapter
+// (adapters/lua, SRD-065): a plain .lua file, embedded and editable.
 package main
 
 import (

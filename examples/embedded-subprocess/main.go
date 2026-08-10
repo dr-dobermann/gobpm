@@ -24,7 +24,7 @@ func main() {
 func run() error {
 	fmt.Print(`
   embedded-subprocess:
-    start → accept → fulfil[ pick → pack ] → notify → end
+    start → accept → fulfill[ pick → pack ] → notify → end
 
 `)
 

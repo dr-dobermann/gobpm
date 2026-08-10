@@ -166,7 +166,7 @@ func run() error {
 
 	fmt.Printf("  ✓ throw-order published %q\n", orderID)
 	fmt.Printf("  ✓ catch-order bound it; confirm read order_in = %q\n", got)
-	fmt.Println("✓ message-events-demo completed: the message travelled the " +
+	fmt.Println("✓ message-events-demo completed: the message traveled the " +
 		"broker from the throw event to the catch event")
 
 	return nil

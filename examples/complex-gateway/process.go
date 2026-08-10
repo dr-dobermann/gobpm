@@ -123,7 +123,10 @@ func approverTasks(ran *pathSet) ([]flow.Element, error) {
 func wire(
 	start, split, join, finalize, end flow.Element, approvers []flow.Element,
 ) error {
-	links := [][2]flow.Element{{start, split}}
+	// start→split, two per approver, then join→finalize→end.
+	links := make([][2]flow.Element, 0, 1+2*len(approvers)+2)
+	links = append(links, [2]flow.Element{start, split})
+
 	for _, ap := range approvers {
 		links = append(links, [2]flow.Element{split, ap}, [2]flow.Element{ap, join})
 	}

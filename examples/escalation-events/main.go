@@ -1,3 +1,6 @@
+// Command escalation-events demonstrates Escalation events (SRD-058): a
+// non-critical signal a sub-process raises to hand a business condition to an
+// enclosing handler, without faulting the instance.
 package main
 
 import (

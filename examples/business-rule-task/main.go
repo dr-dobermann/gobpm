@@ -1,3 +1,7 @@
+// Command business-rule-task demonstrates the Business Rule Task on the
+// pluggable Business Rule Engine seam (ADR-027, SRD-060): the task calls a
+// named decision on the configured engine and commits the result to process
+// data.
 package main
 
 import (

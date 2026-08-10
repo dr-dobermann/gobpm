@@ -91,7 +91,7 @@ func register(
 }
 
 // startAndWait consumes a Start* call's (handle, error) result, runs the
-// instance to completion, and prints the labelled outcome. Threading the Start*
+// instance to completion, and prints the labeled outcome. Threading the Start*
 // result straight in keeps each call site a single readable line.
 func startAndWait(
 	ctx context.Context,

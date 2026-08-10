@@ -1,3 +1,6 @@
+// Command transaction-sub-process demonstrates a Transaction Sub-Process
+// (SRD-061, ADR-028): a Sub-Process variant that aborts atomically on a Cancel
+// End Event — the ACID-style all-or-nothing unit in BPMN form.
 package main
 
 import (
@@ -38,9 +41,9 @@ func run() error {
 	}
 
 	// Records the execution order, so the reverse-order claim is checked.
-	log := newRunLog()
+	runLog := newRunLog()
 
-	proc, err := buildProcess(log)
+	proc, err := buildProcess(runLog)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -71,7 +74,7 @@ func run() error {
 	// reserve then charge), and only afterwards does control leave through
 	// the Cancel boundary to notify-customer. A run that notified first, or
 	// undid forwards, would execute every task and complete just the same.
-	if err := log.check(
+	if err := runLog.check(
 		"reserve-seat", "charge-card",
 		"refund-card", "release-seat",
 		"notify-customer",

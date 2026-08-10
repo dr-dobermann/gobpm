@@ -1,3 +1,6 @@
+// Command signal-start demonstrates a broadcast signal CREATING process
+// instances with no StartProcess call: two processes registered with a signal
+// Start Event on the same signal are both instantiated by one broadcast.
 package main
 
 import (
