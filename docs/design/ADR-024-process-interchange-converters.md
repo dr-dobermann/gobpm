@@ -179,8 +179,8 @@ build/read the model), holds **all** `encoding/xml` code, and self-registers:
 ```go
 // package bpmn  (github.com/dr-dobermann/gobpm/pkg/convert/bpmn)
 func init() {
-	convert.MustRegisterImporter(convert.BPMN, importer{})
-	convert.MustRegisterExporter(convert.BPMN, exporter{})
+	convert.RegisterImporterAtInit(convert.BPMN, importer{})
+	convert.RegisterExporterAtInit(convert.BPMN, exporter{})
 }
 ```
 

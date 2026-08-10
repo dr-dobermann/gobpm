@@ -20,7 +20,7 @@ XPDL, a JSON DSL, or a vendor dialect without touching core.
 |---|---|
 | Package | `github.com/dr-dobermann/gobpm/pkg/convert` |
 | Interfaces | `convert.Importer`, `convert.Exporter` |
-| Registration | `convert.RegisterImporter` / `RegisterExporter` (or the `Must…` twins, from `init()`) |
+| Registration | `convert.RegisterImporter` / `RegisterExporter` (or the `…AtInit` twins, from `init()`) |
 | Consumed by | your host code — **not** the engine |
 | Built-in | [`pkg/convert/bpmn`](../../../pkg/convert/bpmn) — BPMN 2.0 XML, both directions |
 
@@ -137,7 +137,7 @@ func (importer) Import(ctx context.Context, r io.Reader) (*process.Process, erro
 }
 
 func init() { //nolint:gochecknoinits // register-by-format-key, image.RegisterFormat idiom
-	convert.MustRegisterImporter(XPDL, importer{})
+	convert.RegisterImporterAtInit(XPDL, importer{})
 }
 ```
 
@@ -147,9 +147,12 @@ register one and the other direction reports *unknown format*.
 
 Rules the registry enforces on your behalf: a blank `Format` is rejected, a nil
 implementation is rejected, and registering the same `(format, direction)`
-twice is rejected. `MustRegisterImporter` panics on those — correct for
-`init()`, where an error has nowhere to go — while `RegisterImporter` returns
-them if you register at runtime.
+twice is rejected. `RegisterImporter` returns those if you register at runtime.
+`RegisterImporterAtInit` has no caller to return to, so it **records** the
+failure against the format and `Import`/`Export` return it on first use — a
+deliberate choice over panicking at load time: an embedder that never touches
+your format is not killed by a converter it does not use, and one that does
+gets the cause through the ordinary error path rather than a stack trace.
 
 ## Running it end to end
 
