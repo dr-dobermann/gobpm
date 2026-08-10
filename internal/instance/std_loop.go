@@ -86,7 +86,13 @@ func (t *track) executeStep(
 		}
 	}
 
-	return t.executeNode(ctx, step)
+	// A node with no loop characteristics has exactly ONE instance, and it
+	// runs through the executor that will hold every instance once the
+	// iteration branches above move onto decorators (SRD-088.A M1, ADR-025
+	// v.3 §2.13). Ordinal 0: a non-iterated activity is instance zero of
+	// one, which keeps the identity uniform rather than special-casing the
+	// common case.
+	return execFor(t, step).run(ctx)
 }
 
 // runStandardLoop executes a leaf activity repeatedly while its loopCondition
