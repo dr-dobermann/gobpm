@@ -94,12 +94,12 @@ func buildProcess(ran *pathSet) (*process.Process, error) {
 		start, intake, fxAudit, xor, urgent, standard, approve,
 		endApproved, endStandard, endAudited,
 	} {
-		if err := proc.Add(e); err != nil {
+		if err = proc.Add(e); err != nil {
 			return nil, fmt.Errorf("add %q: %w", e.Name(), err)
 		}
 	}
 
-	if _, err := flow.Link(start, intake); err != nil {
+	if _, err = flow.Link(start, intake); err != nil {
 		return nil, fmt.Errorf("link start: %w", err)
 	}
 
@@ -110,12 +110,12 @@ func buildProcess(ran *pathSet) (*process.Process, error) {
 		return nil, fmt.Errorf("premium condition: %w", err)
 	}
 
-	if _, err := flow.Link(intake, xor,
+	if _, err = flow.Link(intake, xor,
 		flow.WithCondition(premiumCond)); err != nil {
 		return nil, fmt.Errorf("link intake→xor: %w", err)
 	}
 
-	if _, err := flow.Link(intake, fxAudit,
+	if _, err = flow.Link(intake, fxAudit,
 		flow.WithCondition(eurRateOK())); err != nil {
 		return nil, fmt.Errorf("link intake→fx-audit: %w", err)
 	}
@@ -127,7 +127,7 @@ func buildProcess(ran *pathSet) (*process.Process, error) {
 		return nil, fmt.Errorf("urgent condition: %w", err)
 	}
 
-	if _, err := flow.Link(xor, urgent,
+	if _, err = flow.Link(xor, urgent,
 		flow.WithCondition(urgentCond)); err != nil {
 		return nil, fmt.Errorf("link xor→urgent: %w", err)
 	}

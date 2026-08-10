@@ -54,7 +54,7 @@ func buildProcess(saw *sightings) (*process.Process, error) {
 	}
 
 	for _, e := range []flow.Element{fStart, pick, pack, fEnd} {
-		if err := fulfil.Add(e); err != nil {
+		if err = fulfil.Add(e); err != nil {
 			return nil, fmt.Errorf("add into fulfil: %w", err)
 		}
 	}

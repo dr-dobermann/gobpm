@@ -100,9 +100,9 @@ func run() error {
 	confirmOp, err := gooper.New("confirm-op",
 		func(ctx context.Context, r service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
-			got, err := r.GetDataByID("order_in")
-			if err != nil {
-				return nil, fmt.Errorf("read order_in: %w", err)
+			got, readErr := r.GetDataByID("order_in")
+			if readErr != nil {
+				return nil, fmt.Errorf("read order_in: %w", readErr)
 			}
 
 			done <- fmt.Sprintf("%v", got.Value().Get(ctx))

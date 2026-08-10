@@ -84,7 +84,7 @@ func run() error {
 	}
 
 	for _, e := range []flow.Element{start, split, workerA, workerB, join, end} {
-		if err := proc.Add(e); err != nil {
+		if err = proc.Add(e); err != nil {
 			return fmt.Errorf("add element: %w", err)
 		}
 	}
@@ -97,19 +97,19 @@ func run() error {
 		{workerA, join}, {workerB, join},
 		{join, end},
 	} {
-		if err := link(l[0], l[1]); err != nil {
+		if err = link(l[0], l[1]); err != nil {
 			return err
 		}
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 

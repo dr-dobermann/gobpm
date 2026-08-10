@@ -48,18 +48,18 @@ func run() error {
 		return fmt.Errorf("build thrower: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(catcher); err != nil {
+	if _, err = engine.RegisterProcess(catcher); err != nil {
 		return fmt.Errorf("register catcher: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(thrower); err != nil {
+	if _, err = engine.RegisterProcess(thrower); err != nil {
 		return fmt.Errorf("register thrower: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 

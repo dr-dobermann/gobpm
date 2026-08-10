@@ -57,7 +57,7 @@ func buildProcess(count *int) (*process.Process, error) {
 	for _, e := range []flow.Element{
 		start, throwInit, catchLoop, work, xor, throwBack, end,
 	} {
-		if err := proc.Add(e); err != nil {
+		if err = proc.Add(e); err != nil {
 			return nil, fmt.Errorf("add element: %w", err)
 		}
 	}
@@ -73,7 +73,7 @@ func buildProcess(count *int) (*process.Process, error) {
 	}
 
 	// xor -[count<3]-> throw"repeat" (back-edge) ; xor -default-> end
-	if _, err := flow.Link(xor, throwBack, flow.WithCondition(cond)); err != nil {
+	if _, err = flow.Link(xor, throwBack, flow.WithCondition(cond)); err != nil {
 		return nil, fmt.Errorf("link back-edge: %w", err)
 	}
 

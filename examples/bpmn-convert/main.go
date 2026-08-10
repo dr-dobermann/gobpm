@@ -70,7 +70,7 @@ func run() error {
 	fmt.Printf("registered key=%q version=%d (ADR-019 version key = BPMN process id)\n",
 		reg.Key(), reg.Version())
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 

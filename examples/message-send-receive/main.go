@@ -112,7 +112,7 @@ func run() error {
 		return fmt.Errorf("create result object: %w", err)
 	}
 
-	if err := receivedDO.AssociateSource(
+	if err = receivedDO.AssociateSource(
 		receive, []string{"order_in"}, nil); err != nil {
 		return fmt.Errorf("bind result object: %w", err)
 	}

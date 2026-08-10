@@ -65,16 +65,16 @@ func buildProcess(amount int, ran *pathSet) (*process.Process, error) {
 	}
 
 	for _, e := range []flow.Element{start, xor, review, approve, endR, endA} {
-		if err := proc.Add(e); err != nil {
+		if err = proc.Add(e); err != nil {
 			return nil, fmt.Errorf("add element: %w", err)
 		}
 	}
 
-	if _, err := flow.Link(start, xor); err != nil {
+	if _, err = flow.Link(start, xor); err != nil {
 		return nil, fmt.Errorf("link start->xor: %w", err)
 	}
 
-	if _, err := flow.Link(xor, review,
+	if _, err = flow.Link(xor, review,
 		flow.WithCondition(amountGt1000())); err != nil {
 		return nil, fmt.Errorf("link xor->review: %w", err)
 	}

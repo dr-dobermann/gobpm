@@ -93,10 +93,10 @@ func main() {
 	}
 
 	// Add elements to process
-	if err := proc.Add(timerStart); err != nil {
+	if err = proc.Add(timerStart); err != nil {
 		log.Fatal("Failed to add timer start to process:", err)
 	}
-	if err := proc.Add(endEvent); err != nil {
+	if err = proc.Add(endEvent); err != nil {
 		log.Fatal("Failed to add end event to process:", err)
 	}
 
@@ -107,7 +107,7 @@ func main() {
 	}
 
 	// Register and start engine
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		log.Fatal("Failed to register process:", err)
 	}
 
@@ -116,7 +116,7 @@ func main() {
 
 	started := time.Now()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		log.Fatal("Failed to start engine:", err)
 	}
 

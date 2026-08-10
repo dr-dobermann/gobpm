@@ -34,9 +34,9 @@ func buildCallee() (*process.Process, error) {
 	op, err := gooper.New("tax",
 		func(ctx context.Context, ds service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
-			d, err := ds.GetData("subtotal")
-			if err != nil {
-				return nil, err
+			d, readErr := ds.GetData("subtotal")
+			if readErr != nil {
+				return nil, readErr
 			}
 
 			sub, _ := d.Value().Get(ctx).(int)

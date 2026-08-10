@@ -104,7 +104,7 @@ func main() {
 
 	// Add elements to process
 	for _, element := range []flow.Element{timerEvent, serviceTask, endEvent} {
-		if err := proc.Add(element); err != nil {
+		if err = proc.Add(element); err != nil {
 			log.Fatal("Failed to add element to process:", err)
 		}
 	}

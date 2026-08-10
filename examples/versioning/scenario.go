@@ -31,19 +31,19 @@ func demonstrateVersioning(
 
 	// Latest is now v2 — StartLatest resolves the highest version number.
 	h, err := engine.StartLatest(processKey)
-	if err := startAndWait(ctx, ran, "StartLatest        → expects v2", "v2", h, err); err != nil {
+	if err = startAndWait(ctx, ran, "StartLatest        → expects v2", "v2", h, err); err != nil {
 		return err
 	}
 
 	// Pin an older version explicitly, by number, without holding its handle.
 	h, err = engine.StartVersion(processKey, 1)
-	if err := startAndWait(ctx, ran, "StartVersion(key,1)→ expects v1", "v1", h, err); err != nil {
+	if err = startAndWait(ctx, ran, "StartVersion(key,1)→ expects v1", "v1", h, err); err != nil {
 		return err
 	}
 
 	// Same version, addressed by the registration handle returned earlier.
 	h, err = engine.StartProcess(v1)
-	if err := startAndWait(ctx, ran, "StartProcess(v1)   → expects v1", "v1", h, err); err != nil {
+	if err = startAndWait(ctx, ran, "StartProcess(v1)   → expects v1", "v1", h, err); err != nil {
 		return err
 	}
 
@@ -52,7 +52,7 @@ func demonstrateVersioning(
 
 	// Unregister the latest (v2): promote-on-removal makes v1 the latest again,
 	// symmetric with how registering v2 superseded v1.
-	if err := engine.UnregisterVersion(v2); err != nil {
+	if err = engine.UnregisterVersion(v2); err != nil {
 		return fmt.Errorf("unregister v2: %w", err)
 	}
 
@@ -60,7 +60,7 @@ func demonstrateVersioning(
 		versionList(engine))
 
 	h, err = engine.StartLatest(processKey)
-	if err := startAndWait(ctx, ran, "StartLatest        → expects v1 (promoted)", "v1", h, err); err != nil {
+	if err = startAndWait(ctx, ran, "StartLatest        → expects v1 (promoted)", "v1", h, err); err != nil {
 		return err
 	}
 

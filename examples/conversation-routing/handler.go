@@ -59,14 +59,14 @@ func newHandler(done chan<- string) (*process.Process, error) {
 	reportOp, err := gooper.New("report-op",
 		func(ctx context.Context, r service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
-			order, err := r.GetDataByID(orderItem)
-			if err != nil {
-				return nil, fmt.Errorf("read %q: %w", orderItem, err)
+			order, readErr := r.GetDataByID(orderItem)
+			if readErr != nil {
+				return nil, fmt.Errorf("read %q: %w", orderItem, readErr)
 			}
 
-			pay, err := r.GetDataByID(payItem)
-			if err != nil {
-				return nil, fmt.Errorf("read %q: %w", payItem, err)
+			pay, readErr := r.GetDataByID(payItem)
+			if readErr != nil {
+				return nil, fmt.Errorf("read %q: %w", payItem, readErr)
 			}
 
 			done <- fmt.Sprintf("%v/%v",
