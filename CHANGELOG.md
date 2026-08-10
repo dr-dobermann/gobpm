@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `%v` over an engine object no longer reflects across it**
+  (FIX-040, closes #314). `Instance` and its tracks now implement
+  `fmt.Stringer`, rendering as their element id. Without it, anything
+  formatting one with `%v` — a log line, an error, a test double's
+  argument matcher — walked the struct through reflection, reading the
+  correlator's maps and the mutexes guarding them from whatever
+  goroutine happened to be formatting. That read takes no lock and
+  cannot: `fmt` reaches the fields behind the type's back. The visible
+  symptom was a `-race` report whose every frame was engine code
+  holding its locks correctly. Diagnostics improve as a side effect —
+  an instance prints as its identity rather than a page of internals.
+
 ### Changed
 
 - **BREAKING: instance discovery queries compose** (SRD-084, closes

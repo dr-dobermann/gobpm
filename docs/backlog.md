@@ -55,14 +55,6 @@ and "examples assert their own outcome" as plain commits on
   decorated. Until it lands, `snapshot.New` **refuses** such a model at build
   time with a message pointing at the sub-process workaround (SRD-086) — the
   refusal is the placeholder, not a fix.
-- **A restore racing a previous incarnation's teardown** — [#314]. Restoring a
-  message-routing instance while the instance it was captured from is still
-  draining trips `-race` between `loopState.stopAll` and the new loop's first
-  checkpoint. Refuted as a general property of capture-then-restore (the ad-hoc
-  family is clean over 15 `-race` runs), so the trigger is narrower and unnamed.
-  It blocks a multi-iteration restore test for correlated routing (SRD-085
-  covers only the single-remaining-iteration shortcut), and if the shared state
-  is real it is a recovery-window defect rather than a test one.
 - **Audit findings** — disposition in
   [`audit/remediation-status.md`](audit/remediation-status.md), design deferrals
   in [`audit/audit-backlog.md`](audit/audit-backlog.md). Both maintain their own
@@ -72,4 +64,3 @@ and "examples assert their own outcome" as plain commits on
   (ADR-033) — it belongs to the durable-Repository work in **E2**.
 
 [#313]: https://github.com/dr-dobermann/gobpm/issues/313
-[#314]: https://github.com/dr-dobermann/gobpm/issues/314
