@@ -61,12 +61,26 @@ linters:
           deny:
             - pkg: "github.com/dr-dobermann/gobpm/internal"
               desc: "examples demonstrate public API only (ADR-003 §4.4)"
-        model-no-internal:
+        # Everything under pkg/ is a public contract an outside author must be
+        # able to implement — a port, its bundled battery, or a model type — so
+        # none of it may reach into internal/. That is what lets a battery serve
+        # as the reference implementation someone copies (SRD-088 FR-9).
+        #
+        # pkg/thresher is the sole exception: it is the engine facade, wiring
+        # internals rather than implementing a port (49 such imports; every
+        # other package under pkg/ has none). It has no subpackages, so a single
+        # negation covers it — and note the pattern is `.../thresher/*.go`, not
+        # `.../thresher/**/*.go`: the latter requires an intervening directory
+        # and silently matches nothing.
+        #
+        # Supersedes model-no-internal, which this strictly contains.
+        public-api-no-internal:
           files:
-            - "**/pkg/model/**/*.go"
+            - "**/pkg/**/*.go"
+            - "!**/pkg/thresher/*.go"
           deny:
             - pkg: "github.com/dr-dobermann/gobpm/internal"
-              desc: "pkg/model is the public modeling API; it MUST NOT import internal (ADR-012, ADR-003 §4.4)"
+              desc: "pkg/ is the public contract surface; it MUST NOT import internal (ADR-003 §4.4). If this is engine wiring rather than a public contract, it belongs in internal/ or in the pkg/thresher facade."
         adapters-no-cross-adapter:
           files:
             - "**/adapters/**/*.go"
