@@ -195,7 +195,7 @@ func buildDefinitions(ctx context.Context, p *process.Process) (*xmlDefinitions,
 	// interface catalog.
 	opsByID := map[string]service.Operation{}
 
-	for _, n := range p.Nodes() {
+	for _, n := range orderNodes(p.Nodes(), p.Flows()) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -208,7 +208,7 @@ func buildDefinitions(ctx context.Context, p *process.Process) (*xmlDefinitions,
 		proc.Elements = append(proc.Elements, *xn)
 	}
 
-	for _, f := range p.Flows() {
+	for _, f := range orderFlows(p.Flows()) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -296,9 +296,16 @@ func nodeXML(n flow.Node, opsByID map[string]service.Operation) (*xmlNode, error
 	case *gateways.ExclusiveGateway:
 		tag = tagExclusiveGateway
 		setGatewayAttrs(xn, &v.Gateway)
+		setDefaultFlow(xn, &v.Gateway)
 
 	case *gateways.ParallelGateway:
 		tag = tagParallelGateway
+		// No setDefaultFlow: BPMN §13.4.1 gives the parallel gateway no
+		// default attribute — it takes one token from each incoming flow
+		// and puts one on each outgoing, so there is no condition to fall
+		// through. The model lets any gateway carry a default flow
+		// (UpdateDefaultFlow is on the shared base), so writing it for
+		// every kind emitted a document no BPMN schema accepts.
 		setGatewayAttrs(xn, &v.Gateway)
 
 	default:
@@ -335,14 +342,19 @@ func setServiceTaskAttrs(
 	}
 }
 
-// setGatewayAttrs fills gatewayDirection (omitted when Unspecified — the
-// schema default) and, for gateways with a default flow, the default
-// attribute.
+// setGatewayAttrs fills gatewayDirection, omitted when Unspecified — the
+// schema default. Every gateway kind carries a direction.
 func setGatewayAttrs(xn *xmlNode, g *gateways.Gateway) {
 	if dir := g.Direction(); dir != gateways.Unspecified {
 		xn.Direction = string(dir)
 	}
+}
 
+// setDefaultFlow fills the default attribute. It is called only for the
+// gateway kinds the standard gives one — the exclusive gateway here, and
+// the inclusive and complex gateways when they land — never for the
+// parallel gateway (BPMN §13.4.1).
+func setDefaultFlow(xn *xmlNode, g *gateways.Gateway) {
 	if df := g.DefaultFlow(); df != nil {
 		xn.Default = df.ID()
 	}
