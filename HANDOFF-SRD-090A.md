@@ -9,9 +9,24 @@ Nothing pushed. Last gate: `make ci` **PASS**, 14/14, head `0e1a378d`,
 diff-coverage **97.8%** of 506 changed lines.
 
 **Task** issue **#313** — the iteration decorator should own the decorated
-node's event registration. This branch is `Part of #313`, not `Closes`: the
-refusal #313 describes is retired by SRD-090.**B**, which cannot start until
-SRD-090.A lands.
+node's event registration. **This branch is meant to CLOSE #313.**
+
+An earlier framing had it as `Part of #313`, with the refusal retiring in a
+future SRD-090.B. That defers the issue's own subject: SRD-090.A builds the
+executor model and the record, and FR-10 deliberately keeps the
+`snapshot.go` refusal, so on its own it closes nothing. **SRD-090.B is
+therefore in scope for this branch**, and the PR closes the issue.
+
+It is narrower than the four-slice framing suggests. SRD-090.C (token /
+incident surfaces) and SRD-090.D (result strategies) do not touch the
+refusal — only B does. Its design is already accepted-in-draft as
+**ADR-006 v.6 §2.9.5** (the decorator as subscriber), so B is an
+implementation spec, not a new design. The model is already built for it:
+`awaitEvent` is an `awaitKind` today, and `iterDecorator.refuseIfParked` is
+the guard that fires the day the refusal lifts. This session's eventhub
+fixes (M2c/M2d) are on the same path — N iteration instances registering
+against one shared event definition IS the joining-processor case M2c
+fixed.
 
 ---
 
