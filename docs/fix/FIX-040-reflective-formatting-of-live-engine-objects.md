@@ -225,18 +225,17 @@ not anything about checkpointing.
 
 ## 7 Related
 
-- **#314** — this closes the **race half** and its blocked deliverable (the
-  T-1 test), not the issue. While this branch was in flight, measurements on
-  `feat/adr-003-layout-close` attached a second symptom to the same issue:
-  `TestIterationCorrelatedRouting` and `TestIterationRoutingKillAndResume`
-  **hang** in a full-package run — no `-race` report, the delivery simply
-  never arrives — with the first failing at any deadline, which is the
-  signature of a lost delivery rather than a slow one. Nothing in this fix
-  addresses that: a formatter reading engine state without a lock and a
-  message that never reaches its waiter are different failures. The issue
-  stays open on that half, and `docs/backlog.md` carries both halves with
-  their measurements. What this doc does supersede is the issue's original
-  *mechanism* for the race reports (§1.4).
+- **#314** — this **closes** it. Its Definition of Done asked for the shared
+  object to be named with both writers shown, for the fixture-vs-engine
+  question to be settled, and for a multi-iteration restore test that passes
+  under `-race`; §2, §3 and §4.1 answer all three. What this doc supersedes is
+  the issue's original *mechanism* for the race reports (§1.4).
+- **#320** — a **different** defect that had been recorded inside #314's
+  backlog entry: a correlated message delivery lost in a full-package run,
+  where the test hangs at any deadline with no `-race` report. Nothing here
+  addresses it — a formatter reading engine state without a lock and a message
+  that never reaches its waiter are different failures — and its measurements
+  now live in that issue rather than beside this one's.
 - **#313** — the loop/MI decorator. Alternative 2 (a narrow processor handle)
   belongs to that work; this fix deliberately does not pre-empt it.
 - **SRD-085** — the routing this test finally covers across a restore.
