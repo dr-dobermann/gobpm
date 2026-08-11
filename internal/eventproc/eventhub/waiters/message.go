@@ -157,6 +157,11 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 			errs.C(MessageWaiterError, errs.EmptyNotAllowed))
 	}
 
+	// Read the keys BEFORE taking the lock: CorrelationKeys is a call into
+	// a processor the host may have supplied, and the engine does not hold
+	// its own lock across another component's call (FIX-038 §1.1).
+	keys := processorKeys(ep)
+
 	mw.m.Lock()
 
 	if idx := slices.Index(mw.processors, ep); idx != -1 {
@@ -165,8 +170,6 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 		return nil
 	}
 
-	mw.processors = append(mw.processors, ep)
-
 	// A JOINING processor brings its own correlation keys, and the
 	// subscription was created from the keys of whoever registered first.
 	// Without this, a Multi-Instance iteration that joins an existing
@@ -174,9 +177,8 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	// subscription and waits in the broker's inbox (#320). The lazy
 	// AddEventKey path cannot be relied on for it — it silently no-ops
 	// while the waiter is not yet in the hub's map.
-	keys := processorKeys(ep)
-
 	if mw.sub == nil {
+		mw.processors = append(mw.processors, ep)
 		mw.pendingKeys = append(mw.pendingKeys, keys...)
 		mw.m.Unlock()
 
@@ -188,6 +190,10 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 
 	for _, k := range keys {
 		if err := sub.AddKey(k); err != nil {
+			// ep is deliberately NOT in the processor list yet: a
+			// half-joined processor would make a retry short-circuit on
+			// the duplicate check above and report success while its
+			// keys never reached the subscription.
 			return errs.New(
 				errs.M("couldn't extend the subscription for a joining "+
 					"processor"),
@@ -196,6 +202,14 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 				errs.E(err))
 		}
 	}
+
+	mw.m.Lock()
+
+	if idx := slices.Index(mw.processors, ep); idx == -1 {
+		mw.processors = append(mw.processors, ep)
+	}
+
+	mw.m.Unlock()
 
 	return nil
 }
@@ -261,21 +275,6 @@ func (mw *messageWaiter) Process(eDef flow.EventDefinition) error {
 // delivery goroutine. The subscription is registered synchronously, so a
 // message published after Service returns is delivered (subscribe-before-
 // publish, ADR-006 v.1 §2.4).
-// subscriptionKeys gathers the correlation keys the waiter's processors declare
-// for their subscription (SRD-017 §4.3 declared-filter): a processor that
-// implements CorrelationKeys (the in-instance receiver track) contributes its
-// instance's conversation key values, so the message routes to that instance; a
-// processor that declares none (the instance-starter) contributes nothing,
-// leaving a wildcard subscription.
-func (mw *messageWaiter) subscriptionKeys() []string {
-	keys := make([]string, 0, len(mw.processors))
-
-	for _, p := range mw.processors {
-		keys = append(keys, processorKeys(p)...)
-	}
-
-	return keys
-}
 
 func (mw *messageWaiter) Service(ctx context.Context) error {
 	if mw.state != eventproc.WSReady {
@@ -289,8 +288,14 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 	// buffered by AddKey before this point.
 	mw.m.Lock()
 	consumed := len(mw.pendingKeys)
-	keys := append(mw.subscriptionKeys(), mw.pendingKeys...)
+	procs := append([]eventproc.EventProcessor(nil), mw.processors...)
+	keys := append([]string(nil), mw.pendingKeys...)
 	mw.m.Unlock()
+
+	// outside the lock, for the same reason as AddEventProcessor
+	for _, p := range procs {
+		keys = append(keys, processorKeys(p)...)
+	}
 
 	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, keys...)
 	if err != nil {
@@ -314,6 +319,10 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 
 	for _, k := range late {
 		if aerr := sub.AddKey(k); aerr != nil {
+			mw.m.Lock()
+			mw.state = eventproc.WSFailed
+			mw.m.Unlock()
+
 			return errs.New(
 				errs.M("couldn't apply a key learned during subscribe"),
 				errs.C(MessageWaiterError, errs.OperationFailed),
