@@ -397,6 +397,7 @@ var nodeBuilders = map[string]nodeBuilder{
 	tagEndEvent:          buildEndEvent,
 	tagIntermediateCatch: buildIntermediateCatch,
 	tagIntermediateThrow: buildIntermediateThrow,
+	tagBoundaryEvent:     buildBoundaryEvent,
 
 	tagTask:       buildManualTask,
 	tagManualTask: buildManualTask,
@@ -506,6 +507,91 @@ func buildIntermediateThrow(
 
 	return events.NewIntermediateThrowEvent(
 		fallbackName(id, name), def, body.opts(id)...)
+}
+
+// buildBoundaryEvent builds a boundary event attached to the activity its
+// attachedToRef names.
+//
+// Which triggers may sit on a boundary, whether an Error boundary may be
+// non-interrupting, and whether a Cancel boundary's host is a transaction
+// are all the model's rules (boundary.go:87-124) and stay there: the
+// converter passes the definition and reports the refusal with the file's
+// element id attached, which is the one thing the model cannot do (§4.3).
+func buildBoundaryEvent(
+	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+) (flow.Node, error) {
+	owner := se.Name.Local + " " + strconv.Quote(id)
+
+	host, err := attachedActivity(asm, owner, se, id)
+	if err != nil {
+		return nil, err
+	}
+
+	def, err := soleDefinition(asm, se, id, body)
+	if err != nil {
+		return nil, err
+	}
+
+	// A compensation boundary routes to a handler activity, which BPMN
+	// expresses as an <association> from the boundary event to that
+	// activity — an element this stage does not import, so the model's
+	// dedicated constructor cannot be fed. Refused by naming what is
+	// missing from the import rather than by letting the model's error
+	// name a Go constructor the modeler cannot call.
+	if def.Type() == flow.TriggerCompensation {
+		return nil, errs.New(
+			errs.M("bpmn: %s carries a compensation trigger, whose handler "+
+				"BPMN names through an <association> this stage does not "+
+				"import yet; the same file imports unchanged once associations "+
+				"land", owner),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	return events.NewBoundaryEvent(
+		fallbackName(id, name), host, def,
+		// The standard's default is interrupting
+		// (elements/events.md:252).
+		attrBool(se, "cancelActivity", true),
+		body.opts(id)...)
+}
+
+// attachedActivity resolves a boundary event's attachedToRef.
+//
+// A boundary event with no host is not a modeling detail to fall back
+// from — it is an event with nothing to guard, so the reference is
+// required rather than optional.
+func attachedActivity(
+	asm *assembly, owner string, se xml.StartElement, id string,
+) (flow.ActivityNode, error) {
+	site := refSite{
+		from:   owner,
+		attr:   attrAttachedTo,
+		target: strings.TrimSpace(attrValue(se, attrAttachedTo)),
+	}
+
+	if site.target == "" {
+		return nil, errs.New(
+			errs.M("bpmn: boundaryEvent %q names no attachedToRef; a boundary "+
+				"event guards an activity, and one attached to nothing has no "+
+				"meaning to import", id),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	node, ok := asm.byID[site.target]
+	if !ok {
+		if kind, taken := asm.cat.kinds[site.target]; taken {
+			return nil, site.wrongKind("activity", kind)
+		}
+
+		return nil, site.notFound("activity")
+	}
+
+	host, ok := node.(flow.ActivityNode)
+	if !ok {
+		return nil, site.wrongKind("activity", asm.declared[site.target])
+	}
+
+	return host, nil
 }
 
 // soleDefinition returns the one definition an intermediate event

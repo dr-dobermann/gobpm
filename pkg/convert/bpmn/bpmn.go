@@ -55,6 +55,10 @@ const (
 	tagMessage           = "message"
 	tagIntermediateCatch = "intermediateCatchEvent"
 	tagIntermediateThrow = "intermediateThrowEvent"
+	tagBoundaryEvent     = "boundaryEvent"
+
+	// attrAttachedTo is the boundary event's host reference.
+	attrAttachedTo = "attachedToRef"
 
 	// The ten event definitions (elements/event-definitions.md), their
 	// expression children and the two references they carry as children

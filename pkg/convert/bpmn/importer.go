@@ -609,8 +609,13 @@ func buildNodes(p *parser, asm *assembly) error {
 }
 
 // namesANode reports whether building this node needs another node to
-// exist first.
+// exist first: a boundary event is attached to its host activity, and a
+// compensation definition names the activity it compensates.
 func (s nodeSpec) namesANode() bool {
+	if s.se.Name.Local == tagBoundaryEvent {
+		return true
+	}
+
 	for _, d := range s.body.defs {
 		if d.local == tagCompensateEventDef && d.ref != "" {
 			return true
