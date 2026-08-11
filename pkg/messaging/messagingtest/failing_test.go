@@ -176,6 +176,32 @@ func TestFailingSubscriptionUnsubscribeIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestFailingSubscriptionRunsTheUnsubscribeHook(t *testing.T) {
+	var seen int
+
+	b := &FailingBroker{OnUnsubscribe: func() { seen++ }}
+
+	sub, err := b.Subscribe(context.Background(), "order placed")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	if err = sub.Unsubscribe(); err != nil {
+		t.Fatalf("Unsubscribe: %v", err)
+	}
+
+	// The hook runs on the second, no-op teardown too: a test that blocks in it
+	// to hold the caller inside the broker must not have that window depend on
+	// whether the subscription happens to be closed already.
+	if err = sub.Unsubscribe(); err != nil {
+		t.Fatalf("second Unsubscribe: %v", err)
+	}
+
+	if seen != 2 {
+		t.Errorf("hook ran %d time(s), want 2", seen)
+	}
+}
+
 func TestFailingSubscriptionReportsUnsubscribed(t *testing.T) {
 	b := &FailingBroker{}
 

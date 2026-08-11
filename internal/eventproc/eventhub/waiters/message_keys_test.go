@@ -597,6 +597,48 @@ func TestPartialKeyFailureDiscardsTheSubscription(t *testing.T) {
 			"Stopped, which reports an orderly shutdown for a break")
 }
 
+// TestFirstKeyRefusalKeepsTheSubscription is the waiter-side half of
+// TestFirstKeyRefusalSparesTheWaiter, and the boundary that keeps D2
+// proportionate.
+//
+// A refusal on the FIRST key of a join applies nothing: the subscription is
+// byte-for-byte what it was, and every processor already parked on it is still
+// served. Discarding a key-set that was never partly applied would tear down a
+// healthy waiter — and every sibling iteration's wait with it — to punish a
+// join that failed harmlessly. Only the join is turned away.
+func TestFirstKeyRefusalKeepsTheSubscription(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
+
+	broker := messagingtest.NewFailingBroker() // every AddKey refused
+	rt := brokerRT{EngineRuntime: enginert.Default(), broker: broker}
+
+	w, err := waiters.NewMessageWaiter(hub, newKeyedProcessor("iter-0", "a"),
+		eDef, "", rt)
+	require.NoError(t, err)
+
+	require.NoError(t, w.Service(ctx))
+
+	t.Cleanup(func() { _ = w.Stop() })
+
+	err = join(t, w, newKeyedProcessor("iter-1", "b"))
+	require.Error(t, err, "a refused key must fail the join")
+	require.ErrorIs(t, err, messagingtest.ErrInjected)
+
+	subs := broker.Subscriptions()
+	require.Len(t, subs, 1)
+	require.False(t, subs[0].Unsubscribed(),
+		"nothing was applied, so there is no partial key-set to shed: "+
+			"discarding here would strand every processor already parked")
+	require.Equal(t, eventproc.WSRunned, w.State(),
+		"the waiter keeps serving; only the join failed")
+}
+
 // TestKeyRefusedDuringSubscribeFailsTheWaiter covers the last unreachable
 // path: a key learned WHILE Subscribe was running, which the waiter buffers
 // and applies the moment the subscription appears — and which the broker then
