@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A joining Multi-Instance iteration's correlation key now reaches the
+  broker** (FIX-041, closes #320). The broker subscription was built from
+  the keys known when the waiter subscribed. An iteration that parked at
+  the same catch *afterwards* — the second, third, Nth instance of a
+  Multi-Instance activity — added itself to the waiter's processor list
+  and nothing else, so the broker still routed only the first iteration's
+  key. Its message then matched no subscription and waited in the
+  broker's inbox forever: no error, no log, no race report, just a
+  process that never continued. A key learned in the window while
+  `Subscribe` was still running was lost the same way, and is now
+  buffered and applied when the subscription appears.
+
+  A join is consequently two steps. Adding the processor is registry work
+  and stays under the EventHub's lock; applying its keys is a call into
+  the **host's** broker and runs with that lock released — the property
+  that decides what may run under the engine's one lock is whether a call
+  can reach the host, not whether it can re-enter the lock (FIX-038
+  §1.1). The two are exposed as named optional capabilities,
+  `eventproc.KeyedProcessor` and `eventproc.KeyedWaiter`, in place of the
+  anonymous type assertions that made either of them undiscoverable;
+  `EventWaiter` is unchanged, so signal and timer waiters are untouched.
+
+  A correlation key the broker **refuses** now costs the whole
+  subscription rather than leaving a partly-keyed one: `Subscription` can
+  grow a key-set but not shrink one, so a half-applied set cannot be
+  repaired in place, and an orphan key left on a live subscription
+  silently eats every message addressed to it. The waiter unsubscribes
+  and fails, the hub unregisters the processor and unmaps the dead
+  waiter, and the next registration builds a fresh one. The messages the
+  discarded keys would have matched go back to waiting in the broker's
+  inbox (ADR-006 v.5 §2.4). `membroker` never refuses a key, so no
+  in-repo behaviour changes; a host adapter that does will see
+  `Unsubscribe` followed by a fresh `Subscribe`.
+
+  `pkg/messaging/messagingtest` gains `FailingBroker` — a broker that can
+  refuse a key, or hold still inside one — because these paths are
+  unreachable through `membroker` and were therefore untested until the
+  key loss reached production behaviour.
+
 - **A `%v` over an engine object no longer reflects across it**
   (FIX-040, closes #314). `Instance` and its tracks now implement
   `fmt.Stringer`, rendering as their element id. Without it, anything
