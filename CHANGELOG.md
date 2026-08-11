@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The SQLite Repository adapter** (SRD-091, ADR-037, closes #316).
+  `adapters/sqlite` implements the durable Repository contract over
+  a pure-Go driver (`modernc.org/sqlite`, no CGo): CAS saves,
+  ownership leases, the group registry and the group-scoped recovery
+  listing. `Open(path)` owns its pool and is what most callers want,
+  `OpenMemory()` covers the ephemeral case, and `New(*sql.DB)` serves
+  a host that manages its own — refusing a pool that cannot enforce
+  the schema's constraints rather than running without them.
+
+  It is the first Repository adapter whose conformance suite actually
+  RUNS in CI. `adapters/postgres` carries the same one-line
+  `repositorytest.Conformance` call, but every postgres test is gated
+  on a DSN environment variable and skips when unset, which CI never
+  sets — so the published contract had only ever executed against
+  `memrepo`, the implementation it was written beside.
+
+  Declares itself NOT cluster-safe (`renv.ClusterAware`), naming the
+  single-writer limit and pointing at `adapters/postgres`.
+
+- **ADR-037 — SQL Repository adapters.** The contract two SQL
+  adapters arrived at independently: the module shape, connection
+  ownership ("set what you own, verify what you are handed"), the
+  refuse-vs-warn split for required settings, portable value
+  encodings, the cluster declaration, and per-dialect migration
+  serialization.
+
+### Fixed
+
+- **A message addressed to a parallel-MI iteration could be lost
+  outright** (SRD-091 branch). A message waiter's broker subscription
+  is built once, when the waiter starts, from the correlation keys of
+  the processors known at that moment. A processor that JOINED an
+  already-serving waiter — which is what every iteration after the
+  first does at a shared catch node — contributed its key to nothing,
+  so an envelope addressed to it matched no subscription and was
+  buffered forever. Not misrouted: silently never delivered.
+
+  Whether it appeared depended purely on whether the second
+  registration landed before or after the waiter started, which is why
+  it read as an intermittent test flake for weeks. Measured on the
+  narrowed reproduction: 3 failures in 6 runs before, 0 in 6 after.
+
+- **Every event waiter could panic on a processor that is not
+  comparable.** `slices.Index` over the processor list compares
+  interface values with `==`, which panics when the dynamic type holds
+  a slice or a map — as a processor carrying correlation keys
+  naturally does. Six sites across the message, signal and timer
+  waiters; identity is now compared by ID.
+
 ### Fixed
 
 - **A `%v` over an engine object no longer reflects across it**

@@ -2,9 +2,7 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"embed"
-	"errors"
 	"regexp"
 	"sort"
 	"strconv"
@@ -114,20 +112,43 @@ func (r *Repo) Migrate(ctx context.Context) error {
 // applyNext applies the single next pending migration, reporting whether one
 // was applied (false: up to date).
 func (r *Repo) applyNext(ctx context.Context, mm []migration) (bool, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
+	// The transaction is driven with explicit statements on ONE connection
+	// rather than through sql.Tx, because BEGIN IMMEDIATE is the whole point
+	// and database/sql gives no way to choose the BEGIN it issues.
+	//
+	// Relying on the DSN's _txlock instead would make serialization
+	// conditional on a flag this adapter may not have written: New is handed
+	// pools whose connection string it cannot inspect, since _txlock is a
+	// driver parameter rather than a PRAGMA. The failure would be two engines
+	// deadlocking at boot, which is a poor way to learn about a missing flag.
+	conn, err := r.db.Conn(ctx)
 	if err != nil {
-		return false, opErr("beginning a migration transaction", "", err)
+		return false, opErr("acquiring a migration connection", "", err)
 	}
 
 	defer func() {
-		if rbErr := tx.Rollback(); rbErr != nil &&
-			!errors.Is(rbErr, sql.ErrTxDone) {
+		//nolint:errcheck // returning the connection to the pool
+		_ = conn.Close()
+	}()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return false, opErr("beginning a migration transaction", "", err)
+	}
+
+	committed := false
+
+	defer func() {
+		if committed {
+			return
+		}
+
+		if _, rbErr := conn.ExecContext(ctx, "ROLLBACK"); rbErr != nil {
 			r.logger.Warn("migration rollback failed", "error", rbErr.Error())
 		}
 	}()
 
 	var current int
-	if serr := tx.QueryRowContext(ctx,
+	if serr := conn.QueryRowContext(ctx,
 		"SELECT COALESCE(MAX(version), 0) FROM schema_version").
 		Scan(&current); serr != nil {
 		return false, opErr("reading the current schema version", "", serr)
@@ -138,24 +159,26 @@ func (r *Repo) applyNext(ctx context.Context, mm []migration) (bool, error) {
 		return false, nil
 	}
 
-	body, err := migrationsFS.ReadFile("migrations/" + next.name)
-	if err != nil {
-		return false, opErr("reading migration "+next.name, "", err)
+	body, rerr := migrationsFS.ReadFile("migrations/" + next.name)
+	if rerr != nil {
+		return false, opErr("reading migration "+next.name, "", rerr)
 	}
 
-	if _, err := tx.ExecContext(ctx, string(body)); err != nil {
-		return false, opErr("applying migration "+next.name, "", err)
+	if _, aerr := conn.ExecContext(ctx, string(body)); aerr != nil {
+		return false, opErr("applying migration "+next.name, "", aerr)
 	}
 
-	if _, err := tx.ExecContext(ctx,
+	if _, ierr := conn.ExecContext(ctx,
 		"INSERT INTO schema_version (version) VALUES (?)",
-		next.version); err != nil {
-		return false, opErr("recording migration "+next.name, "", err)
+		next.version); ierr != nil {
+		return false, opErr("recording migration "+next.name, "", ierr)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return false, opErr("committing migration "+next.name, "", err)
+	if _, cerr := conn.ExecContext(ctx, "COMMIT"); cerr != nil {
+		return false, opErr("committing migration "+next.name, "", cerr)
 	}
+
+	committed = true
 
 	r.logger.Info("sqlite migration applied",
 		"migration", next.name, "version", next.version)

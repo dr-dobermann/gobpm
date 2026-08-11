@@ -35,17 +35,19 @@ const MessageWaiterError = "MESSAGE_WAITER_ERROR"
 // the receiving instance loop's job, not the waiter's (ADR-017 v.1 §2): the loop
 // runs the correlation gate and drops a mismatch, keeping its track parked.
 type messageWaiter struct {
-	hub        eventproc.EventHub
-	rt         renv.EngineRuntime
-	eDef       *events.MessageEventDefinition
-	stopCh     chan struct{}
-	done       chan struct{}
-	sub        messaging.Subscription
-	name       string
-	id         string
-	processors []eventproc.EventProcessor
-	state      eventproc.EventWaiterState
-	m          sync.Mutex
+	// subscribedKeys is what mw.sub was created carrying — see pendingKeys.
+	subscribedKeys []string
+	hub            eventproc.EventHub
+	rt             renv.EngineRuntime
+	eDef           *events.MessageEventDefinition
+	stopCh         chan struct{}
+	done           chan struct{}
+	sub            messaging.Subscription
+	name           string
+	id             string
+	processors     []eventproc.EventProcessor
+	state          eventproc.EventWaiterState
+	m              sync.Mutex
 }
 
 // AddKey extends the waiter's broker subscription with key (SRD-017 §4.5 lazy
@@ -156,6 +158,12 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 		return nil
 	}
 
+	if len(mw.pendingKeys(ep)) == 0 {
+		// Already carried — either Service included it, or a previous join
+		// subscribed it. Nothing to do, and nothing silently skipped.
+		return nil
+	}
+
 	// The keys are (re-)subscribed even when ep was ALREADY on the list.
 	//
 	// Returning early on "already present" would make a retry a no-op, and a
@@ -189,6 +197,33 @@ func (mw *messageWaiter) addProcessor(
 	return mw.sub
 }
 
+// pendingKeys returns the keys ep declares that this waiter's subscription
+// does not already carry, and whether the waiter is serving at all.
+//
+// It closes the window between Service reading the key list and publishing
+// mw.sub. A joiner that lands inside it must NOT conclude "Service will read
+// my keys" — Service already read them — so the decision is made against what
+// the subscription actually carries, recorded when it was created.
+func (mw *messageWaiter) pendingKeys(ep eventproc.EventProcessor) []string {
+	kp, ok := ep.(interface{ CorrelationKeys() []string })
+	if !ok {
+		return nil
+	}
+
+	mw.m.Lock()
+	defer mw.m.Unlock()
+
+	var missing []string
+
+	for _, k := range kp.CorrelationKeys() {
+		if k != "" && !slices.Contains(mw.subscribedKeys, k) {
+			missing = append(missing, k)
+		}
+	}
+
+	return missing
+}
+
 // subscribeKeysOf extends sub with the correlation keys ep declares.
 //
 // It runs OUTSIDE the waiter's lock: AddKey reaches the host's broker, which
@@ -209,7 +244,11 @@ func (mw *messageWaiter) subscribeKeysOf(
 			continue
 		}
 
-		if err := sub.AddKey(k); err != nil {
+		if err := sub.AddKey(k); err == nil {
+			mw.m.Lock()
+			mw.subscribedKeys = append(mw.subscribedKeys, k)
+			mw.m.Unlock()
+		} else {
 			return errs.New(
 				errs.M("couldn't extend the subscription with a joining "+
 					"processor's correlation key"),
@@ -298,7 +337,14 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.D("current_state", mw.state.String()))
 	}
 
-	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, mw.subscriptionKeys()...)
+	// The keys are read BEFORE the blocking Subscribe, and mw.sub is published
+	// after it — a window in which a processor may join. subscribedKeys
+	// records what this subscription actually carries, so a joiner can tell
+	// whether its own key was included rather than assuming Service will pick
+	// it up (it cannot: the list was already read).
+	keys := mw.subscriptionKeys()
+
+	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, keys...)
 	if err != nil {
 		mw.state = eventproc.WSFailed
 
@@ -309,7 +355,11 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.E(err))
 	}
 
+	mw.m.Lock()
 	mw.sub = sub
+	mw.subscribedKeys = keys
+	mw.m.Unlock()
+
 	mw.state = eventproc.WSRunned
 	mw.stopCh = make(chan struct{})
 	mw.done = make(chan struct{})
