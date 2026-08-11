@@ -450,7 +450,22 @@ func restoredTrack(
 
 	// a recorded own-iteration position: the decorator resumes at the
 	// recorded pass instead of iterating from zero (SRD-082 FR-3).
+	//
+	// A LEAF activity's set is Iteration (Schema 6, SRD-090.A FR-6/FR-7);
+	// a Schema-5 document has only the MI mirror, which for a leaf meant
+	// the same sequential position — so it seeds the same field and the
+	// old document restores to the same live state (FR-7).
 	t.miSeed = rec.MI
+	t.iterSeed = rec.Iteration
+
+	if rec.Iteration != nil {
+		t.miSeed = &checkpoint.MIRecord{
+			N:            rec.Iteration.N,
+			Completed:    rec.Iteration.Completed,
+			ConditionMet: rec.Iteration.ConditionMet,
+			Staging:      rec.Iteration.Staging,
+		}
+	}
 
 	if err := t.checkNodeType(node, true); err != nil {
 		return nil, err

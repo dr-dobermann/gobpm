@@ -252,13 +252,17 @@ func (it miIterator) bindInstance(
 	return nil
 }
 
-// prepareSequential resolves the activation, builds the host's miState
+// prepareIteration resolves the activation, builds the host's miState
 // (staging included) and applies a restored seed (SRD-082 FR-3): the
 // recorded N is the frozen activation count (§13.3.7) — the cardinality
 // expression must not re-resolve to a different bound after the restart
-// — and the recorded staging returns the completed passes' outputs. It
-// returns the frozen instance count and the first pass to launch.
-func (t *track) prepareSequential(
+// — and the recorded staging returns the completed instances' outputs. It
+// returns the frozen instance count and the first instance to launch.
+//
+// It serves both kinds a leaf decorator drives: a sequential iteration
+// resumes AT the returned ordinal, a parallel one reads it as the count
+// already behind it and launches the rest.
+func (t *track) prepareIteration(
 	ctx context.Context, it miIterator, mi multiInstance, step *stepInfo,
 ) (int, int, error) {
 	n, col, err := it.resolveActivation(ctx, t, step.node)
@@ -422,7 +426,7 @@ func (t *track) runMISequential(
 ) ([]*flow.SequenceFlow, error) {
 	it := miIterator{mi: mi}
 
-	n, start, err := t.prepareSequential(ctx, it, mi, step)
+	n, start, err := t.prepareIteration(ctx, it, mi, step)
 	if err != nil {
 		return nil, err
 	}

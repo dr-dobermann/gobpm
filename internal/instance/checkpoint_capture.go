@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strconv"
 	"time"
@@ -523,26 +524,56 @@ func trackRecord(
 	// The mirror is loop-owned and staging is loop-written, so both
 	// reads are loop-serialized.
 	if mirror != nil {
-		mi := &checkpoint.MIRecord{
-			N:            mirror.n,
-			Completed:    mirror.completed,
-			ConditionMet: mirror.conditionMet,
+		if err := recordIteration(ctx, &rec, t, mirror); err != nil {
+			return checkpoint.TrackRecord{}, false, err
 		}
-
-		if mirror.staging != nil {
-			raw, err := checkpoint.EncodeValue(
-				ctx, "track "+t.ID(), mirror.staging)
-			if err != nil {
-				return checkpoint.TrackRecord{}, false, err
-			}
-
-			mi.Staging = raw
-		}
-
-		rec.MI = mi
 	}
 
 	return rec, true, nil
+}
+
+// recordIteration writes the host's iteration position onto its track
+// record. A LEAF activity's instances go to Iteration — the executor set
+// that replaced the per-instance tracks and scopes (SRD-090.A FR-6) — and
+// a composite keeps riding the MI mirror until its kinds convert too
+// (SRD-090.A M3). The mirror's kind is what distinguishes them: only a
+// decorator posts one, and only a leaf has a decorator today.
+func recordIteration(
+	ctx context.Context, rec *checkpoint.TrackRecord, t *track,
+	mirror *iterMirror,
+) error {
+	var staging json.RawMessage
+
+	if mirror.staging != nil {
+		raw, err := checkpoint.EncodeValue(ctx, "track "+t.ID(), mirror.staging)
+		if err != nil {
+			return err
+		}
+
+		staging = raw
+	}
+
+	if mirror.kind == "" {
+		rec.MI = &checkpoint.MIRecord{
+			N:            mirror.n,
+			Completed:    mirror.completed,
+			ConditionMet: mirror.conditionMet,
+			Staging:      staging,
+		}
+
+		return nil
+	}
+
+	rec.Iteration = &checkpoint.IterationRecord{
+		Kind:         mirror.kind,
+		N:            mirror.n,
+		Completed:    mirror.completed,
+		ConditionMet: mirror.conditionMet,
+		Staging:      staging,
+		Instances:    mirror.instances,
+	}
+
+	return nil
 }
 
 // persistedStatus maps the runtime lifecycle onto the repository's

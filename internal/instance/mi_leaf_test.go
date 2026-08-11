@@ -745,14 +745,28 @@ func gatedLeafMISnapshot(
 // leafMIRec finds the recorded iteration position of the leaf node.
 func leafMIRec(
 	d *checkpoint.Document, nodeID string,
-) *checkpoint.MIRecord {
+) *checkpoint.IterationRecord {
 	for i := range d.Tracks {
 		if d.Tracks[i].NodeID == nodeID {
-			return d.Tracks[i].MI
+			return d.Tracks[i].Iteration
 		}
 	}
 
 	return nil
+}
+
+// liveOrdinals counts the instances an iteration record still shows as
+// running — the ordinals a restore has to relaunch (SRD-090.A FR-7).
+func liveOrdinals(rec *checkpoint.IterationRecord) int {
+	live := 0
+
+	for _, inst := range rec.Instances {
+		if inst.State != "completed" {
+			live++
+		}
+	}
+
+	return live
 }
 
 // leafOuts reads the assembled output collection of a finished run.
@@ -768,9 +782,10 @@ func leafOuts(t *testing.T, inst *Instance, path string) []any {
 	return col.GetAll(context.Background())
 }
 
-// TestLeafMISequentialKillAndResume is T-7 (SRD-086 FR-5): the
-// sequential leaf's position rides TrackRecord.MI via the pass-posted
-// mirror — the restored run resumes at pass 2, never re-running the
+// TestLeafMISequentialKillAndResume is T-7 (SRD-086 FR-5), now reading
+// the executor set TrackRecord.Iteration that replaced the MI mirror for
+// a leaf (SRD-090.A FR-6): the position still rides the pass-posted
+// mirror, and the restored run resumes at pass 2, never re-running the
 // completed pass.
 func TestLeafMISequentialKillAndResume(t *testing.T) {
 	var gate, count atomic.Int32
@@ -818,17 +833,27 @@ func normalized(elems []any) []any {
 	return out
 }
 
-// TestLeafMIParallelKillAndResume is T-6 (SRD-086 FR-5): the parallel
-// leaf restores over the EXISTING schema — the group record plus one
-// leaf track per open instance scope, re-marked for plain execution.
+// TestLeafMIParallelKillAndResume is T-6 (SRD-086 FR-5), rewritten onto
+// the executor set (SRD-090.A FR-6/FR-7). A parallel leaf no longer
+// persists as a group record plus one track per open instance scope,
+// because it no longer HAS instance scopes or per-instance tracks: it
+// records which ordinals are still running, and restore relaunches
+// exactly those. That a completed ordinal never re-runs is the property
+// the old shape and this one both exist to protect.
 func TestLeafMIParallelKillAndResume(t *testing.T) {
 	var gate, count atomic.Int32
 
 	s := gatedLeafMISnapshot(t, "lm-pkr", false, &gate, &count)
 
 	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
-		return len(d.MIGroups) == 1 && len(d.MIGroups[0].Open) == 2
+		rec := leafMIRec(d, "lm-pkr-work")
+
+		return rec != nil && rec.Kind == "mi_parallel" && rec.Completed == 1 &&
+			liveOrdinals(rec) == 2
 	})
+
+	require.Empty(t, doc.MIGroups,
+		"a leaf opens no instance scope, so it forms no group (FR-4)")
 
 	require.Eventually(t, func() bool { return count.Load() == 3 },
 		3*time.Second, 5*time.Millisecond,

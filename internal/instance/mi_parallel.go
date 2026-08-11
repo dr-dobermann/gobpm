@@ -285,18 +285,16 @@ func (t *track) bindMICounters(n, completed, terminated int) error {
 // fan-out finishes (§4.6). A partial-open error leaves cleanup to the runner's fault
 // (stopAll cancels the subtree).
 func (ls *loopState) handleFanOut(ctx context.Context, req scopeRequest) {
-	// a composite host seeds its body into each instance scope; a LEAF
-	// (SRD-086 FR-2) has no body — each instance scope runs one spawned
-	// track at the leaf node itself, so sh stays nil for it. The
-	// corrupt-graph key is the MISSING Multi-Instance decoration, not
-	// the missing body (the pre-SRD-086 guard conflated the two).
-	sh, _ := req.node.(scopeHost)
+	// only a COMPOSITE fans out into scopes now: a leaf activity's
+	// instances live in the decorator's frames, not in scopes of their own
+	// (ADR-025 v.3 §2.2). Either missing decoration is a corrupt graph.
+	sh, isComposite := req.node.(scopeHost)
 
 	mi := multiInstanceOf(req.node)
-	if mi == nil {
+	if mi == nil || !isComposite {
 		req.reply <- scopeReply{err: errs.New(
-			errs.M("scope fan-out requested for non-Multi-Instance node %q"+
-				" — a corrupt graph", req.node.ID()),
+			errs.M("scope fan-out requested for %q, which is not a "+
+				"Multi-Instance composite — a corrupt graph", req.node.ID()),
 			errs.C(errorClass, errs.TypeCastingError))}
 
 		return
@@ -450,36 +448,8 @@ func (ls *loopState) openParallelInstance(
 		}
 	}
 
-	if sh != nil {
-		ls.seedScope(ctx, sh, child)
-		ls.armScopeHandlers(ctx, sh.Nodes(), child)
-
-		return nil
-	}
-
-	// the LEAF instance (SRD-086 FR-2/FR-3): one track at the leaf node
-	// itself, spawned with the pre-spawn discipline (scope path and the
-	// plain-execution mark set on the loop, before the run goroutine
-	// exists) — the group drives the iteration, the track executes the
-	// node exactly once.
-	nt, terr := newTrack(node, ls.inst, host)
-	if terr != nil {
-		return errs.New(
-			errs.M("couldn't spawn leaf MI instance %d of %q", i, node.ID()),
-			errs.C(errorClass, errs.BulidingFailed),
-			errs.E(terr))
-	}
-
-	nt.scopePath = child
-	nt.leafPlain = true
-
-	ls.inst.trackCount.Add(1)
-	ls.inst.tracks[nt.ID()] = nt
-	ls.spawn(ctx, nt)
-
-	if ls.stopping {
-		nt.stop()
-	}
+	ls.seedScope(ctx, sh, child)
+	ls.armScopeHandlers(ctx, sh.Nodes(), child)
 
 	return nil
 }

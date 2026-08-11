@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -60,10 +61,16 @@ const (
 // fan-out's instance count and input collection; cancel asks scopeComplete to tear
 // down the still-open instances first.
 type scopeRequest struct {
-	col    data.Collection
-	host   *track
-	node   flow.Node
-	reply  chan scopeReply
+	col   data.Collection
+	host  *track
+	node  flow.Node
+	reply chan scopeReply
+	// kind and insts carry a LEAF decorator's executor set to the loop's
+	// iteration mirror on a scopeLeafPass (SRD-090.A FR-6): a leaf opens
+	// no scope and spawns no track, so this post is the ONLY thing that
+	// can tell the capture which instances are live.
+	kind   string
+	insts  []checkpoint.IterationInstance
 	op     scopeOp
 	n      int
 	cancel bool
@@ -146,6 +153,8 @@ func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 	case scopeLeafPass:
 		m := ls.ensureIterMirror(req.host)
 		m.completed = req.n
+		m.kind = req.kind
+		m.instances = req.insts
 
 		req.reply <- scopeReply{}
 

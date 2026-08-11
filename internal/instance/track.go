@@ -236,6 +236,14 @@ type track struct {
 	// instead of iterating from zero. Set by restore before spawn,
 	// consumed once by the runner.
 	miSeed *checkpoint.MIRecord
+
+	// iterSeed is a RESTORED LEAF activity's executor set (SRD-090.A
+	// FR-7): which ordinals were still live when the capture was taken.
+	// A sequential decorator needs only the completed count (miSeed
+	// carries it), but a parallel one completes out of order — the count
+	// alone cannot say WHICH ordinals are done, and re-running a
+	// completed instance is exactly what FR-7 forbids.
+	iterSeed *checkpoint.IterationRecord
 	// miParallelSeed is the parallel counterpart (SRD-082 FR-4): the
 	// runner re-attaches to its restored group instead of fanning out.
 	// Set by the loop's adoption BEFORE the spawns, consumed once.
@@ -283,13 +291,7 @@ type track struct {
 	// dehydrated track's lineage without appending it (bounded across cycles,
 	// §4.1).
 	woken bool
-	// leafPlain marks a track spawned to execute a PARALLEL LEAF MI
-	// instance (SRD-086 FR-3): the group's fan-out drives the
-	// iteration, so this track's executeStep must run the node plainly
-	// instead of re-entering the MI decorator. Set pre-spawn on the
-	// loop goroutine, before the run goroutine exists.
-	leafPlain bool
-	state     trackState
+	state trackState
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -508,13 +510,13 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		return nil
 	}
 
-	// a Multi-Instance HOST doesn't wait — its decorator drives the
-	// iteration, and only the per-instance leaf tracks (leafPlain) or
-	// the serial passes register (SRD-086 FR-4). Registering the host
-	// would evaluate iteration correlation at the HOST scope, where no
-	// split item exists.
-	if mi := multiInstanceOf(node); mi != nil &&
-		!mi.IsSequential() && !t.leafPlain {
+	// a PARALLEL Multi-Instance host doesn't wait — its decorator drives
+	// the iteration, and registering the host would evaluate iteration
+	// correlation at the HOST scope, where no split item exists. The
+	// instances themselves cannot wait either while an iterated waiting
+	// activity is refused at build time (SRD-090.A FR-10); SRD-090.B makes
+	// the decorator the registered processor and retires that refusal.
+	if mi := multiInstanceOf(node); mi != nil && !mi.IsSequential() {
 		return nil
 	}
 
@@ -1384,6 +1386,19 @@ func (t *track) executeNode(
 	ctx context.Context,
 	step *stepInfo,
 ) ([]*flow.SequenceFlow, error) {
+	return t.executeNodeAs(ctx, step, activityInstance{})
+}
+
+// executeNodeAs runs the node as ONE instance of its activity (ADR-025 v.3
+// §2.13). ai carries what distinguishes this instance from its siblings: the
+// data only it sees, and whether it is a member of a set whose decorator owns
+// the track-wide bookkeeping. A plain node is the degenerate case — one
+// instance, no local data, driving the track itself.
+func (t *track) executeNodeAs(
+	ctx context.Context,
+	step *stepInfo,
+	ai activityInstance,
+) ([]*flow.SequenceFlow, error) {
 	ne, ok := step.node.(exec.NodeExecutor)
 	if !ok {
 		return nil,
@@ -1416,7 +1431,18 @@ func (t *track) executeNode(
 		}
 	}
 
-	if perr := t.prepareNodeExecution(ctx, step, f); perr != nil {
+	// ONE instance of an iterated activity carries its own data frame-local
+	// (ADR-025 v.3 §2.2, SRD-090.A FR-4): binding it at the shared container
+	// scope is safe only while a single instance runs at a time, and the
+	// instances of a parallel activity run at once. Bound before the node
+	// loads its inputs, which resolve frame-first through it.
+	if len(ai.local) > 0 {
+		if berr := f.BindLocal(ai.local...); berr != nil {
+			return nil, berr
+		}
+	}
+
+	if perr := t.prepareNodeExecution(ctx, step, f, ai); perr != nil {
 		return nil, perr
 	}
 
@@ -1439,11 +1465,39 @@ func (t *track) executeNode(
 		return nil, err
 	}
 
-	if err := t.finalizeNodeExecution(ctx, step, f); err != nil {
+	if err := t.finalizeNodeExecution(ctx, step, f, ai); err != nil {
 		return nil, err
 	}
 
 	return nexts, nil
+}
+
+// activityInstance is what distinguishes ONE instance of an activity from its
+// siblings when a decorator drives several of them (ADR-025 v.3 §2.13).
+type activityInstance struct {
+	// capture, when set, is called with this execution's frame once the node
+	// has produced its outputs and BEFORE they commit to the shared
+	// container scope. It is how a decorator takes ONE instance's declared
+	// output for positional assembly (ADR-025 v.3 §2.6): with no
+	// per-instance scope to read it from, concurrent siblings overwrite the
+	// output's name in the container scope, so the value has to be taken
+	// while it is still this instance's own.
+	capture func(f *scope.Frame) error
+
+	// local is this instance's own data — the 0-based loopCounter and, for a
+	// collection-driven Multi-Instance, its split input item. Bound
+	// frame-local, so a sibling cannot overwrite it and it never reaches the
+	// shared container scope (SRD-090.A FR-4).
+	local []data.Data
+
+	// inSet reports that a decorator drives this execution as one of N.
+	// The track-wide transitions then belong to the decorator, which makes
+	// them ONCE for the activity: an activity is one token's step however
+	// many times it executes. Making them per instance would be wrong twice
+	// over — record is read-copy-store on an atomic pointer rather than a
+	// CAS, so concurrent instances silently lose history entries, and N
+	// updateState calls would report one activity as N step executions.
+	inSet bool
 }
 
 // prepareNodeExecution marks the step started and runs the consumer role:
@@ -1452,10 +1506,17 @@ func (t *track) prepareNodeExecution(
 	ctx context.Context,
 	step *stepInfo,
 	f *scope.Frame,
+	ai activityInstance,
 ) error {
-	t.updateState(TrackExecutingStep)
+	if !ai.inSet {
+		t.updateState(TrackExecutingStep)
+	}
+
 	step.state = StepStarted
-	t.record(TrackExecutingStep) // record this node visit (path + timing)
+
+	if !ai.inSet {
+		t.record(TrackExecutingStep) // record this node visit (path + timing)
+	}
 
 	return t.loadIncomingData(ctx, step.node, f)
 }
@@ -1527,9 +1588,13 @@ func (t *track) finalizeNodeExecution(
 	ctx context.Context,
 	step *stepInfo,
 	f *scope.Frame,
+	ai activityInstance,
 ) error {
 	step.state = StepEnded
-	t.updateState(TrackProcessStepResults)
+
+	if !ai.inSet {
+		t.updateState(TrackProcessStepResults)
+	}
 
 	// stage the delivery's payload for the catch node's binding and
 	// consume it — the next execution must not see a stale item
@@ -1542,6 +1607,14 @@ func (t *track) finalizeNodeExecution(
 
 	if err := t.uploadOutgoingData(ctx, step.node, f); err != nil {
 		return err
+	}
+
+	// take this instance's own output before the commit makes the name a
+	// shared one (ADR-025 v.3 §2.6).
+	if ai.capture != nil {
+		if cerr := ai.capture(f); cerr != nil {
+			return cerr
+		}
 	}
 
 	// The changed-path set is the activity-boundary change signal — one

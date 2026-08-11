@@ -35,7 +35,16 @@ import (
 // ad-hoc scope (the construct was never guarded), and such a document
 // refuses to restore rather than resuming with the routing state lost
 // (SRD-083 FR-6) — loud beats silently wrong.
-const CurrentSchema = 5
+//
+// 5 → 6 (SRD-090.A FR-6) moved an iterated LEAF activity's position into
+// the executor set (Iteration). Additive in the wire sense — a Schema-5
+// document carries no Iteration — but its READ path is the interesting
+// half: a leaf iteration used to persist as a TrackRecord.MI mirror
+// (sequential) or as an MIGroupRecord plus one TrackRecord per instance
+// (parallel), and neither describes an object that still exists. Both are
+// therefore translated on restore into the instances they meant, rather
+// than rebuilt as the tracks and scopes they named (FR-7).
+const CurrentSchema = 6
 
 // Document is one instance's durable state (SRD-070 FR-3): identity +
 // the version pin, status, the scope table, conversation keys, the
@@ -170,9 +179,20 @@ type TrackRecord struct {
 	// would otherwise restart — SRD-070 §4.2).
 	Timer *TimerDescriptor `json:"timer,omitempty"`
 	// MI is the sequential-iteration position (Schema 4, SRD-082 FR-1)
-	// of a host that drives its own passes — sequential MI or a
-	// Standard Loop. nil for every other track.
+	// of a COMPOSITE host that drives its own passes — sequential MI or
+	// a Standard Loop. nil for every other track. A leaf activity's
+	// iteration moved to Iteration in Schema 6; this stays for the
+	// composite kinds until they follow (SRD-090.A M3), and is still
+	// READ from a Schema-5 document whatever the kind.
 	MI *MIRecord `json:"mi,omitempty"`
+
+	// Iteration is an iterated LEAF activity's executor set (Schema 6,
+	// SRD-090.A FR-6): the instances that are live, keyed by ordinal.
+	// It replaces both halves of the old shape — the MI mirror a
+	// sequential leaf rode, and the MIGroupRecord plus per-instance
+	// TrackRecords a parallel leaf rode — because a leaf instance is no
+	// longer a track and opens no scope of its own.
+	Iteration *IterationRecord `json:"iteration,omitempty"`
 	// AdHocActivity names the inner activity this track was routed to
 	// inside an Ad-Hoc container (Schema 5, SRD-083 FR-2) — the
 	// track-table half of the AdHocRecord: restore rebuilds the
@@ -205,6 +225,39 @@ type MIRecord struct {
 	N            int             `json:"n,omitempty"`
 	Completed    int             `json:"completed"`
 	ConditionMet bool            `json:"condition_met,omitempty"`
+}
+
+// IterationInstance is ONE live instance of an iterated activity (Schema
+// 6, SRD-090.A FR-6): its 0-based ordinal — the join key across the
+// record, the token projection and an incident — and what it is doing.
+// ChildID names the callee a call executor owns, and is what lets a
+// recovered caller bind a completing child's output to the slot it
+// belongs in; empty for every other kind.
+//
+// Frames are deliberately absent: the split item is the collection
+// element at the ordinal and the counter IS the ordinal, both recomputed
+// (ADR-025 v.3 §2.4 fixes cardinality once, so the collection cannot
+// shift underneath).
+type IterationInstance struct {
+	State   string `json:"state"` // running | waiting | completed
+	ChildID string `json:"child_id,omitempty"`
+	Ordinal int    `json:"ordinal"`
+}
+
+// IterationRecord is an iterated activity's live instances (Schema 6,
+// SRD-090.A FR-6) — the executor set that replaces per-iteration
+// TrackRecords and the TrackRecord.MI mirror. Kind names the iteration
+// shape, N the count frozen at activation (0 for a Standard Loop, whose
+// bound is its condition), Completed the instances fully done, Staging
+// their assembled outputs, and ConditionMet whether the
+// completionCondition already fired.
+type IterationRecord struct {
+	Kind         string              `json:"kind"` // loop | mi_sequential | mi_parallel
+	Staging      json.RawMessage     `json:"staging,omitempty"`
+	Instances    []IterationInstance `json:"instances,omitempty"`
+	N            int                 `json:"n,omitempty"`
+	Completed    int                 `json:"completed"`
+	ConditionMet bool                `json:"condition_met,omitempty"`
 }
 
 // OpenScope is one still-open per-instance scope of a parallel MI

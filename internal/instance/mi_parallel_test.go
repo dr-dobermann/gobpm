@@ -548,11 +548,12 @@ func TestHandleCompleteGroupGone(t *testing.T) {
 	require.NoError(t, (<-reply).err)
 }
 
-// TestHandleFanOutNonMI: a fan-out for a node with NO Multi-Instance
-// decoration is a corrupt-graph error (SRD-086 re-keyed the guard: the
-// old refusal fired on "not a composite", which the leaf realization
-// legitimized — the corruption key is the missing MI itself; the leaf
-// spawn path is proven end-to-end by the parallel-leaf tests).
+// TestHandleFanOutNonMI: a fan-out is a COMPOSITE's operation, so a node
+// missing either half of that — the Multi-Instance decoration or the
+// scope host — is a corrupt graph. SRD-086 had re-keyed the guard onto
+// the missing MI alone, because a leaf legitimately fanned out into
+// scopes then; SRD-090.A FR-4 removed leaf instance scopes, so "not a
+// composite" is a refusal again rather than an everyday case.
 func TestHandleFanOutNonMI(t *testing.T) {
 	inst, _, host := miParFixture(t)
 	ls := newLoopState(inst)
@@ -561,5 +562,5 @@ func TestHandleFanOutNonMI(t *testing.T) {
 	reply := make(chan scopeReply, 1)
 	ls.handleFanOut(t.Context(),
 		scopeRequest{op: scopeFanOut, host: host, node: leaf, n: 1, reply: reply})
-	require.ErrorContains(t, (<-reply).err, "non-Multi-Instance")
+	require.ErrorContains(t, (<-reply).err, "Multi-Instance composite")
 }

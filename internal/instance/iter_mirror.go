@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 )
 
@@ -19,7 +20,14 @@ import (
 // scopeLoopCounter relies on). conditionMet arrives over the protocol
 // (scopeNote) when the runner's completionCondition fires.
 type iterMirror struct {
-	staging      *values.Array[any]
+	staging *values.Array[any]
+	// kind and instances describe a LEAF activity's executor set
+	// (SRD-090.A FR-6). A leaf opens no scope and spawns no track, so
+	// neither the drain protocol nor the track table can show the loop
+	// what is live — the decorator posts it (scopeLeafPass). Empty for a
+	// composite, whose position still rides the open/drain protocol.
+	kind         string
+	instances    []checkpoint.IterationInstance
 	n            int
 	completed    int
 	conditionMet bool

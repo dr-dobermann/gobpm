@@ -57,11 +57,12 @@ func (t *track) executeStep(
 		return t.runStandardLoop(ctx, step, sl)
 	}
 
-	// a Multi-Instance activity drives itself off the loop via its own
-	// decorator (ADR-025 v.2 §2.12): a composite iterates by child scope
-	// (sequential await-each runMISequential, SRD-055; parallel
-	// fan-out-then-await-all runMIParallel, SRD-056.A), a LEAF
-	// sequentially through the decorator execFor builds (SRD-090.A M2).
+	// a Multi-Instance COMPOSITE drives itself off the loop via its own
+	// decorator (ADR-025 v.2 §2.12), iterating by child scope: sequential
+	// await-each (runMISequential, SRD-055) or parallel
+	// fan-out-then-await-all (runMIParallel, SRD-056.A). A LEAF of either
+	// kind goes through execFor, which builds the decorator that holds its
+	// instances (SRD-090.A M2) — no scope, no spawned track.
 	if mi := multiInstanceOf(step.node); mi != nil {
 		if _, ok := step.node.(scopeHost); ok {
 			if mi.IsSequential() {
@@ -70,25 +71,12 @@ func (t *track) executeStep(
 
 			return t.runMIParallel(ctx, step, mi)
 		}
-
-		// a parallel LEAF still rides the fan-out decorator composites
-		// use (SRD-086 FR-2): per-instance scopes, each running one
-		// spawned leaf track. leafPlain guards the spawned track's own
-		// pass through this routing — the group drives the iteration,
-		// the track executes the node exactly once (FR-3). A SEQUENTIAL
-		// leaf falls through to execFor, which builds its decorator
-		// (SRD-090.A M2); this branch must not catch it.
-		if !t.leafPlain && !mi.IsSequential() {
-			return t.runMIParallel(ctx, step, mi)
-		}
 	}
 
 	// A node with no loop characteristics has exactly ONE instance, and it
 	// runs through the executor that will hold every instance once the
-	// iteration branches above move onto decorators (SRD-090.A M1, ADR-025
-	// v.3 §2.13). Ordinal 0: a non-iterated activity is instance zero of
-	// one, which keeps the identity uniform rather than special-casing the
-	// common case.
+	// composite branches above move onto decorators too (SRD-090.A M3,
+	// ADR-025 v.3 §2.13).
 	return execFor(t, step).run(ctx)
 }
 

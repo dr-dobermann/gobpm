@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A parallel Multi-Instance leaf activity's instances are no longer
+  tracks, and no longer get a scope apiece** (ADR-025 v.3 §2.13,
+  SRD-090.A M2b, part of #313). Iterating a leaf three times used to
+  fork three tracks into three per-instance scopes, coordinated by a
+  loop-owned barrier; the activity's decorator now holds one executor
+  per instance, isolates each in its own execution frame, and runs the
+  N-of-N barrier as ordinary control flow. A track means a token
+  walking a path again.
+
+  **One behaviour changes, deliberately.** Each instance used to run in
+  a scope of its own, so anything it wrote beyond its declared
+  `outputDataItem` died when that scope closed. With no per-instance
+  scope, such a write reaches the **enclosing** scope, and for a
+  parallel activity the last writer wins — which is order-dependent.
+  The declared output collection is unaffected: it is still assembled
+  positionally by ordinal and published once, so a model that reads its
+  `loopDataOutputRef` sees exactly what it saw before. A model that
+  relied on undeclared writes vanishing now sees the last one.
+
+  The checkpoint schema moves 5 → 6 with it: an iterated leaf persists
+  as an executor set keyed by ordinal, replacing the per-instance track
+  records and the group record it used to be scattered across.
+  Documents written by the previous release still restore.
+
 ### Fixed
 
 - **A `%v` over an engine object no longer reflects across it**
