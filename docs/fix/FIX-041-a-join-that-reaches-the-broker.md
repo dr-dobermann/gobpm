@@ -675,8 +675,9 @@ the hub was only going to unregister the *processor*. That leaves a waiter in
 the registry with no subscription and a exiting goroutine: every later
 registration for the same definition joins it and receives nothing, forever,
 with no error anywhere. That is FIX-038 §1.3's stranding reached from the other
-direction, and it would have been *introduced* by the fix. `dropFailedWaiter`
-unmaps it, so the next registration builds a fresh one
+direction, and it would have been *introduced* by the fix. `undoFailedJoin`
+(named `dropFailedWaiter` until §8.2.8 made the unmapping conditional) takes it
+out of the registry, so the next registration builds a fresh one
 (`TestRefusedJoinKeyLeavesNoWaiterBehind`).
 
 **8.2.3 — a failed waiter was relabelled by the goroutine its own failure
@@ -735,7 +736,7 @@ The same pass closed the branches the diff-coverage gate left at 98.0%:
 `ApplyProcessorKeys` with a nil and with a keyless processor
 (`TestApplyProcessorKeysGuardsItsInput` — a keyless processor must not touch the
 subscription at all, since a keyless subscription is a wildcard a spurious
-`AddKey` would silently narrow), and `dropFailedWaiter`'s already-unmapped
+`AddKey` would silently narrow), and `undoFailedJoin`'s already-unmapped
 branch, which was removed rather than tested: the Error log belongs on both
 paths, so only the unmapping is conditional now.
 
