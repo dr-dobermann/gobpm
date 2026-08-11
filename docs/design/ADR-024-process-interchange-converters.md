@@ -408,7 +408,23 @@ recorded as such in §3.
 
 `ScriptTask` carries `scriptFormat` (a MIME hint, 0..1) and its source; the
 standard mandates no script language. The engine routes scripts by that format
-through its script-engine seam, and ships exactly one battery — **Lua**.
+through its script-engine seam, and ships **two** batteries — Lua, and a
+dependency-free one whose script text names a **Go function the host
+registered**.
+
+Only the first is importable, and the reason is not arithmetic. A Lua body is
+**self-contained source**: the file carries the behaviour and the engine
+interprets it. A `gofunc` body carries a *name*, and the behaviour lives in
+host code the document cannot see — reference-by-registry, which is precisely
+the shape §2.13 refuses for the `GlobalTask` family. A converter that accepted
+it would admit a process whose script does nothing until an unrelated Go
+program happens to register the matching key, and would fail at execution far
+from the import that let it in.
+
+*(This replaces a v.4 claim that the engine "ships exactly one battery — Lua".
+That was true when v.4 was drafted and false within a day, when the
+dependency-free engine landed. The decision is unchanged; its reason is now one
+that survives a second battery — and a third.)*
 
 Import therefore accepts a script task whose `scriptFormat` names Lua and
 **refuses every other format by name**, including an *absent* format: with
