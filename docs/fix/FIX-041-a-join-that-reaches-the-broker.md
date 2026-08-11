@@ -535,7 +535,7 @@ Each fails on the pre-fix code; that is verified per test, not assumed.
 |---|---|---|---|---|
 | T-1 | `TestJoinDoesNotHoldTheHubLock` | new, `eventhub` | a broker whose `AddKey` blocks on a channel; one goroutine joins a live waiter, another calls a hub lookup | the lookup completes while `AddKey` is still blocked — on the pre-fix code it blocks until released (§1.1) |
 | T-2 | `TestJoinHalvesAreSeparable` (`waiters`) + `TestJoinRegistersBeforeItReachesTheBroker` (`eventhub`) | new | a broker recording, and probing from inside, its `AddKey` | the registry half reaches no broker; the hub lists the processor before its key reaches one (§1.2 — see §8.2.1) |
-| T-3 | `TestPartialKeyFailureDiscardsTheSubscription` | new, `waiters` | `FailingBroker{AddKeyAfter: 1}`, a processor with two keys | the join fails, the processor is not listed, `Unsubscribe` was called, waiter `WSFailed` (§1.3) |
+| T-3 | `TestPartialKeyFailureDiscardsTheSubscription` | new, `waiters` | `FailingBroker{AddKeyAfter: 1}`, a processor with two keys | the join fails, exactly one key landed, `Unsubscribe` was called, waiter `WSFailed` (§1.3). The drafted row also claimed *"the processor is not listed"*; after D1 that is the **hub's** half — the waiter registers and the hub unregisters — and it is asserted by `TestRefusedJoinKeyLeavesNoWaiterBehind` |
 | T-4 | `TestKeyRefusedDuringSubscribeFailsTheWaiter` | **extended** | as today | additionally: the subscription was unsubscribed (§1.4) |
 | T-5 | `TestJoinBeforeServiceSubscribesEachKeyOnce` | new, `waiters` | join a keyed processor before `Service` | `Subscriptions()[0].Keys` contains each key exactly once (§1.5) |
 | T-6 | existing suite under `-race` | — | — | `internal/eventproc/...` clean (§1.6) |
@@ -650,11 +650,17 @@ public package outside `messagingtest`'s doc comment.
 | Changelog | `b139ba7b` | `[Unreleased]` entry for #320 | — |
 | Sweep | `be402c39` | `scripts/lock-sweep.py` + `make lock-sweep`, and the two findings it produced | §8.2.4 |
 | Guard | `96909a70` | `ApplyProcessorKeys` refuses a failed waiter; the last uncovered branches | `TestApplyProcessorKeysGuardsItsInput`, `TestApplyProcessorKeysRejectsAFailedWaiter` (§8.2.7) |
+| Review | `3932ae88` | the six agreed `/pr-review` findings: `acceptKeys` as the one reader of `mw.sub == nil`, send-once keys, proportionate discard, both lock-drop pins, hub-test cleanup, the join-pairing contract note | `TestFinishedWaiterRefusesALazyKey`, `TestKeysReachTheBrokerOnce`, `TestFirstKeyRefusalSparesTheWaiter`, `TestStopDoesNotHoldTheWaiterLock`, `TestRegisterDoesNotHoldTheRegistryLock` (§8.2.8) |
+| Coverage | `b219faca` | the two branches only another package's tests reached (per-package profiles) | `TestFirstKeyRefusalKeepsTheSubscription`, `TestFailingSubscriptionRunsTheUnsubscribeHook` |
+| Changelog | `390e6f50` | the two host-visible behaviours the review changed | — |
+| Doc | `23113dcc` | §8.2 names `undoFailedJoin` | — |
 
-Gate: `make ci` PASS at `b139ba7b`, `be402c39` and `96909a70` — the last at
-**100.0% diff-coverage of 259 changed lines** across all four touched files —
-judged by `.ci/last-run.json` rather than by the exit code of whatever wrapped
-the run (FIX-039).
+Gate: `make ci` PASS at `b139ba7b`, `be402c39`, `96909a70`, `3932ae88`,
+`390e6f50` and at the branch tip — every one judged by `.ci/last-run.json`
+rather than by the exit code of whatever wrapped the run (FIX-039).
+Diff-coverage finishes at **100%** of the changed lines in all four touched
+files; it dipped to 97.1% after the review milestones, and `b219faca` closed the
+two branches that only another package's tests reached.
 
 ### 8.2 Empirical findings
 
