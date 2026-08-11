@@ -1,11 +1,11 @@
-# SRD-090.A — handoff after M2d
+# SRD-090.A — handoff after M3a
 
 **Branch** `feat/node-execution-model`, worktree
 `/home/dober/wrk/development/go/src/gobpm/iter-events` (sibling worktree; the
 directory name `iter-events` predates the branch rename — cosmetic only).
 
-**Base** `origin/master` = `8532091d`. Three commits ahead: `M2b`, `M2c`,
-`M2d`. Nothing pushed.
+**Base** `origin/master` = `8532091d`. Six commits ahead: `M2b`, `M2c`,
+`M2d`, a changelog/plan commit, `M3a`, a plan-reorder commit. Nothing pushed.
 
 **Task** issue **#313** — the iteration decorator should own the decorated
 node's event registration. This branch is `Part of #313`, not `Closes`: the
@@ -22,7 +22,7 @@ flip to Accepted when **SRD-090.C** lands. The implementation is sliced:
 
 | Slice | Subject | State |
 |---|---|---|
-| **SRD-090.A** | executor/decorator model + the checkpoint record | M1, M2a landed on master (PR #321); **M2b, M2c, M2d landed here**; M3a, M3b, M3c, M4 remain |
+| **SRD-090.A** | executor/decorator model + the checkpoint record | M1, M2a landed on master (PR #321); **M2b, M2c, M2d, M3a landed here**; M3b, M3c, M3d, M4 remain |
 | SRD-090.B | registration ownership; the refusal retired — #313's literal subject | not authored |
 | SRD-090.C | token / incident surfaces | not authored |
 | SRD-090.D | declared result strategies, runtime iteration values | not authored |
@@ -85,43 +85,123 @@ at the boundary, naming the type. Identity by `ID()` was rejected: a snapshot
 clone preserves element ids, so two instances of one process present distinct
 processors carrying the same id.
 
-## Verification at M2d
+## Verification at M3a
 
-`make ci` **PASS**, 14/14 steps, head `8d8dc722`, diff coverage **96.9%** of
-350 changed lines (floor 95). `.ci/last-run.json` holds the verdict.
+`make ci` **PASS**, 14/14 steps, head `ff6c1639`, diff coverage **97.7%** of
+479 changed lines (floor 95). `.ci/last-run.json` holds the verdict.
+
+## What M3a did (`ff6c1639`)
+
+An instance of a composite activity is a child scope, and it now has an object
+that says so.
+
+- **`scopeExec`** (`internal/instance/scope_exec.go`) — opens that instance's
+  child scope, parks for its drain, reports `awaitScope` while it holds it.
+  The reporting is the part that could not be expressed before: from outside
+  the runner's own stack, a host parked for a child's drain is
+  indistinguishable from one executing.
+- **`leafDecorator` → `iterDecorator`**, indifferent to what an instance IS:
+  `buildInstance` returns a `scopeExec` for a composite and a `nodeExec` for a
+  leaf. Three leaf-only behaviours are guarded where they occur — the step is
+  re-armed per pass only for a leaf, the declared output is taken by the
+  decorator only for a leaf (the loop takes a composite's before its scope
+  closes), and `exitFlows` differs.
+- **`loopDecorator`** (`std_loop.go`) — the composite Standard Loop. A second
+  type rather than a flag: the two share no state at all, only the interface.
+- **Deleted, not bypassed:** `runCompositeLoop`, `runMISequential`.
+  `executeStep` is down to two named exceptions — a LEAF Standard Loop
+  (converts with SRD-090.B) and a PARALLEL COMPOSITE MI (M3b).
+- **The record followed:** a composite's position is an `IterationRecord`, and
+  `iterKindOf` derives the shape from the node instead of the decorator
+  posting it. **Nothing writes `TrackRecord.MI` any more** — it survives on
+  the read side alone, which IS the schema-5 compatibility path (FR-7).
+- **Fixed while here — the restored executor set outlived its activity.**
+  `iterSeed` was cleared only inside the parallel fan-out, so a track restored
+  on any other iterated kind carried it onward; a restored track finishes its
+  recorded activity and walks on, and the next iterated activity's decorator
+  would read another activity's ordinals as its own and skip every instance
+  recorded complete — silently, producing a shorter result. M2b introduced it
+  for sequential leaves; `takeIterSeed` now hands the set over once.
+
+T-1 findings, updated not silently absorbed: `hostMI`
+(`composite_restore_test.go`) and the kill-point predicate in
+`TestCompositeCallKillAndResume` both read `.MI`; five white-box error-path
+tests called the two deleted drivers.
 
 ## Remaining milestones
 
-M3 lands in three commits (SRD §7 records the split and its reason — the three
-drivers it replaces do not share a mechanism, and one commit would mix a
-straight conversion with the removal of the loop-owned barrier):
+**M3b — the parallel composite, and the loop-owned group retired.** The
+analysis is done; this is the design to implement:
 
-- **M3a — the scope executor, and residency by what an instance awaits.**
-  `scopeExec`: one instance of a composite activity — opens its child scope,
-  parks for that scope's drain, reports `awaitScope`. The decorator
-  generalizes over `activityExec`, and the sequential composite kinds drive
-  through it; `runCompositeLoop` and `runMISequential` go. Residency lands
-  here because `awaitScope` is what makes it decidable (FR-8): today an
-  iterated Sub-Process host disqualifies its whole instance from dehydration
-  via `dehydratableParked`'s default arm, so three iterations holding parked
-  User Tasks pin it forever. T-1 (composite), T-4 (composite), T-6, T-7.
-- **M3b — the parallel composite, and the loop-owned group retired.**
-  Parallel composite MI on the same decorator, each instance holding its own
-  scope and its own drain — which removes the reason `miGroup` existed: the
-  fan-out/re-arm/complete/re-attach handshake serialized N concurrent drains
-  onto a cap-1 park that N executors no longer share. Note
-  `maybeDehydrate`'s `len(ls.miGroups) > 0` guard goes with it. T-8.
-- **M3c — the call executor.** Iterated Call Activity: N children, each
-  recorded against its ordinal with `ChildID`, restore re-linking each child,
-  cancellation terminating the remaining children. Tests T-9, T-10 — both
-  genuinely new (`NewCallActivity` never appears with `WithLoop` today, so
-  T-1 is not an oracle here).
-- **M4 — the sweep.** Old symbols absent not orphaned; the Schema-5
-  compatibility path proven against documents captured by the previous
-  release; the §9 absence check enforced; §10 filled.
+The group exists for ONE reason: a drain is delivered by resuming the host
+track, and a track has ONE `evtCh`. N concurrent drains cannot land on a cap-1
+park, so `miGroup` + the `scopeFanOut`/`scopeReArm`/`scopeComplete`/
+`scopeReAttach` handshake serializes them (`grp.pending` counts the ones that
+arrived while the runner was busy). N executors do not share that park, so the
+whole apparatus goes — but only once **drain delivery becomes per-instance**.
+
+That is the substance of M3b, and it must land as one change:
+`scopeEntry` carries the signal its instance waits on (the executor's own
+channel, supplied at open) instead of the loop resuming `entry.host`;
+`completeScope` signals that; `awaitScopeDrained` stops reading `evtCh`.
+Doing it for the parallel kind alone would leave two drain protocols, so
+convert the sequential kind with it — `scopeExec` becomes uniform, and
+`dispatchToParked`'s scope-drain path disappears rather than forking.
+
+Then retire: `miGroup`, `miParallelSeed`, `handleFanOut`, `handleReArm`,
+`handleComplete`, `handleReAttach`, `openParallelInstance`,
+`captureParallelOutput`, `cancelOpenInstances`, `cancelParallelGroup`,
+`markIterDrain` (its `entry.group` guard and its only remaining callers go
+together), the `scopeFanOut`/`scopeReArm`/`scopeComplete`/`scopeReAttach` ops,
+`scopeEntry.group`/`ordinal`/`awaitAttach`/`drainPending`, `doc.MIGroups` on
+the WRITE side (the read side stays for schema-5), and `ls.miGroups` with
+`maybeDehydrate`'s `len(ls.miGroups) > 0` guard. Watch `boundary_watch.go`
+and `cancelParallelGroup`'s caller — an interrupting boundary on a fanned-out
+host tears the instances down (SRD-056.A FR-13) and needs the executor
+equivalent. T-8.
+
+**M3c — residency by what an instance awaits (FR-8).** Not a predicate
+change. Confirmed by reading the release path:
+
+- `dehydrateCh` is observed ONLY in `awaitTrigger` (`track.go:1124`), so a
+  host parked in `awaitScopeDrained` cannot be released at all today.
+- A host must therefore (a) select on `dehydrateCh`, (b) unwind the decorator
+  through a sentinel `run()` maps to `TrackDehydrated` rather than
+  Canceled/Failed (`discardOrFail` would mis-route it), and (c) be **added to**
+  `parked` in `dehydratableParked` rather than skipped — skipping leaves its
+  goroutine alive and the instance never fully releases.
+- It is releasable by construction: it holds no external wait and its position
+  is durable. `waitReleasable` must not be asked — a Sub-Process is not
+  `Dehydratable`, which is exactly why it pins today.
+- The loop needs to reach the executor: publish it on the track (`t.exec`
+  under `t.m`), and call `awaits()` WITHOUT holding the track mutex
+  (`nodeExec.awaits` takes it).
+- **Restore already works**: `restore.go` does not branch on the recorded
+  state, so a dehydrated host rebuilds and re-enters its decorator at
+  `miSeed.Completed`, and `handleScopeOpen`'s restored-scope branch
+  re-attaches. No new restore code is expected.
+
+T-6, T-7.
+
+**M3d — the call executor.** Iterated Call Activity: N children, each recorded
+against its ordinal with `ChildID`, restore re-linking each child, cancellation
+terminating the remaining children. T-9, T-10 — both genuinely new
+(`NewCallActivity` never appears with `WithLoop` today).
+
+**M4 — the sweep.** Old symbols absent not orphaned; the Schema-5
+compatibility path proven against documents captured by the previous release;
+the §9 absence check enforced; §10 filled.
 
 Then: `/check-srd`, **`/pr-review` (obligatory)**, sync linked docs, and only
 then the PR description.
+
+## Open question for the owner (not blocking)
+
+A **plain** (non-iterated) Sub-Process host is not `Dehydratable` either, so it
+pins its instance exactly as an iterated one does today. FR-8 names only
+executors, so M3c as specified leaves that case alone. Widening it would change
+dehydration for every composite in the engine — the owner's call, and a
+separate slice if wanted.
 
 ## Discipline that cost time this session — do not relearn it
 
@@ -138,6 +218,10 @@ then the PR description.
 - **`covercheck` reads per-package profiles.** A helper added in package A but
   exercised only by package B's tests counts as uncovered and reddens the
   gate. M2c needed `waiters/message_keysync_test.go` for exactly that reason.
+- **`covercheck` is HEAD-based — measure AFTER committing.** A gate run on a
+  dirty tree diffs the committed lines against a working-tree profile, and the
+  line numbers no longer correspond. M3a's first run reported a bogus 92.2%
+  that way; the same tree read 97.7% once committed.
 - **Never bare `git stash`/`pop`** — other sessions share the stack. Push with
   a unique tag, capture the SHA, `apply` it, then drop by tag.
 
