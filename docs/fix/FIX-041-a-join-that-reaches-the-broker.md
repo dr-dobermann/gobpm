@@ -649,10 +649,12 @@ public package outside `messagingtest`'s doc comment.
 | Fix | `5de0cf54` | D1–D4: `eventproc` capabilities, the waiter split, the hub side (§3.3–§3.5, §3.7) | T-1…T-6, below |
 | Changelog | `b139ba7b` | `[Unreleased]` entry for #320 | — |
 | Sweep | `be402c39` | `scripts/lock-sweep.py` + `make lock-sweep`, and the two findings it produced | §8.2.4 |
+| Guard | `96909a70` | `ApplyProcessorKeys` refuses a failed waiter; the last uncovered branches | `TestApplyProcessorKeysGuardsItsInput`, `TestApplyProcessorKeysRejectsAFailedWaiter` (§8.2.7) |
 
-Gate: `make ci` PASS at `b139ba7b` and again at `be402c39`, judged by
-`.ci/last-run.json` rather than by the exit code of whatever wrapped the run
-(FIX-039).
+Gate: `make ci` PASS at `b139ba7b`, `be402c39` and `96909a70` — the last at
+**100.0% diff-coverage of 259 changed lines** across all four touched files —
+judged by `.ci/last-run.json` rather than by the exit code of whatever wrapped
+the run (FIX-039).
 
 ### 8.2 Empirical findings
 
