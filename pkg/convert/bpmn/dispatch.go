@@ -50,7 +50,32 @@ const (
 	// correct where dropping the element leaves the imported definition
 	// meaning the same thing.
 	skipped
+
+	// notYet refuses an element that is waiting on a subsystem rather
+	// than on this converter. The same file imports unchanged once that
+	// subsystem lands, and saying so is the difference between "come
+	// back later" and "rewrite your diagram" (ADR-024 v.4 §2.13).
+	notYet
+
+	// notExpressible refuses an element whose XML form and model form do
+	// not correspond — the engine executes it, and no mechanical reading
+	// of the document can produce it. Neither waiting nor a later slice
+	// helps; the reason names what to do instead.
+	notExpressible
 )
+
+// refusalReasons explains a notExpressible element. Without the reason
+// such a refusal reads as an oversight, which is the one thing it is not.
+var refusalReasons = map[string]string{
+	tagComplexGateway: "BPMN carries its activation as an `activationCondition` " +
+		"expression, while this engine's complex gateway is activated by " +
+		"per-incoming-flow token counts — a threshold or a set of triples. " +
+		"The two describe the same domain in forms a converter cannot " +
+		"translate between: recovering counts from an arbitrary Boolean " +
+		"expression is not mechanical, and guessing one changes WHEN the " +
+		"gateway fires. Build it programmatically with WithActivationThreshold " +
+		"or WithActivation",
+}
 
 // annotations are the BPMN-namespace children carrying no execution
 // semantics, skipped in every context that can hold one. They are
@@ -68,6 +93,21 @@ var annotations = []string{tagExtensionElems}
 // refused — so an element appears in exactly one place and the three
 // cannot drift apart.
 var policy = map[elementKey]dispositionKind{
+	// The GlobalTask family is reuse BY REFERENCE: a task defined once at
+	// definitions level and invoked through a callActivity. Resolving that
+	// reference needs a registry of callable definitions, which is the
+	// server tier's, so these are refused as a deferral rather than as a
+	// verdict on the file.
+	{local: "globalTask", ctx: ctxDefinitions}:             notYet,
+	{local: "globalUserTask", ctx: ctxDefinitions}:         notYet,
+	{local: "globalManualTask", ctx: ctxDefinitions}:       notYet,
+	{local: "globalScriptTask", ctx: ctxDefinitions}:       notYet,
+	{local: "globalBusinessRuleTask", ctx: ctxDefinitions}: notYet,
+
+	// The complex gateway is executable here and unreachable from XML —
+	// see refusalReasons.
+	{local: tagComplexGateway, ctx: ctxProcess}: notExpressible,
+
 	// A node's incoming/outgoing duplicate the wiring <sequenceFlow>
 	// already carries through sourceRef/targetRef.
 	{local: tagIncoming, ctx: ctxNode}: skipped,
@@ -189,15 +229,22 @@ func dispositionFor(ctx parseCtx, local string) dispositionKind {
 // is also where a recognized dialect keeps the constructs a host needs
 // to be told about.
 func (p *parser) settle(ctx parseCtx, se xml.StartElement) error {
-	if dispositionFor(ctx, se.Name.Local) != skipped {
-		return unsupported(se)
+	switch dispositionFor(ctx, se.Name.Local) {
+	case skipped:
+		if se.Name.Local == tagExtensionElems {
+			return p.skipReporting(p.owner)
+		}
+
+		return p.skipElement()
+
+	case notYet:
+		return notSupportedYet(se)
+
+	case notExpressible:
+		return notExpressibleHere(se)
 	}
 
-	if se.Name.Local == tagExtensionElems {
-		return p.skipReporting(p.owner)
-	}
-
-	return p.skipElement()
+	return unsupported(se)
 }
 
 // defsParser parses one child of <bpmn:definitions>. It returns a
