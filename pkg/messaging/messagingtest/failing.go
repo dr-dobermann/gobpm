@@ -31,7 +31,14 @@ type FailingBroker struct {
 	// AddKeyErr, when set, makes AddKey fail on every subscription this
 	// broker hands out.
 	AddKeyErr error
-	subs      []*FailingSubscription
+	// OnSubscribe, when set, runs INSIDE Subscribe, before the subscription
+	// is handed back. It opens the window a real broker's Subscribe occupies
+	// — the window in which a correlation key can be learned with no
+	// subscription to apply it to, which is where #320's key was lost. A
+	// caller cannot reach that window from outside, because Subscribe
+	// returning is what closes it.
+	OnSubscribe func()
+	subs        []*FailingSubscription
 	// AddKeyAfter lets the first N AddKey calls succeed before AddKeyErr
 	// starts being returned — for the path where a subscription is built
 	// with some keys and then refuses a later one. Ignored when AddKeyErr
@@ -60,6 +67,10 @@ func (b *FailingBroker) Subscribe(
 ) (messaging.Subscription, error) {
 	if b.SubscribeErr != nil {
 		return nil, b.SubscribeErr
+	}
+
+	if b.OnSubscribe != nil {
+		b.OnSubscribe()
 	}
 
 	s := &FailingSubscription{
