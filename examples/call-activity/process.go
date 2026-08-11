@@ -34,9 +34,9 @@ func buildCallee() (*process.Process, error) {
 	op, err := gooper.New("tax",
 		func(ctx context.Context, ds service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
-			d, err := ds.GetData("subtotal")
-			if err != nil {
-				return nil, err
+			d, readErr := ds.GetData("subtotal")
+			if readErr != nil {
+				return nil, readErr
 			}
 
 			sub, _ := d.Value().Get(ctx).(int)
@@ -147,11 +147,29 @@ func wire(p *process.Process, nodes ...flow.Element) error {
 	}
 
 	for i := 0; i+1 < len(nodes); i++ {
-		if _, err := flow.Link(
-			nodes[i].(flow.SequenceSource),
-			nodes[i+1].(flow.SequenceTarget)); err != nil {
+		if err := link(nodes[i], nodes[i+1]); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+// link connects two flow elements with a sequence flow, reporting an element
+// that cannot carry one rather than panicking on the assertion.
+func link(src, trg flow.Element) error {
+	s, ok := src.(flow.SequenceSource)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence source", src.Name())
+	}
+
+	t, ok := trg.(flow.SequenceTarget)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence target", trg.Name())
+	}
+
+	if _, err := flow.Link(s, t); err != nil {
+		return fmt.Errorf("link: %w", err)
 	}
 
 	return nil

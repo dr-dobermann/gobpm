@@ -11,7 +11,7 @@ import (
 // buildBoard builds the parallel Multi-Instance review board: one instance per
 // quorumSize is how many votes the Complex behavior waits for before throwing
 // "quorum-reached" — read by the behavior condition and by the example's own
-// assertion, so the check cannot drift from the behaviour it checks.
+// assertion, so the check cannot drift from the behavior it checks.
 const quorumSize = 2
 
 // reviewer, all voting concurrently. A Complex behavior throws a "quorum-reached"

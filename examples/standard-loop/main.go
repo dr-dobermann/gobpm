@@ -52,19 +52,19 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
 	// Records the counter seen on each pass, so the loop claim is checked.
-	log := newRunLog()
+	runLog := newRunLog()
 
-	proc, err := buildProcess(log)
+	proc, err := buildProcess(runLog)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 
@@ -80,7 +80,7 @@ func run() error {
 	// A post-tested loop runs the body first and tests after, so it must make
 	// exactly wantPasses passes, seeing 0, 1, 2 — one short would mean it was
 	// pre-tested, one long that the condition was read a pass late.
-	if err := log.check(passes()...); err != nil {
+	if err := runLog.check(passes()...); err != nil {
 		return fmt.Errorf("loop passes: %w", err)
 	}
 

@@ -13,8 +13,8 @@ import (
 // parked task is held here, not in the engine's memory, which is exactly why
 // the instance can release its goroutines while the task is pending.
 type inbox struct {
-	mu     sync.Mutex
 	taskID string
+	mu     sync.Mutex
 }
 
 func newInbox() *inbox {

@@ -1,3 +1,7 @@
+// Command multi-instance-parallel demonstrates a BPMN parallel Multi-Instance
+// activity (§13.3.7, SRD-056.A): the activity runs once per element of a
+// collection, all instances concurrently in distinct scopes, completing when
+// the last drains.
 package main
 
 import (
@@ -37,7 +41,7 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
@@ -46,7 +50,7 @@ func run() error {
 		return fmt.Errorf("build process: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 

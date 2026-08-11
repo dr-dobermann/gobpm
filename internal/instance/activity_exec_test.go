@@ -145,7 +145,7 @@ func TestLeafDecoratorSatisfiesActivityExec(t *testing.T) {
 // the same step and publish output as though every instance had finished.
 //
 // Reaching this from runInstance requires the construct the snapshot refuses
-// (an activity that both iterates and parks), so SRD-088.B covers the path;
+// (an activity that both iterates and parks), so SRD-090.B covers the path;
 // what is testable now is what the guard decides, and that is tested here
 // rather than assumed.
 func TestRefuseIfParked(t *testing.T) {

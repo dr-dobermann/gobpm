@@ -1,3 +1,6 @@
+// Command signal-start demonstrates a broadcast signal CREATING process
+// instances with no StartProcess call: two processes registered with a signal
+// Start Event on the same signal are both instantiated by one broadcast.
 package main
 
 import (
@@ -49,7 +52,7 @@ func run() error {
 	}
 
 	for _, p := range []*process.Process{fulfillment, audit} {
-		if _, err := engine.RegisterProcess(p); err != nil {
+		if _, err = engine.RegisterProcess(p); err != nil {
 			return fmt.Errorf("register %s: %w", p.ID(), err)
 		}
 	}
@@ -57,7 +60,7 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 

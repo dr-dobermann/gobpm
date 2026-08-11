@@ -1,3 +1,7 @@
+// Command decision-table demonstrates the Decision Table engine adapter
+// (adapters/dtable, ADR-029 / SRD-062) — the first out-of-core Business Rule
+// Engine: a JSON decision table deployed from an embedded artifact onto the
+// pluggable seam.
 package main
 
 import (
@@ -83,14 +87,14 @@ func runOrder(
 		return fmt.Errorf("build process: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 

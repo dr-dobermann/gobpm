@@ -25,7 +25,7 @@ const (
 	awaitEvent
 	// The two remaining kinds — awaiting a child scope's drain, and
 	// awaiting a child instance — arrive with the sub-process and call
-	// executors that can hold them (SRD-088.A M3). A leaf instance can
+	// executors that can hold them (SRD-090.A M3). A leaf instance can
 	// hold neither: it opens no scope and owns no child.
 )
 
@@ -33,7 +33,7 @@ const (
 // (ADR-025 v.3 §2.9.1): the ordinal identifies it, and the rest says what it
 // is doing. The same shape is what the durable record persists, what the
 // token view projects and what an incident carries — one vocabulary, so the
-// three surfaces cannot describe an instance differently (SRD-088.C).
+// three surfaces cannot describe an instance differently (SRD-090.C).
 type instanceState struct {
 	// ordinal is 0 for a non-iterated activity, which has exactly one
 	// instance, and the 0-based instance number otherwise. It is the join
@@ -71,7 +71,7 @@ type activityExec interface {
 //
 // In this slice a leaf activity has exactly one instance per track, so the
 // frame identity the track already supplies is unambiguous. When a decorator
-// holds several instances of one node (SRD-088.A M2), the ordinal joins that
+// holds several instances of one node (SRD-090.A M2), the ordinal joins that
 // identity — which is why it is carried here from the start rather than
 // introduced later at every call site.
 type nodeExec struct {
@@ -87,7 +87,7 @@ type nodeExec struct {
 // it (ADR-025 v.3 §2.13).
 //
 // The remaining iteration kinds are still routed by executeStep and move here
-// as they convert (SRD-088.A M2/M3).
+// as they convert (SRD-090.A M2/M3).
 func execFor(t *track, step *stepInfo) activityExec {
 	if mi := multiInstanceOf(step.node); mi != nil && mi.IsSequential() {
 		if _, composite := step.node.(scopeHost); !composite {
@@ -196,7 +196,7 @@ func (d *leafDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 // waiting instance in silence.
 //
 // Its DECISION is tested (refuseIfParked); what stays untested is reaching
-// it, which requires building the construct the snapshot refuses. SRD-088.B
+// it, which requires building the construct the snapshot refuses. SRD-090.B
 // covers that end to end, in the slice that makes the construct buildable.
 func (d *leafDecorator) runInstance(
 	ctx context.Context, it miIterator, i, n int,

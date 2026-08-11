@@ -24,7 +24,7 @@ func main() {
 func run() error {
 	fmt.Print(`
   embedded-subprocess:
-    start → accept → fulfil[ pick → pack ] → notify → end
+    start → accept → fulfill[ pick → pack ] → notify → end
 
 `)
 
@@ -44,7 +44,7 @@ func run() error {
 	sub := engine.Observe(&scopePrinter{})
 	defer sub.Cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
@@ -56,7 +56,7 @@ func run() error {
 		return fmt.Errorf("build process: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 

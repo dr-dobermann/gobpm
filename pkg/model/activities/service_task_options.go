@@ -15,6 +15,7 @@ type srvTaskConfig struct {
 	errorMapper     tasks.ErrorMapper
 	retryPolicy     tasks.RetryPolicy
 	workerTopic     tasks.Topic
+	implementation  string
 	statusVar       string
 	outputMapping   []tasks.OutputRule
 	timeout         time.Duration
@@ -31,6 +32,34 @@ type SrvTaskOption func(*srvTaskConfig) error
 // Option marks SrvTaskOption as an options.Option; NewServiceTask applies it by
 // calling the func directly.
 func (SrvTaskOption) Option() {}
+
+// WithImplementation sets the BPMN `implementation` hint of a ServiceTask —
+// the technology that realizes it, e.g. "##WebService" or a URI naming a
+// concrete binding.
+//
+// BPMN carries `implementation` as an attribute of the ServiceTask itself,
+// alongside `operationRef` (§10.5.7). gobpm otherwise derives the value
+// from the Operation's Implementor, which is right for a task an embedder
+// builds and wires, and impossible for a task an importer builds from a
+// document: an imported Operation is a catalog stub with no Implementor,
+// so there is nowhere for the file's own hint to live. This option gives
+// it one.
+//
+// Unset, the derived value stands, so no existing caller changes.
+func WithImplementation(impl string) SrvTaskOption {
+	return func(c *srvTaskConfig) error {
+		impl = strings.TrimSpace(impl)
+		if impl == "" {
+			return errs.New(
+				errs.M("WithImplementation: an empty implementation isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.implementation = impl
+
+		return nil
+	}
+}
 
 // WithTimeout bounds the in-process Operation execution to d and makes it
 // context-cancellable (ADR-021 v.1 §2.9, SRD-035). When d is positive, Exec

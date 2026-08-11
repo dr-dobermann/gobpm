@@ -55,6 +55,79 @@ and "examples assert their own outcome" as plain commits on
   decorated. Until it lands, `snapshot.New` **refuses** such a model at build
   time with a message pointing at the sub-process workaround (SRD-086) — the
   refusal is the placeholder, not a fix.
+- **A restore racing a previous incarnation's teardown** — [#314]. Restoring a
+  message-routing instance while the instance it was captured from is still
+  draining trips `-race` between `loopState.stopAll` and the new loop's first
+  checkpoint. Refuted as a general property of capture-then-restore (the ad-hoc
+  family is clean over 15 `-race` runs), so the trigger is narrower and unnamed.
+  It blocks a multi-iteration restore test for correlated routing (SRD-085
+  covers only the single-remaining-iteration shortcut), and if the shared state
+  is real it is a recovery-window defect rather than a test one.
+
+  **A second symptom, measured 2026-08-10 on `feat/adr-003-layout-close`, may
+  share that root cause.** `TestIterationCorrelatedRouting` and
+  `TestIterationRoutingKillAndResume` (`pkg/thresher/delivery_payload_test.go`)
+  fail intermittently in a full-package run by **hanging until their deadline**,
+  while passing in **0.021s** when run alone and passing when run with each
+  other. No `-race` report — the delivery simply never arrives.
+
+  What this is **not**, since the obvious hypothesis was tested and refuted: it
+  is not a deadline too tight for a loaded machine. Raising the wait from 3s to
+  30s moved the failure from 3.01s to 30.03s and changed nothing else. Failing
+  *exactly at* the deadline is the signature of an event that never arrives, not
+  of a slow one — a slow-but-arriving delivery would pass once the wait was
+  extended. (The 40-site deadline sweep built on that hypothesis was reverted
+  for the same reason; nothing in the tree depends on it.)
+
+  Cross-test interference losing a delivery is what #314's second candidate
+  cause predicts — "the message-routing fixture shares an event broker/hub
+  between the two instances". Different surface (a hang in `pkg/thresher`, not
+  `-race` in `internal/instance`), plausibly one shared object. Naming that
+  object is #314's first DoD item, and this symptom is a cheaper reproduction
+  of it: no race detector needed, just a full-package run.
+
+  **Correction, same day, after more measurement: the two tests do NOT share
+  one mechanism, and the paragraph above generalizes from one to both.** They
+  are separated by what happens when the deadline moves:
+
+  - `TestIterationCorrelatedRouting` **hangs regardless of the deadline** —
+    raising the wait from 3s to 30s moved the failure from 3.01s to 30.03s.
+    That is a delivery that never arrives, and the paragraphs above describe
+    it correctly.
+  - `TestIterationRoutingKillAndResume` is **load-sensitive**, not
+    deadline-independent. It failed twice consecutively in `make ci`, then
+    passed **9/9** when the gate's exact conditions were reproduced by hand
+    (`GOMAXPROCS=4`, `-race`, `-coverprofile`, the whole package list). The
+    two failures happened while `make ci` was piped through an
+    output-summarizing wrapper teeing ~10k lines; the run without it passed at
+    the same commit. That points at total machine load rather than at the
+    engine.
+
+  So a red gate on `KillAndResume` alone is not evidence of a lost delivery,
+  and it is worth re-running before investigating. `CorrelatedRouting` failing
+  IS evidence, at any deadline. Whether one root cause produces both remains
+  open — which is the point of naming the shared object.
+
+  **Update, `feat/loop-mi-decorator`: the `-race` half is closed, the
+  lost-delivery half is not.** FIX-040 found and removed what produced the
+  race REPORTS — testify's argument matcher formats each argument with `%v`,
+  and a message registration hands it the whole live `*Instance`, so `fmt`
+  walked the correlator's maps and mutexes from the registering goroutine
+  with no lock. A `Stringer` on the two types stops the walk; measured 6→0
+  races with two live instances and no restore, and 5→0 on this issue's own
+  scenario. The multi-iteration restore test that had been withdrawn is back
+  and green under `-race`.
+
+  That accounts for the race reports and for **nothing** in the paragraphs
+  above. A delivery that never arrives is a different failure with a
+  different signature, and the measurements above — deadline-independence,
+  passing alone in 0.021s, failing in a full-package run — still describe an
+  unexplained shared object. `TestIterationCorrelatedRouting` also failed
+  once during this branch's M1 at 3.01s and passed the nine runs after it,
+  which reads as the same intermittent symptom rather than a separate one.
+  The issue therefore stays open on that half, and naming the shared object
+  remains its first DoD item.
+
 - **Audit findings** — disposition in
   [`audit/remediation-status.md`](audit/remediation-status.md), design deferrals
   in [`audit/audit-backlog.md`](audit/audit-backlog.md). Both maintain their own

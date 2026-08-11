@@ -56,9 +56,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
-	"github.com/dr-dobermann/gobpm/pkg/rules"
 	"github.com/dr-dobermann/gobpm/pkg/script"
-	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 const (
@@ -328,43 +326,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 	t.producer = newProducer(cfg.Logger(), cfg.AuthorizationProvider())
 	t.cfg.reporter = t.producer
 
-	// Bind the producer to the dispatcher (when it accepts one) so the
-	// dispatcher's job-lifecycle events land on the same seam (SRD-041 §3.2). A
-	// dispatcher without the binder simply does not emit.
-	if ob, ok := cfg.WorkerDispatcher().(tasks.ReporterBinder); ok {
-		ob.BindReporter(t.producer)
-	}
-
-	// Bind the engine as the worker dispatcher's completion sink (when it accepts
-	// one) so a worker's Complete/Fail routes back to the owning instance by the id
-	// embedded in the job id (SRD-036 §4.5). A dispatcher that reaches the engine
-	// another way (a remote adapter) need not implement SinkBinder.
-	if binder, ok := cfg.WorkerDispatcher().(tasks.SinkBinder); ok {
-		binder.BindSink(t)
-	}
-
-	// Bind the engine's configured logger so the dispatcher's own lifecycle logging
-	// uses the embedder's logger rather than its private default (SRD-037). Done
-	// after all options are applied, so a WithLogger override is honored.
-	if lb, ok := cfg.WorkerDispatcher().(tasks.LoggerBinder); ok {
-		lb.BindLogger(cfg.Logger())
-	}
-
-	// Bind the engine's expression engine so the dispatcher can run a Job's
-	// ErrorMapper when it classifies a raw fault engine-side (EngineAuthoritative,
-	// SRD-038). A dispatcher that never classifies engine-side need not implement
-	// ExpressionEngineBinder.
-	if eb, ok := cfg.WorkerDispatcher().(tasks.ExpressionEngineBinder); ok {
-		eb.BindExpressionEngine(cfg.ExpressionEngine())
-	}
-
-	// Bind the sink into the rule engine's registrar surfaces (SRD-069
-	// FR-3): once bound, register/deploy calls on the live engine emit
-	// their KindRules audit facts. An engine without the capability
-	// simply doesn't emit.
-	if rb, ok := cfg.RuleEngine().(rules.ReporterBinder); ok {
-		rb.BindReporter(t.producer)
-	}
+	t.bindCapabilities()
 
 	// The EventHub receives the engine's resolved runtime (&t.cfg implements
 	// renv.EngineRuntime) so the waiters it builds reach Clock / ExpressionEngine
@@ -381,6 +343,8 @@ func New(id string, opts ...Option) (*Thresher, error) {
 	t.eventHub = eh
 
 	t.logStartupConfig()
+
+	t.shareRuntime()
 
 	return t, nil
 }
@@ -714,6 +678,21 @@ func (t *Thresher) Run(ctx context.Context) error {
 			errs.E(err))
 	}
 
+	// Extension startup (ADR-002 v.2 §8.3, SRD-090 FR-2): every wired seam
+	// implementing renv.Starter is started before the engine accepts work, in
+	// the order lifecycleSeams fixes. It precedes the migration hook below
+	// because an adapter that cannot start must not then be asked to prepare
+	// its storage.
+	if err := t.startSeams(runCtx); err != nil {
+		ec.cancel()
+		t.state.Store(uint32(NotStarted))
+
+		return errs.New(
+			errs.M("an extension refused to start"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
 	// The storage migration hook (SRD-078 FR-3, ADR-033 §2.7): a
 	// Repository that implements renv.Migrator prepares its own objects
 	// BEFORE the group registry is touched and recovery lists anything —
@@ -838,7 +817,14 @@ func (t *Thresher) Shutdown(ctx context.Context) error {
 	}
 
 	// Drain the event machinery: stop waiters and wait for their goroutines.
-	return t.eventHub.Shutdown(ctx)
+	hubErr := t.eventHub.Shutdown(ctx)
+
+	// Extension teardown (ADR-002 v.2 §8.3, SRD-090 FR-2), last and in reverse
+	// start order. It follows the hub drain because waiters hold the broker's
+	// subscriptions, and it follows drainInstances because a draining instance
+	// still checkpoints through the Repository — stopping either first would
+	// pull the floor out from under work that is still finishing.
+	return errors.Join(hubErr, t.stopSeams(ctx))
 }
 
 // drainInstances awaits every instance the engine tracks, bounded by ctx.
@@ -1043,6 +1029,13 @@ func (t *Thresher) RegisterProcess(
 			errs.M("failed to create snapshot from process"),
 			errs.C(errorClass, errs.BulidingFailed),
 			errs.E(err))
+	}
+
+	// Refuse a model this engine cannot run: a Script Task whose format no
+	// configured engine claims would otherwise fail deep inside a running
+	// instance, long after the caller was told the process registered fine.
+	if err := t.validateScriptCoverage(s); err != nil {
+		return nil, err
 	}
 
 	// Serialize this whole key operation against a concurrent unregister of the

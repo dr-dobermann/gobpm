@@ -61,7 +61,7 @@ func (t *track) executeStep(
 	// decorator (ADR-025 v.2 §2.12): a composite iterates by child scope
 	// (sequential await-each runMISequential, SRD-055; parallel
 	// fan-out-then-await-all runMIParallel, SRD-056.A), a LEAF
-	// sequentially through the decorator execFor builds (SRD-088.A M2).
+	// sequentially through the decorator execFor builds (SRD-090.A M2).
 	if mi := multiInstanceOf(step.node); mi != nil {
 		if _, ok := step.node.(scopeHost); ok {
 			if mi.IsSequential() {
@@ -77,7 +77,7 @@ func (t *track) executeStep(
 		// pass through this routing — the group drives the iteration,
 		// the track executes the node exactly once (FR-3). A SEQUENTIAL
 		// leaf falls through to execFor, which builds its decorator
-		// (SRD-088.A M2); this branch must not catch it.
+		// (SRD-090.A M2); this branch must not catch it.
 		if !t.leafPlain && !mi.IsSequential() {
 			return t.runMIParallel(ctx, step, mi)
 		}
@@ -85,7 +85,7 @@ func (t *track) executeStep(
 
 	// A node with no loop characteristics has exactly ONE instance, and it
 	// runs through the executor that will hold every instance once the
-	// iteration branches above move onto decorators (SRD-088.A M1, ADR-025
+	// iteration branches above move onto decorators (SRD-090.A M1, ADR-025
 	// v.3 §2.13). Ordinal 0: a non-iterated activity is instance zero of
 	// one, which keeps the identity uniform rather than special-casing the
 	// common case.

@@ -5,7 +5,7 @@
 //
 //	start → [process-payment] ───────────────> end-paid
 //	             ╳ (timer boundary, 2s, interrupting)
-//	             └─> [cancel-order] ─────────> end-cancelled
+//	             └─> [cancel-order] ─────────> end-canceled
 //
 // The process build lives in process.go, the operations in handlers.go; this file is
 // the engine wiring + run.
@@ -32,7 +32,7 @@ func run() error {
   boundary-events:
     start → [process-payment] ───────────────> end-paid
                  ╳ (timer boundary, 2s, interrupting)
-                 └─> [cancel-order] ─────────> end-cancelled
+                 └─> [cancel-order] ─────────> end-canceled
 
 `)
 
@@ -53,14 +53,14 @@ func run() error {
 		return fmt.Errorf("build process: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 

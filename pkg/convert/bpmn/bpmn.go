@@ -36,23 +36,14 @@ const (
 	tagExtensionElems   = "extensionElements"
 	tagIncoming         = "incoming"
 	tagOutgoing         = "outgoing"
+	tagErrorRef         = "errorRef"
+	tagTextAnnotation   = "textAnnotation"
+	tagGroup            = "group"
+	tagCategory         = "category"
+	tagRelationship     = "relationship"
+	tagImport           = "import"
+	tagAssociation      = "association"
 )
-
-// isSkippableAnnotation reports BPMN-namespace children that carry no
-// executable-core semantics for this slice and are therefore skipped
-// silently — the same policy as documentation (package doc, SRD-051 §FR-7
-// spirit: only *unmapped flow elements* must surface as
-// UnsupportedElementError). extensionElements is nearly universal in
-// bpmn.io / Camunda exports; treating it as an error would reject every
-// real modeler file even when the flow graph is fully in the MVP subset.
-func isSkippableAnnotation(local string) bool {
-	switch local {
-	case tagDocumentation, tagExtensionElems:
-		return true
-	default:
-		return false
-	}
-}
 
 func init() { //nolint:gochecknoinits // SRD-051 §FR-4: blank-import self-registration, the image.RegisterFormat idiom (ADR-024 §2.2)
 	convert.RegisterImporterAtInit(convert.BPMN, importer{})

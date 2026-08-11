@@ -447,7 +447,7 @@ instance-termination story in the runtime ([ADR-001 v.6](ADR-001-execution-model
 |---|---|---|---|
 | ADR-001 | Execution Model | **Accepted v.3** | Two-layer Instance + track; one event-loop goroutine per instance; token as a projection; ctx cancellation cascade. (Joins/events/long-waits/persistence relocated to the ADRs below + the Persistence ADR.) |
 | ADR-002 | Extension Architecture | **Accepted v.2** | Interface catalog; functional-options assembly; default implementations; adapter module conventions |
-| ADR-003 | Module Layout | Draft | Multi-module monorepo; import directions; module evolution; future split-out path |
+| ADR-003 | Module Layout | **Accepted v.1** | Multi-module monorepo; import directions; module evolution; future split-out path |
 | ADR-004 | Runtime Environment Contract | Draft | Tenancy, AuthN, AuthZ, observability, diagnostics, profiling — ownership and interfaces |
 | ADR-005 | Gateways & Joins | **Accepted v.2** | Synchronizing join, non-synchronizing merge, OR-join, Event-Based Gateway + `Withdrawn`; fork-flow activation by gateway type |
 | ADR-006 | Events & Subscriptions | **Accepted v.1** | EventHub delivery, Terminate End Event, interrupting boundary events, wait nodes |

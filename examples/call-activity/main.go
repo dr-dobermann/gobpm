@@ -55,7 +55,7 @@ func run() error {
 	sub := engine.Observe(callPrinter{})
 	defer sub.Cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
@@ -72,11 +72,11 @@ func run() error {
 		return fmt.Errorf("build caller: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(callee); err != nil {
+	if _, err = engine.RegisterProcess(callee); err != nil {
 		return fmt.Errorf("register callee: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(caller); err != nil {
+	if _, err = engine.RegisterProcess(caller); err != nil {
 		return fmt.Errorf("register caller: %w", err)
 	}
 

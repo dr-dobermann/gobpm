@@ -1,3 +1,6 @@
+// Command multi-instance-sequential demonstrates a BPMN sequential
+// Multi-Instance activity (§13.3.7, SRD-055): the activity runs once per
+// element of an input collection, the instances running one after another.
 package main
 
 import (
@@ -37,7 +40,7 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
@@ -46,7 +49,7 @@ func run() error {
 		return fmt.Errorf("build process: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 

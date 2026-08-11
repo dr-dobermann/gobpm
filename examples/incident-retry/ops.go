@@ -28,13 +28,13 @@ func start() (*thresher.InstanceHandle, func(), error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	if err := th.Run(ctx); err != nil {
+	if err = th.Run(ctx); err != nil {
 		cancel()
 
 		return nil, nil, fmt.Errorf("engine run: %w", err)
 	}
 
-	if _, err := th.RegisterProcess(p); err != nil {
+	if _, err = th.RegisterProcess(p); err != nil {
 		cancel()
 
 		return nil, nil, fmt.Errorf("register: %w", err)
@@ -71,7 +71,7 @@ func operate(
 	fmt.Printf("  snapshot: %s\n", string(view.Data))
 	fmt.Println("→ operator: retry the incident")
 
-	if err := h.RetryIncident(context.Background(), view.ID); err != nil {
+	if err = h.RetryIncident(context.Background(), view.ID); err != nil {
 		return "", view, fmt.Errorf("retry: %w", err)
 	}
 
@@ -95,9 +95,11 @@ func waitOpenIncident(
 	deadline := time.Now().Add(10 * time.Second)
 
 	for time.Now().Before(deadline) {
-		for _, v := range h.Incidents() {
+		views := h.Incidents()
+		for i := range views {
+			v := &views[i]
 			if v.State == "open" && v.Attempts == 2 && v.RetryAt.IsZero() {
-				return v, nil
+				return *v, nil
 			}
 		}
 

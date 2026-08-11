@@ -1,3 +1,6 @@
+// Command event-subprocess demonstrates an interrupting Event Sub-Process
+// (ADR-023 v.2 / SRD-052): a scope-armed handler — a SubProcess marked
+// triggeredByEvent — that interrupts its enclosing scope when it fires.
 package main
 
 import (
@@ -43,7 +46,7 @@ func run() error {
 	sub := engine.Observe(&scopePrinter{})
 	defer sub.Cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
@@ -55,7 +58,7 @@ func run() error {
 		return fmt.Errorf("build process: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 

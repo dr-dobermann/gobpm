@@ -55,18 +55,51 @@ linters:
               desc: "core MUST NOT import runtime (ADR-003 §4.4)"
             - pkg: "github.com/dr-dobermann/gobpm/adapters"
               desc: "core MUST NOT import adapters (ADR-003 §4.4)"
+        # Redundant with Go itself — each example is its own module, so the
+        # language blocks an internal/ import before depguard is consulted
+        # (verified: the probe fails as typecheck, not depguard). Kept because
+        # it states the intent, not because it is load-bearing.
         examples-no-internal:
           files:
             - "**/examples/**/*.go"
           deny:
             - pkg: "github.com/dr-dobermann/gobpm/internal"
               desc: "examples demonstrate public API only (ADR-003 §4.4)"
-        model-no-internal:
+        # An example shows how to embed the LIBRARY. Reaching into runtime/
+        # would demonstrate the server, which is a different product with its
+        # own examples (ADR-003 §4.4).
+        #
+        # adapters/ is deliberately NOT denied here, though §4.4 as written
+        # forbids it: decision-table demonstrates adapters/dtable and
+        # script-task demonstrates adapters/lua, and an adapter nobody
+        # demonstrates is an adapter nobody can learn to wire. ADR-003 §4.4
+        # is amended to permit it (SRD-088 FR-6).
+        examples-no-runtime:
           files:
-            - "**/pkg/model/**/*.go"
+            - "**/examples/**/*.go"
+          deny:
+            - pkg: "github.com/dr-dobermann/gobpm/runtime"
+              desc: "examples demonstrate the embedded library; the server has its own examples (ADR-003 §4.4)"
+        # Everything under pkg/ is a public contract an outside author must be
+        # able to implement — a port, its bundled battery, or a model type — so
+        # none of it may reach into internal/. That is what lets a battery serve
+        # as the reference implementation someone copies (SRD-088 FR-9).
+        #
+        # pkg/thresher is the sole exception: it is the engine facade, wiring
+        # internals rather than implementing a port (49 such imports; every
+        # other package under pkg/ has none). It has no subpackages, so a single
+        # negation covers it — and note the pattern is `.../thresher/*.go`, not
+        # `.../thresher/**/*.go`: the latter requires an intervening directory
+        # and silently matches nothing.
+        #
+        # Supersedes model-no-internal, which this strictly contains.
+        public-api-no-internal:
+          files:
+            - "**/pkg/**/*.go"
+            - "!**/pkg/thresher/*.go"
           deny:
             - pkg: "github.com/dr-dobermann/gobpm/internal"
-              desc: "pkg/model is the public modeling API; it MUST NOT import internal (ADR-012, ADR-003 §4.4)"
+              desc: "pkg/ is the public contract surface; it MUST NOT import internal (ADR-003 §4.4). If this is engine wiring rather than a public contract, it belongs in internal/ or in the pkg/thresher facade."
         adapters-no-cross-adapter:
           files:
             - "**/adapters/**/*.go"
@@ -152,10 +185,24 @@ linters:
       - linters:
           - lll
         source: '^//go:generate '
+      # gocyclo measures the wrong property in an example's model builder.
+      # Those functions are linear — construct an element, check its error,
+      # construct the next — so every point of "complexity" is an error check,
+      # not a decision. Splitting them to satisfy the threshold needs either a
+      # struct of flow.Element (which cannot then feed flow.Link, since that
+      # wants SequenceSource/SequenceTarget) or an error-accumulating builder,
+      # which makes an example about BPMN spend its first screen teaching error
+      # accumulation instead (SRD-088 §4.8).
+      #
+      # This exempts complexity, NOT length: funlen still applies, and it is
+      # the check that actually measures "this function is too long to scan".
+      # An example needing real branching is an example doing too much.
+      - linters:
+          - gocyclo
+        path: '^examples/'
     paths:
       - generated
       - .generated
-      - examples
       - third_party
       - builtin
       - mock_.*\.go$

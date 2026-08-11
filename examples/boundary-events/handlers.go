@@ -12,7 +12,7 @@ import (
 )
 
 // paymentTask builds the long-running guarded activity: a ServiceTask that would
-// take ~4s but honours its context, so when the timer boundary fires and the engine
+// take ~4s but honors its context, so when the timer boundary fires and the engine
 // cancels the track, it returns early. Its result is then discarded by the
 // interruption checkpoint (SRD-029 §3.7) — the normal "paid" flow is never taken.
 func paymentTask(ran *pathSet) (*activities.ServiceTask, error) {

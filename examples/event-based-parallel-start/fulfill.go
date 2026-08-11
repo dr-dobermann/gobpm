@@ -33,7 +33,7 @@ func fulfill(
 
 	fmt.Println("publishing 'payment received' (routes to the same instance)...")
 
-	if err := broker.Publish(ctx, messaging.Envelope{
+	if err = broker.Publish(ctx, messaging.Envelope{
 		Name: paymentMessage, Payload: orderID, CorrelationKey: orderID,
 	}); err != nil {
 		return fmt.Errorf("publish payment: %w", err)

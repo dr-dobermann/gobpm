@@ -23,7 +23,7 @@ func check(state thresher.InstanceState, fired []string) error {
 
 	// The point of NON-interrupting: the guarded task survived all three
 	// warnings and still completed. An interrupting boundary would have
-	// cancelled it at the first mark and this would read Terminated.
+	// canceled it at the first mark and this would read Terminated.
 	if state != thresher.StateCompleted {
 		return fmt.Errorf(
 			"instance finished %s, want %s — a non-interrupting boundary "+

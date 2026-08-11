@@ -255,7 +255,18 @@ func bpmnStartElement(local, id string) xml.StartElement {
 func TestImporterDefensiveConstructorBranches(t *testing.T) {
 	t.Run("process constructor error", func(t *testing.T) {
 		constructorErr := errors.New("process constructor failed")
+
+		// The process is constructed lazily now — on its first flow
+		// element, or at its end tag when it has none — so the parser
+		// needs a real token stream to reach the constructor at all.
+		dec := xml.NewDecoder(strings.NewReader(
+			`<bpmn:process xmlns:bpmn="` + nsBPMN + `" id="p"></bpmn:process>`))
+
 		p := &parser{
+			dec:        dec,
+			ctx:        context.Background(),
+			interfaces: map[string]string{},
+			ops:        map[string]opSpec{},
 			newProcess: func(
 				string,
 				...options.Option,
@@ -264,7 +275,46 @@ func TestImporterDefensiveConstructorBranches(t *testing.T) {
 			},
 		}
 
-		proc, err := p.parseProcess(bpmnStartElement(tagProcess, "p"))
+		se, err := p.rootElement2()
+		if err != nil {
+			t.Fatalf("reading the process start element: %v", err)
+		}
+
+		proc, err := p.parseProcess(se)
+		if proc != nil || !errors.Is(err, constructorErr) {
+			t.Fatalf("parseProcess = %v, %v; want wrapped constructor error", proc, err)
+		}
+	})
+
+	t.Run("process constructor error on the first flow element", func(t *testing.T) {
+		// The empty-process case above reaches the constructor through
+		// finish(); a process WITH content reaches it through child(),
+		// which is the path every real document takes.
+		constructorErr := errors.New("process constructor failed")
+
+		dec := xml.NewDecoder(strings.NewReader(
+			`<bpmn:process xmlns:bpmn="` + nsBPMN + `" id="p">` +
+				`<bpmn:startEvent id="s"/></bpmn:process>`))
+
+		p := &parser{
+			dec:        dec,
+			ctx:        context.Background(),
+			interfaces: map[string]string{},
+			ops:        map[string]opSpec{},
+			newProcess: func(
+				string,
+				...options.Option,
+			) (*process.Process, error) {
+				return nil, constructorErr
+			},
+		}
+
+		se, err := p.rootElement2()
+		if err != nil {
+			t.Fatalf("reading the process start element: %v", err)
+		}
+
+		proc, err := p.parseProcess(se)
 		if proc != nil || !errors.Is(err, constructorErr) {
 			t.Fatalf("parseProcess = %v, %v; want wrapped constructor error", proc, err)
 		}
@@ -280,11 +330,12 @@ func TestImporterDefensiveConstructorBranches(t *testing.T) {
 	})
 
 	t.Run("exclusive gateway constructor error", func(t *testing.T) {
-		_, err := (&parser{}).parseGateway(
+		_, err := parseGateway(
 			&assembly{},
 			bpmnStartElement(tagExclusiveGateway, ""),
 			"",
 			"",
+			nodeBody{},
 		)
 		if err == nil {
 			t.Fatal("parseGateway with empty id: want constructor error")
@@ -316,7 +367,7 @@ func TestImportGatewayBranches(t *testing.T) {
 		},
 		"default names an unknown flow": {
 			doc:  branch(`default="nope"`),
-			want: "unknown default flow",
+			want: `references sequence flow "nope" in "default"`,
 		},
 	})
 }
@@ -401,7 +452,7 @@ func TestImportGatewayDefaultNotOutgoing(t *testing.T) {
 				`<bpmn:sequenceFlow id="f1" sourceRef="g" targetRef="e1"/>` +
 				`<bpmn:sequenceFlow id="f2" sourceRef="g" targetRef="e2"/>` +
 				`</bpmn:process>`),
-			want: "couldn't set default flow",
+			want: `references "f0" in "default", and the model refused it`,
 		},
 	})
 }
@@ -712,5 +763,20 @@ func TestExportUnsupportedNode(t *testing.T) {
 	var uee *convert.UnsupportedElementError
 	if !errors.As(err, &uee) {
 		t.Fatalf("Export = %v, want *convert.UnsupportedElementError", err)
+	}
+}
+
+// rootElement2 advances the parser to the next start element, so a test can
+// hand parseProcess a real element off a real stream.
+func (p *parser) rootElement2() (xml.StartElement, error) {
+	for {
+		tok, err := p.token()
+		if err != nil {
+			return xml.StartElement{}, err
+		}
+
+		if se, ok := tok.(xml.StartElement); ok {
+			return se, nil
+		}
 	}
 }

@@ -225,9 +225,18 @@ not anything about checkpointing.
 
 ## 7 Related
 
-- **#314** — this closes it, including its blocked deliverable (the T-1 test).
-  The issue's own title and body describe the wrong mechanism; §1.4 records
-  why and this doc supersedes it.
+- **#314** — this closes the **race half** and its blocked deliverable (the
+  T-1 test), not the issue. While this branch was in flight, measurements on
+  `feat/adr-003-layout-close` attached a second symptom to the same issue:
+  `TestIterationCorrelatedRouting` and `TestIterationRoutingKillAndResume`
+  **hang** in a full-package run — no `-race` report, the delivery simply
+  never arrives — with the first failing at any deadline, which is the
+  signature of a lost delivery rather than a slow one. Nothing in this fix
+  addresses that: a formatter reading engine state without a lock and a
+  message that never reaches its waiter are different failures. The issue
+  stays open on that half, and `docs/backlog.md` carries both halves with
+  their measurements. What this doc does supersede is the issue's original
+  *mechanism* for the race reports (§1.4).
 - **#313** — the loop/MI decorator. Alternative 2 (a narrow processor handle)
   belongs to that work; this fix deliberately does not pre-empt it.
 - **SRD-085** — the routing this test finally covers across a restore.

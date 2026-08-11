@@ -3,6 +3,7 @@ package goexpr
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -43,5 +44,39 @@ func TestEngineDelegatesToExpression(t *testing.T) {
 
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want the expression's error", err)
+	}
+}
+
+// TestEngineRejectsANilExpression: the engine is a public extension point, so
+// a nil expression is named here rather than dereferenced.
+//
+// The guard exists because it did not: Evaluate delegated straight into the
+// nil and panicked, which reports the library as broken instead of the call.
+// expressiontest's NilExpressionRejected covers it too, but from another
+// package — this package's own profile is what the coverage gate reads.
+func TestEngineRejectsANilExpression(t *testing.T) {
+	_, err := New().Evaluate(context.Background(), nil, nil)
+	if err == nil {
+		t.Fatal("Evaluate(nil expression) must be rejected, not dereferenced")
+	}
+
+	if !strings.Contains(err.Error(), "nil FormalExpression") {
+		t.Fatalf("err = %v, want it to name the nil FormalExpression", err)
+	}
+}
+
+// TestEngineAcceptsANilSource pins the asymmetry with lite.Engine: a
+// GExpression may carry a source bound at construction, and substituteSource
+// uses it precisely when the passed one is nil, so rejecting nil here would
+// break self-sourced functors.
+func TestEngineAcceptsANilSource(t *testing.T) {
+	expr := &fakeExpr{}
+
+	if _, err := New().Evaluate(context.Background(), expr, nil); err != nil {
+		t.Fatalf("Evaluate with a nil source must reach the expression: %v", err)
+	}
+
+	if !expr.called {
+		t.Fatal("a nil source must be passed through, not rejected")
 	}
 }

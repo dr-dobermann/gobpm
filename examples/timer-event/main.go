@@ -6,165 +6,41 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"log"
 	"time"
 
-	"github.com/dr-dobermann/gobpm/pkg/model/activities"
-	"github.com/dr-dobermann/gobpm/pkg/model/data"
-	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
-	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
-	"github.com/dr-dobermann/gobpm/pkg/model/events"
-	"github.com/dr-dobermann/gobpm/pkg/model/flow"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
-	"github.com/dr-dobermann/gobpm/pkg/model/process"
-	"github.com/dr-dobermann/gobpm/pkg/model/service"
-	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
+	"fmt"
+	"log"
+
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
 
 // timerDelay is how long the start event's timer holds the token. The timer
 // definition and the example's own assertion both read it, so the check can
-// never drift away from the behaviour it is checking.
+// never drift away from the behavior it is checking.
 const timerDelay = 5 * time.Second
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	fmt.Print(`
   timer-event:
     (timer start — fires in 5s) ◷─> handle-timeout (ServiceTask) ─> end
 
 `)
-	// Create BPM engine
+
 	engine, err := thresher.New("timer-event-engine")
 	if err != nil {
-		log.Fatal("Failed to create BPM engine:", err)
+		return fmt.Errorf("create engine: %w", err)
 	}
 
-	// Create a process with timer event
-	proc, err := process.New("timer-process")
+	proc, err := buildProcess()
 	if err != nil {
-		log.Fatal("Failed to create process:", err)
+		return err
 	}
 
-	// Create timer expression for time date (current time + 5 seconds)
-	timeExpr := goexpr.Must(
-		nil, // no data source needed for static time
-		data.MustItemDefinition(values.NewVariable(time.Now().Add(timerDelay))),
-		func(ctx context.Context, ds data.Source) (data.Value, error) {
-			return values.NewVariable(time.Now().Add(timerDelay)), nil
-		},
-		foundation.WithID("time-plus-5s"),
-	)
-
-	// Create timer event definition with time date
-	// Note: According to BPMN timer logic, we can use either timeDate OR (timeCycle + timeDuration)
-	timerDef, err := events.NewTimerEventDefinition(
-		timeExpr, // timeDate - specific time to trigger
-		nil,      // timeCycle - not used with timeDate
-		nil,      // timeDuration - not used with timeDate
-	)
-	if err != nil {
-		log.Fatal("Failed to create timer event definition:", err)
-	}
-
-	// Create start event with timer definition
-	timerEvent, err := events.NewStartEvent("timer-start",
-		events.WithTimerTrigger(timerDef))
-	if err != nil {
-		log.Fatal("Failed to create timer start event:", err)
-	}
-
-	// Create service operation. It needs a real implementation: an operation
-	// built with a nil implementation faults the instance the moment the task
-	// runs, which is what this example did until its outcome was checked.
-	op, err := gooper.New("handle-timer",
-		func(_ context.Context, _ service.DataReader,
-			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
-			fmt.Println("  ▶ handle-timeout: the timer fired, handling it")
-
-			return nil, nil
-		})
-	if err != nil {
-		log.Fatal("Failed to create service operation:", err)
-	}
-
-	// Create service task
-	serviceTask, err := activities.NewServiceTask("handle-timeout", op,
-		activities.WithoutParams())
-	if err != nil {
-		log.Fatal("Failed to create service task:", err)
-	}
-
-	// Create end event
-	endEvent, err := events.NewEndEvent("end")
-	if err != nil {
-		log.Fatal("Failed to create end event:", err)
-	}
-
-	// Add elements to process
-	for _, element := range []flow.Element{timerEvent, serviceTask, endEvent} {
-		if err := proc.Add(element); err != nil {
-			log.Fatal("Failed to add element to process:", err)
-		}
-	}
-
-	// Connect elements with sequence flows
-	_, err = flow.Link(timerEvent, serviceTask)
-	if err != nil {
-		log.Fatal("Failed to link timer event to service task:", err)
-	}
-
-	_, err = flow.Link(serviceTask, endEvent)
-	if err != nil {
-		log.Fatal("Failed to link service task to end event:", err)
-	}
-
-	// Register process with engine
-	_, err = engine.RegisterProcess(proc)
-	if err != nil {
-		log.Fatal("Failed to register process:", err)
-	}
-
-	// Start engine
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	err = engine.Run(ctx)
-	if err != nil {
-		log.Fatal("Failed to start engine:", err)
-	}
-
-	// Start process execution
-	started := time.Now()
-
-	h, err := engine.StartLatest(proc.ID())
-	if err != nil {
-		log.Fatal("Failed to start process:", err)
-	}
-
-	fmt.Printf("Timer process '%s' started successfully with ID: %s\n",
-		proc.Name(), proc.ID())
-	fmt.Println("Timer will trigger after 5 seconds...")
-	fmt.Println("Waiting up to 8s for the timer event...")
-
-	state, err := h.WaitCompletion(ctx)
-	if err != nil {
-		log.Fatal("Waiting for completion:", err)
-	}
-
-	if state != thresher.StateCompleted {
-		log.Fatalf("Instance ended %s, want Completed", state)
-	}
-
-	// The delay is the demonstration, so it is what gets checked: a timer
-	// that fired immediately — or a start event that ignored its trigger
-	// altogether — would complete the process just the same, only sooner.
-	// The earlier version of this example simply waited for the context to
-	// expire and then declared success, which no failure could have upset.
-	if waited := time.Since(started); waited < timerDelay {
-		log.Fatalf("completed after %s, want at least %s — the timer did "+
-			"not hold the token", waited.Round(time.Millisecond), timerDelay)
-	}
-
-	fmt.Println("Process completed")
+	return runProcess(engine, proc)
 }

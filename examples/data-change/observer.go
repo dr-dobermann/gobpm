@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 
@@ -49,26 +48,6 @@ func (p *dataChangePrinter) check(want ...string) error {
 
 	if strings.Join(p.seen, " | ") != strings.Join(want, " | ") {
 		return fmt.Errorf("saw %v, want %v", p.seen, want)
-	}
-
-	return nil
-}
-
-// checkSet reports an error unless exactly these changes were observed, in any
-// order — for commits whose changes come from a map, whose iteration order is
-// deliberately unspecified.
-func (p *dataChangePrinter) checkSet(want ...string) error {
-	p.m.Lock()
-	defer p.m.Unlock()
-
-	got := append([]string(nil), p.seen...)
-	sort.Strings(got)
-
-	w := append([]string(nil), want...)
-	sort.Strings(w)
-
-	if strings.Join(got, " | ") != strings.Join(w, " | ") {
-		return fmt.Errorf("saw %v, want %v (in any order)", p.seen, want)
 	}
 
 	return nil

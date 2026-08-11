@@ -120,8 +120,8 @@ func wire(
 
 	add(p, start, wait, arrived, end)
 
-	link(start, wait.(flow.SequenceTarget))
-	link(wait.(flow.SequenceSource), arrived)
+	link(start, wait)
+	link(wait, arrived)
 	link(arrived, end)
 
 	return p
@@ -181,8 +181,23 @@ func add(p *process.Process, ee ...flow.Element) {
 	}
 }
 
-func link(src flow.SequenceSource, tgt flow.SequenceTarget) {
-	if _, err := flow.Link(src, tgt); err != nil {
+// link wires two elements, panicking like must: an element that cannot carry a
+// sequence flow is a bug in the example, not a runtime condition. It takes
+// flow.Element so the assertion — and its message — live here rather than at
+// each call site, where a bare `x.(flow.SequenceTarget)` would panic with no
+// indication of which element was wrong.
+func link(src, tgt flow.Element) {
+	s, ok := src.(flow.SequenceSource)
+	if !ok {
+		panic(fmt.Sprintf("%q is not a sequence source", src.Name()))
+	}
+
+	t, ok := tgt.(flow.SequenceTarget)
+	if !ok {
+		panic(fmt.Sprintf("%q is not a sequence target", tgt.Name()))
+	}
+
+	if _, err := flow.Link(s, t); err != nil {
 		panic(fmt.Sprintf("linking: %v", err))
 	}
 }
