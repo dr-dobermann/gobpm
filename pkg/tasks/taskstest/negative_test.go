@@ -308,13 +308,19 @@ func good() *stubDispatcher {
 
 // shrinkWaits cuts the suite's hang-breakers for the negative tests, which
 // force failures they already know how to produce.
+// It goes through the exported SetWaits rather than assigning the package
+// variables directly, so the negative tests exercise the same knob an adapter
+// author uses — a tunable nothing in the repo calls is a tunable nobody has
+// checked. SetWaits is process-global and its restore is registered with
+// t.Cleanup, which is why no test in this package may call t.Parallel.
 func shrinkWaits(t *testing.T) {
 	t.Helper()
 
-	fw, sw := fetchWait, settleWait
-	fetchWait, settleWait = 150*time.Millisecond, 100*time.Millisecond
-
-	t.Cleanup(func() { fetchWait, settleWait = fw, sw })
+	t.Cleanup(SetWaits(WaitConfig{
+		Fetch:   150 * time.Millisecond,
+		Settle:  100 * time.Millisecond,
+		Absence: 30 * time.Millisecond,
+	}))
 }
 
 // TestAssertionsRejectBrokenDispatchers drives each contract assertion against
@@ -542,5 +548,73 @@ func TestSinkAssertionsSkipWithoutABinder(t *testing.T) {
 	if !got.skipped {
 		t.Fatal("a dispatcher with no SinkBinder must SKIP the sink " +
 			"assertions, not fail them")
+	}
+}
+
+// TestWaitsAreTunable covers the knob published for out-of-repo adapters
+// (NFR-3) — see the messagingtest twin for why an untested tunable is a trap.
+func TestWaitsAreTunable(t *testing.T) {
+	before := Waits()
+
+	restore := SetWaits(WaitConfig{
+		Fetch:   42 * time.Second,
+		Settle:  7 * time.Second,
+		Absence: 3 * time.Second,
+	})
+
+	got := Waits()
+	if got.Fetch != 42*time.Second || got.Settle != 7*time.Second ||
+		got.Absence != 3*time.Second {
+		t.Fatalf("SetWaits did not take effect: %+v", got)
+	}
+
+	restore()
+
+	if back := Waits(); back != before {
+		t.Fatalf("restore left %+v, want %+v", back, before)
+	}
+
+	defer SetWaits(WaitConfig{Fetch: 9 * time.Second})()
+
+	if partial := Waits(); partial.Absence != before.Absence {
+		t.Fatalf("a zero field overwrote Absence: %+v", partial)
+	}
+}
+
+// impatientDispatcher returns from FetchAndLock immediately, with no job and
+// no error — the dispatcher that does not block at all.
+type impatientDispatcher struct{ *stubDispatcher }
+
+func (impatientDispatcher) FetchAndLock(
+	context.Context, tasks.WorkerID, []tasks.Topic, time.Duration,
+) ([]tasks.LockedJob, error) {
+	return nil, nil
+}
+
+// TestHandshakeCatchesANonBlockingFetch covers the branch the handshake added:
+// a dispatcher whose FetchAndLock returns straight away is rejected.
+//
+// The previous version slept and hoped, so this implementation passed — it
+// simply happened to return before the sleep elapsed, which reads exactly like
+// a fetch that parked and was woken.
+func TestHandshakeCatchesANonBlockingFetch(t *testing.T) {
+	shrinkWaits(t)
+
+	for name, test := range map[string]func(tb, tasks.WorkerDispatcher){
+		"FetchWakesOnEnqueue":      testFetchWakesOnEnqueue,
+		"FetchHonorsContextCancel": testFetchHonorsContextCancel,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := drive(test, impatientDispatcher{good()})
+
+			if !got.failed {
+				t.Fatal("a fetch that never blocks must be rejected")
+			}
+
+			if !strings.Contains(got.msg, "returned before") {
+				t.Fatalf("failed with %q, which does not name the early return",
+					got.msg)
+			}
+		})
 	}
 }

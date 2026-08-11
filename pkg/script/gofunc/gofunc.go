@@ -71,7 +71,12 @@ type Option func(*Engine) error
 // token reaches the task.
 func WithScript(name string, f ScriptFunc) Option {
 	return func(e *Engine) error {
-		if strings.TrimSpace(name) == "" {
+		// Trim HERE, not only in the guard. Execute trims before looking up,
+		// so a name stored with surrounding whitespace would be registered
+		// successfully and then be permanently unreachable.
+		name = strings.TrimSpace(name)
+
+		if name == "" {
 			return errs.New(
 				errs.M("WithScript: an empty script name isn't allowed"),
 				errs.C(errorClass, errs.EmptyNotAllowed))

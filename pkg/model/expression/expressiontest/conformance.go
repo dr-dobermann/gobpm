@@ -35,14 +35,22 @@ type Subject struct {
 	Source data.Source
 
 	// Want is the value Expr must produce, compared against the evaluated
-	// result's Get(ctx). A nil Want skips the value comparison and checks
-	// only that evaluation succeeds and returns a non-nil Value — for an
-	// engine whose natural result is awkward to state as a plain Go value.
+	// result's Get(ctx). It is only consulted when CheckWant is set.
 	//
 	// The comparison is by Go equality, so the type matters: lite evaluates
 	// arithmetic in float64 where a Go-native functor returns int, and both
 	// are correct. State the value the engine actually produces.
 	Want any
+
+	// CheckWant asserts the evaluated result equals Want. Without it the suite
+	// checks only that evaluation succeeds and returns a non-nil Value.
+	//
+	// It exists because "Want is nil" and "do not check the value" are
+	// different claims, and conflating them made the interesting case
+	// unsayable: an engine whose expression correctly evaluates to nil — a
+	// missing field, an empty lookup — could not assert that, because the
+	// suite read the nil as "skip" and silently checked nothing.
+	CheckWant bool
 
 	// SourceRequired declares that this engine cannot evaluate without a
 	// caller-supplied data.Source, making Evaluate(ctx, expr, nil) an error.
@@ -177,7 +185,7 @@ func testEvaluatesItsOwnSubject(t tb, s Subject) {
 			"cannot tell success from failure")
 	}
 
-	if s.Want == nil {
+	if !s.CheckWant {
 		return
 	}
 

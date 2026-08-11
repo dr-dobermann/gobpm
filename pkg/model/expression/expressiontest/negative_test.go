@@ -122,10 +122,11 @@ func (stubSource) Find(context.Context, string) (data.Data, error) {
 
 func subject(e *stubEngine) Subject {
 	return Subject{
-		Engine: e,
-		Expr:   stubExpr{},
-		Source: stubSource{},
-		Want:   2,
+		Engine:    e,
+		Expr:      stubExpr{},
+		Source:    stubSource{},
+		Want:      2,
+		CheckWant: true,
 	}
 }
 

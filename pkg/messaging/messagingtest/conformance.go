@@ -14,6 +14,8 @@ package messagingtest
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,6 +54,40 @@ type tb interface {
 	Fatal(args ...any)
 	Fatalf(format string, args ...any)
 	Skip(args ...any)
+}
+
+// Waits returns the suite's current time bounds, so a caller can widen them
+// for a backend this suite's defaults would falsely reject.
+//
+// The defaults suit an in-process implementation. An adapter over a remote
+// queue does not: a broker with a 20-second long-poll, or one behind a network
+// hop slower than the absence windows, is CORRECT and would fail here for
+// reasons that have nothing to do with the contract. The suite is published
+// for exactly those adapters (NFR-3), so it must not hardcode the assumption
+// that delivery is instant.
+func Waits() WaitConfig { return currentWaits() }
+
+// SetWaits widens or narrows the suite's time bounds for the current test
+// binary, returning a function that restores them.
+//
+//	defer messagingtest.SetWaits(messagingtest.WaitConfig{
+//		Delivery: 30 * time.Second, Silence: time.Second,
+//	})()
+//
+// It is process-global and NOT safe to call from a parallel test — the suite
+// reads these while running. Set it once, before Conformance.
+func SetWaits(w WaitConfig) func() { return applyWaits(w) }
+
+// WaitConfig is the suite's time bounds. A zero field keeps the current value.
+type WaitConfig struct {
+	// Delivery bounds a message that MUST arrive. A hang-breaker: raise it for
+	// a slow backend; it costs nothing when delivery is prompt.
+	Delivery time.Duration
+
+	// Silence is how long a message that must NOT arrive is given to arrive
+	// anyway. Every such assertion pays it in full, so it trades runtime
+	// against the chance of missing a broker that mis-routes slowly.
+	Silence time.Duration
 }
 
 // Factory builds a fresh, empty MessageBroker under test. It is called once
@@ -249,19 +285,38 @@ func testPointToPointSingleDelivery(t tb, b messaging.MessageBroker) {
 
 	publish(t, b, env("order", "k1"))
 
-	delivered := 0
+	// Both subscribers are watched CONCURRENTLY, for the whole delivery
+	// window, then the window is allowed to close. Polling them in turn was
+	// wrong in both directions: a broker slower than silenceWait scored 0 on
+	// the first and 1 on the second and PASSED as if correct, and a broker
+	// that fanned out slowly scored 1 the same way — so the assertion could
+	// neither fail a fan-out nor pass a slow-but-correct broker for the right
+	// reason.
+	var delivered atomic.Int32
+
+	var wg sync.WaitGroup
 
 	for _, s := range []messaging.Subscription{s1, s2} {
-		select {
-		case <-s.C():
-			delivered++
+		wg.Add(1)
 
-		case <-time.After(silenceWait):
-		}
+		go func(sub messaging.Subscription) {
+			defer wg.Done()
+
+			select {
+			case <-sub.C():
+				delivered.Add(1)
+			case <-time.After(deliveryWait):
+			}
+		}(s)
 	}
 
-	if delivered != 1 {
-		t.Fatalf("one message reached %d subscribers, want exactly 1", delivered)
+	// One delivery is expected, so one wait ends early and the other burns the
+	// full window. Wait for both: returning at the first would report a
+	// fan-out that is still in flight as a single delivery.
+	wg.Wait()
+
+	if got := delivered.Load(); got != 1 {
+		t.Fatalf("one message reached %d subscribers, want exactly 1", got)
 	}
 }
 
@@ -312,4 +367,24 @@ func testUnsubscribeIsIdempotent(t tb, b messaging.MessageBroker) {
 	if err := s.Unsubscribe(); err != nil {
 		t.Fatalf("second Unsubscribe must be a no-op, got: %v", err)
 	}
+}
+
+// currentWaits and applyWaits keep the tunables in one place, so the exported
+// surface stays a value type and the package variables stay unexported.
+func currentWaits() WaitConfig {
+	return WaitConfig{Delivery: deliveryWait, Silence: silenceWait}
+}
+
+func applyWaits(w WaitConfig) func() {
+	prev := currentWaits()
+
+	if w.Delivery > 0 {
+		deliveryWait = w.Delivery
+	}
+
+	if w.Silence > 0 {
+		silenceWait = w.Silence
+	}
+
+	return func() { deliveryWait, silenceWait = prev.Delivery, prev.Silence }
 }

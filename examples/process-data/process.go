@@ -87,7 +87,7 @@ func buildProcess(done chan<- string) (*demo, error) {
 		{greetA, endA}, {greetB, endB},
 	} {
 		if linkErr := link(l[0], l[1]); linkErr != nil {
-			return nil, err
+			return nil, linkErr
 		}
 	}
 	return &demo{proc: proc, resultA: resultA, resultB: resultB}, nil

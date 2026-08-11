@@ -49,7 +49,13 @@ type thresherConfig struct {
 	// registration order. datastore.Registry resolves a ref to a store and
 	// does not enumerate, so this is how Shutdown reaches the stores it must
 	// stop (SRD-088 §3.2).
-	registeredStores    []datastore.DataStore
+	//
+	// It is keyed by REF, not a flat slice, because WithDataStore replaces a
+	// store when its ref is reused. A slice that only appended would keep the
+	// superseded store here, and the engine would start, health-check and
+	// stop an object serving no reference — acquiring its connections and
+	// letting its health decide the engine's.
+	registeredStores    []registeredStore
 	authz               auth.AuthorizationProvider
 	workerRetryPolicy   tasks.RetryPolicy
 	incidentRetryPolicy tasks.RetryPolicy
@@ -300,10 +306,28 @@ func WithDataStore(ref string, store datastore.DataStore) Option {
 			return err
 		}
 
-		c.registeredStores = append(c.registeredStores, store)
+		// Mirror the registry's replace-by-ref semantics, keeping the original
+		// position so the shutdown order does not shift under a reconfiguration.
+		for i := range c.registeredStores {
+			if c.registeredStores[i].ref == ref {
+				c.registeredStores[i].store = store
+
+				return nil
+			}
+		}
+
+		c.registeredStores = append(c.registeredStores,
+			registeredStore{ref: ref, store: store})
 
 		return nil
 	}
+}
+
+// registeredStore pairs a Data Store with the ref it was registered under, so
+// a re-registration of that ref replaces it rather than adding a second entry.
+type registeredStore struct {
+	store datastore.DataStore
+	ref   string
 }
 
 // WithWorkerErrorMapper sets the engine-wide default ErrorMapper applied to a

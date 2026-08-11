@@ -36,6 +36,13 @@ type Migrator interface {
 // A returned error ABORTS the start: an extension that cannot start is not a
 // degraded mode, and an engine that ran on top of one would fail later, further
 // from the cause.
+//
+// Start MUST tolerate being called twice, for the same reason Stop must: one
+// object may occupy two seams — an adapter that is both the Repository and a
+// Data Store is wired twice and started twice — and the engine cannot tell
+// two seams sharing an implementation from two implementations. A second
+// call is a no-op returning nil, not an "already started" error, which would
+// abort a legitimate run.
 type Starter interface {
 	Start(ctx context.Context) error
 }

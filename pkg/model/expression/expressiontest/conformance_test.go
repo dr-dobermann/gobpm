@@ -58,6 +58,7 @@ func TestLiteConformance(t *testing.T) {
 				Expr:           ex,
 				Source:         source(t, "a", 1),
 				Want:           float64(2),
+				CheckWant:      true,
 				SourceRequired: true,
 			}
 		})
@@ -94,10 +95,11 @@ func TestGoExprConformance(t *testing.T) {
 				})
 
 			return expressiontest.Subject{
-				Engine: goexpr.New(),
-				Expr:   ex,
-				Source: src,
-				Want:   2,
+				Engine:    goexpr.New(),
+				Expr:      ex,
+				Source:    src,
+				Want:      2,
+				CheckWant: true,
 			}
 		})
 }

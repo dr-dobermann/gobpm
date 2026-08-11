@@ -2,6 +2,7 @@ package thresher
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
@@ -49,6 +50,11 @@ func (t *Thresher) validateScriptCoverage(s *snapshot.Snapshot) error {
 	if len(unmet) == 0 {
 		return nil
 	}
+
+	// Sort: Walk iterates a map, so without this the same broken model reports
+	// its tasks in a different order every run — which makes the error hard to
+	// diff between runs and impossible to match on exactly.
+	sort.Strings(unmet)
 
 	// Name what IS registered next to what is missing: the caller's next move
 	// is to wire an engine claiming the format, and a message that reports only

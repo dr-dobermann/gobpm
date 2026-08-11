@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
+	"github.com/dr-dobermann/gobpm/pkg/datastore/memstore"
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -756,4 +758,220 @@ func TestHealthCheckerIsReachable(t *testing.T) {
 		require.NoError(t, th.HealthCheck(context.Background()),
 			"silence from a seam that never opted in is not a failure")
 	})
+}
+
+// lifecycleStore is a DataStore implementing Starter and Stopper, so a
+// re-registered ref can be observed at the lifecycle seam.
+type lifecycleStore struct {
+	datastore.DataStore
+
+	j    *journal
+	name string
+}
+
+func (s *lifecycleStore) Start(context.Context) error {
+	s.j.note(s.name + ".Start")
+
+	return nil
+}
+
+func (s *lifecycleStore) Stop(context.Context) error {
+	s.j.note(s.name + ".Stop")
+
+	return nil
+}
+
+// TestStartRollsBackWhatItAlreadyStarted (pr-review #1): when a later seam's
+// Start fails, the seams already started are stopped before the error returns.
+//
+// Without the rollback they stay live with nothing holding a reference to
+// stop them — Run resets the engine to NotStarted, so the caller may start
+// again and would strand the first set. It is the same failure §3.2 guards
+// against on the shutdown side.
+func TestStartRollsBackWhatItAlreadyStarted(t *testing.T) {
+	j := &journal{}
+
+	// The Repository starts first and succeeds; the MessageBroker starts last
+	// and fails, so the repository must be rolled back.
+	repo := &lifecycleRepo{Repository: memrepo.New(), j: j}
+	broker := &startFailBroker{MessageBroker: membroker.New(), j: j}
+
+	th := lifecycleEngine(t, "rollback",
+		WithRepository(repo), WithMessageBroker(broker))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := th.Run(ctx)
+	require.Error(t, err, "a failing Start must fail the run")
+	require.Contains(t, err.Error(), "MessageBroker")
+
+	seen := j.entries()
+	require.Contains(t, seen, "repo.Start")
+	require.Contains(t, seen, "repo.Stop",
+		"the repository started before the broker failed, so it must be "+
+			"stopped again — otherwise it stays live and unreachable")
+
+	// Ordering: the rollback happens after the failure, not before it.
+	require.Less(t, indexOf(seen, "repo.Start"), indexOf(seen, "broker.Start"))
+	require.Less(t, indexOf(seen, "broker.Start"), indexOf(seen, "repo.Stop"))
+}
+
+// startFailBroker is a MessageBroker whose Start fails.
+type startFailBroker struct {
+	messaging.MessageBroker
+
+	j *journal
+}
+
+func (b *startFailBroker) Start(context.Context) error {
+	b.j.note("broker.Start")
+
+	return errors.New("broker refuses to start")
+}
+
+func indexOf(ss []string, want string) int {
+	for i, s := range ss {
+		if s == want {
+			return i
+		}
+	}
+
+	return -1
+}
+
+// TestReplacedDataStoreLeavesTheLifecycle (pr-review #2): registering two
+// stores under ONE ref replaces the first, and the superseded store is not
+// started, health-checked or stopped.
+//
+// WithDataStore documents replace-by-ref, and the registry honours it; the
+// lifecycle list did not, so a discarded store still had its connections
+// acquired and its health folded into the engine's.
+func TestReplacedDataStoreLeavesTheLifecycle(t *testing.T) {
+	j := &journal{}
+
+	first := &lifecycleStore{DataStore: memstore.New(), j: j, name: "first"}
+	second := &lifecycleStore{DataStore: memstore.New(), j: j, name: "second"}
+
+	th := lifecycleEngine(t, "store-replace",
+		WithDataStore("orders", first),
+		WithDataStore("orders", second))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	require.NoError(t, th.Run(ctx))
+	require.NoError(t, th.Shutdown(context.Background()))
+
+	seen := j.entries()
+	require.Contains(t, seen, "second.Start")
+	require.Contains(t, seen, "second.Stop")
+	require.NotContains(t, seen, "first.Start",
+		"the superseded store serves no reference; starting it acquires "+
+			"resources nothing will use")
+	require.NotContains(t, seen, "first.Stop")
+}
+
+// stopOnlyRepo implements Stopper but NOT Starter — the engine never started
+// it, so a rollback must leave it alone.
+//
+// It has to be a REPOSITORY, not the message broker: the broker is the last
+// seam, so a failure anywhere would leave it outside the started prefix and
+// the assertion would hold no matter what the rollback did. The repository
+// starts fourth, well inside the prefix, so skipping it is a real decision.
+type stopOnlyRepo struct {
+	repository.Repository
+
+	j *journal
+}
+
+func (r *stopOnlyRepo) Stop(context.Context) error {
+	r.j.note("stopOnly.Stop")
+
+	return nil
+}
+
+// TestRollbackSkipsWhatItNeverStarted (pr-review #1, second half): the unwind
+// after a failed Start touches only seams that actually started.
+//
+// A seam implementing Stopper but not Starter was never started here, and its
+// owner did not hand the engine that responsibility — stopping it on the way
+// out of a failed start would shut down something the caller is still using.
+func TestRollbackSkipsWhatItNeverStarted(t *testing.T) {
+	j := &journal{}
+
+	// The repository is IN the started prefix (seam 3) but implements no
+	// Starter; the message broker starts last and fails, triggering the unwind.
+	repo := &stopOnlyRepo{Repository: memrepo.New(), j: j}
+	broker := &startFailBroker{MessageBroker: membroker.New(), j: j}
+
+	th := lifecycleEngine(t, "rollback-skip",
+		WithRepository(repo), WithMessageBroker(broker))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	require.Error(t, th.Run(ctx))
+
+	seen := j.entries()
+	require.Contains(t, seen, "broker.Start", "the failing seam ran")
+	require.NotContains(t, seen, "stopOnly.Stop",
+		"a seam the engine never started must not be stopped by the rollback")
+}
+
+// startOnlyStore implements Starter but NOT Stopper: it starts, and there is
+// nothing for the rollback to undo.
+type startOnlyStore struct {
+	datastore.DataStore
+
+	j *journal
+}
+
+func (s *startOnlyStore) Start(context.Context) error {
+	s.j.note("startOnly.Start")
+
+	return nil
+}
+
+// TestRollbackReportsItsOwnFailures (pr-review #1, third half): a Stop that
+// fails DURING the rollback is reported alongside the start failure, and a
+// started seam with no Stopper is simply skipped.
+//
+// The joining is the part worth pinning: the start failure is the cause, and a
+// rollback that also fails is a second fact about the same event. Returning
+// only the rollback error would bury WHY the engine was unwinding, and
+// returning only the start error would hide that the cleanup was incomplete —
+// which is exactly what an operator needs to know before retrying.
+func TestRollbackReportsItsOwnFailures(t *testing.T) {
+	j := &journal{}
+
+	repo := &lifecycleRepo{
+		Repository: memrepo.New(),
+		j:          j,
+		stopErr:    errors.New("repo will not close"),
+	}
+	store := &startOnlyStore{DataStore: memstore.New(), j: j}
+	broker := &startFailBroker{MessageBroker: membroker.New(), j: j}
+
+	th := lifecycleEngine(t, "rollback-errors",
+		WithRepository(repo),
+		WithDataStore("orders", store),
+		WithMessageBroker(broker))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := th.Run(ctx)
+	require.Error(t, err)
+
+	// Both facts survive: what refused to start, and what refused to unwind.
+	require.Contains(t, err.Error(), "broker refuses to start",
+		"the cause must not be replaced by the cleanup's own failure")
+	require.Contains(t, err.Error(), "repo will not close",
+		"a rollback that fails must say so — the engine is left dirty")
+	require.Contains(t, err.Error(), "rolling back the Repository")
+
+	seen := j.entries()
+	require.Contains(t, seen, "startOnly.Start")
+	require.Contains(t, seen, "repo.Stop")
 }

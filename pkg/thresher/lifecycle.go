@@ -45,7 +45,7 @@ func (t *Thresher) lifecycleSeams() []seam {
 	}
 
 	for _, st := range t.cfg.registeredStores {
-		seams = append(seams, seam{st, "DataStore"})
+		seams = append(seams, seam{st.store, "DataStore " + st.ref})
 	}
 
 	return append(seams,
@@ -59,18 +59,58 @@ func (t *Thresher) lifecycleSeams() []seam {
 // lifecycleSeams gives. A failure aborts the start and names the seam: an
 // extension that cannot start is not a degraded mode.
 func (t *Thresher) startSeams(ctx context.Context) error {
-	for _, s := range t.lifecycleSeams() {
+	seams := t.lifecycleSeams()
+
+	for i, s := range seams {
 		st, ok := s.impl.(renv.Starter)
 		if !ok {
 			continue
 		}
 
 		if err := st.Start(ctx); err != nil {
-			return fmt.Errorf("starting the %s extension: %w", s.name, err)
+			// Unwind what is already running before giving up. Run resets the
+			// engine to NotStarted on this path, so the caller may legitimately
+			// call it again — and everything started before the failure would
+			// otherwise still be live, with nothing holding a reference to stop
+			// it. That is the same reasoning §3.2 applies to shutdown: leaving a
+			// live resource behind with no second chance is the failure mode,
+			// not the aborted start itself.
+			return errors.Join(
+				fmt.Errorf("starting the %s extension: %w", s.name, err),
+				t.stopStartedPrefix(ctx, seams[:i]))
 		}
 	}
 
 	return nil
+}
+
+// stopStartedPrefix stops the seams that already started, in reverse, after a
+// later Start failed. Their Stop errors are joined onto the start failure
+// rather than replacing it: the start failure is the cause, and a Stop that
+// also fails is a second fact about the same event, not a substitute for it.
+func (t *Thresher) stopStartedPrefix(ctx context.Context, started []seam) error {
+	var errs []error
+
+	for i := len(started) - 1; i >= 0; i-- {
+		// Only seams that actually started are unwound. A seam implementing
+		// Stopper but not Starter was never started here, and its owner did
+		// not hand the engine that responsibility.
+		if _, isStarter := started[i].impl.(renv.Starter); !isStarter {
+			continue
+		}
+
+		sp, ok := started[i].impl.(renv.Stopper)
+		if !ok {
+			continue
+		}
+
+		if err := sp.Stop(ctx); err != nil {
+			errs = append(errs, fmt.Errorf(
+				"rolling back the %s extension: %w", started[i].name, err))
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // stopSeams stops every wired seam implementing renv.Stopper, in REVERSE start

@@ -14,13 +14,19 @@ import (
 // shrinkWaits cuts the suite's hang-breakers for the negative tests. A broker
 // that is KNOWN never to deliver does not need five seconds to prove it, and
 // these cases would otherwise dominate the package's runtime on every gate run.
+//
+// It goes through the exported SetWaits rather than assigning the package
+// variables directly, so the negative tests exercise the same knob an adapter
+// author uses — a tunable nothing in the repo calls is a tunable nobody has
+// checked. SetWaits is process-global and its restore is registered with
+// t.Cleanup, which is why no test in this package may call t.Parallel.
 func shrinkWaits(t *testing.T) {
 	t.Helper()
 
-	dw, sw := deliveryWait, silenceWait
-	deliveryWait, silenceWait = 100*time.Millisecond, 20*time.Millisecond
-
-	t.Cleanup(func() { deliveryWait, silenceWait = dw, sw })
+	t.Cleanup(SetWaits(WaitConfig{
+		Delivery: 100 * time.Millisecond,
+		Silence:  20 * time.Millisecond,
+	}))
 }
 
 // fakeTB records what an assertion did instead of failing the real test.
@@ -238,5 +244,40 @@ func TestAssertionsRejectBrokenBrokers(t *testing.T) {
 					got.msg, tc.want)
 			}
 		})
+	}
+}
+
+// TestWaitsAreTunable covers the knob published for out-of-repo adapters
+// (NFR-3): an adapter over a slow backend must be able to widen the bounds
+// this suite's in-process defaults assume.
+//
+// It is tested rather than merely offered because an untested tunable is the
+// same trap as an untested assertion — it would be discovered broken by the
+// adapter author it exists for, at the moment they need it.
+func TestWaitsAreTunable(t *testing.T) {
+	before := Waits()
+
+	restore := SetWaits(WaitConfig{
+		Delivery: 42 * time.Second,
+		Silence:  7 * time.Second,
+	})
+
+	got := Waits()
+	if got.Delivery != 42*time.Second || got.Silence != 7*time.Second {
+		t.Fatalf("SetWaits did not take effect: %+v", got)
+	}
+
+	restore()
+
+	if back := Waits(); back != before {
+		t.Fatalf("restore left %+v, want %+v", back, before)
+	}
+
+	// A zero field keeps the current value, so a caller may widen one bound
+	// without having to restate the others.
+	defer SetWaits(WaitConfig{Delivery: 9 * time.Second})()
+
+	if partial := Waits(); partial.Silence != before.Silence {
+		t.Fatalf("a zero field overwrote Silence: %+v", partial)
 	}
 }

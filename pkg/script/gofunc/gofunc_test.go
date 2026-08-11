@@ -144,3 +144,37 @@ func TestGoFuncExecute(t *testing.T) {
 		require.Error(t, execErr)
 	})
 }
+
+// TestGoFuncTrimsTheRegisteredName (pr-review #4): a name registered with
+// surrounding whitespace is reachable.
+//
+// WithScript guarded on the trimmed name but STORED the raw one, while Execute
+// trims before looking up — so " total " registered successfully and could
+// never be called, failing as "no script registered" on a name plainly in the
+// registry.
+func TestGoFuncTrimsTheRegisteredName(t *testing.T) {
+	e, err := gofunc.New(
+		gofunc.WithScript("  total  ",
+			func(context.Context, service.DataReader) (script.Outputs, error) {
+				return script.Outputs{"sum": values.NewVariable(1)}, nil
+			}))
+	require.NoError(t, err)
+
+	_, execErr := e.Execute(context.Background(), "gofunc", "total", stubReader{})
+	require.NoError(t, execErr,
+		"a padded registration must be reachable by its trimmed name")
+
+	// And the duplicate guard sees through padding too, for the same reason.
+	_, dupErr := gofunc.New(
+		gofunc.WithScript("total", func(
+			context.Context, service.DataReader,
+		) (script.Outputs, error) {
+			return nil, nil
+		}),
+		gofunc.WithScript(" total ", func(
+			context.Context, service.DataReader,
+		) (script.Outputs, error) {
+			return nil, nil
+		}))
+	require.Error(t, dupErr, "padding must not smuggle in a duplicate name")
+}
