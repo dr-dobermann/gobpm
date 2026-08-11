@@ -643,3 +643,92 @@ func (emptySource) Find(_ context.Context, name string) (data.Data, error) {
 		errs.M("no data source is wired for %q", name),
 		errs.C("TEST", errs.ObjectNotFound))
 }
+
+// TestDefinitionParseFailures covers the failure paths inside an event
+// definition's own subtree. Each one must abort the import: a definition
+// half-read is a definition whose event would fire on the wrong thing.
+func TestDefinitionParseFailures(t *testing.T) {
+	for name, tc := range map[string]struct{ doc, want string }{
+		"the stream ends inside a definition": {
+			doc: `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="P" name="P">
+    <bpmn:startEvent id="s1"><bpmn:timerEventDefinition id="d1">`,
+			want: "EOF",
+		},
+		"an element nested in a condition": {
+			doc: eventDoc(`<bpmn:conditionalEventDefinition id="d1">`+
+				`<bpmn:condition>x <bpmn:task id="nested"/></bpmn:condition>`+
+				`</bpmn:conditionalEventDefinition>`, ""),
+			want: "unsupported element",
+		},
+		"an element nested in an operationRef": {
+			doc: eventDoc(`<bpmn:messageEventDefinition id="d1" messageRef="m1">`+
+				`<bpmn:operationRef>op <bpmn:task id="nested"/></bpmn:operationRef>`+
+				`</bpmn:messageEventDefinition>`, ""),
+			want: "unsupported element",
+		},
+		"the stream ends inside a skipped link ref": {
+			doc: `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="P" name="P">
+    <bpmn:endEvent id="e1"><bpmn:linkEventDefinition id="d1" name="hop">
+      <bpmn:source>`,
+			want: "EOF",
+		},
+		"the stream ends inside a foreign child": {
+			doc: `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:v="urn:v">
+  <bpmn:process id="P" name="P">
+    <bpmn:startEvent id="s1"><bpmn:timerEventDefinition id="d1">
+      <v:meta>`,
+			want: "EOF",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, tc.doc)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Import = %v, want an error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestConditionInAnUnsupportedLanguage pins that the expression layer's
+// refusal reaches the import from a conditional event definition, and
+// names the definition rather than a sequence flow — the reason the
+// helper stopped taking a flowSpec.
+func TestConditionInAnUnsupportedLanguage(t *testing.T) {
+	_, err := importEventDoc(t, eventDoc(
+		`<bpmn:conditionalEventDefinition id="d1">`+
+			`<bpmn:condition language="`+nsXPath+`">count(//x) &gt; 1</bpmn:condition>`+
+			`</bpmn:conditionalEventDefinition>`, ""))
+	if err == nil {
+		t.Fatal("Import of an XPath condition = nil, want it refused")
+	}
+
+	if !strings.Contains(err.Error(), `conditionalEventDefinition "d1"`) {
+		t.Errorf("error = %q, want it to name the definition carrying the "+
+			"condition", err)
+	}
+}
+
+// TestDefBuilderTableGuard covers the drift guard between the two tables
+// that must agree about which children are event definitions. It is
+// unreachable through any document — nodeChildParsers is derived FROM
+// defBuilders — so the table stands in for a routing that lost its
+// builder.
+func TestDefBuilderTableGuard(t *testing.T) {
+	saved := defBuilders[tagSignalEventDef]
+	delete(defBuilders, tagSignalEventDef)
+
+	defer func() { defBuilders[tagSignalEventDef] = saved }()
+
+	_, err := importEventDoc(t, eventDoc(
+		`<bpmn:signalEventDefinition id="d1" signalRef="sig1"/>`, ""))
+	if err == nil ||
+		!strings.Contains(err.Error(), "no event-definition constructor") {
+		t.Fatalf("error = %v, want the drift guard between the two tables", err)
+	}
+}
