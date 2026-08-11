@@ -194,7 +194,7 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 // The inverse window (key subscribed, processor not listed) consumes and
 // discards.
 //
-// Guarded by TestJoinAppliesKeysAfterRegistering and
+// Guarded by TestJoinHalvesAreSeparable and
 // TestPartialKeyFailureDiscardsTheSubscription.
 func (mw *messageWaiter) ApplyProcessorKeys(ep eventproc.EventProcessor) error {
 	if ep == nil {
@@ -212,6 +212,21 @@ func (mw *messageWaiter) ApplyProcessorKeys(ep eventproc.EventProcessor) error {
 	}
 
 	mw.m.Lock()
+
+	// A failed waiter has given its subscription back and the hub has unmapped
+	// it, so buffering into it would report success for keys that reach no
+	// broker — #320's silence, restored. This is reachable: a registration that
+	// read the waiter out of the registry can arrive here just after another
+	// one failed it.
+	if mw.state == eventproc.WSFailed {
+		mw.m.Unlock()
+
+		return errs.New(
+			errs.M("couldn't apply correlation keys to a failed waiter"),
+			errs.C(MessageWaiterError, errs.InvalidState),
+			errs.D(observability.AttrWaiterID, mw.id),
+			errs.D(observability.AttrMessageName, mw.name))
+	}
 
 	// No subscription yet — BUFFER, do not skip. It is tempting to reason
 	// that a registered processor is in Service's snapshot and will have its

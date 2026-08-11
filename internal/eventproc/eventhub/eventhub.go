@@ -370,18 +370,14 @@ func (eh *EventHub) dropFailedWaiter(
 
 	eh.m.Lock()
 
-	mapped, ok := eh.waiters[eDefID]
-	if ok && mapped == w {
+	// Only if it is still THIS waiter under that id: a concurrent
+	// registration may already have replaced it, and unmapping the
+	// replacement would strand a live one to bury a dead one.
+	if mapped, ok := eh.waiters[eDefID]; ok && mapped == w {
 		eh.dropWaiterLocked(eDefID, w)
-	} else {
-		ok = false
 	}
 
 	eh.m.Unlock()
-
-	if !ok {
-		return
-	}
 
 	eh.rt.Logger().Error("a refused correlation key failed a message waiter",
 		observability.AttrWaiterID, w.ID(),

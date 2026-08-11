@@ -648,10 +648,11 @@ public package outside `messagingtest`'s doc comment.
 | Double | `514db68e` | `messagingtest`: `OnAddKey`, `Unsubscribed`, the configuration contract (§3.6) | `TestFailingSubscriptionRunsTheAddKeyHook`, `TestFailingSubscriptionReportsUnsubscribed` |
 | Fix | `5de0cf54` | D1–D4: `eventproc` capabilities, the waiter split, the hub side (§3.3–§3.5, §3.7) | T-1…T-6, below |
 | Changelog | `b139ba7b` | `[Unreleased]` entry for #320 | — |
-| Sweep | *(this stage)* | `scripts/lock-sweep.py` + `make lock-sweep`, and the two findings it produced | §8.2.4 |
+| Sweep | `be402c39` | `scripts/lock-sweep.py` + `make lock-sweep`, and the two findings it produced | §8.2.4 |
 
-Gate: `make ci` PASS at `b139ba7b` (`.ci/last-run.json`), re-run after the sweep
-stage.
+Gate: `make ci` PASS at `b139ba7b` and again at `be402c39`, judged by
+`.ci/last-run.json` rather than by the exit code of whatever wrapped the run
+(FIX-039).
 
 ### 8.2 Empirical findings
 
@@ -717,6 +718,24 @@ and pass on the fixed tree.
 **8.2.6 — `Done()` was reading `mw.done` unlocked.** §3.4 listed only `Service`
 for §1.6. `Done()` reads the same field with no lock while every other path
 guards it; now it takes `mw.m`.
+
+**8.2.7 — D2 opened a way to restore #320's silence, and §3 did not see it.**
+Once a failed waiter has given its subscription back, `mw.sub` is nil again — so
+`ApplyProcessorKeys`'s buffering branch would take a joining processor's keys
+into `pendingKeys` and **return nil**, for a waiter the hub has unmapped and
+nothing will ever service. A registration that read the waiter out of the
+registry just before another one failed it lands exactly there. That is #320's
+failure mode — a key accepted, never routed, no error — reachable only through
+the fix for #320. `ApplyProcessorKeys` now refuses a `WSFailed` waiter
+(`TestApplyProcessorKeysRejectsAFailedWaiter`).
+
+The same pass closed the branches the diff-coverage gate left at 98.0%:
+`ApplyProcessorKeys` with a nil and with a keyless processor
+(`TestApplyProcessorKeysGuardsItsInput` — a keyless processor must not touch the
+subscription at all, since a keyless subscription is a wildcard a spurious
+`AddKey` would silently narrow), and `dropFailedWaiter`'s already-unmapped
+branch, which was removed rather than tested: the Error log belongs on both
+paths, so only the unmapping is conditional now.
 
 ### 8.3 What this fix deliberately leaves alone
 

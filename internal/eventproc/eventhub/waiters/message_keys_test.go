@@ -264,6 +264,78 @@ func TestJoinHalvesAreSeparable(t *testing.T) {
 	require.Equal(t, []string{"b"}, broker.Subscriptions()[0].Added())
 }
 
+// TestApplyProcessorKeysGuardsItsInput covers what the foreign half does with
+// input it cannot act on: a nil processor is rejected, and a KEYLESS one — a
+// plain track, which is the common case — is a no-op that must not reach the
+// broker at all. A waiter subscribed with no keys is a wildcard, so a spurious
+// AddKey there would quietly narrow it.
+func TestApplyProcessorKeysGuardsItsInput(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
+
+	broker := &messagingtest.FailingBroker{}
+	rt := brokerRT{EngineRuntime: enginert.Default(), broker: broker}
+
+	w, err := waiters.NewMessageWaiter(hub, newKeyedProcessor("iter-0", "a"),
+		eDef, "", rt)
+	require.NoError(t, err)
+
+	require.NoError(t, w.Service(ctx))
+
+	t.Cleanup(func() { _ = w.Stop() })
+
+	kw := keyed(t, w)
+
+	require.Error(t, kw.ApplyProcessorKeys(nil))
+
+	// A processor with no keys of its own: registered, but nothing to apply.
+	require.NoError(t, kw.ApplyProcessorKeys(newKeyedProcessor("keyless")))
+	require.Empty(t, broker.Subscriptions()[0].Added(),
+		"a keyless processor must not touch the subscription")
+}
+
+// TestApplyProcessorKeysRejectsAFailedWaiter covers the state a join can arrive
+// in through no fault of its own: another registration failed the waiter and
+// the hub unmapped it, between this one reading it out of the registry and
+// getting here.
+//
+// Buffering into it would return nil for keys that reach no broker — #320's
+// silence, restored by the code that fixes it. So it is refused, loudly.
+func TestApplyProcessorKeysRejectsAFailedWaiter(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
+
+	broker := messagingtest.NewFailingBroker() // every AddKey refused
+	rt := brokerRT{EngineRuntime: enginert.Default(), broker: broker}
+
+	w, err := waiters.NewMessageWaiter(hub, newKeyedProcessor("iter-0", "a"),
+		eDef, "", rt)
+	require.NoError(t, err)
+
+	require.NoError(t, w.Service(ctx))
+
+	// fail it the ordinary way: a refused key
+	require.Error(t, join(t, w, newKeyedProcessor("iter-1", "b")))
+	require.Equal(t, eventproc.WSFailed, w.State())
+
+	err = keyed(t, w).ApplyProcessorKeys(newKeyedProcessor("iter-2", "c"))
+	require.Error(t, err,
+		"a waiter that gave up its subscription must refuse further keys "+
+			"rather than buffer them into a waiter nothing will service")
+	require.NotErrorIs(t, err, messagingtest.ErrInjected,
+		"the refusal is the waiter's own state, not another broker call")
+}
+
 // TestPartialKeyFailureDiscardsTheSubscription pins D2: a key the broker
 // refuses costs the waiter its whole subscription.
 //
