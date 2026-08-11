@@ -21,7 +21,7 @@ type seam struct {
 
 // lifecycleSeams lists the seams the engine starts and stops, in START order.
 //
-// The order is a correctness requirement, not tidiness (SRD-088 §3.2):
+// The order is a correctness requirement, not tidiness (SRD-090 §3.2):
 // telemetry first, so a failure in anything below it is observable; storage
 // before the things that write to it; input last, so nothing arrives before the
 // machinery that serves it exists. Shutdown walks the reverse — the message

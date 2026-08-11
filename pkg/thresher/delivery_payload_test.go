@@ -535,10 +535,13 @@ func TestIterationRoutingKillAndResume(t *testing.T) {
 
 		// count BOTH iterations, never "any one token": the kill lands
 		// before either delivery, so both re-arm on restore. Returning
-		// on the FIRST parked token would let the envelope keyed "a" be
-		// published while the "a" iteration is still un-armed — and a
-		// point-to-point message with no subscriber is dropped, which
-		// makes the test fail by timeout somewhere unrelated.
+		// on the FIRST parked token would publish the envelope keyed "a"
+		// while only one iteration has re-armed — and a half-armed set
+		// can match it into the OTHER instance. The broker does not lose
+		// it (an unmatched envelope waits in its inbox for a matching
+		// subscription, per the messaging conformance suite); what a
+		// premature publish risks is the wrong iteration being served,
+		// which is silent where a delay is not.
 		parked := 0
 
 		for _, tk := range rh.Tokens() {

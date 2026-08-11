@@ -1,4 +1,4 @@
-# SRD-088 — Closing the ADR-003 layout, and the adapter lifecycle seam
+# SRD-090 — Closing the ADR-003 layout, and the adapter lifecycle seam
 
 | Field | Value |
 |---|---|

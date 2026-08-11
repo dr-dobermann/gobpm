@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.1 |
-| Date | 2026-08-04 |
+| Status | Draft (v.2 — flips back to Accepted when the v.2 changes land) |
+| Version | v.2 |
+| Date | 2026-08-10 (v.1 accepted 2026-08-04) |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1.1](SAD-001-vision-and-architecture.md) §10 (persistence as the state of record — this ADR makes *failure* part of that record), [ADR-021 v.1](ADR-021-service-task-execution-model.md) §2.8 (the first-class Incident construct this ADR was deferred to), [ADR-022 v.2](ADR-022-error-propagation-and-logging-policy.md) (the propagation policy whose "goroutine top" consequence this refines) |
-| Related | [ADR-001 v.6](ADR-001-execution-model.md) (tracks and token projection), [ADR-007 v.2.1](ADR-007-in-memory-long-waits.md) (the wait model an incident joins), [ADR-013 v.2](ADR-013-instance-observability.md) (the `Incident` phase reserved in the fact taxonomy), [ADR-017 v.1](ADR-017-channel-based-event-processing.md) (the loop as sole state owner), [ADR-025 v.2](ADR-025-activity-iteration-loop-and-multi-instance.md) (multi-instance interaction), [ADR-026 v.1](ADR-026-compensation-events.md) (the completion ledger interaction), [ADR-033 v.3](ADR-033-persistence-and-state.md) (the checkpoint an incident rides) |
+| Related | [ADR-001 v.6](ADR-001-execution-model.md) (tracks and token projection), [ADR-007 v.2.1](ADR-007-in-memory-long-waits.md) (the wait model an incident joins), [ADR-013 v.3](ADR-013-instance-observability.md) (the `Incident` phase reserved in the fact taxonomy; §2.11's iteration view shares this ADR's iteration section), [ADR-017 v.1](ADR-017-channel-based-event-processing.md) (the loop as sole state owner), [ADR-025 v.3](ADR-025-activity-iteration-loop-and-multi-instance.md) §2.13–§2.14 (the node execution model, and the iteration granularity §2.8 below realizes), [ADR-026 v.1](ADR-026-compensation-events.md) (the completion ledger interaction), [ADR-033 v.5](ADR-033-persistence-and-state.md) (the checkpoint an incident rides) |
 
 ## 1. Context & problem
 
@@ -47,7 +47,7 @@ alignment target the project has already declared.
 ### 2.1 The incident
 
 An **incident** is the durable record of a failure the model did not handle:
-it names the instance, the node, the failing track's lineage, the cause
+it names the instance, the node, the failing execution's lineage, the cause
 chain, the attempt count, the timestamps of first and last failure — and a
 **failure-time data snapshot**: the variables visible in the failing node's
 scope chain, captured at each raise, so the operator sees what the attempt
@@ -66,7 +66,7 @@ What raises one:
 | **Uncaught BPMN error thrown by a failing activity** — no boundary, no scope-chain catcher | Incident at the throwing node. The standard leaves the reaction open (§3); halting recoverably dominates dying, because an uncaught activity error is routinely a *deployment* mistake — a missing boundary — fixable by model correction and retry against live state |
 | **Error End Event reaching the root uncaught** | Instance fails, as today. This is the **modeled outcome** — the author explicitly ended the instance in error (`semantics/end-events.md`: an Error End Event fails the instance; Camunda ends the scope likewise, no incident). Turning the model's own verdict into an operator ticket would invert its intent |
 | **Invariant violation** — impossible engine state | Instance fault, as today. An incident asserts "the world outside misbehaved, the engine's state is sound"; an invariant violation denies the second half, and retrying against corrupt state compounds it |
-| **Any uncaught failure in a child instance** (a Call Activity's callee, at any depth) | The child instance fails and the failure **propagates across the call boundary** to the caller's Call Activity node, typed errors staying catchable by its boundary. **Incidents exist only at top-level instances**: to its caller, the whole called process is a single task with two exits — success or failure — and the incident that finally arises at the (top-level) call node carries the child's diagnostics and offers the honest retry unit: **re-run the whole Call Activity**, or resolve/give up |
+| **Any uncaught failure in a child instance** (a Call Activity's callee, at any depth) | The child instance fails and the failure **propagates across the call boundary** to the caller's Call Activity node, typed errors staying catchable by its boundary. **Incidents exist only at top-level instances**: to its caller, the whole called process is a single task with two exits — success or failure — and the incident that finally arises at the (top-level) call node carries the child's diagnostics and offers the honest retry unit: **re-run the call**, or resolve/give up. For an **iterated** Call Activity that unit is the failed **instance's** child, not the activity: each instance owns its own child (ADR-025 v.3 §2.13), so re-running all five because the third failed would discard four completed children and their effects — v.1's "re-run the whole Call Activity" predates iterated calls and is corrected here |
 
 Every incident is logged at `Error` level when raised — an unresolved
 failure is never silent (the standing uncaught-must-log rule), and ADR-022
@@ -81,11 +81,20 @@ and the **incident record** takes over as the durable carrier of everything a
 future attempt needs: the node, the scope path, the lineage, the cause chain,
 the attempt count. This is the dehydration pattern applied to failure
 (ADR-007 v.2.1): the goroutine-bearing thing ends, the recorded state is what
-persists, and continuation is a **fresh track spawned from the record** —
+persists, and continuation is a **fresh execution spawned from the record** —
+for a plain node that is a track, and for one instance of an iterated activity
+it is that instance, re-created at its ordinal (ADR-025 v.3 §2.13) —
 exactly how a boundary catch births a new track at the boundary and how
 rehydration respawns from a checkpoint. Each retry is its own track, with the
 failed track as its predecessor, so attempt history is ordinary track lineage
 rather than bookkeeping invented for incidents.
+
+**(v.2)** v.1 wrote this contract in terms of the failing *track*, which was
+then the only object that executed anything. It was already record-based —
+"the goroutine-bearing thing ends, the recorded state is what persists" — so
+the generalization costs nothing: what ends and what respawns is the failing
+**execution**, whichever kind it is. §2.4's per-instance granularity, decided
+in v.1, is what this preserves at the iteration level.
 
 The node was entered but did not complete: no outgoing flow fires, no
 completion is recorded, armed boundary events stay armed (§2.4), and the
@@ -120,7 +129,7 @@ Retry ownership splits along the line ADR-021 v.1 drew:
   retrying external-worker jobs below the loop, with no track state change
   and no incident. An incident begins where that automation *ends*.
 - **Incident retry — after automation gives up.** An open incident may be
-  retried, which **spawns a fresh track at the failed node** from the
+  retried, which **spawns a fresh execution at the failed node** from the
   incident record (§2.2), with the failed track as its predecessor: a fresh
   execution of the activity against the current scope data, under the same
   contract as the checkpoint-recovery re-entry (ADR-033 v.3 — a step is
@@ -158,21 +167,58 @@ eventually succeeds. Failed attempts are the incident's history, not the
 ledger's.
 
 **Multi-instance.** One inner instance's failure raises the incident **on
-that inner instance alone** — each inner instance runs isolated in its own
-per-instance scope (ADR-025 v.2 §2.2), and that scope identifies the incident.
-Sibling instances run to their own completion; the MI node cannot complete
-while the incident is open, exactly as §2.2's instance-level rule, one level
-down. **Retry re-runs only the failed instance**: the respawned track enters
-the inner activity inside the same per-instance scope, so it sees exactly the
-iteration identity and data slice the failed attempt saw, and the node's
-completion accounting — already waiting on that instance's open slot — is
-untouched. Completed inner instances are **never re-run**: they are completed
+that inner instance alone**. v.1 said the per-instance *scope* identified it;
+since [ADR-025 v.3](ADR-025-activity-iteration-loop-and-multi-instance.md)
+§2.2 a leaf activity's iterations have no scope — a frame each, a scope only
+where the activity is itself a scope host — so the identity is the instance
+**ordinal**, which every iterated activity has, scope or not. Sibling
+instances run to their own completion; the iterated activity cannot complete
+while the incident is open, exactly as §2.2's instance-level rule one level
+down, and here for a sharper reason: assembly is positional
+(ADR-025 v.3 §2.6), so completing around an unresolved ordinal would publish
+a collection with a hole in it and call that success. **Retry re-runs only the
+failed instance**: it is re-created at its ordinal, seeing exactly the
+iteration identity and data slice the failed attempt saw — the split item is
+the collection element at that ordinal and the counter is the ordinal, both
+recomputed rather than persisted (ADR-025 v.3 §2.4 fixes cardinality once) —
+and the activity's completion accounting, already waiting on that instance,
+is untouched. Completed inner instances are **never re-run**: they are completed
 work in the ledger, and their effects exist; a model that wants all-or-nothing
 semantics across the set says so through an error boundary plus compensation,
 which remains the modeled, business-level path. One asymmetry is worth
 stating: in a **sequential** MI, instance *k*'s incident blocks *k+1…N* by
 definition, so the remainder of the sequence waits behind the retry. There is
 no set-wide retry and no set-wide fault.
+
+### 2.4a The iteration section — what a retry needs to target one instance (v.2)
+
+An incident raised on one instance of an iterated activity carries an
+**iteration section**, the same shape ADR-013 v.3 §2.11 puts on the token: the
+kind, the count fixed at activation, how many instances have completed, and
+which **ordinal** failed.
+
+A bare ordinal would name the retry unit without supplying enough to act on
+it. §2.4 promises that completed instances are never re-run, and the party
+performing a retry has to know *which* those are — the completed count is that
+knowledge, carried by the record rather than re-derived from state the incident
+does not own. This matters most where it is least visible: after a restart,
+when the retry is performed by an engine that never saw the failure.
+
+Using the **same shape** as the token view is deliberate. Iteration state has
+one vocabulary whether it is being observed, recorded durably, or attached to a
+failure, and the **ordinal is the join key** across all three: "instance 3 of 5
+is waiting", "instance 3 failed", "retry instance 3" name the same 3. Two
+descriptions of one concept drift, and an operator who reads the token view and
+then queries incidents would otherwise have to translate between them.
+
+**Two failures belong to the activity rather than to an instance**, and carry
+no ordinal: one raised before any instance starts — resolving the cardinality
+or the input collection — and one raised in the activity's own work after
+instances have begun, such as evaluating the completion condition or assembling
+output. The second still carries the iteration section, because its retry must
+resume against the recorded instances rather than restart the activity;
+without that, a failing completion-condition expression would re-execute every
+completed instance, which is precisely what §2.4 forbids.
 
 ### 2.5 Persistence — the incident rides the checkpoint
 
@@ -185,7 +231,8 @@ Incidents extend the ADR-033 v.3 document additively:
   terminal tracks stay unpersisted, as today; what persists is the incident
   itself, carrying everything a respawn needs (node, scope path, lineage,
   cause chain, attempt count, retry deadline when a policy retry is
-  scheduled, first/last failure times). Structurally it is a wait
+  scheduled, first/last failure times, and the §2.4a iteration section when
+  the failure belongs to an iterated activity). Structurally it is a wait
   descriptor's sibling: recovery re-arms a scheduled retry by re-deriving
   its deadline, and an operator-waiting incident simply persists.
 - **The instance's persisted status vocabulary** gains the *active with
@@ -286,3 +333,4 @@ notification, never the incident.
 | Version | Date | Author | Change |
 |---|---|---|---|
 | v.1 | 2026-08-04 | Ruslan Gabitov | Initial decision: incident as terminal track + durable instance-level record, continuation by respawn (the dehydration pattern); two-layer retry; boundary/compensation/MI contracts; checkpoint extension; resolution primitives |
+| v.2 | 2026-08-10 | Ruslan Gabitov | **Draft.** Reconciles the incident contract with the node execution model of ADR-025 v.3, and corrects one promise that predates iterated calls. §2.4's per-instance granularity — an inner instance's failure raises the incident on that instance alone, retry re-runs only it, completed instances are never re-run — was already v.1's contract and is unchanged; what changes is the identity it rests on. v.1 said the per-instance SCOPE identified the incident; since ADR-025 v.3 §2.2 a leaf activity's iterations have no scope, so the identity is the instance **ordinal**, which every iterated activity has, and a retried instance is re-created at that ordinal with its item and counter recomputed rather than persisted (§2.4 fixes cardinality once). The completion rule gains its sharper reason: assembly is positional, so completing around an unresolved ordinal would publish a collection with a hole. New **§2.4a** adds the **iteration section** to the record — the same shape ADR-013 v.3 §2.11 puts on the token (kind, total, completed, failing ordinal) — because a bare ordinal names the retry unit without supplying what a retry must know: which instances must NOT re-run, knowledge the record must carry rather than re-derive, most of all after a restart where the retry is performed by an engine that never saw the failure. One vocabulary across the token view, the durable record and the incident; the ordinal is the join key. §2.1's Call Activity row corrected: the retry unit for a failed child of an **iterated** call is that instance's child, not the activity — "re-run the whole Call Activity" would discard four completed children because the third failed. §2.2/§2.3's "fresh track spawned from the record" generalizes to a fresh **execution**, which costs nothing because the contract was already record-based rather than track-based. Pins refreshed: ADR-013 v.3, ADR-025 v.3, ADR-033 v.5. |

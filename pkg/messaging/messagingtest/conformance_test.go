@@ -40,7 +40,7 @@ func (deadSubscription) C() <-chan messaging.Envelope { return nil }
 func (deadSubscription) AddKey(string) error          { return nil }
 func (deadSubscription) Unsubscribe() error           { return nil }
 
-// TestSuiteRejectsABrokenBroker is the suite's own negative control (SRD-088
+// TestSuiteRejectsABrokenBroker is the suite's own negative control (SRD-090
 // T-9): a conformance helper that cannot fail proves nothing about the
 // implementations it passes.
 //

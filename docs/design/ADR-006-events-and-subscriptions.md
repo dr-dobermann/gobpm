@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.5 |
-| Date | 2026-08-08 (v.4 accepted 2026-07-20; v.5 accepted 2026-08-08) |
+| Status | Draft (v.6 — flips back to Accepted when the v.6 changes land) |
+| Version | v.6 |
+| Date | 2026-08-10 (v.4 accepted 2026-07-20; v.5 accepted 2026-08-08) |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) |
 
@@ -29,8 +29,8 @@
 ADR-001 defines the runtime core and a **generic** `context` cancellation
 cascade (Engine → Instance → track). It does **not** define how external event
 arrivals (Message / Timer / Signal) reach a running instance, nor the
-BPMN-specific nodes that *trigger* cancellation. The runtime today moves a track
-to `TrackWaitForEvent` and registers an event-node's definitions, but the
+BPMN-specific nodes that *trigger* cancellation. At v.1's authoring the runtime moved a track
+to `TrackWaitForEvent` and registered an event-node's definitions, but the
 **delivery edge** (how a trigger is routed back to the right track), the
 **cancellation-trigger nodes** (Terminate End Event, interrupting boundary
 event), and the **wait-release** shape are this ADR's scope. §2.1–§2.3 decide
@@ -152,8 +152,10 @@ track runs on (§10.5.6).
   critical (abort the instance), unresolved Escalation is silent. **The Error
   *event* model — throw points, `errorRef` matching, scope-chain propagation,
   catch, and the unmatched→fault outcome — is detailed in §2.6.** Scope-chain
-  propagation lands with the sub-process/boundary workstream; ADR-006 fixes the
-  *delivery* and *interruption* model it will use.
+  propagation was landed by the sub-process/boundary workstream and is decided
+  by [ADR-023 v.3](ADR-023-sub-process-and-call-activity.md) §2.6 (refreshed at
+  v.6 — v.1 wrote this as future work); ADR-006 fixes the *delivery* and
+  *interruption* model it uses.
 - *Handler multiplicity* (§10.5.6 p278): at most **one interrupting handler per
   Event Declaration** on a given activity; non-interrupting handlers are
   unbounded and run concurrently. The engine tracks multiplicity per
@@ -548,7 +550,8 @@ One instance can hold **several concurrent executions waiting on the same
 event definition at the same catch node** — the canonical producer is a
 parallel Multi-Instance activity whose iterations each wait at their catch
 (every iteration is its own execution over the one node graph the instance
-runs, ADR-009 v.1; per-instance parallel scopes per ADR-025 v.2 §2.2). This
+runs, ADR-009 v.1; per-iteration execution contexts per ADR-025 v.3 §2.2 — a
+frame each, and a scope only where the activity is itself a scope host). This
 subsection decides how a delivery reaches the right waiter and carries its
 payload there intact.
 
@@ -584,7 +587,7 @@ publication semantics quoted above.
 
 **2.9.3 Iteration-granular message correlation.** Each concurrently-waiting
 execution's subscription carries a **correlation key derived from its
-iteration's split input item** (the datum ADR-025 v.2 §2.6 binds per
+iteration's split input item** (the datum ADR-025 v.3 §2.6 binds per
 instance); the message waiter matches an envelope to **exactly one**
 subscription over the per-subscription key machinery (ADR-016 v.1;
 ADR-014 v.1 §2.6's key seam). A parallel-MI message catch that declares
@@ -592,6 +595,46 @@ ADR-014 v.1 §2.6's key seam). A parallel-MI message catch that declares
 identical subscriptions delivery is genuinely ambiguous, and a loud
 modeling error beats an arbitrary pick (the uncaught-events posture —
 nothing routes silently).
+
+**2.9.5 For an iterated node, the subscriber is the decorator (v.6).** §2.9.1–
+§2.9.4 decide how a delivery finds the right *execution*; they left open who
+the hub knows as the **subscriber**, and the answer had been "whichever runtime
+object happened to be executing" — an execution, or the instance itself. For an
+activity carrying loop characteristics it is now the **decorator**
+(ADR-025 v.3 §2.13): one processor identity per iterated activity, holding one
+subscription per waiting instance.
+
+Nothing about matching changes. The hub still resolves an envelope to exactly
+one subscription by its correlation key (§2.9.3) and still serves a signal to
+every subscription (§2.9.2); it simply hands the delivery to that one
+processor, which dispatches it to the instance owning the matched
+subscription. The receiving execution is unchanged and so is §2.9.1: **that
+instance** captures the item into its own frame. Multiplicity, correlation and
+payload binding are all as decided; only the registered identity moves.
+
+**Why the identity matters at all.** A set of subscriptions with no owner is a
+set nobody can re-arm. A sequential iteration must re-arm its wait on every
+pass, and after a restart every waiting instance must be re-armed **before any
+delivery is accepted** (ADR-025 v.3 §2.13) — not because an unmatched envelope
+would be lost, since the broker buffers one until a matching subscription
+appears, but because a partially armed set can match it into the wrong
+instance. With each execution registering as itself
+there is no party responsible for either, which is precisely why the engine
+refuses an iterated *waiting* activity today: a second instance either never
+armed or served the first one's subscription. The decorator is that party.
+
+**Consequence for §2.9.4's pair identity.** A queue entry was a *(subscriber,
+definition)* pair, unambiguous while every subscriber was distinct. One
+subscriber now holds N subscriptions on **one** definition, so the pair no
+longer identifies an entry: unregistering "the decorator's subscription to this
+definition" would name N of them. The entry therefore carries a
+**discriminator** — the instance ordinal — and registration, matching and
+unregistration all name it. Without this, one iteration completing would
+unregister a sibling's wait, which is the same class of silent
+cross-iteration bug §2.9.1 designed out for payloads.
+
+**Scope.** This governs activities with loop characteristics. A plain node's
+registration is unchanged: it has one execution, which is its own subscriber.
 
 **2.9.4 The queue owns the waiter's life.** A waiter serves a **queue of
 subscriptions** — registration appends a (subscriber, definition) pair,
@@ -694,10 +737,12 @@ cancellation-trigger nodes (§2.2 — Terminate + interrupting/non-interrupting
 boundary), the wait-node subscription model (§2.3), Conditional events (§2.7),
 and Link events (§2.8 — static intra-container pairing, loop-local redirect, not
 a subscription) are decided as conception.
-The in-memory wait-release mechanics are delegated to ADR-007, durable
-rehydration to the persistence ADR, and scope-chain Error/Escalation propagation
-lands with the sub-process/boundary workstream — these are delegations, not open
-questions.
+The in-memory wait-release mechanics are delegated to
+[ADR-007 v.2.1](ADR-007-in-memory-long-waits.md), durable rehydration to
+[ADR-033 v.5](ADR-033-persistence-and-state.md), and scope-chain
+Error/Escalation propagation to
+[ADR-023 v.3](ADR-023-sub-process-and-call-activity.md) §2.6, which has since
+landed it — these are delegations, not open questions.
 
 ## 7. References
 
@@ -753,3 +798,4 @@ questions.
 | v.3 | 2026-07-15 | Ruslan Gabitov | Added **§2.7 "Conditional events: status-based triggering by commit-diff"** — the Conditional conception the taxonomy rows named but never decided. **Positions:** Intermediate Catch + Boundary (interrupting/non-interrupting, Tables 10.89/10.90) + **Event-Based Gateway arms** (closing the ADR-005 §2.12 arms deferral; `gateways.md` lists Conditional among the gateway's catching events) in scope; **top-level Conditional Start not supported indefinitely** — an engine choice grounded in Table 10.84's verbatim prohibition ("MUST NOT refer to the data context or instance attribute of the Process … MAY refer to static Process attributes and states of entities in the environment", access mechanisms "out of scope of the standard") + the engine having no such surface (reference engines reduce it to an explicit evaluate-API); **Event Sub-Process start is the planned Conditional-start home** (inside a live instance the condition legally reads the enclosing scope per §10.4.3) — decided now, lands with Sub-Processes. **Evaluation:** instance-scope data context (§10.4.3); evaluated at arm (an arm-time true fires — reference-engine behavior) then re-evaluated on **committed** data change only — the ADR-011 v.6 §2.9.4 commit-diff seam is the change signal (mid-activity writes never fire a conditional); the normative **false→true edge rule** (Table 10.84: "MUST become false and then true before the Event can be triggered again") realized as per-subscription edge state, governing non-interrupting boundary re-fires; opaque-expression granularity = re-evaluate all armed conditionals per non-empty commit by default, with an OPT-IN declared watched-paths filter settled as ONE uniform per-subscription rule with NO processing modes at any level: the expression carries an optional `Dependencies() []string` capability (`data.DependencyLister`; goexpr authors declare via `WithDependencies`, declarative expressions implement it structurally, a conservative codegen source analyzer may derive it) — absent/nil → the CE re-evaluates on every non-empty commit (the safe fallback: a missing statement costs performance, never correctness — which is why no mode or completeness validation exists); non-empty → re-evaluate only when the commit-diff intersects (segment-prefix); explicitly-empty rejected at construction (the never-fire trap); runtime read-tracing rejected (opaque closures take data-dependent paths and can bypass the data source via captured live structs → silently incomplete inferred sets); multi-fire ordering: one commit → one snapshot → evaluate per the rule, apply fires in arming order, a disarming fire voids later-collected deliveries. **Ownership:** conditional subscriptions are **loop-local** — a deliberate exception to §2.5's sole-hub pattern (the trigger source is the instance's own commits; timer stays hub-owned as a clock-driven engine-wide source); delivery through the §2.1 inbound edge, single-writer preserved, §2.4 subscribe-before-publish holds by construction. Added the §3 data-driven-waiting consequence. Standard-grounded against the BPMN 2.0 PDF (Tables 10.84/10.89/10.90, §10.5.1, §10.4.3 — verified verbatim via the spec notebook; the verified clauses added to `event-handling.md`'s appendix so future reviews ground in-repo) and `docs/bpmn-spec/` (`gateways.md`, `sub-processes.md`, `events.md`). §7 refreshed at the bump moment: stale pins ADR-001 v.5→v.6 and ADR-013 v.1→v.2 corrected; ADR-011 v.6 / ADR-005 v.4 / ADR-018 v.1 references added (the ADR-018 §2.7 deferred row gains a decided-here annotation at landing). §2.5 clarified: Conditional is the deliberate loop-owned exception to the sole-hub pattern. Conception; the accompanying SRD implements. |
 | v.2 | 2026-06-27 | Ruslan Gabitov | Added **§2.6 "Error events: throw, propagation, and catch"** — the detailed Error *event* model §2.2 named but left at engine-note depth: the `Error`/`ErrorEventDefinition` object (`errorRef`→`errorCode`/`structureRef`, valid only at End / Boundary / Event-Sub-Process-Start positions per `conformance.md`); the two **throw** sources (Error End Event throwing its `Error`, §10.5.6/`end-events.md`; and an activity raising an interrupting error → `Active→Failing`, `tasks.md`/`activity-lifecycle.md`) and that the throw is **critical** (§10.5.1) with no Error Intermediate Throw Event; **propagation** as the scope-chain walk to the innermost enclosing catcher matching `errorRef` (§10.5.1/§10.5.7), matching **per Event Declaration**; **catch** at an always-interrupting Error Boundary (activity→`Failing`, token on the exception flow, cancel-after-flow per §10.5.6 §7; Error Event Sub-Process catch deferred with Sub-Processes); **unmatched→instance fault** as the engine choice for the spec's "unresolved Error"; and an **engine note** on the single-scope reality before Sub-Processes (no scope to climb to → an activity's error is caught only by a boundary on that same activity, and an Error End Event always resolves to an instance fault) cross-referencing [SAD-001 v.1 §15.3]. Fixed the §2.2 engine-note citation `§11`→`§10.5.7` and pointed it at §2.6. Refines pin updated ADR-001 v.5→v.6. Standard-grounded against `docs/bpmn-spec/` (§10.5.1/§10.5.6/§10.5.7, `event-definitions.md`/`tasks.md`/`end-events.md`/`conformance.md`/`activity-lifecycle.md`). No code/behaviour change — conception only. |
 | v.1 | 2026-06-18 | Ruslan Gabitov | Accepted. Event-delivery & event-triggered-cancellation conception relocated from ADR-001 and authored in full: §2.1 external-signal delivery (single serialized inbound edge, per-instance subscription identity, publication/direct/propagation/implicit reach per §10.5.1), §2.2 cancellation-trigger nodes (Terminate End Event §13.5.6 over ADR-001's cascade; interrupting/non-interrupting boundary §10.5.6/§13.5.3; Error/Escalation propagation + handler multiplicity as engine notes), §2.3 wait-node subscription **lifecycle** (subscribe/unsubscribe per subscriber kind — in-flow on arrival/consume, non-compensation boundary on activity entry/exit, compensation boundary armed on `Completed` until enclosing scope finishes; §13.5.2/§13.5.3/§13.5.5; release mechanics delegated to ADR-007, compensation *handling* + the optional off-by-default `compensate-on-terminate` extension delegated to a future Compensation ADR; terminate runs **no** compensation by default per §13.5.6), §2.4 in-memory delivery contract (subscribe-before-publish, no-waiter no-op, broker-buffered messages, non-durable; remediates audit 2.4), §2.5 sole-hub waiter lifecycle (`WaitGroup`-synchronized shutdown, no self-removal, no leak on `Stop` error, single-lock registry; remediates audit 2.5). Standard-grounded against `docs/bpmn-spec/` (§10.5.1/§10.5.6/§10.5.7, §13.5.2/§13.5.3/§13.5.6). Refines ADR-001 v.5; siblings ADR-002 v.2, ADR-007 v.1, ADR-009 v.1, ADR-013 v.1, ADR-014 v.1. Conception; implementation rides the events-workstream SRD(s). |
+| v.6 | 2026-08-10 | Ruslan Gabitov | **Draft.** Adds §2.9.5 — for an activity carrying loop characteristics the registered SUBSCRIBER is the decorator (ADR-025 v.3 §2.13): one processor identity per iterated activity, holding one subscription per waiting instance. Matching is untouched — the hub still resolves an envelope to exactly one subscription by correlation (§2.9.3) and serves a signal to every subscription (§2.9.2) — and so is the receiving execution, which still captures the payload into its own frame (§2.9.1); only the registered identity moves, and with it the responsibility to dispatch to the instance owning the matched subscription. The identity is what makes the set re-armable: a sequential iteration re-arms every pass, and after a restart every waiting instance must be re-armed before any delivery is accepted — not against loss, since the broker buffers an unmatched envelope until a matching subscription appears, but against a partially armed set matching an envelope into the WRONG instance — with each execution registering as itself, no party owns either, which is why the engine refuses an iterated WAITING activity today. Consequence for §2.9.4: a queue entry was a (subscriber, definition) pair, unambiguous only while every subscriber was distinct; one subscriber now holds N subscriptions on one definition, so the entry carries a discriminator — the instance ordinal — or one iteration completing would unregister a sibling's wait. §2.9's opening and §2.9.3 re-pinned to ADR-025 v.3, whose §2.2 replaced per-instance parallel scopes with a frame per iteration and a scope only where the activity is a scope host. Three stale claims refreshed at the bump, since a version re-asserts the whole document: scope-chain Error/Escalation propagation was written twice as future work ("lands with the sub-process/boundary workstream") when ADR-023 v.3 §2.6 has long decided it — both now delegate to it by pin, alongside pins for the two other delegations (ADR-007 v.2.1, ADR-033 v.5); and §1.1's "the runtime today moves a track to TrackWaitForEvent but the delivery edge is missing" describes the pre-ADR baseline this document removed, so it is re-tensed to say so rather than reading as current. |

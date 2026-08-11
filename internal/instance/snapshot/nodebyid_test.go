@@ -69,7 +69,7 @@ func TestNodeByID(t *testing.T) {
 }
 
 // TestWalk: the exported deep traversal reaches nested nodes and honors an
-// early stop. Its caller is registration-time model validation (SRD-088 FR-8),
+// early stop. Its caller is registration-time model validation (SRD-090 FR-8),
 // which must inspect EVERY node rather than find one — a Script Task inside a
 // Sub-Process demands its script format just as much as a top-level one.
 func TestWalk(t *testing.T) {

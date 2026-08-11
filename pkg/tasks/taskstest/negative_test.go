@@ -324,7 +324,7 @@ func shrinkWaits(t *testing.T) {
 }
 
 // TestAssertionsRejectBrokenDispatchers drives each contract assertion against
-// a dispatcher that violates precisely it (SRD-088 T-9, in-process half).
+// a dispatcher that violates precisely it (SRD-090 T-9, in-process half).
 func TestAssertionsRejectBrokenDispatchers(t *testing.T) {
 	shrinkWaits(t)
 

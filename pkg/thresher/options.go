@@ -48,7 +48,7 @@ type thresherConfig struct {
 	// registeredStores is what WithDataStore put in dataStores, kept in
 	// registration order. datastore.Registry resolves a ref to a store and
 	// does not enumerate, so this is how Shutdown reaches the stores it must
-	// stop (SRD-088 §3.2).
+	// stop (SRD-090 §3.2).
 	//
 	// It is keyed by REF, not a flat slice, because WithDataStore replaces a
 	// store when its ref is reused. A slice that only appended would keep the

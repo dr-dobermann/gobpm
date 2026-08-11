@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `%v` over an engine object no longer reflects across it**
+  (FIX-040, closes #314). `Instance` and its tracks now implement
+  `fmt.Stringer`, rendering as their element id. Without it, anything
+  formatting one with `%v` — a log line, an error, a test double's
+  argument matcher — walked the struct through reflection, reading the
+  correlator's maps and the mutexes guarding them from whatever
+  goroutine happened to be formatting. That read takes no lock and
+  cannot: `fmt` reaches the fields behind the type's back. The visible
+  symptom was a `-race` report whose every frame was engine code
+  holding its locks correctly. Diagnostics improve as a side effect —
+  an instance prints as its identity rather than a page of internals.
+
 ### Changed
 
 - **BPMN converter: the import parser is rebuilt, and six of its own
@@ -47,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Adapter lifecycle and observation hooks** (SRD-088, closes #269).
+- **Adapter lifecycle and observation hooks** (SRD-090, closes #269).
   `renv.Starter`, `renv.Stopper`, `renv.HealthChecker` and
   `renv.RuntimeAware` join `Migrator` and `ClusterAware` in
   `pkg/renv/capabilities.go`. All are optional and satisfied
@@ -58,7 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   observes. `Stop` is idempotent by contract, so an adapter the host
   started before the engine existed can be stopped by either.
   `Thresher.HealthCheck` asks every seam and joins what they report.
-- **Four conformance helpers for adapter authors** (SRD-088):
+- **Four conformance helpers for adapter authors** (SRD-090):
   `messagingtest`, `expressiontest`, `taskstest` and `authtest`, the
   names ADR-003 §4.2 had listed but nothing provided. Each publishes
   its port's contract as `Conformance(t, factory)` — one line in an
@@ -66,7 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suite can fail. `messagingtest` and `taskstest` also publish
   `Waits()`/`SetWaits()`, so an adapter over a remote backend can widen
   bounds tuned for an in-process one.
-- **A dependency-free Script Task engine** (SRD-088):
+- **A dependency-free Script Task engine** (SRD-090):
   `pkg/script/gofunc` runs a Go function the host registered under a
   name, the same move `gooper` makes for Service Tasks. It is opt-in —
   an auto-wired empty registry would be `##None` with a longer name —
@@ -75,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **A process whose Script Task no configured engine can run is refused
-  at registration** (SRD-088). `RegisterProcess` walks the model, nested
+  at registration** (SRD-090). `RegisterProcess` walks the model, nested
   Sub-Processes included, and rejects any Script Task whose
   `scriptFormat` no wired engine claims — naming the task, the format,
   the formats that ARE registered, and the option to wire one. This
@@ -83,31 +97,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   asynchronously, inside an already-running instance, as an incident.
   **Migration:** a model with a Script Task now needs its engine wired
   before `RegisterProcess`, not before the token arrives.
-- **`pkg/**` may not import `internal/`** (SRD-088), enforced by
+- **`pkg/**` may not import `internal/`** (SRD-090), enforced by
   depguard, excepting the `pkg/thresher` facade. This is what makes a
   bundled battery a reference implementation an outside author can
   copy.
-- **The examples are linted** (SRD-088). An `exclusions.paths` entry had
+- **The examples are linted** (SRD-090). An `exclusions.paths` entry had
   been suppressing every finding across all 49 example modules, so the
   `examples-no-internal` rule had never fired. 198 real issues surfaced
   and are fixed.
 
 ### Fixed
 
-- **`goexpr.Engine.Evaluate` panicked on a nil expression** (SRD-088)
+- **`goexpr.Engine.Evaluate` panicked on a nil expression** (SRD-090)
   where `lite` returns a named error — a public extension point turning
   a caller's bug into a library crash. A nil *source* is still passed
   through, deliberately: a `GExpression` may carry one bound at
   construction.
-- **A failed start left already-started adapters running** (SRD-088).
+- **A failed start left already-started adapters running** (SRD-090).
   `startSeams` now unwinds the started prefix in reverse before
   returning, joining any rollback failure onto the cause rather than
   replacing it.
-- **A replaced Data Store stayed in the lifecycle** (SRD-088).
+- **A replaced Data Store stayed in the lifecycle** (SRD-090).
   `WithDataStore` documented replace-by-ref and the registry honoured
   it, but the lifecycle list appended — so a superseded store was still
   started, health-checked and stopped while serving no reference.
-- **`gofunc` could register an unreachable script** (SRD-088): the name
+- **`gofunc` could register an unreachable script** (SRD-090): the name
   was stored untrimmed and looked up trimmed, so a padded registration
   failed as "no script registered" on a name plainly in the registry.
 

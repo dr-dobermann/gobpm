@@ -95,7 +95,7 @@ func (permissiveProvider) Authorize(context.Context, auth.Request) error {
 }
 
 // TestSuiteRejectsAPermissiveProvider is the suite's own negative control
-// (SRD-088 T-9), run in a child process for the reason given in the
+// (SRD-090 T-9), run in a child process for the reason given in the
 // messagingtest twin.
 func TestSuiteRejectsAPermissiveProvider(t *testing.T) {
 	if os.Getenv("GOBPM_CONFORMANCE_NEGATIVE") == "1" {
