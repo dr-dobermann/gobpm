@@ -78,13 +78,131 @@ type nodeExec struct {
 	ord  int
 }
 
-// execFor builds the executor that runs this node. Today every node it is
-// asked about has exactly one instance; once the iteration branches move
-// onto decorators (SRD-088.A M2) this is where a node carrying loop
-// characteristics gets a decorator instead, and the caller does not change
-// because both satisfy activityExec.
+// execFor builds the executor that runs this node: a decorator when the node
+// carries loop characteristics this slice has converted, a single instance
+// otherwise. The caller does not care which — both satisfy activityExec, so
+// a track drives one executor and cannot tell how many instances are behind
+// it (ADR-025 v.3 §2.13).
+//
+// The remaining iteration kinds are still routed by executeStep and move here
+// as they convert (SRD-088.A M2/M3).
 func execFor(t *track, step *stepInfo) activityExec {
+	if mi := multiInstanceOf(step.node); mi != nil && mi.IsSequential() {
+		if _, composite := step.node.(scopeHost); !composite {
+			return newLeafDecorator(t, step, mi)
+		}
+	}
+
 	return newNodeExec(t, step, 0)
+}
+
+// leafDecorator drives the instances of an iterated LEAF activity, holding
+// one executor per instance (ADR-025 v.3 §2.13). It implements activityExec
+// itself, which is what closes the composition: to the track it is the thing
+// that runs the activity, exactly as a single instance would be.
+//
+// This slice drives the SEQUENTIAL kind, where instances run one at a time
+// and the decorator holds the live one. The record is unchanged by that: a
+// sequential leaf's position was never a per-instance track — it is the
+// iteration mirror on the host's own record — so nothing about persistence
+// moves until parallel instances stop being tracks (M2b).
+type leafDecorator struct {
+	t    *track
+	step *stepInfo
+	mi   multiInstance
+
+	// live is the instance currently executing, or nil between passes and
+	// after the last one. A sequential decorator holds at most one.
+	live *nodeExec
+}
+
+// newLeafDecorator builds the decorator for an iterated leaf activity.
+func newLeafDecorator(
+	t *track, step *stepInfo, mi multiInstance,
+) *leafDecorator {
+	return &leafDecorator{t: t, step: step, mi: mi}
+}
+
+// run drives every instance and follows the activity's outgoing flow ONCE,
+// on exit — the activity is one token's step regardless of how many times it
+// executed.
+func (d *leafDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
+	it := miIterator{mi: d.mi}
+
+	n, start, err := d.t.prepareSequential(ctx, it, d.mi, d.step)
+	if err != nil {
+		return nil, err
+	}
+
+	// N <= 0 runs zero instances — the activity itself does not execute,
+	// and the token leaves via the declared outgoing flow.
+	if n <= 0 {
+		d.t.miState = nil
+
+		return d.step.node.Outgoing(), nil
+	}
+
+	var nextFlows []*flow.SequenceFlow
+
+	for i := start; i < n; i++ {
+		flows, stop, err := d.runInstance(ctx, it, i, n)
+		if err != nil {
+			return nil, err
+		}
+
+		nextFlows = flows
+
+		if stop {
+			break
+		}
+	}
+
+	if err := it.publishOutput(d.t); err != nil {
+		return nil, err
+	}
+
+	d.t.miState = nil
+	d.t.setLoopCounter(0)
+	d.live = nil
+
+	// a condition-stopped (or zero-flow) run still leaves via the
+	// activity's declared outgoing flow, exactly once.
+	if nextFlows == nil {
+		nextFlows = d.step.node.Outgoing()
+	}
+
+	return nextFlows, nil
+}
+
+// runInstance executes instance i through its own executor.
+func (d *leafDecorator) runInstance(
+	ctx context.Context, it miIterator, i, n int,
+) ([]*flow.SequenceFlow, bool, error) {
+	d.live = newNodeExec(d.t, d.step, i)
+
+	return d.t.runLeafPass(ctx, it, d.mi, d.step, i, n, d.live)
+}
+
+// awaits reports what the decorator's live instance awaits — the conjunction
+// is trivial while at most one instance runs (ADR-025 v.3 §2.13's
+// releasability rule takes its general form when parallel instances arrive).
+func (d *leafDecorator) awaits() awaitKind {
+	if d.live == nil {
+		return awaitNothing
+	}
+
+	return d.live.awaits()
+}
+
+// state reports the ACTIVITY's iteration state: the live instance's ordinal
+// and what it is doing. Its own ordinal is 0 — the activity is one instance
+// of itself from the track's point of view.
+func (d *leafDecorator) state() instanceState {
+	if d.live == nil {
+		return instanceState{ordinal: 0, await: awaitNothing}
+	}
+
+	return d.live.state()
 }
 
 // newNodeExec builds the executor for one instance of a leaf activity.

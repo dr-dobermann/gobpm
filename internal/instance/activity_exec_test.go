@@ -91,3 +91,41 @@ func TestNodeExecDoneNeedsAnEndedStep(t *testing.T) {
 	ended := newNodeExec(tr, &stepInfo{state: StepEnded}, 0)
 	require.True(t, ended.state().done)
 }
+
+// TestLeafDecoratorAwaitsItsLiveInstance: a decorator answers for the
+// instance currently running, and reports nothing between instances. M3's
+// residency rule reads this — an activity whose instances are all finished
+// must not look like one that is waiting, or it would pin its process
+// instance resident forever (ADR-025 v.3 §2.13).
+func TestLeafDecoratorAwaitsItsLiveInstance(t *testing.T) {
+	tr := &track{}
+	d := newLeafDecorator(tr, &stepInfo{}, nil)
+
+	require.Equal(t, awaitNothing, d.awaits(),
+		"a decorator with no live instance awaits nothing")
+	require.Equal(t, awaitNothing, d.state().await)
+	require.Equal(t, 0, d.state().ordinal)
+
+	// instance 2 is running and parks
+	d.live = newNodeExec(tr, &stepInfo{}, 2)
+	tr.state = TrackWaitForEvent
+
+	require.Equal(t, awaitEvent, d.awaits(),
+		"the decorator reports what its live instance awaits")
+	require.Equal(t, 2, d.state().ordinal,
+		"and reports WHICH instance that is — the ordinal is the join key")
+}
+
+// TestLeafDecoratorSatisfiesActivityExec: the composition is closed — a
+// decorator is an activityExec, which is what lets a track drive one without
+// knowing how many instances are behind it. A compile-time assertion, kept as
+// a test so the reason survives next to it.
+func TestLeafDecoratorSatisfiesActivityExec(t *testing.T) {
+	var (
+		_ activityExec = (*nodeExec)(nil)
+		_ activityExec = (*leafDecorator)(nil)
+	)
+
+	require.Implements(t, (*activityExec)(nil), newLeafDecorator(
+		&track{}, &stepInfo{}, nil))
+}

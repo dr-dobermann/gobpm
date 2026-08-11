@@ -6,67 +6,9 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
-// runLeafMISequential drives a sequential Multi-Instance LEAF activity
-// in place on the host's own runner (SRD-086 FR-1, ADR-025 v.2 §2.2):
-// per pass it binds the split item and the 0-based loopCounter at the
-// host scope (the walk-up the activity reads by name), re-runs
-// executeNode — whose fresh per-pass frame IS the iteration isolation,
-// the runStandardLoop mechanism — captures the declared output item
-// into the staging slot, and evaluates the completionCondition. On
-// exit the assembled output publishes once and the single outgoing
-// flow is followed once. Before this decorator existed, a leaf MI fell
-// through executeStep to a SINGLE executeNode — the silent single-run
-// SRD-086 §1 documents.
-func (t *track) runLeafMISequential(
-	ctx context.Context, step *stepInfo, mi multiInstance,
-) ([]*flow.SequenceFlow, error) {
-	it := miIterator{mi: mi}
-
-	n, start, err := t.prepareSequential(ctx, it, mi, step)
-	if err != nil {
-		return nil, err
-	}
-
-	// N <= 0 runs zero passes — the activity itself does not execute,
-	// and the token leaves via the declared outgoing flow.
-	if n <= 0 {
-		t.miState = nil
-
-		return step.node.Outgoing(), nil
-	}
-
-	var nextFlows []*flow.SequenceFlow
-
-	for i := start; i < n; i++ {
-		flows, stop, err := t.runLeafPass(ctx, it, mi, step, i, n)
-		if err != nil {
-			return nil, err
-		}
-
-		nextFlows = flows
-
-		if stop {
-			break
-		}
-	}
-
-	if err := it.publishOutput(t); err != nil {
-		return nil, err
-	}
-
-	t.miState = nil
-	t.setLoopCounter(0)
-
-	// a condition-stopped (or zero-flow) run still leaves via the
-	// activity's declared outgoing flow, exactly once.
-	if nextFlows == nil {
-		nextFlows = step.node.Outgoing()
-	}
-
-	return nextFlows, nil
-}
-
-// runLeafPass executes ONE sequential leaf pass (SRD-086 FR-1): bind,
+// runLeafPass executes ONE instance of a sequential leaf activity, through
+// the executor the decorator holds for it (SRD-088.A M2). Originally
+// SRD-086 FR-1's pass: bind,
 // execute in a fresh frame, capture the output, post the pass to the
 // loop's iteration mirror (the checkpoint's position — a leaf opens no
 // scope, so the record rides this roundtrip instead of the drain),
@@ -75,7 +17,7 @@ func (t *track) runLeafMISequential(
 // mirror the same way the composite's is (SRD-082 FR-2).
 func (t *track) runLeafPass(
 	ctx context.Context, it miIterator, mi multiInstance,
-	step *stepInfo, i, n int,
+	step *stepInfo, i, n int, inst activityExec,
 ) ([]*flow.SequenceFlow, bool, error) {
 	t.setLoopCounter(i)
 
@@ -90,7 +32,7 @@ func (t *track) runLeafPass(
 	// idiom): finalizeNodeExecution ended the previous pass.
 	step.state = StepCreated
 
-	flows, err := t.executeNode(ctx, step)
+	flows, err := inst.run(ctx)
 	if err != nil {
 		return nil, false, err
 	}
