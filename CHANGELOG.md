@@ -35,6 +35,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A correlation key learned while a message waiter was being
+  registered no longer disappears** (SRD-090.A M2c, part of #313). The
+  waiter subscribes the broker — reading the correlation keys its
+  processors declare — before the hub installs it in its registry, and
+  the lazy-association path that grows a live subscription looks the
+  waiter up in that same registry. A key declared between those two
+  moments reached neither, and every message carrying it was buffered by
+  the broker unrouted, forever: the receiver simply waited. Two parallel
+  Multi-Instance iterations parking at one shared message catch declare
+  their keys concurrently, so they landed in that window about once in
+  three runs. The waiter now re-reads its processors' keys once the hub
+  has made it reachable.
+
+  The same re-read fixes a second case that was never a race: a
+  processor **joining** an existing waiter never contributed its keys at
+  all. With the engine's held subscriptions — one holder per instance,
+  all joining one waiter for the shared catch definition — a second
+  conversation was unreachable and its instance never woke. A wildcard
+  subscription is deliberately left as one: it already receives every
+  message for its name, and keying it would cut off the keyless
+  processor that asked for exactly that.
+
+- **Registering an event processor the engine cannot compare is now
+  refused, not a panic** (SRD-090.A M2d). A waiter identifies its
+  processors by value, and Go panics rather than reporting false when
+  two interface values of one uncomparable dynamic type meet — so a host
+  implementing the public `eventproc.EventProcessor` on a struct with a
+  slice or map field crashed the hub on its **second** registration for
+  one event definition, inside the waiter, with the first having
+  succeeded. Registration now rejects such a processor at the boundary,
+  naming the type and saying to register a pointer to it instead.
+
 - **A `%v` over an engine object no longer reflects across it**
   (FIX-040, closes #314). `Instance` and its tracks now implement
   `fmt.Stringer`, rendering as their element id. Without it, anything

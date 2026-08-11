@@ -1,10 +1,11 @@
-# SRD-090.A — handoff after M2b
+# SRD-090.A — handoff after M2d
 
 **Branch** `feat/node-execution-model`, worktree
 `/home/dober/wrk/development/go/src/gobpm/iter-events` (sibling worktree; the
 directory name `iter-events` predates the branch rename — cosmetic only).
 
-**Base** `origin/master` = `8532091d`. One commit ahead: `M2b`. Nothing pushed.
+**Base** `origin/master` = `8532091d`. Three commits ahead: `M2b`, `M2c`,
+`M2d`. Nothing pushed.
 
 **Task** issue **#313** — the iteration decorator should own the decorated
 node's event registration. This branch is `Part of #313`, not `Closes`: the
@@ -21,7 +22,7 @@ flip to Accepted when **SRD-090.C** lands. The implementation is sliced:
 
 | Slice | Subject | State |
 |---|---|---|
-| **SRD-090.A** | executor/decorator model + the checkpoint record | M1, M2a landed on master (PR #321); **M2b landed here**; M3a, M3b, M4 remain |
+| **SRD-090.A** | executor/decorator model + the checkpoint record | M1, M2a landed on master (PR #321); **M2b, M2c, M2d landed here**; M3a, M3b, M3c, M4 remain |
 | SRD-090.B | registration ownership; the refusal retired — #313's literal subject | not authored |
 | SRD-090.C | token / incident surfaces | not authored |
 | SRD-090.D | declared result strategies, runtime iteration values | not authored |
@@ -30,12 +31,12 @@ Only `docs/srd/SRD-090.A-node-execution-model.md` exists. Its §7 is the
 milestone list; §10 (implementation summary) is still `*Filled at landing.*`
 and must be filled before the branch is done.
 
-## What M2b did (commit 1 on this branch)
+## What landed here
 
-A parallel MI **leaf** activity's instances are no longer tracks and get no
-scope apiece. The decorator holds one `nodeExec` per instance and runs the
-N-of-N barrier as ordinary control flow. Key mechanisms, all in
-`internal/instance/activity_exec.go` unless noted:
+**M2b** (`ebb4a74a`) — a parallel MI **leaf** activity's instances are no
+longer tracks and get no scope apiece. The decorator holds one `nodeExec` per
+instance and runs the N-of-N barrier as ordinary control flow. Key mechanisms,
+all in `internal/instance/activity_exec.go` unless noted:
 
 - **`Frame.BindLocal`** (`internal/scope/frame.go`) — the FR-4 isolation
   vehicle. Binds an instance's `loopCounter` and split input item into the
@@ -61,44 +62,60 @@ N-of-N barrier as ordinary control flow. Key mechanisms, all in
 undeclared writes used to die with its scope and now reach the enclosing one,
 last-wins. The declared output collection is unaffected.
 
-## Verification at the end of M2b
+**M2c** (`6012af08`) — **the blocker is fixed.** `TestIterationCorrelated`
+`Routing` and `TestIterationRoutingKillAndResume` failed with a 3.01s timeout
+about 1 run in 3 on untouched `origin/master`. `registerWaiter` subscribes the
+broker — reading its processors' declared correlation keys — BEFORE installing
+the waiter in the registry, and `AddEventKey` no-ops while the waiter is
+uninstalled, so a key a sibling iteration declared inside that window reached
+neither and its envelope was buffered unrouted forever. The waiter now re-reads
+its processors' keys at both points where the reachable processor set changes
+(`syncWaiterKeys` / `messageWaiter.SyncKeys`). The same re-read fixes a second
+case that was never a race: a processor **joining** an existing waiter never
+contributed its keys at all. A wildcard subscription is deliberately left as
+one. 40 consecutive green runs of the pair afterwards.
 
-- `internal/instance` green at `-race -count=5`, `GOMAXPROCS=4`.
-- `make lint` 0 issues; `gofmt` clean.
-- **Diff coverage 96.1%** of 283 changed lines (floor 95) — PASS.
-- `make ci` **RED at `test-core`** — see the blocker below.
+**M2d** (`8d8dc722`) — found while writing M2c's tests, fixed where found. A
+waiter identifies its processors by value (`slices.Index` over the interface),
+and Go **panics** rather than reporting false when two interface values of one
+uncomparable dynamic type meet, so a host implementing the public
+`eventproc.EventProcessor` on a struct with a slice field crashed the hub on
+its SECOND registration for a definition. Registration refuses such a processor
+at the boundary, naming the type. Identity by `ID()` was rejected: a snapshot
+clone preserves element ids, so two instances of one process present distinct
+processors carrying the same id.
 
-## BLOCKER — the next milestone (M2b-a)
+## Verification at M2d
 
-`TestIterationCorrelatedRouting` and `TestIterationRoutingKillAndResume`
-(`pkg/thresher/delivery_payload_test.go`) fail intermittently with a **3.01s
-timeout**. **Measured pre-existing**: on base `8532091d` untouched, 1 failure
-in 3 runs of `GOMAXPROCS=4 go test -race -count=1 ./pkg/thresher/`. On M2b, 2
-in 3 — noise at n=3.
+`make ci` **PASS**, 14/14 steps, head `8d8dc722`, diff coverage **96.9%** of
+350 changed lines (floor 95). `.ci/last-run.json` holds the verdict.
 
-It is NOT M2b's: the fixture is a parallel MI **Sub-Process** (an iterated
-composite), whose execution path M2b does not modify.
+## Remaining milestones
 
-Fix it here as its own milestone before anything else — it blocks the gate and
-makes every future gate result ambiguous.
+M3 lands in three commits (SRD §7 records the split and its reason — the three
+drivers it replaces do not share a mechanism, and one commit would mix a
+straight conversion with the removal of the loop-owned barrier):
 
-Already ruled out: `awaitParked` waits on token state rather than on the
-subscription, but the broker **buffers** an unmatched envelope and drains it on
-`Subscribe` (`pkg/messaging/membroker/membroker.go:204-206`, `:230`), so an
-early publish is not lost. Cause still open.
-
-## Remaining milestones after M2b-a
-
-- **M3a — the sub-process executor.** Composite Standard Loop and composite MI
-  (both kinds) onto executors; `runCompositeLoop`, `runMISequential`,
-  `runMIParallel`, `runStandardLoop` (leaf Standard Loop) and `miGroup` retired
-  with the loop-side drain accounting; residency by `awaits()` (FR-8);
-  composites into `IterationRecord`. Tests T-1, T-4 (composite), T-6, T-7, T-8.
-- **M3b — the call executor.** Iterated Call Activity: N children, each
+- **M3a — the scope executor, and residency by what an instance awaits.**
+  `scopeExec`: one instance of a composite activity — opens its child scope,
+  parks for that scope's drain, reports `awaitScope`. The decorator
+  generalizes over `activityExec`, and the sequential composite kinds drive
+  through it; `runCompositeLoop` and `runMISequential` go. Residency lands
+  here because `awaitScope` is what makes it decidable (FR-8): today an
+  iterated Sub-Process host disqualifies its whole instance from dehydration
+  via `dehydratableParked`'s default arm, so three iterations holding parked
+  User Tasks pin it forever. T-1 (composite), T-4 (composite), T-6, T-7.
+- **M3b — the parallel composite, and the loop-owned group retired.**
+  Parallel composite MI on the same decorator, each instance holding its own
+  scope and its own drain — which removes the reason `miGroup` existed: the
+  fan-out/re-arm/complete/re-attach handshake serialized N concurrent drains
+  onto a cap-1 park that N executors no longer share. Note
+  `maybeDehydrate`'s `len(ls.miGroups) > 0` guard goes with it. T-8.
+- **M3c — the call executor.** Iterated Call Activity: N children, each
   recorded against its ordinal with `ChildID`, restore re-linking each child,
   cancellation terminating the remaining children. Tests T-9, T-10 — both
-  genuinely new (`NewCallActivity` never appears with `WithLoop` today, so T-1
-  is not an oracle here).
+  genuinely new (`NewCallActivity` never appears with `WithLoop` today, so
+  T-1 is not an oracle here).
 - **M4 — the sweep.** Old symbols absent not orphaned; the Schema-5
   compatibility path proven against documents captured by the previous
   release; the §9 absence check enforced; §10 filled.
@@ -118,6 +135,9 @@ then the PR description.
   surviving scopes on a finished run (they are already closed), one read
   `NodeID` from `Fact.Details` where it is a top-level field, and T-11 looked
   fine before it was checked. Stash the implementation, run, restore.
+- **`covercheck` reads per-package profiles.** A helper added in package A but
+  exercised only by package B's tests counts as uncovered and reddens the
+  gate. M2c needed `waiters/message_keysync_test.go` for exactly that reason.
 - **Never bare `git stash`/`pop`** — other sessions share the stack. Push with
   a unique tag, capture the SHA, `apply` it, then drop by tag.
 
