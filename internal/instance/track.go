@@ -237,12 +237,13 @@ type track struct {
 	// consumed once by the runner.
 	miSeed *checkpoint.MIRecord
 
-	// iterSeed is a RESTORED LEAF activity's executor set (SRD-090.A
-	// FR-7): which ordinals were still live when the capture was taken.
-	// A sequential decorator needs only the completed count (miSeed
-	// carries it), but a parallel one completes out of order — the count
-	// alone cannot say WHICH ordinals are done, and re-running a
-	// completed instance is exactly what FR-7 forbids.
+	// iterSeed is a RESTORED activity's executor set (SRD-090.A FR-7):
+	// which ordinals were still live when the capture was taken. A
+	// sequential decorator needs only the completed count (miSeed carries
+	// it), but a parallel one completes out of order — the count alone
+	// cannot say WHICH ordinals are done, and re-running a completed
+	// instance is exactly what FR-7 forbids. Consumed once, by the
+	// activity the track was restored on (takeIterSeed).
 	iterSeed *checkpoint.IterationRecord
 	// miParallelSeed is the parallel counterpart (SRD-082 FR-4): the
 	// runner re-attaches to its restored group instead of fanning out.
@@ -1966,4 +1967,26 @@ func (t *track) loopCounterSnap() int {
 	defer t.m.RUnlock()
 
 	return t.loopCounter
+}
+
+// takeIterSeed hands the restored executor set to the activity starting
+// now, and clears it (SRD-090.A FR-7).
+//
+// The clear is the point. A seed describes the instances of ONE activity —
+// the one the track was restored on — and a restored track does not stop
+// there: it finishes that activity and walks on through the graph. Left in
+// place, the seed would still be sitting on the track when the token reached
+// the NEXT iterated activity, whose decorator would read another activity's
+// ordinals as its own and skip every instance recorded completed. Those
+// instances would never run, and nothing would say so — the run would simply
+// produce a shorter result.
+//
+// Only a decorator calls this, which is exactly the set that can be handed
+// one: a seed reaches a track only when the capture wrote an IterationRecord
+// for it, and only an iterated activity has one.
+func (t *track) takeIterSeed() *checkpoint.IterationRecord {
+	seed := t.iterSeed
+	t.iterSeed = nil
+
+	return seed
 }

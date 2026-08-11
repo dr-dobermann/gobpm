@@ -21,9 +21,10 @@ type standardLoop interface {
 }
 
 // standardLoopOf reports the node's Standard-Loop characteristics, or nil when
-// the node runs once (no marker, or a Multi-Instance marker). A composite host
-// never reaches this path — it parks before executeNode — so a leaf activity is
-// the only node a Standard Loop drives in place (ADR-025 §2.2).
+// the node runs once (no marker, or a Multi-Instance marker). It says nothing
+// about HOW the loop runs: a leaf is the only node a Standard Loop drives in
+// place (ADR-025 §2.2), while a composite's passes are child scopes a
+// loopDecorator opens one at a time.
 func standardLoopOf(node flow.Node) standardLoop {
 	lch, ok := node.(interface {
 		LoopCharacteristics() activities.LoopCharacteristics
@@ -40,44 +41,157 @@ func standardLoopOf(node flow.Node) standardLoop {
 	return sl
 }
 
-// executeStep runs the current node once, or — when it carries a Standard Loop —
-// re-runs it in place until the loop terminates (ADR-025 §2.2, leaf-Task
-// mechanism). It returns the outgoing flows to follow exactly once, on loop
-// exit.
+// executeStep runs the current node through the executor that holds its
+// instances (ADR-025 v.3 §2.13): a decorator when the node iterates, a single
+// executor otherwise. It returns the outgoing flows to follow exactly once,
+// on exit.
+//
+// Two kinds are still driven from here rather than by an executor, and each
+// leaves for a stated reason. A LEAF Standard Loop re-runs its node in place
+// and has no per-instance object yet — it converts with SRD-090.B, which is
+// what makes an iterated waiting activity buildable at all. A PARALLEL
+// COMPOSITE Multi-Instance still drives the loop-owned group barrier, which
+// M3c retires together with the mechanism.
 func (t *track) executeStep(
 	ctx context.Context, step *stepInfo,
 ) ([]*flow.SequenceFlow, error) {
-	if sl := standardLoopOf(step.node); sl != nil {
-		// a composite (scopeHost) Standard Loop iterates off the loop via the
-		// scope decorator (SRD-054 §2.12); a leaf Task iterates in place.
-		if _, ok := step.node.(scopeHost); ok {
-			return t.runCompositeLoop(ctx, step, sl)
-		}
+	_, composite := step.node.(scopeHost)
 
+	if sl := standardLoopOf(step.node); sl != nil && !composite {
 		return t.runStandardLoop(ctx, step, sl)
 	}
 
-	// a Multi-Instance COMPOSITE drives itself off the loop via its own
-	// decorator (ADR-025 v.2 §2.12), iterating by child scope: sequential
-	// await-each (runMISequential, SRD-055) or parallel
-	// fan-out-then-await-all (runMIParallel, SRD-056.A). A LEAF of either
-	// kind goes through execFor, which builds the decorator that holds its
-	// instances (SRD-090.A M2) — no scope, no spawned track.
-	if mi := multiInstanceOf(step.node); mi != nil {
-		if _, ok := step.node.(scopeHost); ok {
-			if mi.IsSequential() {
-				return t.runMISequential(ctx, step, mi)
+	if mi := multiInstanceOf(step.node); mi != nil &&
+		composite && !mi.IsSequential() {
+		return t.runMIParallel(ctx, step, mi)
+	}
+
+	return execFor(t, step).run(ctx)
+}
+
+// loopDecorator drives a COMPOSITE activity's Standard Loop, holding the
+// executor for the pass currently running (ADR-025 v.3 §2.13, BPMN §13.3.6).
+// It is the condition-driven sibling of iterDecorator: where a Multi-Instance
+// resolves its instance count once and gives each instance its own slice of
+// the input, a Standard Loop runs passes until its loopCondition says stop
+// and gives them nothing but the ordinal.
+//
+// That difference is the whole reason it is a second type rather than a flag
+// on the first. The two share no state — no cardinality, no collection, no
+// staging, no completionCondition — and the only thing they have in common is
+// what they hold, which is exactly the interface (ADR-025 v.3 §2.13).
+type loopDecorator struct {
+	t    *track
+	step *stepInfo
+	sl   standardLoop
+
+	// live is the pass currently executing, or nil between passes and once
+	// the loop has finished. A Standard Loop runs one pass at a time.
+	live activityExec
+}
+
+// newLoopDecorator builds the decorator for a looped composite activity.
+func newLoopDecorator(
+	t *track, step *stepInfo, sl standardLoop,
+) *loopDecorator {
+	return &loopDecorator{t: t, step: step, sl: sl}
+}
+
+// run drives the passes and follows the composite's outgoing flow once, on
+// exit — the activity is one token's step however many times its body ran.
+//
+// Each pass publishes its 0-based ordinal (track field + host-scope datum) so
+// the condition and the body resolve it by name via walk-up, and so it
+// survives the child close for the next pass's test (§4.6). The bind is a
+// plane write, mutex-safe, made here rather than by the loop so it is set
+// before the continuation test reads it and before the scope opens.
+func (d *loopDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
+	t, step := d.t, d.step
+
+	// a Standard Loop resumes from the completed count alone (miSeed below)
+	// — its passes are strictly ordered, so there is no set of out-of-order
+	// ordinals to read. The executor set is still TAKEN, because leaving it
+	// on the track would hand this activity's restored position to the next
+	// iterated activity the token reaches (SRD-090.A FR-7).
+	_ = t.takeIterSeed()
+
+	// a restored host resumes at its recorded pass (SRD-082 FR-3):
+	// completed passes are never re-run; the loop condition re-evaluates
+	// naturally at the seeded pass over the restored scope data.
+	first := 0
+	if t.miSeed != nil {
+		first = t.miSeed.Completed
+		t.miSeed = nil
+	}
+
+	for pass := first; ; pass++ {
+		t.setLoopCounter(pass)
+
+		if err := t.instance.sc.bindLoopCounterAt(t.scopePath, pass); err != nil {
+			return nil, err
+		}
+
+		// pre-tested (while) tests every pass; post-tested (do-while) skips
+		// the first — one test site, matching runStandardLoop.
+		if d.sl.TestBefore() || pass > 0 {
+			cont, err := t.evalLoopCond(ctx, step.node, d.sl)
+			if err != nil {
+				return nil, err
 			}
 
-			return t.runMIParallel(ctx, step, mi)
+			if !cont {
+				break
+			}
+		}
+
+		if err := d.runPass(ctx, pass); err != nil {
+			return nil, err
+		}
+
+		if m, ok := d.sl.LoopMaximum(); ok && pass+1 >= m {
+			break
 		}
 	}
 
-	// A node with no loop characteristics has exactly ONE instance, and it
-	// runs through the executor that will hold every instance once the
-	// composite branches above move onto decorators too (SRD-090.A M3,
-	// ADR-025 v.3 §2.13).
-	return execFor(t, step).run(ctx)
+	d.live = nil
+
+	// the loop finished — follow the composite's outgoing once (SubProcess
+	// selects it; the body already ran through the scopes, so this only
+	// routes the token onward), mirroring runStandardLoop's single
+	// post-loop exit.
+	return t.executeNode(ctx, step)
+}
+
+// runPass runs one pass as its own instance: the executor opens that pass's
+// child scope and parks for its drain.
+func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
+	d.live = newScopeExec(d.t, d.step, pass)
+
+	_, err := d.live.run(ctx)
+
+	return err
+}
+
+// awaits reports what the pass currently running awaits — a child scope's
+// drain, or nothing between passes. The conjunction ADR-025 v.3 §2.13 states
+// is trivial here: a Standard Loop holds one pass at a time.
+func (d *loopDecorator) awaits() awaitKind {
+	if d.live == nil {
+		return awaitNothing
+	}
+
+	return d.live.awaits()
+}
+
+// state reports the ACTIVITY's iteration state: the live pass's ordinal and
+// what it is doing. Its own ordinal is 0 — the activity is one instance of
+// itself from the track's point of view.
+func (d *loopDecorator) state() instanceState {
+	if d.live == nil {
+		return instanceState{ordinal: 0, await: awaitNothing}
+	}
+
+	return d.live.state()
 }
 
 // runStandardLoop executes a leaf activity repeatedly while its loopCondition

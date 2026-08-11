@@ -65,11 +65,10 @@ type scopeRequest struct {
 	host  *track
 	node  flow.Node
 	reply chan scopeReply
-	// kind and insts carry a LEAF decorator's executor set to the loop's
+	// insts carries a LEAF decorator's executor set to the loop's
 	// iteration mirror on a scopeLeafPass (SRD-090.A FR-6): a leaf opens
 	// no scope and spawns no track, so this post is the ONLY thing that
 	// can tell the capture which instances are live.
-	kind   string
 	insts  []checkpoint.IterationInstance
 	op     scopeOp
 	n      int
@@ -151,9 +150,8 @@ func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 
 		req.reply <- scopeReply{}
 	case scopeLeafPass:
-		m := ls.ensureIterMirror(req.host)
+		m := ls.ensureIterMirror(req.host, req.node)
 		m.completed = req.n
-		m.kind = req.kind
 		m.instances = req.insts
 
 		req.reply <- scopeReply{}
@@ -206,7 +204,7 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 		ls.waiting[req.host.ID()] = struct{}{}
 
 		if drivesOwnIteration(req.node) {
-			ls.ensureIterMirror(req.host)
+			ls.ensureIterMirror(req.host, req.node)
 		}
 
 		entry.awaitAttach = false
@@ -247,7 +245,7 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 	// mirror the decorator's position for the capture (SRD-082 FR-2);
 	// the runner is parked in its roundtrip, so the reads are fenced.
 	if drivesOwnIteration(req.node) {
-		ls.ensureIterMirror(req.host)
+		ls.ensureIterMirror(req.host, req.node)
 	}
 
 	ls.reportScope(observability.PhaseOpened, req.node, child,
@@ -256,72 +254,6 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 	ls.armScopeHandlers(ctx, sh.Nodes(), child)
 
 	req.reply <- scopeReply{scopePath: child}
-}
-
-// runCompositeLoop drives a looped composite Standard Loop from the host's own
-// runner goroutine — the off-loop iteration decorator (SRD-054 FR-8, ADR-025 v.2
-// §2.12). Each pass it binds the ordinal (off the loop, like the leaf loop), tests
-// the continuation, requests the loop to open the child scope, and parks for the
-// drain; on exit it selects the composite's single outgoing flow once. This
-// replaces the loop-goroutine-driven firstOpen/afterDrain seam for a Standard-Loop
-// composite; the loop stays the sole writer of the scope (it only responds to the
-// open request and delivers the drain).
-func (t *track) runCompositeLoop(
-	ctx context.Context, step *stepInfo, sl standardLoop,
-) ([]*flow.SequenceFlow, error) {
-	// a restored host resumes at its recorded pass (SRD-082 FR-3):
-	// completed passes are never re-run; the loop condition re-evaluates
-	// naturally at the seeded pass over the restored scope data.
-	first := 0
-	if t.miSeed != nil {
-		first = t.miSeed.Completed
-		t.miSeed = nil
-	}
-
-	for pass := first; ; pass++ {
-		// publish the 0-based ordinal (track field + host-scope datum) so the
-		// condition and the body resolve it by name via walk-up, and it survives
-		// the child close for the next pass's test (§4.6). Off the loop — a
-		// plane write, mutex-safe, mirroring runStandardLoop's leaf bind.
-		t.setLoopCounter(pass)
-		if err := t.instance.sc.bindLoopCounterAt(t.scopePath, pass); err != nil {
-			return nil, err
-		}
-
-		// pre-tested (while) tests every pass; post-tested (do-while) skips the
-		// first — one test site, matching runStandardLoop.
-		if sl.TestBefore() || pass > 0 {
-			cont, err := t.evalLoopCond(ctx, step.node, sl)
-			if err != nil {
-				return nil, err
-			}
-
-			if !cont {
-				break
-			}
-		}
-
-		// ask the loop to open the child scope for this pass and block for the
-		// acknowledgement (single-writer), then park for the scope's drain — the
-		// loop delivers scopeDone on evtCh, as for any composite host.
-		if _, err := t.instance.scopeRoundtrip(ctx,
-			scopeRequest{op: scopeOpen, host: t, node: step.node}); err != nil {
-			return nil, err
-		}
-
-		if err := t.awaitScopeDrained(ctx); err != nil {
-			return nil, err
-		}
-
-		if m, ok := sl.LoopMaximum(); ok && pass+1 >= m {
-			break
-		}
-	}
-
-	// the loop finished — follow the composite's outgoing once (SubProcess.Exec
-	// selects it; the body already ran through the scope, so this only routes the
-	// token onward), mirroring runStandardLoop's single post-loop exit.
-	return t.executeNode(ctx, step)
 }
 
 // awaitScopeDrained parks the decorator's runner on evtCh for the pass's scope

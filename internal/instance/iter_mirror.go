@@ -3,6 +3,7 @@ package instance
 import (
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
 // iterMirror is the loop-owned mirror of an off-loop iteration
@@ -21,28 +22,65 @@ import (
 // (scopeNote) when the runner's completionCondition fires.
 type iterMirror struct {
 	staging *values.Array[any]
-	// kind and instances describe a LEAF activity's executor set
-	// (SRD-090.A FR-6). A leaf opens no scope and spawns no track, so
-	// neither the drain protocol nor the track table can show the loop
-	// what is live — the decorator posts it (scopeLeafPass). Empty for a
-	// composite, whose position still rides the open/drain protocol.
-	kind         string
+	// kind names the iteration shape for the record (SRD-090.A FR-6). It
+	// is derived from the NODE rather than posted, because every shape
+	// that reaches a mirror is decided by the node's own loop
+	// characteristics — a decorator posting it would be telling the loop
+	// something the loop can already read.
+	kind string
+	// instances describe a LEAF activity's executor set (FR-6). A leaf
+	// opens no scope and spawns no track, so neither the drain protocol
+	// nor the track table can show the loop what is live — the decorator
+	// posts it (scopeLeafPass). Empty for a composite, whose instances
+	// ARE its child scopes and whose position rides the drain protocol.
 	instances    []checkpoint.IterationInstance
 	n            int
 	completed    int
 	conditionMet bool
 }
 
+// iterKindOf names the iteration shape a node drives, for the record
+// (SRD-090.A FR-6). The empty string for a node that iterates not at all —
+// which never reaches a mirror, since only an own-iteration host has one.
+func iterKindOf(node flow.Node) string {
+	if standardLoopOf(node) != nil {
+		return iterKindStdLoop
+	}
+
+	mi := multiInstanceOf(node)
+	if mi == nil {
+		return ""
+	}
+
+	if mi.IsSequential() {
+		return iterKindMISequential
+	}
+
+	return iterKindMIParallel
+}
+
+// The iteration shapes a record names. They describe the SHAPE, not the
+// node: a sequential Multi-Instance reads the same whether its instances
+// are executions of a leaf or child scopes of a composite, which is the
+// point of recording instances rather than tracks.
+const (
+	iterKindStdLoop      = "std_loop"
+	iterKindMISequential = "mi_sequential"
+	iterKindMIParallel   = "mi_parallel"
+)
+
 // ensureIterMirror registers (or returns) the mirror for a host whose
-// composite drives its own iteration. Runs on the loop goroutine, from
+// activity drives its own iteration. Runs on the loop goroutine, from
 // handleScopeOpen — the runner is parked awaiting the reply, so the
 // miState reads are fenced by the request channel.
-func (ls *loopState) ensureIterMirror(host *track) *iterMirror {
+func (ls *loopState) ensureIterMirror(
+	host *track, node flow.Node,
+) *iterMirror {
 	if m, ok := ls.iter[host.ID()]; ok {
 		return m
 	}
 
-	m := &iterMirror{}
+	m := &iterMirror{kind: iterKindOf(node)}
 	if st := host.miState; st != nil {
 		m.n = st.numberOfInstances
 		m.staging = st.staging

@@ -533,11 +533,15 @@ func trackRecord(
 }
 
 // recordIteration writes the host's iteration position onto its track
-// record. A LEAF activity's instances go to Iteration — the executor set
-// that replaced the per-instance tracks and scopes (SRD-090.A FR-6) — and
-// a composite keeps riding the MI mirror until its kinds convert too
-// (SRD-090.A M3). The mirror's kind is what distinguishes them: only a
-// decorator posts one, and only a leaf has a decorator today.
+// record, as the executor set that replaced the per-instance tracks and
+// scopes (SRD-090.A FR-6).
+//
+// Every mirrored host writes one. `TrackRecord.MI` — the mirror a
+// sequential iteration used to ride — is no longer written by anything: it
+// survives on the READ side alone, so a schema-5 document captured before
+// this slice still restores (FR-7). The one iterated kind that reaches no
+// mirror at all is a parallel COMPOSITE Multi-Instance, whose position is
+// still the loop-owned group's until M3c retires it.
 func recordIteration(
 	ctx context.Context, rec *checkpoint.TrackRecord, t *track,
 	mirror *iterMirror,
@@ -551,17 +555,6 @@ func recordIteration(
 		}
 
 		staging = raw
-	}
-
-	if mirror.kind == "" {
-		rec.MI = &checkpoint.MIRecord{
-			N:            mirror.n,
-			Completed:    mirror.completed,
-			ConditionMet: mirror.conditionMet,
-			Staging:      staging,
-		}
-
-		return nil
 	}
 
 	rec.Iteration = &checkpoint.IterationRecord{

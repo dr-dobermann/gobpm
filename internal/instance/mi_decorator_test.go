@@ -51,8 +51,8 @@ func TestRunMISequentialRequestError(t *testing.T) {
 	inst, node, host := miSeqFixture(t)
 	close(inst.loopDone) // scopeRoundtrip returns the not-running error
 
-	_, err := host.runMISequential(
-		t.Context(), &stepInfo{node: node}, multiInstanceOf(node))
+	_, err := newIterDecorator(
+		host, &stepInfo{node: node}, multiInstanceOf(node), true).run(t.Context())
 	require.Error(t, err)
 }
 
@@ -76,8 +76,8 @@ func TestRunMISequentialBindError(t *testing.T) {
 	coll := getAtErrColl{values.NewArray[any](1, 2, 3)}
 	require.NoError(t, inst.sc.bindValueAt(host.scopePath, "items", coll))
 
-	_, err = host.runMISequential(
-		t.Context(), &stepInfo{node: node}, multiInstanceOf(node))
+	_, err = newIterDecorator(
+		host, &stepInfo{node: node}, multiInstanceOf(node), true).run(t.Context())
 	require.Error(t, err)
 }
 
@@ -93,8 +93,8 @@ func TestRunMISequentialDrainError(t *testing.T) {
 		close(host.evtCh) // the loop closes evtCh on stop
 	}()
 
-	_, err := host.runMISequential(
-		t.Context(), &stepInfo{node: node}, multiInstanceOf(node))
+	_, err := newIterDecorator(
+		host, &stepInfo{node: node}, multiInstanceOf(node), true).run(t.Context())
 	require.Error(t, err)
 }
 

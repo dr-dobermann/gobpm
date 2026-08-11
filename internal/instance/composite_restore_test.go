@@ -260,10 +260,16 @@ func openScope(d *checkpoint.Document) bool {
 
 // hostMI returns the recorded iteration position of the body host, or
 // nil.
-func hostMI(d *checkpoint.Document, key string) *checkpoint.MIRecord {
+//
+// A composite's position is the executor set (SRD-090.A FR-6, M3a): it was
+// the `MI` mirror until its instances became executors, and nothing writes
+// that mirror any more. The fields these tests read — N, Completed,
+// ConditionMet, Staging — carry the same meanings under the new name, which
+// is why they assert unchanged.
+func hostMI(d *checkpoint.Document, key string) *checkpoint.IterationRecord {
 	for i := range d.Tracks {
 		if d.Tracks[i].NodeID == key+"-body" {
-			return d.Tracks[i].MI
+			return d.Tracks[i].Iteration
 		}
 	}
 

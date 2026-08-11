@@ -48,7 +48,7 @@ func TestExecForRoutesByLoopCharacteristics(t *testing.T) {
 		"a node with no loop characteristics runs as one instance")
 
 	if seqMI != nil {
-		require.IsType(t, &leafDecorator{},
+		require.IsType(t, &iterDecorator{},
 			execFor(tr, &stepInfo{node: seqMI}),
 			"a sequentially iterated leaf runs through a decorator")
 	}
@@ -108,7 +108,7 @@ func TestNodeExecDoneNeedsAnEndedStep(t *testing.T) {
 // instance resident forever (ADR-025 v.3 §2.13).
 func TestLeafDecoratorAwaitsItsLiveInstance(t *testing.T) {
 	tr := &track{}
-	d := newLeafDecorator(tr, &stepInfo{}, nil)
+	d := newIterDecorator(tr, &stepInfo{}, nil, false)
 
 	require.Equal(t, awaitNothing, d.awaits(),
 		"a decorator with no live instance awaits nothing")
@@ -132,11 +132,11 @@ func TestLeafDecoratorAwaitsItsLiveInstance(t *testing.T) {
 func TestLeafDecoratorSatisfiesActivityExec(t *testing.T) {
 	var (
 		_ activityExec = (*nodeExec)(nil)
-		_ activityExec = (*leafDecorator)(nil)
+		_ activityExec = (*iterDecorator)(nil)
 	)
 
-	require.Implements(t, (*activityExec)(nil), newLeafDecorator(
-		&track{}, &stepInfo{}, nil))
+	require.Implements(t, (*activityExec)(nil), newIterDecorator(
+		&track{}, &stepInfo{}, nil, false))
 }
 
 // TestRefuseIfParked pins the guard's DECISION: an instance still waiting
@@ -168,7 +168,7 @@ func TestRefuseIfParked(t *testing.T) {
 	require.NotNil(t, host)
 
 	tr := &track{instance: inst}
-	d := newLeafDecorator(tr, &stepInfo{node: host}, nil)
+	d := newIterDecorator(tr, &stepInfo{node: host}, nil, false)
 
 	require.NoError(t, d.refuseIfParked(0),
 		"no live instance is not a parked one")
