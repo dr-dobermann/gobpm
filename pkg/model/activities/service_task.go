@@ -116,28 +116,8 @@ func NewServiceTask(
 		baseOpts = append(baseOpts, o)
 	}
 
-	// WithWorker is valid only on a message operation: a Go operation is an
-	// in-process closure with no shippable message boundary (SRD-036 §2.3).
-	if sc.workerTopic != "" && operation.Type() == gooper.GoOperType {
-		return nil,
-			errs.New(
-				errs.M("WithWorker requires a message-operation ServiceTask; "+
-					"%q has a Go operation", name),
-				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("worker_topic", string(sc.workerTopic)))
-	}
-
-	// WithErrorMapper / WithStatus / WithOutputMapping govern the worker outcome —
-	// meaningless on an in-process ServiceTask, so require WithWorker (SRD-037 §3.4).
-	if sc.workerTopic == "" &&
-		(sc.errorMapper != nil || sc.retryPolicy != nil || sc.trustSet ||
-			sc.statusVar != "" || len(sc.outputMapping) > 0) {
-		return nil,
-			errs.New(
-				errs.M("WithErrorMapper/WithRetryPolicy/WithWorkerTrust/WithStatus/"+
-					"WithOutputMapping require a worker-dispatched ServiceTask "+
-					"(WithWorker); %q has none", name),
-				errs.C(errorClass, errs.InvalidParameter))
+	if err := sc.validate(name, operation); err != nil {
+		return nil, err
 	}
 
 	t, err := newTask(name, baseOpts...)
@@ -145,9 +125,16 @@ func NewServiceTask(
 		return nil, err
 	}
 
+	// The BPMN hint wins when the caller supplied one; otherwise it is
+	// derived from the Operation's Implementor as before.
+	implementation := sc.implementation
+	if implementation == "" {
+		implementation = operation.Type()
+	}
+
 	return &ServiceTask{
 			task:            *t,
-			implementation:  operation.Type(),
+			implementation:  implementation,
 			operation:       operation,
 			timeout:         sc.timeout,
 			workerTopic:     sc.workerTopic,
@@ -159,6 +146,35 @@ func NewServiceTask(
 			statusOverwrite: sc.statusOverwrite,
 		},
 		nil
+}
+
+// validate rejects ServiceTask option combinations that cannot mean
+// anything together. Split out of NewServiceTask so the constructor reads
+// as build-then-return rather than as a wall of guards.
+func (sc *srvTaskConfig) validate(name string, operation service.Operation) error {
+	// WithWorker is valid only on a message operation: a Go operation is an
+	// in-process closure with no shippable message boundary (SRD-036 §2.3).
+	if sc.workerTopic != "" && operation.Type() == gooper.GoOperType {
+		return errs.New(
+			errs.M("WithWorker requires a message-operation ServiceTask; "+
+				"%q has a Go operation", name),
+			errs.C(errorClass, errs.InvalidParameter),
+			errs.D("worker_topic", string(sc.workerTopic)))
+	}
+
+	// WithErrorMapper / WithStatus / WithOutputMapping govern the worker outcome —
+	// meaningless on an in-process ServiceTask, so require WithWorker (SRD-037 §3.4).
+	if sc.workerTopic == "" &&
+		(sc.errorMapper != nil || sc.retryPolicy != nil || sc.trustSet ||
+			sc.statusVar != "" || len(sc.outputMapping) > 0) {
+		return errs.New(
+			errs.M("WithErrorMapper/WithRetryPolicy/WithWorkerTrust/WithStatus/"+
+				"WithOutputMapping require a worker-dispatched ServiceTask "+
+				"(WithWorker); %q has none", name),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	return nil
 }
 
 // Implementation returns the ServiceTask implementation description.

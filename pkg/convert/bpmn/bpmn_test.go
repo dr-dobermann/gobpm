@@ -1083,8 +1083,8 @@ func TestSectionFor(t *testing.T) {
 	}
 
 	for tag, want := range tests {
-		if got := sectionFor(tag); got != want {
-			t.Errorf("sectionFor(%q) = %q, want %q", tag, got, want)
+		if got := sections[tag]; got != want {
+			t.Errorf("sections[%q] = %q, want %q", tag, got, want)
 		}
 	}
 }

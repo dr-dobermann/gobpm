@@ -20,7 +20,7 @@ XPDL, a JSON DSL, or a vendor dialect without touching core.
 |---|---|
 | Package | `github.com/dr-dobermann/gobpm/pkg/convert` |
 | Interfaces | `convert.Importer`, `convert.Exporter` |
-| Registration | `convert.RegisterImporter` / `RegisterExporter` (or the `Must…` twins, from `init()`) |
+| Registration | `convert.RegisterImporter` / `RegisterExporter` (or the `…AtInit` twins, from `init()`) |
 | Consumed by | your host code — **not** the engine |
 | Built-in | [`pkg/convert/bpmn`](../../../pkg/convert/bpmn) — BPMN 2.0 XML, both directions |
 
@@ -69,27 +69,39 @@ element with a missing or blank `id` is a hard import error.
 | `<bpmn:startEvent>` / `<bpmn:endEvent>` (none) | `events.NewStartEvent` / `NewEndEvent` |
 | `<bpmn:task>` / `<bpmn:manualTask>` | `activities.NewManualTask` |
 | `<bpmn:userTask>` | `activities.NewUserTask` |
-| `<bpmn:serviceTask>` (`operationRef`) | `activities.NewServiceTask` |
+| `<bpmn:serviceTask>` (`operationRef`, `implementation`) | `activities.NewServiceTask` (+ `WithImplementation`) |
 | `<bpmn:interface>` / `<bpmn:operation>` | `service.NewOperation` (catalog stub) |
 | `<bpmn:sequenceFlow>` (+ `conditionExpression`) | `flow.Link` (+ `flow.WithCondition`) |
 | `<bpmn:exclusiveGateway>` (+ `default`) | `gateways.NewExclusiveGateway` |
 | `<bpmn:parallelGateway>` | `gateways.NewParallelGateway` |
+| `<bpmn:documentation>` (on any of the above) | `foundation.WithDoc` → `Docs()` |
 
 An imported `serviceTask` is bound to an operation **without an implementor** —
 a catalog stub carrying the id and name from the definitions-level
 `<interface>`/`<operation>`. The host supplies the real implementor after
 import, before running.
 
+**`name` is optional in BPMN, and the model does not always agree.** A
+`<task>`, `<manualTask>` or `<userTask>` with no `name` imports with its **id**
+as the name, because those constructors require one — the same fallback
+`<process>` and `<serviceTask>` already used. It shows on the way out: such an
+element re-exports carrying `name="<its id>"`. A start event, end event or
+gateway accepts an empty name and keeps one, so nothing acquires a name it
+never had.
+
 ### What is skipped, and what fails
 
-Three outcomes, decided by namespace:
+Three outcomes:
 
 - **Skipped silently** — diagram interchange (`bpmndi:*`, `dc:*`, `di:*`) and
   any other foreign-namespace subtree. Layout is not execution.
-- **Skipped silently, despite being BPMN** — `<bpmn:documentation>` and
-  `<bpmn:extensionElements>`. Both are near-universal in modeler output and
-  carry no execution semantics; erroring on them would reject files whose flow
-  graph is perfectly runnable.
+- **Skipped silently, despite being BPMN** — `<bpmn:extensionElements>`, the
+  purely visual artifacts (`<textAnnotation>`, `<group>`, `<category>`), and
+  `<relationship>`/`<import>`. All are common in modeler output and carry no
+  execution semantics, so dropping them leaves the imported definition meaning
+  the same thing — erroring on them would reject a runnable file for carrying a
+  comment. `<association>` is **not** in this group: it carries compensation
+  semantics, so it is reported until the converter maps it.
 - **Reported** — a *flow element* in the BPMN namespace that this slice does
   not map yet (inclusive gateway, boundary event, sub-process, …) yields a
   `*convert.UnsupportedElementError` naming the tag, its id, and the spec
@@ -105,11 +117,20 @@ if errors.As(err, &uee) {
 ### Round-trip is semantic, not byte-for-byte
 
 Import→export reproduces ids, node kinds, flows, conditions, gateway direction
-and defaults — not the original bytes. Diagram interchange is not re-emitted
-(it was never parsed), attribute order and whitespace are the encoder's, and a
-condition is written back from its recorded source text plus its `language`
-URI. A condition with **no** source text — a compiled expression from some
-future engine — is a classified export error rather than a silent drop.
+and defaults, documentation (text and `textFormat`), and the `serviceTask`
+`implementation` hint — not the original bytes. Diagram interchange is not
+re-emitted (it was never parsed), attribute order and whitespace are the
+encoder's, and a condition is written back from its recorded source text plus
+its `language` URI. A condition with **no** source text — a compiled expression
+from some future engine — is a classified export error rather than a silent
+drop.
+
+**Export is deterministic.** The model holds nodes and flows in maps, so the
+exporter imposes an order rather than inheriting Go's randomized map iteration:
+nodes are walked from the start events following outgoing flows in flow-id
+order — the way a token travels the process — with anything unreachable
+appended by id, and flows follow by id. Two exports of an unchanged process are
+byte-identical, so an exported file can be diffed and version-controlled.
 
 ## Registering your own format
 
@@ -137,7 +158,7 @@ func (importer) Import(ctx context.Context, r io.Reader) (*process.Process, erro
 }
 
 func init() { //nolint:gochecknoinits // register-by-format-key, image.RegisterFormat idiom
-	convert.MustRegisterImporter(XPDL, importer{})
+	convert.RegisterImporterAtInit(XPDL, importer{})
 }
 ```
 
@@ -147,9 +168,12 @@ register one and the other direction reports *unknown format*.
 
 Rules the registry enforces on your behalf: a blank `Format` is rejected, a nil
 implementation is rejected, and registering the same `(format, direction)`
-twice is rejected. `MustRegisterImporter` panics on those — correct for
-`init()`, where an error has nowhere to go — while `RegisterImporter` returns
-them if you register at runtime.
+twice is rejected. `RegisterImporter` returns those if you register at runtime.
+`RegisterImporterAtInit` has no caller to return to, so it **records** the
+failure against the format and `Import`/`Export` return it on first use — a
+deliberate choice over panicking at load time: an embedder that never touches
+your format is not killed by a converter it does not use, and one that does
+gets the cause through the ordinary error path rather than a stack trace.
 
 ## Running it end to end
 
