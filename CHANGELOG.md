@@ -31,17 +31,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anonymous type assertions that made either of them undiscoverable;
   `EventWaiter` is unchanged, so signal and timer waiters are untouched.
 
-  A correlation key the broker **refuses** now costs the whole
-  subscription rather than leaving a partly-keyed one: `Subscription` can
-  grow a key-set but not shrink one, so a half-applied set cannot be
-  repaired in place, and an orphan key left on a live subscription
-  silently eats every message addressed to it. The waiter unsubscribes
-  and fails, the hub unregisters the processor and unmaps the dead
-  waiter, and the next registration builds a fresh one. The messages the
-  discarded keys would have matched go back to waiting in the broker's
-  inbox (ADR-006 v.5 §2.4). `membroker` never refuses a key, so no
-  in-repo behaviour changes; a host adapter that does will see
-  `Unsubscribe` followed by a fresh `Subscribe`.
+  A correlation key the broker **refuses part-way through a set** now
+  costs the whole subscription rather than leaving a partly-keyed one:
+  `Subscription` can grow a key-set but not shrink one, so a half-applied
+  set cannot be repaired in place, and an orphan key left on a live
+  subscription silently eats every message addressed to it. The waiter
+  unsubscribes and fails, the hub unregisters the processor and unmaps
+  the dead waiter, and the next registration builds a fresh one. The
+  messages the discarded keys would have matched go back to waiting in
+  the broker's inbox (ADR-006 v.5 §2.4). A refusal on the **first** key
+  applies nothing, so the subscription is untouched and survives — only
+  that registration fails, and the processors already parked keep their
+  wait. `membroker` never refuses a key, so no in-repo behaviour changes;
+  a host adapter that does will see `Unsubscribe` followed by a fresh
+  `Subscribe`.
+
+  Each correlation key now reaches the broker **once**, whichever way the
+  engine learned it — a subscription's creation keys, a lazily-added key,
+  a joining processor's set, or the same processor registered twice.
+  `membroker` collapsed the repeats; an adapter that turns each key into
+  a queue-level binding did not.
 
   `pkg/messaging/messagingtest` gains `FailingBroker` — a broker that can
   refuse a key, or hold still inside one — because these paths are
