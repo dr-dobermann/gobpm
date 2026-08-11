@@ -304,3 +304,25 @@ func TestReportingSurvivesATruncatedExtension(t *testing.T) {
 		t.Fatal("a truncated extension subtree must fail the import")
 	}
 }
+
+// TestCamundaTopicMatchesTheDialect guards the one risk in reading a
+// Camunda attribute name out of the observability vocabulary.
+//
+// The importer uses observability.AttrTopic as the attribute name because
+// the repo enforces the constant wherever its spelling appears
+// (internal/lintcfg TestNoLiteralAttrKeys). But the two are different
+// things that merely spell the same: Camunda fixes `camunda:topic`, while
+// a log key may be renamed at any time. Without this pin such a rename
+// would make the parser look for an attribute no file carries, and every
+// external-task topic would go back to being silently dropped — with all
+// the other tests still green.
+func TestCamundaTopicMatchesTheDialect(t *testing.T) {
+	const dialectAttr = "topic"
+
+	if camundaTopic != dialectAttr {
+		t.Fatalf("camundaTopic = %q, but Camunda names the attribute %q; the "+
+			"importer reads it through the observability constant, so they must "+
+			"agree — give the dialect its own constant if the vocabulary moves",
+			camundaTopic, dialectAttr)
+	}
+}

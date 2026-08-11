@@ -7,6 +7,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/convert"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // nsCamunda is the one vendor dialect this converter recognizes (ADR-024
@@ -27,8 +28,13 @@ const (
 	camundaCandidateUsers  = "candidateUsers"
 	camundaCandidateGroups = "candidateGroups"
 	camundaType            = "type"
-	camundaTopic           = "topic"
-	camundaDecisionRef     = "decisionRef"
+	// The name comes from the observability vocabulary because the two
+	// collide by spelling and the repo enforces the constant wherever it
+	// appears (internal/lintcfg TestNoLiteralAttrKeys). They are NOT the
+	// same thing — Camunda fixes this attribute name, a log key can be
+	// renamed — so TestCamundaTopicMatchesTheDialect pins the equality.
+	camundaTopic       = observability.AttrTopic
+	camundaDecisionRef = "decisionRef"
 )
 
 // camundaExternal is the camunda:type value that makes a service task an
