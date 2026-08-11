@@ -37,6 +37,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
 
 	_ "modernc.org/sqlite" // the pure-Go driver this adapter is built on
@@ -297,8 +298,17 @@ func opErr(op, id string, err error) error {
 		errs.E(err))
 }
 
-// interface checks
+// interface checks.
+//
+// The two renv capabilities are asserted here on purpose: they are OPTIONAL
+// and satisfied structurally, so the engine detects them by type assertion
+// and simply does not call a Repo whose signature has drifted. Nothing would
+// fail — Migrate would stop running and the cluster verdict would stop being
+// asked — which is why FR-4 and FR-5 need a compile-time claim rather than a
+// method that merely looks right.
 var (
 	_ repository.Repository = (*Repo)(nil)
+	_ renv.ClusterAware     = (*Repo)(nil)
+	_ renv.Migrator         = (*Repo)(nil)
 	_ fmt.Stringer          = (*Repo)(nil)
 )

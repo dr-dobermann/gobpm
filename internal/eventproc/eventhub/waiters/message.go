@@ -126,7 +126,22 @@ func (mw *messageWaiter) EventDefinition() flow.EventDefinition {
 	return mw.eDef
 }
 
-// AddEventProcessor adds ep to the waiter's processor list (idempotent).
+// AddEventProcessor adds ep to the waiter's processor list (idempotent) and
+// extends the live broker subscription with ep's correlation keys.
+//
+// The key half is not an optimization. subscriptionKeys() is read once, by
+// Service, when the subscription is created — so a processor that JOINS an
+// already-serving waiter contributes its keys to nothing. Its instance then
+// sits parked on a subscription that does not carry its key, and an envelope
+// addressed to it matches no subscription and is buffered forever: the
+// message is not misrouted, it is silently never delivered.
+//
+// Parallel multi-instance is where this bites. Iterations of one shared catch
+// register concurrently; whichever arrives first builds and services the
+// waiter with only ITS key, and every later iteration joins here. Whether the
+// bug appears depends purely on whether the second registration lands before
+// or after Service, which is why it surfaced as an intermittent lost
+// delivery rather than a reproducible failure.
 func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	if ep == nil {
 		return errs.New(
@@ -134,11 +149,66 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 			errs.C(MessageWaiterError, errs.EmptyNotAllowed))
 	}
 
+	sub, added := mw.addProcessor(ep)
+
+	if !added || sub == nil {
+		// Not serving yet: Service will read this processor's keys itself.
+		return nil
+	}
+
+	return mw.subscribeKeysOf(ep, sub)
+}
+
+// addProcessor records ep and returns the live subscription, if any.
+//
+// It exists so the lock is released by DEFER rather than by hand. The first
+// version of this unlocked explicitly before the foreign AddKey call below,
+// and a panic in between then left the waiter's mutex held — turning a
+// recoverable fault into a deadlocked Stop, which is how it presented.
+func (mw *messageWaiter) addProcessor(
+	ep eventproc.EventProcessor,
+) (messaging.Subscription, bool) {
 	mw.m.Lock()
 	defer mw.m.Unlock()
 
-	if idx := slices.Index(mw.processors, ep); idx == -1 {
-		mw.processors = append(mw.processors, ep)
+	if slices.IndexFunc(mw.processors, sameProcessor(ep)) != -1 {
+		return mw.sub, false
+	}
+
+	mw.processors = append(mw.processors, ep)
+
+	return mw.sub, true
+}
+
+// subscribeKeysOf extends sub with the correlation keys ep declares.
+//
+// It runs OUTSIDE the waiter's lock: AddKey reaches the host's broker, which
+// may be remote and may block, and holding a lock across a foreign call is
+// what FIX-038 §1.1 removed from the hub's registration path.
+func (mw *messageWaiter) subscribeKeysOf(
+	ep eventproc.EventProcessor, sub messaging.Subscription,
+) error {
+	kp, ok := ep.(interface{ CorrelationKeys() []string })
+	if !ok {
+		// A processor declaring no keys wants the wildcard the subscription
+		// already has — an instance-starter, for one.
+		return nil
+	}
+
+	for _, k := range kp.CorrelationKeys() {
+		if k == "" {
+			continue
+		}
+
+		if err := sub.AddKey(k); err != nil {
+			return errs.New(
+				errs.M("couldn't extend the subscription with a joining "+
+					"processor's correlation key"),
+				errs.C(MessageWaiterError, errs.OperationFailed),
+				errs.D(observability.AttrMessageName, mw.name),
+				errs.D(observability.AttrEventProcessorID, ep.ID()),
+				errs.E(err))
+		}
 	}
 
 	return nil
@@ -155,7 +225,7 @@ func (mw *messageWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error
 	mw.m.Lock()
 	defer mw.m.Unlock()
 
-	idx := slices.Index(mw.processors, ep)
+	idx := slices.IndexFunc(mw.processors, sameProcessor(ep))
 	if idx == -1 {
 		return errs.New(
 			errs.M("event processor isn't registered with the waiter"),

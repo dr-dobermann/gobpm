@@ -106,6 +106,10 @@ func TestMessageWaiterCreate(t *testing.T) {
 
 func TestMessageWaiterProcessors(t *testing.T) {
 	ep := mockeventproc.NewMockEventProcessor(t)
+	// Identity is compared by ID (waiters.sameProcessor), so every processor
+	// already on the list is asked for its own — including the one the waiter
+	// was built with.
+	ep.EXPECT().ID().Return("ep1").Maybe()
 	ep2 := mockeventproc.NewMockEventProcessor(t)
 	ep2.EXPECT().ID().Return("ep2").Maybe()
 	hub := mockeventproc.NewMockEventHub(t)
@@ -453,5 +457,83 @@ func TestMessageWaiterUnsubscribeErrorIsLogged(t *testing.T) {
 	case <-w.Done():
 	case <-time.After(time.Second):
 		t.Fatal("Done did not close after Stop despite the unsubscribe error")
+	}
+}
+
+// TestJoiningProcessorExtendsTheSubscription is the regression pin for a lost
+// message delivery in parallel multi-instance routing.
+//
+// subscriptionKeys() is read ONCE, by Service. A processor that joins an
+// already-serving waiter — which is what every iteration after the first does
+// at a shared catch node — therefore contributed its correlation key to
+// nothing: the instance parked on a subscription that did not carry its key,
+// and an envelope addressed to it matched no subscription and was buffered
+// forever. Not misrouted; silently never delivered.
+//
+// The end-to-end test (TestIterationCorrelatedRouting) only caught this when
+// the second registration happened to land after Service, which is why it
+// read as an intermittent flake for weeks. This pins it deterministically:
+// join AFTER Service, then address an envelope to the joiner alone.
+func TestJoiningProcessorExtendsTheSubscription(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	rt := enginert.Default()
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
+
+	// the FIRST processor: it builds and services the waiter, so the
+	// subscription is created carrying only its key.
+	firstDone := make(chan flow.EventDefinition, 1)
+	firstMock := mockeventproc.NewMockEventProcessor(t)
+	firstMock.EXPECT().ID().Return("iter-a-proc").Maybe()
+	firstMock.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, ed flow.EventDefinition) error {
+			firstDone <- ed
+
+			return nil
+		}).Maybe()
+
+	first := keyedProc{MockEventProcessor: firstMock, keys: []string{"iter-a"}}
+
+	w, err := waiters.NewMessageWaiter(hub, first, eDef, "", rt)
+	require.NoError(t, err)
+	require.NoError(t, w.Service(ctx))
+
+	t.Cleanup(func() { require.NoError(t, w.Stop()) })
+
+	// the SECOND processor joins the SERVING waiter — the ordering the bug
+	// depended on.
+	joinerDone := make(chan flow.EventDefinition, 1)
+	joinerMock := mockeventproc.NewMockEventProcessor(t)
+	joinerMock.EXPECT().ID().Return("iter-b-proc").Maybe()
+	joinerMock.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, ed flow.EventDefinition) error {
+			joinerDone <- ed
+
+			return nil
+		}).Maybe()
+
+	joiner := keyedProc{MockEventProcessor: joinerMock, keys: []string{"iter-b"}}
+	require.NoError(t, w.AddEventProcessor(joiner))
+
+	// An envelope addressed to the JOINER's key only. Before the fix this
+	// matched no subscription and sat in the broker's inbox.
+	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
+		Name: "order placed", Payload: "iter-b", CorrelationKey: "iter-b"}))
+
+	select {
+	case <-joinerDone:
+	case <-firstDone:
+		// forwarding is coarse — either processor receiving proves the
+		// envelope reached the waiter, which is the delivery being pinned.
+	case <-time.After(2 * time.Second):
+		t.Fatal("an envelope addressed to a JOINING processor's correlation " +
+			"key reached the waiter not at all: joining added the processor " +
+			"but not its key to the live subscription")
 	}
 }

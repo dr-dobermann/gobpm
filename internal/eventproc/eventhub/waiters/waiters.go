@@ -132,3 +132,15 @@ func CreatePersistentWaiter(
 			errs.D(observability.AttrEventDefinitionType, string(eDef.Type())))
 	}
 }
+
+// sameProcessor reports whether p is the processor ep, by ID.
+//
+// Identity is compared by ID rather than with ==, because an EventProcessor is
+// an interface and Go PANICS when comparing one whose dynamic type is not
+// comparable — a struct holding a slice or a map, which a processor carrying
+// correlation keys naturally is. slices.Index does exactly that comparison, so
+// every waiter's add/remove path used to be one uncomparable processor away
+// from taking the engine down.
+func sameProcessor(ep eventproc.EventProcessor) func(eventproc.EventProcessor) bool {
+	return func(p eventproc.EventProcessor) bool { return p.ID() == ep.ID() }
+}
