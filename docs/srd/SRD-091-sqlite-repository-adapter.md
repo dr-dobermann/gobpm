@@ -268,8 +268,8 @@ contract is a change every adapter author inherits.
 - Diff-coverage ≥95% on changed lines.
 - The conformance suite runs **in CI**, unskipped — demonstrated by the run's
   own output, not asserted.
-- `adapters/sqlite/doc.go` describes the package, and #316 is closed by the
-  PR rather than left open against a landed adapter.
+- `adapters/sqlite/doc.go` describes the package, and the PR body carries
+  `Closes #316`, so the issue does not stay open against a landed adapter.
 
 ## 9 Open questions
 

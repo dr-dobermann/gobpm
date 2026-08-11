@@ -54,12 +54,41 @@ type messageWaiter struct {
 // association). It is safe before Service has subscribed (a nil subscription is
 // a no-op) — the receiver then picks the key up from its instance's grown
 // key-set when it does subscribe.
+//
+// The key is recorded in subscribedKeys on success, because that field is what
+// a joining processor consults to decide whether its own key still needs
+// subscribing. This path extends the SAME subscription (correlation.go's
+// extendReceivers reaches it for every parked message catch, MI iterations
+// included), so leaving it unrecorded would make the field understate what the
+// subscription carries.
 func (mw *messageWaiter) AddKey(key string) error {
-	if mw.sub == nil {
+	mw.m.Lock()
+	sub := mw.sub
+	mw.m.Unlock()
+
+	if sub == nil {
 		return nil
 	}
 
-	return mw.sub.AddKey(key)
+	if err := sub.AddKey(key); err != nil {
+		return err
+	}
+
+	mw.recordKey(key)
+
+	return nil
+}
+
+// recordKey notes that the waiter's subscription now carries key, ignoring one
+// it already lists — a retry re-issues AddKey deliberately (see
+// AddEventProcessor), and without this the record would grow on every retry.
+func (mw *messageWaiter) recordKey(key string) {
+	mw.m.Lock()
+	defer mw.m.Unlock()
+
+	if !slices.Contains(mw.subscribedKeys, key) {
+		mw.subscribedKeys = append(mw.subscribedKeys, key)
+	}
 }
 
 // NewMessageWaiter builds a messageWaiter for a MessageEventDefinition. It
@@ -154,7 +183,10 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	sub := mw.addProcessor(ep)
 
 	if sub == nil {
-		// Not serving yet: Service will read this processor's keys itself.
+		// Not serving yet. Service reads the processor list when it
+		// subscribes, and re-reads it once the subscription is published
+		// (subscribeLateJoiners) — so a join landing on either side of that
+		// read is picked up, and this return strands nothing.
 		return nil
 	}
 
@@ -198,12 +230,14 @@ func (mw *messageWaiter) addProcessor(
 }
 
 // pendingKeys returns the keys ep declares that this waiter's subscription
-// does not already carry, and whether the waiter is serving at all.
+// does not already carry.
 //
-// It closes the window between Service reading the key list and publishing
-// mw.sub. A joiner that lands inside it must NOT conclude "Service will read
-// my keys" — Service already read them — so the decision is made against what
-// the subscription actually carries, recorded when it was created.
+// The decision is made against what the subscription ACTUALLY carries —
+// recorded when it was created and kept current by every path that extends it
+// — rather than against whether ep is on the processor list. A processor may
+// be listed and its key unsubscribed (it joined while Service was blocked in
+// Subscribe), and it may be listed twice over with its key already carried (a
+// caller retrying a failed AddEventProcessor).
 func (mw *messageWaiter) pendingKeys(ep eventproc.EventProcessor) []string {
 	kp, ok := ep.(interface{ CorrelationKeys() []string })
 	if !ok {
@@ -245,9 +279,7 @@ func (mw *messageWaiter) subscribeKeysOf(
 		}
 
 		if err := sub.AddKey(k); err == nil {
-			mw.m.Lock()
-			mw.subscribedKeys = append(mw.subscribedKeys, k)
-			mw.m.Unlock()
+			mw.recordKey(k)
 		} else {
 			return errs.New(
 				errs.M("couldn't extend the subscription with a joining "+
@@ -305,10 +337,6 @@ func (mw *messageWaiter) Process(eDef flow.EventDefinition) error {
 		errs.D(observability.AttrEventDefinitionType, string(eDef.Type())))
 }
 
-// Service subscribes the broker for the waiter's message name and starts the
-// delivery goroutine. The subscription is registered synchronously, so a
-// message published after Service returns is delivered (subscribe-before-
-// publish, ADR-006 v.1 §2.4).
 // subscriptionKeys gathers the correlation keys the waiter's processors declare
 // for their subscription (SRD-017 §4.3 declared-filter): a processor that
 // implements CorrelationKeys (the in-instance receiver track) contributes its
@@ -316,6 +344,9 @@ func (mw *messageWaiter) Process(eDef flow.EventDefinition) error {
 // processor that declares none (the instance-starter) contributes nothing,
 // leaving a wildcard subscription.
 func (mw *messageWaiter) subscriptionKeys() []string {
+	mw.m.Lock()
+	defer mw.m.Unlock()
+
 	var keys []string
 
 	for _, p := range mw.processors {
@@ -329,24 +360,35 @@ func (mw *messageWaiter) subscriptionKeys() []string {
 	return keys
 }
 
+// Service subscribes the broker for the waiter's message name and starts the
+// delivery goroutine. The subscription is registered synchronously, so a
+// message published after Service returns is delivered (subscribe-before-
+// publish, ADR-006 v.1 §2.4).
+//
+// The key list is read BEFORE the blocking Subscribe and mw.sub is published
+// only after it, so a processor joining in between defers to a Service that
+// has already read the list — the lost-delivery bug AddEventProcessor exists
+// to prevent, one window narrower. Service therefore RE-READS the processors
+// once the subscription is published and subscribes anything that appeared.
+//
+// The hub makes that window unreachable today: registerWaiter builds and
+// services a waiter before publishing it, so no other goroutine holds a
+// reference while this runs. That is an ordering in another package, and a
+// waiter whose correctness rests on it would break silently the day the
+// ordering changes.
 func (mw *messageWaiter) Service(ctx context.Context) error {
-	if mw.state != eventproc.WSReady {
+	if mw.State() != eventproc.WSReady {
 		return errs.New(
 			errs.M("waiter isn't ready to start"),
 			errs.C(MessageWaiterError, errs.InvalidState),
-			errs.D("current_state", mw.state.String()))
+			errs.D("current_state", mw.State().String()))
 	}
 
-	// The keys are read BEFORE the blocking Subscribe, and mw.sub is published
-	// after it — a window in which a processor may join. subscribedKeys
-	// records what this subscription actually carries, so a joiner can tell
-	// whether its own key was included rather than assuming Service will pick
-	// it up (it cannot: the list was already read).
 	keys := mw.subscriptionKeys()
 
 	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, keys...)
 	if err != nil {
-		mw.state = eventproc.WSFailed
+		mw.setState(eventproc.WSFailed)
 
 		return errs.New(
 			errs.M("couldn't subscribe to the message broker"),
@@ -355,19 +397,65 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.E(err))
 	}
 
+	// Published first, so a joiner arriving from here on takes the ordinary
+	// AddEventProcessor path and subscribes its own key.
 	mw.m.Lock()
 	mw.sub = sub
 	mw.subscribedKeys = keys
 	mw.m.Unlock()
 
+	if err := mw.subscribeLateJoiners(sub); err != nil {
+		if uErr := sub.Unsubscribe(); uErr != nil {
+			mw.rt.Logger().Warn("message waiter unsubscribe failed after a "+
+				"failed start", observability.AttrWaiterID, mw.id,
+				observability.AttrError, uErr.Error())
+		}
+
+		mw.m.Lock()
+		mw.sub = nil
+		mw.subscribedKeys = nil
+		mw.state = eventproc.WSFailed
+		mw.m.Unlock()
+
+		return err
+	}
+
+	// Running state is published last and together: until the goroutine
+	// exists there is nothing for Stop to stop, and stopCh/done must be in
+	// place before it can be reached.
+	mw.m.Lock()
 	mw.state = eventproc.WSRunned
 	mw.stopCh = make(chan struct{})
 	mw.done = make(chan struct{})
+	mw.m.Unlock()
 
 	mw.rt.Logger().Debug("message waiter serviced",
 		observability.AttrWaiterID, mw.id, observability.AttrMessageName, mw.name)
 
 	go mw.runMessageService(ctx, sub)
+
+	return nil
+}
+
+// subscribeLateJoiners extends sub with the keys of every processor whose keys
+// the subscription does not already carry — those that joined while Subscribe
+// was blocking, and whose AddEventProcessor deferred to this method.
+func (mw *messageWaiter) subscribeLateJoiners(
+	sub messaging.Subscription,
+) error {
+	mw.m.Lock()
+	processors := append([]eventproc.EventProcessor(nil), mw.processors...)
+	mw.m.Unlock()
+
+	for _, ep := range processors {
+		if len(mw.pendingKeys(ep)) == 0 {
+			continue
+		}
+
+		if err := mw.subscribeKeysOf(ep, sub); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }

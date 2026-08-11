@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -105,6 +106,38 @@ func TestSaveUpdatePathReportsABrokenTable(t *testing.T) {
 	require.Contains(t, err.Error(), "update",
 		"the error must name the operation that failed, so it is "+
 			"distinguishable from the create path's")
+}
+
+// TestSaveCreatePathReportsABrokenTable is the create-path twin of the test
+// above, and it exists for the same reason that one does.
+//
+// TestEveryOperationReportsABrokenDatabase appears to cover Save on a broken
+// store, but a closed pool fails Save's opening GroupExists, so it returns
+// before the INSERT is ever attempted: the create path's error handling was
+// never executed by any test. The update path was caught and fixed; this was
+// the same defect one branch over.
+func TestSaveCreatePathReportsABrokenTable(t *testing.T) {
+	repo, err := OpenMemory()
+	require.NoError(t, err)
+
+	t.Cleanup(func() { require.NoError(t, repo.Close()) })
+
+	ctx := context.Background()
+	require.NoError(t, repo.Migrate(ctx))
+	require.NoError(t, repo.RegisterGroup(ctx, "g"))
+
+	// groups and tenants survive, so GroupExists and the tenant resolution
+	// both succeed and the failure lands on the insert itself
+	_, err = repo.db.ExecContext(ctx, "DROP TABLE instances")
+	require.NoError(t, err)
+
+	err = repo.Save(ctx, repository.InstanceRecord{
+		ID: "i1", Group: "g", Status: repository.StatusActive,
+	})
+	require.Error(t, err, "the create path must report a broken table")
+	require.Contains(t, err.Error(), "create",
+		"the error must name the operation that failed, so it is "+
+			"distinguishable from the update path's")
 }
 
 // TestCASRejectsAStaleVersion covers casOutcome's zero-rows branch through the
@@ -415,6 +448,138 @@ func TestMigrateReportsAContendedWriteLock(t *testing.T) {
 	require.Contains(t, merr.Error(), "migration transaction",
 		"the failure must be the transaction's, not an earlier write's — "+
 			"otherwise this test never reaches BEGIN IMMEDIATE")
+}
+
+// TestTransactionCanceledMidFlightLeavesThePoolUsable pins the defect an
+// independent review found in the hand-driven transaction. It is a
+// database-wide one, not a migration-local one.
+//
+// Rolling back with the SAME context that just failed does nothing when that
+// context is WHY it failed: ExecContext returns immediately on a canceled
+// context without sending the statement. The connection then returns to the
+// pool still inside a write transaction, so every later BEGIN on that pool
+// fails with "cannot start a transaction within a transaction" — while the
+// connection holds SQLite's single write lock, which stops the whole database
+// accepting writes. sql.Tx.Rollback guards against exactly this; driving the
+// transaction by hand moved the obligation onto withImmediateTx.
+//
+// It drives withImmediateTx directly because the failure has to land BETWEEN
+// BEGIN and COMMIT: a context canceled before the call never opens a
+// transaction (db.Conn rejects it first), so it would exercise nothing.
+//
+// The pool is capped at one connection so the damage is observable here rather
+// than later — with a larger pool the next checkout may be a different,
+// healthy connection, and the poisoned one resurfaces somewhere else entirely.
+func TestTransactionCanceledMidFlightLeavesThePoolUsable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "canceled.db")
+
+	db, err := sql.Open(driverName, dsn(path))
+	require.NoError(t, err)
+
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	db.SetMaxOpenConns(1)
+
+	// The log is captured because the two guards here are independent, and
+	// asserting only the outcome cannot tell them apart: discarding the
+	// connection ALSO leaves the pool healthy, so a rollback that silently
+	// did nothing would pass on outcome alone. The warning is what
+	// distinguishes "rolled back" from "threw the connection away".
+	var logged strings.Builder
+
+	repo, err := New(db, WithLogger(slog.New(
+		slog.NewTextHandler(&logged, &slog.HandlerOptions{}))))
+	require.NoError(t, err)
+	require.NoError(t, repo.Migrate(context.Background()))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// the transaction opens, writes, and then its context dies under it
+	canceled := false
+
+	terr := repo.withImmediateTx(ctx, func(conn *sql.Conn) error {
+		_, eerr := conn.ExecContext(ctx,
+			"INSERT INTO groups (group_name) VALUES ('g')")
+		require.NoError(t, eerr,
+			"the write must land, or the body returns before cancelling and "+
+				"the test exercises an uncanceled rollback")
+
+		cancel()
+
+		canceled = true
+
+		return errors.New("the work failed once its context was gone")
+	})
+	require.Error(t, terr)
+	require.True(t, canceled, "the body must have reached the cancel")
+
+	require.NotContains(t, logged.String(), "rollback failed",
+		"the ROLLBACK must actually reach the database — a rollback issued "+
+			"on the dead context returns without sending anything, and the "+
+			"connection is then only saved by being discarded")
+
+	// The single pooled connection must be usable — it is not if one was
+	// returned mid-transaction.
+	require.NoError(t, repo.RegisterGroup(context.Background(), "after"),
+		"the pool must not hold a connection stuck inside a transaction")
+
+	// and the write lock must have been released, so another pool can write
+	fresh, ferr := Open(path)
+	require.NoError(t, ferr)
+
+	t.Cleanup(func() { require.NoError(t, fresh.Close()) })
+
+	require.NoError(t, fresh.RegisterGroup(context.Background(), "elsewhere"),
+		"the canceled transaction must not still hold the write lock")
+
+	// the rolled-back work must be absent — a poisoned connection would also
+	// have left this uncommitted, so assert the rollback, not just liveness
+	exists, gerr := repo.GroupExists(context.Background(), "g")
+	require.NoError(t, gerr)
+	require.False(t, exists, "the failed transaction must have rolled back")
+}
+
+// TestOpenMemoryDoesNotWarnAboutWAL: a warning that always fires is not a
+// warning.
+//
+// An in-memory database cannot use WAL at all — it reports journal_mode
+// "memory" and there is no file to journal beside — so the concurrency check
+// flagged every single OpenMemory call. The reader learns to skip the
+// adapter's warnings, and the busy_timeout warning next to it goes with them.
+func TestOpenMemoryDoesNotWarnAboutWAL(t *testing.T) {
+	var logged strings.Builder
+
+	repo, err := OpenMemory(WithLogger(slog.New(
+		slog.NewTextHandler(&logged, &slog.HandlerOptions{}))))
+	require.NoError(t, err)
+
+	t.Cleanup(func() { require.NoError(t, repo.Close()) })
+
+	require.NotContains(t, logged.String(), "journal_mode is not WAL",
+		"OpenMemory cannot be in WAL, so warning about it every time says "+
+			"nothing the caller can act on")
+}
+
+// TestAFileWithoutWALStillWarns is the counterpart: silencing the in-memory
+// case must not silence the case the check exists for — a host pool on a real
+// file, in the rollback-journal default, where readers really do block behind
+// a writer.
+func TestAFileWithoutWALStillWarns(t *testing.T) {
+	db, err := sql.Open(driverName,
+		filepath.Join(t.TempDir(), "nowal.db")+"?_pragma=foreign_keys(1)")
+	require.NoError(t, err)
+
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	var logged strings.Builder
+
+	_, err = New(db, WithLogger(slog.New(
+		slog.NewTextHandler(&logged, &slog.HandlerOptions{}))))
+	require.NoError(t, err)
+
+	require.Contains(t, logged.String(), "journal_mode is not WAL",
+		"a file-backed pool outside WAL is exactly what this warns about")
 }
 
 // TestIdentityAndLoggerOption covers the two surfaces a host actually sees at

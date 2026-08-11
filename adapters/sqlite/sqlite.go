@@ -311,7 +311,7 @@ func (r *Repo) warnMissingConcurrencyPragmas(ctx context.Context) {
 	var mode string
 	if err := r.db.QueryRowContext(
 		ctx, "PRAGMA journal_mode",
-	).Scan(&mode); err == nil && !strings.EqualFold(mode, "wal") {
+	).Scan(&mode); err == nil && !acceptableJournalMode(mode) {
 		r.logger.Warn("sqlite: journal_mode is not WAL; readers will block "+
 			"behind a writer", "journal_mode", mode)
 	}
@@ -323,6 +323,25 @@ func (r *Repo) warnMissingConcurrencyPragmas(ctx context.Context) {
 		r.logger.Warn("sqlite: busy_timeout is 0; a contended write will fail " +
 			"immediately instead of waiting")
 	}
+}
+
+// journalModesNotWorthWarningAbout are the modes for which "this is not WAL"
+// is not news.
+//
+// An in-memory database CANNOT be in WAL — WAL needs a file to journal
+// alongside — so OpenMemory would warn on every single call. A warning that
+// always fires is not a warning; it teaches the reader to skip the adapter's
+// output, which costs more than the one it was meant to raise.
+var journalModesNotWorthWarningAbout = map[string]struct{}{
+	"wal":    {}, // what the check wants
+	"memory": {}, // an in-memory database, where WAL is not available at all
+}
+
+// acceptableJournalMode reports whether mode should pass without a warning.
+func acceptableJournalMode(mode string) bool {
+	_, ok := journalModesNotWorthWarningAbout[strings.ToLower(mode)]
+
+	return ok
 }
 
 // ClusterCompatibility declares the adapter unsafe to share between engines

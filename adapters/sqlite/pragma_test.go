@@ -96,10 +96,24 @@ func TestMigrateIsIdempotent(t *testing.T) {
 
 // TestLeaseExpiryOrdersLexicographically is T-8: the §3.2 encoding claim.
 //
-// lease_expiry is TEXT, and ListInFlight compares it with `<=`. That is only
-// a chronological comparison if the encoding is fixed-width UTC — which is
-// why the layout pins nine fractional digits rather than using
-// time.RFC3339Nano, whose trimmed fractions sort wrongly against each other.
+// lease_expiry is TEXT, and ListInFlight compares it with `<=`. That is a
+// chronological comparison only if the encoding is fixed-width UTC, which is
+// why the layout pins nine fractional digits instead of using
+// time.RFC3339Nano.
+//
+// The instants are chosen so a trimmed encoding gives the WRONG answer, and
+// getting that right needed a correction: trimming trailing zeros preserves
+// order BETWEEN two fractions (".45" < ".5" compares digit by digit exactly as
+// the values do), so an earlier version of this test — .45s against .5s — was
+// unfalsifiable, and it hid that behind a `live` record set an hour ahead,
+// where the comparison never reached the fraction at all.
+//
+// Where RFC3339Nano actually inverts is a WHOLE second: it drops the fraction
+// AND the dot, so 10:00:00.000 renders "…10:00:00Z" while 10:00:00.250 renders
+// "…10:00:00.25Z" — and 'Z' (0x5A) sorts AFTER '.' (0x2E). The expired lease
+// would compare as later than a "now" a quarter-second after it, and vanish
+// from the recovery listing: an instance whose lease has expired never gets
+// claimed, which is a stuck instance rather than a cosmetic ordering bug.
 func TestLeaseExpiryOrdersLexicographically(t *testing.T) {
 	repo, err := sqlite.OpenMemory()
 	require.NoError(t, err)
@@ -112,10 +126,9 @@ func TestLeaseExpiryOrdersLexicographically(t *testing.T) {
 
 	base := time.Date(2026, 8, 11, 10, 0, 0, 0, time.UTC)
 
-	// .5s and .45s: RFC3339Nano renders these ".5" and ".45", which compare
-	// in the WRONG order as text even though .45 < .5 chronologically.
-	expired := base.Add(500 * time.Millisecond)
-	live := base.Add(450 * time.Millisecond)
+	expired := base                          // exactly on the second
+	live := base.Add(500 * time.Millisecond) // still in the future at `now`
+	now := base.Add(250 * time.Millisecond)  // between the two
 
 	require.NoError(t, repo.Save(ctx, repository.InstanceRecord{
 		ID: "expired", Group: "g", Status: repository.StatusActive,
@@ -123,14 +136,16 @@ func TestLeaseExpiryOrdersLexicographically(t *testing.T) {
 	}))
 	require.NoError(t, repo.Save(ctx, repository.InstanceRecord{
 		ID: "live", Group: "g", Status: repository.StatusActive,
-		Lease: repository.Lease{Owner: "e2", Expiry: live.Add(time.Hour)},
+		Lease: repository.Lease{Owner: "e2", Expiry: live},
 	}))
 
-	// now sits between the two expiries: "expired" is claimable, "live" is not.
-	ids, err := repo.ListInFlight(ctx, "g", expired.Add(time.Millisecond))
+	// All three instants fall in the SAME second, so the comparison is decided
+	// by the fractional part — which is the encoding under test.
+	ids, err := repo.ListInFlight(ctx, "g", now)
 	require.NoError(t, err)
 	require.Equal(t, []string{"expired"}, ids,
-		"the lease comparison must be chronological, not textual")
+		"the lease comparison must be chronological, not textual: an expired "+
+			"lease on a whole second must still be claimable")
 
 	// and the round-trip preserves the instant
 	rec, ok, err := repo.Load(ctx, "expired")
@@ -166,11 +181,19 @@ func TestConcurrentSaveSerializes(t *testing.T) {
 
 		errCh := make(chan error, writers)
 
+		// A starting gun, because without one the goroutines may simply run
+		// one after another — and sequential writes satisfy every assertion
+		// below while proving nothing about contention, which is the only
+		// thing this test exists to prove.
+		start := make(chan struct{})
+
 		for i := range writers {
 			wg.Add(1)
 
 			go func(n int) {
 				defer wg.Done()
+
+				<-start
 
 				errCh <- repo.Save(ctx, repository.InstanceRecord{
 					ID:     fmt.Sprintf("rec-%d", n),
@@ -180,6 +203,7 @@ func TestConcurrentSaveSerializes(t *testing.T) {
 			}(i)
 		}
 
+		close(start)
 		wg.Wait()
 		close(errCh)
 
@@ -208,12 +232,19 @@ func TestConcurrentSaveSerializes(t *testing.T) {
 			rejected atomic.Int32
 		)
 
+		// the same starting gun: serialized writers would produce exactly one
+		// winner and seven fenced losers whether or not CAS works under
+		// contention, since each starts from the same stored version
+		start := make(chan struct{})
+
 		// every writer starts from the SAME stored version
 		for range writers {
 			wg.Add(1)
 
 			go func() {
 				defer wg.Done()
+
+				<-start
 
 				err := repo.Save(ctx, rec)
 				if err == nil {
@@ -233,6 +264,7 @@ func TestConcurrentSaveSerializes(t *testing.T) {
 			}()
 		}
 
+		close(start)
 		wg.Wait()
 
 		require.EqualValues(t, 1, won.Load(),

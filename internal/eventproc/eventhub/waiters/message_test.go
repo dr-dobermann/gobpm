@@ -583,30 +583,163 @@ func TestJoiningProcessorWithoutKeysIsAccepted(t *testing.T) {
 	require.Len(t, w.EventProcessors(), 2)
 }
 
-// TestJoinBeforeServiceAddsNoKeys covers the not-yet-serving branch: before
-// Service there is no subscription to extend, and Service will read the
-// joined processor's keys itself.
-func TestJoinBeforeServiceAddsNoKeys(t *testing.T) {
+// TestJoinBeforeServiceIsSubscribedByService covers the not-yet-serving
+// branch: before Service there is no subscription to extend, so the join
+// records the processor and defers to Service — which must then actually
+// subscribe the deferred key.
+//
+// That deferral is the entire content of the branch, so asserting only that
+// AddEventProcessor returned nil and grew the list tests nothing: a waiter
+// that dropped the key on the floor passes it. The test services the waiter
+// and addresses an envelope to the joiner's key alone.
+func TestJoinBeforeServiceIsSubscribedByService(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
+	ctx := context.Background()
 	eDef := msgEventDef(t)
 	rt := enginert.Default()
 	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
 
 	firstMock := mockeventproc.NewMockEventProcessor(t)
 	firstMock.EXPECT().ID().Return("a").Maybe()
+	firstMock.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).Return(nil).Maybe()
+
 	first := keyedProc{MockEventProcessor: firstMock, keys: []string{"k-a"}}
 
 	w, err := waiters.NewMessageWaiter(hub, first, eDef, "", rt)
 	require.NoError(t, err)
 
+	delivered := make(chan flow.EventDefinition, 1)
 	joinerMock := mockeventproc.NewMockEventProcessor(t)
 	joinerMock.EXPECT().ID().Return("b").Maybe()
+	joinerMock.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, ed flow.EventDefinition) error {
+			delivered <- ed
+
+			return nil
+		}).Maybe()
+
 	joiner := keyedProc{MockEventProcessor: joinerMock, keys: []string{"k-b"}}
 
 	// no Service yet — the join must succeed and simply record the processor
 	require.NoError(t, w.AddEventProcessor(joiner))
 	require.Len(t, w.EventProcessors(), 2)
+
+	require.NoError(t, w.Service(ctx))
+
+	t.Cleanup(func() { require.NoError(t, w.Stop()) })
+
+	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
+		Name: "order placed", Payload: "k-b", CorrelationKey: "k-b"}))
+
+	select {
+	case <-delivered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Service did not subscribe the key of a processor that " +
+			"joined before it")
+	}
+}
+
+// gatedBroker holds Subscribe open until release is closed, so a test can put
+// a join inside the window between Service reading the processors' keys and
+// publishing the subscription those keys were passed to.
+type gatedBroker struct {
+	messaging.MessageBroker
+
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *gatedBroker) Subscribe(
+	ctx context.Context, name string, keys ...string,
+) (messaging.Subscription, error) {
+	b.once.Do(func() { close(b.entered) })
+
+	<-b.release
+
+	return b.MessageBroker.Subscribe(ctx, name, keys...)
+}
+
+// TestJoinDuringSubscribeIsCaughtUp pins the window both independent review
+// lenses found in the joining-key fix itself.
+//
+// Service reads the processors' key list, makes the BLOCKING Subscribe call
+// outside the lock (FIX-038 §1.1 put it there deliberately), and publishes
+// mw.sub only afterwards. A processor joining in between sees a nil
+// subscription and defers to Service — but Service has already read the list,
+// so the key is subscribed by nobody: the same silent lost delivery, one
+// window narrower.
+//
+// The hub makes this unreachable today, because registerWaiter services a
+// waiter before publishing it into the registry, so no other goroutine holds a
+// reference while Service runs. That is an ordering in a different package,
+// and a waiter that depends on it fails silently the day it changes. This test
+// reaches the window directly.
+func TestJoinDuringSubscribeIsCaughtUp(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	broker := &gatedBroker{
+		MessageBroker: membroker.New(),
+		entered:       make(chan struct{}),
+		release:       make(chan struct{}),
+	}
+	rt := flakyKeyRuntime{EngineRuntime: enginert.Default(), broker: broker}
+
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
+
+	firstMock := mockeventproc.NewMockEventProcessor(t)
+	firstMock.EXPECT().ID().Return("a").Maybe()
+	firstMock.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	first := keyedProc{MockEventProcessor: firstMock, keys: []string{"k-a"}}
+
+	w, err := waiters.NewMessageWaiter(hub, first, eDef, "", rt)
+	require.NoError(t, err)
+
+	served := make(chan error, 1)
+
+	go func() { served <- w.Service(ctx) }()
+
+	// Service has read the key list and is now inside Subscribe.
+	<-broker.entered
+
+	delivered := make(chan flow.EventDefinition, 1)
+	joinerMock := mockeventproc.NewMockEventProcessor(t)
+	joinerMock.EXPECT().ID().Return("b").Maybe()
+	joinerMock.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, ed flow.EventDefinition) error {
+			delivered <- ed
+
+			return nil
+		}).Maybe()
+
+	joiner := keyedProc{MockEventProcessor: joinerMock, keys: []string{"k-b"}}
+	require.NoError(t, w.AddEventProcessor(joiner))
+
+	close(broker.release)
+	require.NoError(t, <-served)
+
+	t.Cleanup(func() { require.NoError(t, w.Stop()) })
+
+	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
+		Name: "order placed", Payload: "k-b", CorrelationKey: "k-b"}))
+
+	select {
+	case <-delivered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a processor that joined while Subscribe was blocked was " +
+			"never subscribed")
+	}
 }
 
 // flakyKeyBroker wraps a real broker and fails the first AddKey on every

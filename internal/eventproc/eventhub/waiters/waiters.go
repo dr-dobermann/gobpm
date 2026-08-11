@@ -141,6 +141,8 @@ func CreatePersistentWaiter(
 // correlation keys naturally is. slices.Index does exactly that comparison, so
 // every waiter's add/remove path used to be one uncomparable processor away
 // from taking the engine down.
-func sameProcessor(ep eventproc.EventProcessor) func(eventproc.EventProcessor) bool {
+func sameProcessor(
+	ep eventproc.EventProcessor,
+) func(eventproc.EventProcessor) bool {
 	return func(p eventproc.EventProcessor) bool { return p.ID() == ep.ID() }
 }

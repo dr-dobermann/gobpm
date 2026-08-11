@@ -58,7 +58,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   naturally does. Six sites across the message, signal and timer
   waiters; identity is now compared by ID.
 
-### Fixed
+- **A waiter's running state is published atomically.** `Service` set
+  the state, the stop channel and the done channel outside the lock it
+  took for the subscription, and it re-read the processor list only
+  once — before the blocking `Subscribe`. A processor joining in
+  between deferred to a `Service` that had already read the list, so
+  its key reached nobody. The hub's ordering makes that unreachable
+  today (a waiter is serviced before it is published, so nothing else
+  holds a reference), but that is an invariant of a different package;
+  `Service` now catches up any processor that appeared while it was
+  subscribing.
+
+- **A migration whose context died could wedge the whole database.**
+  The rollback was issued on the same context that had just failed —
+  and `ExecContext` on a canceled context returns without sending the
+  statement, so the connection went back to the pool still inside a
+  write transaction. Every later `BEGIN` on that pool then failed with
+  "cannot start a transaction within a transaction", while the pooled
+  connection held SQLite's single writer lock. The rollback now runs
+  under `context.WithoutCancel`, and a connection that cannot be
+  rolled back is discarded rather than pooled. `sql.Tx.Rollback`
+  handles this; driving the transaction by hand to get `BEGIN
+  IMMEDIATE` moved the obligation into the adapter.
+
+- **`OpenMemory` no longer warns about WAL on every call.** An
+  in-memory database cannot journal to WAL — there is no file to
+  journal beside — so the concurrency check fired on every single
+  construction, which trains a reader to ignore the adapter's
+  warnings. A file-backed pool outside WAL still warns.
 
 - **A `%v` over an engine object no longer reflects across it**
   (FIX-040, closes #314). `Instance` and its tracks now implement

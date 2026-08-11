@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"embed"
 	"regexp"
 	"sort"
@@ -73,8 +75,9 @@ func parseMigrations(names []string) ([]migration, error) {
 //
 // There is no advisory lock, unlike the postgres adapter: SQLite permits a
 // single writer, so two engines migrating one file serialize on the database
-// itself. That only holds because the connection is opened with
-// _txlock=immediate.
+// itself. That holds only because each transaction is opened with an explicit
+// BEGIN IMMEDIATE (see withImmediateTx), never on the DSN's _txlock — which
+// this adapter cannot verify on a pool it was handed.
 //
 // The default is DEFERRED, under which a transaction takes no write lock at
 // BEGIN. Two concurrent migrators would then both read the current version
@@ -109,81 +112,131 @@ func (r *Repo) Migrate(ctx context.Context) error {
 	}
 }
 
-// applyNext applies the single next pending migration, reporting whether one
-// was applied (false: up to date).
-func (r *Repo) applyNext(ctx context.Context, mm []migration) (bool, error) {
-	// The transaction is driven with explicit statements on ONE connection
-	// rather than through sql.Tx, because BEGIN IMMEDIATE is the whole point
-	// and database/sql gives no way to choose the BEGIN it issues.
-	//
-	// Relying on the DSN's _txlock instead would make serialization
-	// conditional on a flag this adapter may not have written: New is handed
-	// pools whose connection string it cannot inspect, since _txlock is a
-	// driver parameter rather than a PRAGMA. The failure would be two engines
-	// deadlocking at boot, which is a poor way to learn about a missing flag.
+// withImmediateTx runs body inside a BEGIN IMMEDIATE transaction on ONE
+// connection, committing if body returns nil and rolling back otherwise.
+//
+// The transaction is driven with explicit statements rather than through
+// sql.Tx because BEGIN IMMEDIATE is the whole point and database/sql gives no
+// way to choose the BEGIN it issues. Relying on the DSN's _txlock instead
+// would make serialization conditional on a flag this adapter may not have
+// written: New is handed pools whose connection string it cannot inspect,
+// since _txlock is a driver parameter rather than a PRAGMA. The failure mode
+// would be two engines deadlocking at boot, which is a poor way to learn about
+// a missing flag.
+//
+// Hand-driving it also means hand-handling what sql.Tx.Rollback does for free
+// — see the rollback below.
+func (r *Repo) withImmediateTx(
+	ctx context.Context,
+	body func(conn *sql.Conn) error,
+) error {
 	conn, err := r.db.Conn(ctx)
 	if err != nil {
-		return false, opErr("acquiring a migration connection", "", err)
+		return opErr("acquiring a migration connection", "", err)
 	}
 
+	poisoned := false
+
 	defer func() {
+		// A connection still inside a transaction must NOT go back to the
+		// pool. database/sql pools whatever Close hands back, and the next
+		// checkout would then fail every BEGIN with "cannot start a
+		// transaction within a transaction" — while holding SQLite's single
+		// write lock, so the whole database stops accepting writes. Raw with a
+		// driver.ErrBadConn is how a connection is discarded rather than
+		// returned.
+		if poisoned {
+			//nolint:errcheck // discarding a connection we must not pool
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+
 		//nolint:errcheck // returning the connection to the pool
 		_ = conn.Close()
 	}()
 
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return false, opErr("beginning a migration transaction", "", err)
+		return opErr("beginning a migration transaction", "", err)
 	}
 
-	committed := false
+	if err := body(conn); err != nil {
+		r.rollback(ctx, conn, &poisoned)
 
-	defer func() {
-		if committed {
-			return
-		}
-
-		if _, rbErr := conn.ExecContext(ctx, "ROLLBACK"); rbErr != nil {
-			r.logger.Warn("migration rollback failed", "error", rbErr.Error())
-		}
-	}()
-
-	var current int
-	if serr := conn.QueryRowContext(ctx,
-		"SELECT COALESCE(MAX(version), 0) FROM schema_version").
-		Scan(&current); serr != nil {
-		return false, opErr("reading the current schema version", "", serr)
-	}
-
-	next, ok := nextPending(mm, current)
-	if !ok {
-		return false, nil
-	}
-
-	body, rerr := migrationsFS.ReadFile("migrations/" + next.name)
-	if rerr != nil {
-		return false, opErr("reading migration "+next.name, "", rerr)
-	}
-
-	if _, aerr := conn.ExecContext(ctx, string(body)); aerr != nil {
-		return false, opErr("applying migration "+next.name, "", aerr)
-	}
-
-	if _, ierr := conn.ExecContext(ctx,
-		"INSERT INTO schema_version (version) VALUES (?)",
-		next.version); ierr != nil {
-		return false, opErr("recording migration "+next.name, "", ierr)
+		return err
 	}
 
 	if _, cerr := conn.ExecContext(ctx, "COMMIT"); cerr != nil {
-		return false, opErr("committing migration "+next.name, "", cerr)
+		r.rollback(ctx, conn, &poisoned)
+
+		return opErr("committing the migration transaction", "", cerr)
 	}
 
-	committed = true
+	return nil
+}
 
-	r.logger.Info("sqlite migration applied",
-		"migration", next.name, "version", next.version)
+// rollback ends an uncommitted transaction, flagging the connection as unfit
+// for the pool when it cannot.
+//
+// It rolls back under WithoutCancel, because the usual reason to be rolling
+// back at all is that ctx died — and ExecContext on a canceled context returns
+// immediately WITHOUT sending the statement, which would leave the transaction
+// open on a connection about to be pooled.
+func (r *Repo) rollback(ctx context.Context, conn *sql.Conn, poisoned *bool) {
+	if _, err := conn.ExecContext(
+		context.WithoutCancel(ctx), "ROLLBACK",
+	); err != nil {
+		*poisoned = true
 
-	return true, nil
+		r.logger.Warn("migration rollback failed; discarding the connection "+
+			"rather than returning an open transaction to the pool",
+			"error", err.Error())
+	}
+}
+
+// applyNext applies the single next pending migration, reporting whether one
+// was applied (false: up to date).
+func (r *Repo) applyNext(ctx context.Context, mm []migration) (bool, error) {
+	applied := false
+
+	err := r.withImmediateTx(ctx, func(conn *sql.Conn) error {
+		var current int
+		if serr := conn.QueryRowContext(ctx,
+			"SELECT COALESCE(MAX(version), 0) FROM schema_version").
+			Scan(&current); serr != nil {
+			return opErr("reading the current schema version", "", serr)
+		}
+
+		next, ok := nextPending(mm, current)
+		if !ok {
+			return nil
+		}
+
+		body, rerr := migrationsFS.ReadFile("migrations/" + next.name)
+		if rerr != nil {
+			return opErr("reading migration "+next.name, "", rerr)
+		}
+
+		if _, aerr := conn.ExecContext(ctx, string(body)); aerr != nil {
+			return opErr("applying migration "+next.name, "", aerr)
+		}
+
+		if _, ierr := conn.ExecContext(ctx,
+			"INSERT INTO schema_version (version) VALUES (?)",
+			next.version); ierr != nil {
+			return opErr("recording migration "+next.name, "", ierr)
+		}
+
+		applied = true
+
+		r.logger.Info("sqlite migration applied",
+			"migration", next.name, "version", next.version)
+
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return applied, nil
 }
 
 // nextPending returns the lowest migration above current.
