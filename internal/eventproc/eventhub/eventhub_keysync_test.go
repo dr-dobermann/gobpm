@@ -275,6 +275,46 @@ func TestKeySyncFailureFailsRegistration(t *testing.T) {
 	})
 }
 
+// valueProcessor is an EventProcessor implemented on a STRUCT whose slice
+// field makes the type uncomparable — a shape a host can legitimately write,
+// since pkg/eventproc.EventProcessor is a public contract.
+type valueProcessor struct {
+	id   string
+	keys []string
+}
+
+func (p valueProcessor) ID() string { return p.id }
+
+func (valueProcessor) ProcessEvent(context.Context, flow.EventDefinition) error {
+	return nil
+}
+
+// TestUncomparableProcessorRefused pins the guard at the boundary: a waiter
+// identifies its processors by value, and Go PANICS rather than reporting
+// false when two interface values of one uncomparable dynamic type are
+// compared. Without the check the hub crashed on the SECOND registration for a
+// definition, inside the waiter — so the refusal has to name the type at the
+// call that can still act on it.
+func TestUncomparableProcessorRefused(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	hub := startedHub(t, enginert.Default())
+	eDef := msgEDef(t, "confirm")
+
+	err := hub.RegisterEvent(valueProcessor{id: "host"}, eDef)
+	require.ErrorContains(t, err, "uncomparable type")
+	require.ErrorContains(t, err, "register a pointer to it instead")
+
+	require.ErrorContains(t,
+		hub.RegisterPersistentEvent(valueProcessor{id: "starter"}, eDef),
+		"uncomparable type")
+
+	// the refusal is total: nothing was installed, so the second registration
+	// that used to panic never happens.
+	require.NoError(t, hub.RegisterEvent(newKeyedProcessor("ok", "a"), eDef))
+	require.NoError(t, hub.RegisterEvent(newKeyedProcessor("ok2", "b"), eDef))
+}
+
 // refusedKey is the one key pickyBroker's subscriptions decline.
 const refusedKey = "boom"
 
