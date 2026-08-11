@@ -564,8 +564,16 @@ func (p *parser) parseServiceTask(
 		return nil, err
 	}
 
-	return activities.NewServiceTask(name, op,
-		append(body.opts(id), activities.WithoutParams())...)
+	opts := append(body.opts(id), activities.WithoutParams())
+
+	// BPMN carries `implementation` on the serviceTask itself. Without the
+	// carrier the attribute had nowhere to land, so export wrote a value
+	// import could never read back.
+	if impl := strings.TrimSpace(attrValue(se, "implementation")); impl != "" {
+		opts = append(opts, activities.WithImplementation(impl))
+	}
+
+	return activities.NewServiceTask(name, op, opts...)
 }
 
 // resolveOperation looks up operationRef in the definitions catalog, or mints
