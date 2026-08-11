@@ -28,6 +28,11 @@ const (
 	// langLite passes through as the model's text-expression kind, for
 	// the engine that already interprets it.
 	langLite
+
+	// langJUEL is rewritten into the text language (see juel.go). It is
+	// reached by the syntactic tell as often as by a declaration, because
+	// a Camunda file declares no expression language at all.
+	langJUEL
 )
 
 // languages maps a declared expression language to its policy. A language
@@ -51,17 +56,28 @@ var languages = map[string]exprLang{
 // It returns the effective language name for diagnostics alongside the
 // policy, so a refusal can name what it refused rather than saying
 // "unsupported".
-func resolveLanguage(declared, docDefault string) (exprLang, string) {
+func resolveLanguage(declared, docDefault, body string) (exprLang, string) {
 	lang := strings.TrimSpace(declared)
 	if lang == "" {
 		lang = strings.TrimSpace(docDefault)
 	}
 
 	if lang == "" {
-		// Nothing declared anywhere. The syntactic tell that recognizes
-		// JUEL here arrives with the translator; until then an undeclared
-		// expression is refused by the same path as an unknown one.
+		// Nothing declared anywhere — so the expression's own shape is the
+		// only evidence left. ${…} means JUEL, which is what a Camunda file
+		// carries and never labels.
+		if isJUEL(body) {
+			return langJUEL, "JUEL (by its ${…} delimiters)"
+		}
+
 		return langRefused, ""
+	}
+
+	// A declared language still yields to the delimiters: a document that
+	// says XPath and writes ${…} is a Camunda file with a schema default
+	// nobody edited, and refusing it on its own mislabelling helps no one.
+	if isJUEL(body) {
+		return langJUEL, "JUEL (by its ${…} delimiters)"
 	}
 
 	return languages[lang], lang
@@ -71,9 +87,23 @@ func resolveLanguage(declared, docDefault string) (exprLang, string) {
 // cannot be built. docLang is the document's expressionLanguage, which an
 // expression declaring none inherits.
 func newCondition(fs flowSpec, docLang string) (data.FormalExpression, error) {
-	kind, lang := resolveLanguage(fs.condLang, docLang)
+	kind, lang := resolveLanguage(fs.condLang, docLang, fs.condBody)
 
-	if kind != langLite {
+	body := fs.condBody
+
+	switch kind {
+	case langLite:
+		// as written
+
+	case langJUEL:
+		translated, err := translateJUEL(fs.condBody)
+		if err != nil {
+			return nil, err
+		}
+
+		body = translated
+
+	case langRefused:
 		return nil, unsupportedLanguage(fs.id, lang)
 	}
 
@@ -86,7 +116,7 @@ func newCondition(fs flowSpec, docLang string) (data.FormalExpression, error) {
 	// way to mint a condition, and it already declares the bool result the
 	// condition paths require before evaluating. Duplicating that here
 	// would be a second place for the requirement to drift from.
-	return lite.Cond(fs.condBody, foundation.WithID(id))
+	return lite.Cond(body, foundation.WithID(id))
 }
 
 // unsupportedLanguage reports an expression the converter cannot make
