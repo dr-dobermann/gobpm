@@ -537,3 +537,71 @@ func TestJoiningProcessorExtendsTheSubscription(t *testing.T) {
 			"but not its key to the live subscription")
 	}
 }
+
+// TestJoiningProcessorWithoutKeysIsAccepted covers the branch a joining
+// processor that declares NO correlation keys takes: an instance-starter
+// wants the wildcard the subscription already has, so there is nothing to
+// add and joining must not fail.
+func TestJoiningProcessorWithoutKeysIsAccepted(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	rt := enginert.Default()
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
+
+	firstMock := mockeventproc.NewMockEventProcessor(t)
+	firstMock.EXPECT().ID().Return("keyed").Maybe()
+	firstMock.EXPECT().ProcessEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+
+	first := keyedProc{MockEventProcessor: firstMock, keys: []string{"k1"}}
+
+	w, err := waiters.NewMessageWaiter(hub, first, eDef, "", rt)
+	require.NoError(t, err)
+	require.NoError(t, w.Service(ctx))
+
+	t.Cleanup(func() { require.NoError(t, w.Stop()) })
+
+	// a keyless processor — the instance-starter shape
+	plain := mockeventproc.NewMockEventProcessor(t)
+	plain.EXPECT().ID().Return("starter").Maybe()
+	plain.EXPECT().ProcessEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+
+	require.NoError(t, w.AddEventProcessor(plain),
+		"a processor declaring no keys must join without error")
+	require.Len(t, w.EventProcessors(), 2)
+
+	// joining twice is idempotent and must not re-add keys either
+	require.NoError(t, w.AddEventProcessor(plain))
+	require.Len(t, w.EventProcessors(), 2)
+}
+
+// TestJoinBeforeServiceAddsNoKeys covers the not-yet-serving branch: before
+// Service there is no subscription to extend, and Service will read the
+// joined processor's keys itself.
+func TestJoinBeforeServiceAddsNoKeys(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	eDef := msgEventDef(t)
+	rt := enginert.Default()
+	hub := mockeventproc.NewMockEventHub(t)
+
+	firstMock := mockeventproc.NewMockEventProcessor(t)
+	firstMock.EXPECT().ID().Return("a").Maybe()
+	first := keyedProc{MockEventProcessor: firstMock, keys: []string{"k-a"}}
+
+	w, err := waiters.NewMessageWaiter(hub, first, eDef, "", rt)
+	require.NoError(t, err)
+
+	joinerMock := mockeventproc.NewMockEventProcessor(t)
+	joinerMock.EXPECT().ID().Return("b").Maybe()
+	joiner := keyedProc{MockEventProcessor: joinerMock, keys: []string{"k-b"}}
+
+	// no Service yet — the join must succeed and simply record the processor
+	require.NoError(t, w.AddEventProcessor(joiner))
+	require.Len(t, w.EventProcessors(), 2)
+}
