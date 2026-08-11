@@ -534,7 +534,7 @@ Each fails on the pre-fix code; that is verified per test, not assumed.
 | # | Test | New/extended | Setup | Assertion |
 |---|---|---|---|---|
 | T-1 | `TestJoinDoesNotHoldTheHubLock` | new, `eventhub` | a broker whose `AddKey` blocks on a channel; one goroutine joins a live waiter, another calls a hub lookup | the lookup completes while `AddKey` is still blocked — on the pre-fix code it blocks until released (§1.1) |
-| T-2 | `TestJoinAppliesKeysAfterRegistering` | new, `waiters` | a broker recording the order of `AddKey` vs. the processor list | the processor is listed before its key reaches the subscription (§1.2) |
+| T-2 | `TestJoinHalvesAreSeparable` (`waiters`) + `TestJoinRegistersBeforeItReachesTheBroker` (`eventhub`) | new | a broker recording, and probing from inside, its `AddKey` | the registry half reaches no broker; the hub lists the processor before its key reaches one (§1.2 — see §8.2.1) |
 | T-3 | `TestPartialKeyFailureDiscardsTheSubscription` | new, `waiters` | `FailingBroker{AddKeyAfter: 1}`, a processor with two keys | the join fails, the processor is not listed, `Unsubscribe` was called, waiter `WSFailed` (§1.3) |
 | T-4 | `TestKeyRefusedDuringSubscribeFailsTheWaiter` | **extended** | as today | additionally: the subscription was unsubscribed (§1.4) |
 | T-5 | `TestJoinBeforeServiceSubscribesEachKeyOnce` | new, `waiters` | join a keyed processor before `Service` | `Subscriptions()[0].Keys` contains each key exactly once (§1.5) |
@@ -580,6 +580,9 @@ bug lives in.
   It is deliberately not wired into the REQUIRED gate in this landing: a new
   blocking check needs its false-positive rate measured against the whole tree
   first, and that measurement is part of this work, not a promise about it.
+  Landed as `scripts/lock-sweep.py` + `make lock-sweep`; it found two live
+  instances of the shape on its first run, in files this branch never touched
+  (§8.2.4), and its limits are stated in §8.2.5.
 
 - **Error branches get asserted on their effects, not their return values.**
   §4.3. Three of the ten findings are error paths that returned the right error
@@ -637,18 +640,93 @@ public package outside `messagingtest`'s doc comment.
 
 ## 8 Implementation summary
 
-> ⚠️ TODO: filled after landing — the stage commits and where reality diverged
-> from the §3 draft.
-
 ### 8.1 Stage commits
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
-| | | | |
+| Doc | `29435458` | this document | — |
+| Double | `514db68e` | `messagingtest`: `OnAddKey`, `Unsubscribed`, the configuration contract (§3.6) | `TestFailingSubscriptionRunsTheAddKeyHook`, `TestFailingSubscriptionReportsUnsubscribed` |
+| Fix | `5de0cf54` | D1–D4: `eventproc` capabilities, the waiter split, the hub side (§3.3–§3.5, §3.7) | T-1…T-6, below |
+| Changelog | `b139ba7b` | `[Unreleased]` entry for #320 | — |
+| Sweep | *(this stage)* | `scripts/lock-sweep.py` + `make lock-sweep`, and the two findings it produced | §8.2.4 |
+
+Gate: `make ci` PASS at `b139ba7b` (`.ci/last-run.json`), re-run after the sweep
+stage.
 
 ### 8.2 Empirical findings
 
+**8.2.1 — T-2 as drafted asserted nothing.** §4.1's T-2 was to observe, at the
+waiter, that a joining processor is listed before its key reaches the
+subscription. But the waiter does not decide that order — the **hub** does, and
+a waiter-level test performs both halves itself, so it would have asserted the
+order of its own test helper. It was replaced by two tests that each pin a real
+property: `TestJoinHalvesAreSeparable` (waiter) — `AddEventProcessor` reaches no
+broker and `ApplyProcessorKeys` is the only half that does — and
+`TestJoinRegistersBeforeItReachesTheBroker` (hub), which probes from inside the
+broker call, the only place the order is visible.
+
+**8.2.2 — discarding the subscription kills the waiter, and §3 did not say who
+buries it.** D2 has the waiter unsubscribe and fail. §3.1 said registry removal
+"remains the hub's, on the failed registration it is already returning" — but
+the hub was only going to unregister the *processor*. That leaves a waiter in
+the registry with no subscription and a exiting goroutine: every later
+registration for the same definition joins it and receives nothing, forever,
+with no error anywhere. That is FIX-038 §1.3's stranding reached from the other
+direction, and it would have been *introduced* by the fix. `dropFailedWaiter`
+unmaps it, so the next registration builds a fresh one
+(`TestRefusedJoinKeyLeavesNoWaiterBehind`).
+
+**8.2.3 — a failed waiter was relabelled by the goroutine its own failure
+woke.** Unsubscribing closes the channel `runMessageService` is selecting on, so
+it wakes at once and set `WSStopped` over the `WSFailed` just written — an
+orderly-shutdown label on a break. `setStateUnlessFailed` refuses the downgrade,
+and `discardSubscription` writes the state **before** unsubscribing so the
+refusal is deterministic rather than a coin toss. Both halves were needed: with
+only the guard, the anti-fix sweep below still passed, because the two writes
+raced. T-3 now waits on `Done()` before reading the state, which also pins that
+the goroutine exits at all.
+
+**8.2.4 — the sweep found two live instances of the very shape, in code this
+branch had not touched.** §5's second bullet proposed committing the FIX-038
+sweep. Committed as `scripts/lock-sweep.py` + `make lock-sweep`, its first run
+reported:
+
+- `waiters/message.go:635` — `Stop` held `mw.m` across `sub.Unsubscribe()`, a
+  host call, blocking `State`, `EventProcessors` and every delivery snapshot
+  behind it. Fixed: the state is set and `stopCh` closed under the lock, the
+  unsubscribe happens after it is released — still synchronous, so SRD-031.A
+  FR-7 (a replacement waiter must not race a live subscription) still holds.
+- `pkg/rules/gorules/gorules.go:80` — `Register` held `reg.mu` across
+  `reg.sink.Report()`, and the sink is whatever the host passed to
+  `BindReporter`. Fixed the same way. `Evaluate`, forty lines below, already
+  read under the lock and called outside it, which is what makes `Register` an
+  outlier rather than the local convention.
+
+Neither is in this branch's diff, so no review lens and no `/check-style` pass
+could have reached them. That is the argument for the sweep existing, and it
+paid for itself on its first run.
+
+**8.2.5 — what the sweep would NOT have caught is #320 itself.** It is
+syntactic: it sees a host call written inside a critical section and misses one
+reached through a helper — which is exactly the shape of §1.1, where
+`AddEventProcessor` was two frames from the lock. The script's docstring says so
+first, because a scanner that reports clean is the dangerous failure mode
+(FIX-038 §5). It is verified to FAIL on the pre-fix copies of both files above
+and pass on the fixed tree.
+
+**8.2.6 — `Done()` was reading `mw.done` unlocked.** §3.4 listed only `Service`
+for §1.6. `Done()` reads the same field with no lock while every other path
+guards it; now it takes `mw.m`.
+
 ### 8.3 What this fix deliberately leaves alone
+
+- **`make lock-sweep` is not in the required gate.** §5 said this would be so
+  and why: a blocking check earns its place after its false-positive rate is
+  measured across the tree over more than one landing. This run produced two
+  findings and zero false positives, which is one data point, not a rate.
+- **`Subscription.RemoveKey`** (alternative B1) stays a promote-to-ADR
+  candidate, unchanged from §7 — one source is not enough to change a
+  host-facing port contract.
 
 ---
 

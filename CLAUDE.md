@@ -39,6 +39,14 @@ make lint_fix
 
 # Run linter on all files (including tests)
 make lint_all
+
+# Report engine calls that reach the HOST while a lock is held — a broker, a
+# processor, a reporter the embedding application supplied (FIX-038 §1.1,
+# FIX-041 §1.1). NOT part of `make ci`: it is syntactic, so a clean run is
+# evidence and not proof, and it knows only the method names listed in the
+# script. Run it when touching locking code, and add any new host-facing
+# method to its PATTERNS set.
+make lock-sweep
 ```
 
 ### Mock Generation

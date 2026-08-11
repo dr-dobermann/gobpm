@@ -611,18 +611,24 @@ func payloadErr(msgName string, err error) error {
 // Stop terminates the delivery goroutine of a running waiter.
 func (mw *messageWaiter) Stop() error {
 	mw.m.Lock()
-	defer mw.m.Unlock()
 
 	if mw.state != eventproc.WSRunned {
+		state := mw.state
+		mw.m.Unlock()
+
 		return errs.New(
 			errs.M("couldn't stop a not-runned waiter"),
 			errs.C(MessageWaiterError, errs.InvalidState),
-			errs.D("current_state", mw.state.String()))
+			errs.D("current_state", state.String()))
 	}
 
 	mw.state = eventproc.WSStopped
 
 	close(mw.stopCh)
+
+	sub := mw.sub
+
+	mw.m.Unlock()
 
 	// Unsubscribe synchronously so the broker has dropped this subscription by the
 	// time Stop returns: EventHub.UnregisterEvent may immediately register a
@@ -631,8 +637,14 @@ func (mw *messageWaiter) Stop() error {
 	// channel (SRD-031.A FR-7). The service goroutine's deferred Unsubscribe (which
 	// covers the ctx-cancel / channel-closed exit paths that never call Stop) is
 	// idempotent, so the double call is harmless.
-	if mw.sub != nil {
-		if err := mw.sub.Unsubscribe(); err != nil {
+	//
+	// Synchronous, but NOT under mw.m: it is the host's broker, and holding the
+	// waiter's lock across it blocks State, EventProcessors and every delivery
+	// snapshot behind a call this engine cannot hurry (FIX-038 §1.1). The state
+	// is already WSStopped and stopCh already closed, so nothing observes a
+	// half-stopped waiter through the gap.
+	if sub != nil {
+		if err := sub.Unsubscribe(); err != nil {
 			mw.rt.Logger().Warn("message waiter unsubscribe failed on stop",
 				observability.AttrWaiterID, mw.id, observability.AttrError, err.Error())
 		}

@@ -48,6 +48,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unreachable through `membroker` and were therefore untested until the
   key loss reached production behaviour.
 
+  Two further host-calls-under-a-lock are fixed, found by the new
+  `make lock-sweep` on its first run and not by any review of this
+  branch, since neither file was in its diff: the message waiter's
+  `Stop` held the waiter's lock across `Unsubscribe`, and the Go rules
+  registry's `Register` held the registry lock across a `Report` to the
+  host's reporter. Both now mutate under the lock and call the host
+  after releasing it. The sweep is a script with its own `make` target
+  and is **not** part of `make ci` — it is syntactic, so a clean run is
+  evidence rather than proof.
+
 - **A `%v` over an engine object no longer reflects across it**
   (FIX-040, closes #314). `Instance` and its tracks now implement
   `fmt.Stringer`, rendering as their element id. Without it, anything
