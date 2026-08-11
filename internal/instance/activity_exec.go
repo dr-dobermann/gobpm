@@ -109,7 +109,7 @@ type nodeExec struct {
 // The two kinds still routed by executeStep — a LEAF Standard Loop, which
 // re-runs its node in place, and a PARALLEL COMPOSITE Multi-Instance, which
 // still drives the loop-owned group — move here as they convert (SRD-090.A
-// M3c, SRD-090.B).
+// M3b, SRD-090.B).
 func execFor(t *track, step *stepInfo) activityExec {
 	_, composite := step.node.(scopeHost)
 

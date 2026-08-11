@@ -51,7 +51,7 @@ func standardLoopOf(node flow.Node) standardLoop {
 // and has no per-instance object yet — it converts with SRD-090.B, which is
 // what makes an iterated waiting activity buildable at all. A PARALLEL
 // COMPOSITE Multi-Instance still drives the loop-owned group barrier, which
-// M3c retires together with the mechanism.
+// M3b retires together with the mechanism.
 func (t *track) executeStep(
 	ctx context.Context, step *stepInfo,
 ) ([]*flow.SequenceFlow, error) {

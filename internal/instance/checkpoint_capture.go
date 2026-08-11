@@ -541,7 +541,7 @@ func trackRecord(
 // survives on the READ side alone, so a schema-5 document captured before
 // this slice still restores (FR-7). The one iterated kind that reaches no
 // mirror at all is a parallel COMPOSITE Multi-Instance, whose position is
-// still the loop-owned group's until M3c retires it.
+// still the loop-owned group's until M3b retires it.
 func recordIteration(
 	ctx context.Context, rec *checkpoint.TrackRecord, t *track,
 	mirror *iterMirror,
