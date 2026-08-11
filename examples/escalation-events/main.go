@@ -1,3 +1,6 @@
+// Command escalation-events demonstrates Escalation events (SRD-058): a
+// non-critical signal a sub-process raises to hand a business condition to an
+// enclosing handler, without faulting the instance.
 package main
 
 import (
@@ -43,14 +46,14 @@ func run() error {
 		return fmt.Errorf("build process: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 

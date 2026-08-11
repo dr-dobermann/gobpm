@@ -22,9 +22,9 @@ import (
 // gobpm tags (ADR-011 v.6 §2.9.5): no conversion, no parallel model.
 type Order struct {
 	ID     string `gobpm:"id"`
-	Total  int    `gobpm:"total"`
+	Secret string `gobpm:"-"`
 	Items  []Item `gobpm:"items"`
-	Secret string `gobpm:"-"` // never visible to the process
+	Total  int    `gobpm:"total"`
 }
 
 // Item is a nested host type — slice elements surface as live sub-records.

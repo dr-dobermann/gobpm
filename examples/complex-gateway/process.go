@@ -123,7 +123,10 @@ func approverTasks(ran *pathSet) ([]flow.Element, error) {
 func wire(
 	start, split, join, finalize, end flow.Element, approvers []flow.Element,
 ) error {
-	links := [][2]flow.Element{{start, split}}
+	// start→split, two per approver, then join→finalize→end.
+	links := make([][2]flow.Element, 0, 1+2*len(approvers)+2)
+	links = append(links, [2]flow.Element{start, split})
+
 	for _, ap := range approvers {
 		links = append(links, [2]flow.Element{split, ap}, [2]flow.Element{ap, join})
 	}
@@ -132,9 +135,8 @@ func wire(
 		[2]flow.Element{join, finalize}, [2]flow.Element{finalize, end})
 
 	for _, l := range links {
-		src, trg := l[0].(flow.SequenceSource), l[1].(flow.SequenceTarget)
-		if _, err := flow.Link(src, trg); err != nil {
-			return fmt.Errorf("link: %w", err)
+		if err := link(l[0], l[1]); err != nil {
+			return err
 		}
 	}
 
@@ -181,4 +183,24 @@ func printTask(
 	}
 
 	return task, nil
+}
+
+// link connects two flow elements with a sequence flow, reporting an element
+// that cannot carry one rather than panicking on the assertion.
+func link(src, trg flow.Element) error {
+	s, ok := src.(flow.SequenceSource)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence source", src.Name())
+	}
+
+	t, ok := trg.(flow.SequenceTarget)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence target", trg.Name())
+	}
+
+	if _, err := flow.Link(s, t); err != nil {
+		return fmt.Errorf("link: %w", err)
+	}
+
+	return nil
 }

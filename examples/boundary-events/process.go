@@ -18,7 +18,7 @@ import (
 //
 //	start → [process-payment] ───────────────> end-paid
 //	             ╳ (timer boundary, 2s, interrupting)
-//	             └─> [cancel-order] ─────────> end-cancelled
+//	             └─> [cancel-order] ─────────> end-canceled
 //
 // The 2s interrupting timer boundary fires before the ~4s payment finishes, so the
 // engine cancels the payment track, discards its result, and routes a token onto the
@@ -50,9 +50,9 @@ func buildProcess(ran *pathSet) (*process.Process, error) {
 		return nil, fmt.Errorf("end-paid: %w", err)
 	}
 
-	endCancelled, err := events.NewEndEvent("end-cancelled")
+	endCancelled, err := events.NewEndEvent("end-canceled")
 	if err != nil {
-		return nil, fmt.Errorf("end-cancelled: %w", err)
+		return nil, fmt.Errorf("end-canceled: %w", err)
 	}
 
 	boundary, err := timerBoundary("payment-timeout", payment, 2*time.Second)
@@ -74,9 +74,8 @@ func buildProcess(ran *pathSet) (*process.Process, error) {
 		{boundary, cancelOrder},
 		{cancelOrder, endCancelled},
 	} {
-		if _, err := flow.Link(
-			l[0].(flow.SequenceSource), l[1].(flow.SequenceTarget)); err != nil {
-			return nil, fmt.Errorf("link: %w", err)
+		if err := link(l[0], l[1]); err != nil {
+			return nil, err
 		}
 	}
 
@@ -107,4 +106,24 @@ func timerBoundary(
 	}
 
 	return be, nil
+}
+
+// link connects two flow elements with a sequence flow, reporting an element
+// that cannot carry one rather than panicking on the assertion.
+func link(src, trg flow.Element) error {
+	s, ok := src.(flow.SequenceSource)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence source", src.Name())
+	}
+
+	t, ok := trg.(flow.SequenceTarget)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence target", trg.Name())
+	}
+
+	if _, err := flow.Link(s, t); err != nil {
+		return fmt.Errorf("link: %w", err)
+	}
+
+	return nil
 }

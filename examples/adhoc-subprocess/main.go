@@ -1,3 +1,6 @@
+// Command adhoc-subprocess demonstrates the Ad-Hoc Sub-Process (BPMN
+// §13.3.5): inner activities with no sequence flows between them, whose order
+// is decided while the case runs.
 package main
 
 import (
@@ -37,21 +40,21 @@ func run() error {
 	}
 
 	// Records the order the Router drove the activities in.
-	log := newRunLog()
+	runLog := newRunLog()
 
-	proc, err := buildProcess(log, "high")
+	proc, err := buildProcess(runLog, "high")
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
@@ -69,11 +72,11 @@ func run() error {
 	// notify-customer and escalate — whose relative order is genuinely up to
 	// the scheduler — and closes only once both have settled. So the two
 	// checkable claims are the boundaries, not the middle.
-	if err := log.first("gather-logs"); err != nil {
+	if err := runLog.first("gather-logs"); err != nil {
 		return fmt.Errorf("router order: %w", err)
 	}
 
-	if err := log.last("close-incident",
+	if err := runLog.last("close-incident",
 		"gather-logs", "notify-customer", "escalate"); err != nil {
 		return fmt.Errorf("router order: %w", err)
 	}

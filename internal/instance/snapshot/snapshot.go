@@ -263,6 +263,17 @@ func (s *Snapshot) NodeByID(id string) (flow.Node, bool) {
 	return found, found != nil
 }
 
+// Walk visits every node of the snapshot's graph and, recursively, of every
+// nested container, returning false if visit stopped the walk early.
+//
+// It is the exported face of the same deep traversal NodeByID uses, for
+// callers that must inspect ALL nodes rather than find one — registration-time
+// model validation, which has to reach a Script Task nested in a Sub-Process
+// just as surely as one at the top level.
+func (s *Snapshot) Walk(visit func(flow.Node) bool) bool {
+	return walkNodesDeep(s.Nodes, visit)
+}
+
 // walkNodesDeep visits every node of the graph and, recursively, of every
 // nested container (SRD-049 FR-5). visit returning false stops the walk.
 func walkNodesDeep(nodes map[string]flow.Node, visit func(flow.Node) bool) bool {

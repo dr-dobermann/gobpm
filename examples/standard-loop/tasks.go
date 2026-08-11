@@ -15,7 +15,7 @@ import (
 // loopedWorkTask builds a Service Task marked with a post-tested Standard Loop
 // wantPasses is how many times the post-tested loop runs — read by the loop
 // condition and by the example's own assertion, so the check cannot drift away
-// from the behaviour it checks.
+// from the behavior it checks.
 const wantPasses = 3
 
 // (loopCounter < 3): each pass reads the engine-published loopCounter and prints

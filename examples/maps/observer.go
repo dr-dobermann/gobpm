@@ -42,18 +42,6 @@ func (p *dataChangePrinter) OnFact(f observability.Fact) {
 	fmt.Printf("  ▶ %s\n", change)
 }
 
-// check reports an error unless exactly these changes were observed, in order.
-func (p *dataChangePrinter) check(want ...string) error {
-	p.m.Lock()
-	defer p.m.Unlock()
-
-	if strings.Join(p.seen, " | ") != strings.Join(want, " | ") {
-		return fmt.Errorf("saw %v, want %v", p.seen, want)
-	}
-
-	return nil
-}
-
 // checkSet reports an error unless exactly these changes were observed, in any
 // order — for commits whose changes come from a map, whose iteration order is
 // deliberately unspecified.

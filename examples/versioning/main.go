@@ -1,3 +1,6 @@
+// Command versioning demonstrates Camunda-style definition versioning
+// (ADR-019 / SRD-031.A): one process key carries many versions, each
+// addressable by latest, by number, or by the registration handle.
 package main
 
 import (

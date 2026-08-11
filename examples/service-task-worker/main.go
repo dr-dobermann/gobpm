@@ -94,7 +94,7 @@ func runOrder(ctx context.Context, engine *thresher.Thresher, o order) error {
 		return fmt.Errorf("build %s: %w", o.name, err)
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register %s: %w", o.name, err)
 	}
 

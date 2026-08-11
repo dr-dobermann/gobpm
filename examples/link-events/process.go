@@ -57,7 +57,7 @@ func buildProcess(count *int) (*process.Process, error) {
 	for _, e := range []flow.Element{
 		start, throwInit, catchLoop, work, xor, throwBack, end,
 	} {
-		if err := proc.Add(e); err != nil {
+		if err = proc.Add(e); err != nil {
 			return nil, fmt.Errorf("add element: %w", err)
 		}
 	}
@@ -66,14 +66,13 @@ func buildProcess(count *int) (*process.Process, error) {
 	for _, l := range [][2]flow.Element{
 		{start, throwInit}, {catchLoop, work}, {work, xor},
 	} {
-		if _, err := flow.Link(l[0].(flow.SequenceSource),
-			l[1].(flow.SequenceTarget)); err != nil {
-			return nil, fmt.Errorf("link flow: %w", err)
+		if linkErr := link(l[0], l[1]); linkErr != nil {
+			return nil, linkErr
 		}
 	}
 
 	// xor -[count<3]-> throw"repeat" (back-edge) ; xor -default-> end
-	if _, err := flow.Link(xor, throwBack, flow.WithCondition(cond)); err != nil {
+	if _, err = flow.Link(xor, throwBack, flow.WithCondition(cond)); err != nil {
 		return nil, fmt.Errorf("link back-edge: %w", err)
 	}
 
@@ -83,4 +82,24 @@ func buildProcess(count *int) (*process.Process, error) {
 	}
 
 	return proc, xor.UpdateDefaultFlow(df)
+}
+
+// link connects two flow elements with a sequence flow, reporting an element
+// that cannot carry one rather than panicking on the assertion.
+func link(src, trg flow.Element) error {
+	s, ok := src.(flow.SequenceSource)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence source", src.Name())
+	}
+
+	t, ok := trg.(flow.SequenceTarget)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence target", trg.Name())
+	}
+
+	if _, err := flow.Link(s, t); err != nil {
+		return fmt.Errorf("link: %w", err)
+	}
+
+	return nil
 }

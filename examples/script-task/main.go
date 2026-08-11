@@ -1,3 +1,6 @@
+// Command script-task demonstrates the Script Task on the multi-engine Script
+// Engine seam (ADR-031 / SRD-064) with the Lua interpreter adapter
+// (adapters/lua, SRD-065): a plain .lua file, embedded and editable.
 package main
 
 import (
@@ -83,14 +86,14 @@ func runOrder(total int, tier, wantLane string, wantPct float64) error {
 		return fmt.Errorf("build process: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 

@@ -60,12 +60,12 @@ func buildProcess(total int) (*process.Process, error) {
 	for _, e := range []flow.Element{
 		start, classify, big, small, endBig, endSmall,
 	} {
-		if err := proc.Add(e); err != nil {
+		if err = proc.Add(e); err != nil {
 			return nil, fmt.Errorf("add %q: %w", e.Name(), err)
 		}
 	}
 
-	if _, err := flow.Link(start, classify); err != nil {
+	if _, err = flow.Link(start, classify); err != nil {
 		return nil, fmt.Errorf("link start: %w", err)
 	}
 
@@ -74,7 +74,7 @@ func buildProcess(total int) (*process.Process, error) {
 		return nil, fmt.Errorf("condition: %w", err)
 	}
 
-	if _, err := flow.Link(classify, big, flow.WithCondition(cond)); err != nil {
+	if _, err = flow.Link(classify, big, flow.WithCondition(cond)); err != nil {
 		return nil, fmt.Errorf("link big lane: %w", err)
 	}
 

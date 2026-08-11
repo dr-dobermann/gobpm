@@ -1,6 +1,6 @@
 // Command terminate-end-event demonstrates a Terminate End Event (SRD-030 / BPMN
 // §13.5.6): one branch of a parallel process reaches a Terminate End Event and
-// abnormally terminates the whole instance, cancelling the other in-flight branch.
+// abnormally terminates the whole instance, canceling the other in-flight branch.
 //
 //	start → split ─┬─ fraud-check ──> terminate-end   (kills the instance)
 //	               └─ process-payment ──> payment-done
@@ -50,14 +50,14 @@ func run() error {
 		return fmt.Errorf("build process: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(proc); err != nil {
+	if _, err = engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
@@ -81,7 +81,7 @@ func run() error {
 	// teardown reaches it is a race, and about one run in eight it is torn
 	// down first and never runs. Not running is just as correct as being
 	// interrupted, so demanding the interruption made this assertion flaky
-	// against perfectly good behaviour.
+	// against perfectly good behavior.
 	if err := ran.check([]string{"fraud-check"},
 		[]string{"payment-charged"}); err != nil {
 		return fmt.Errorf("terminate teardown: %w", err)

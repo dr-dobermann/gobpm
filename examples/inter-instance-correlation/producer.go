@@ -46,9 +46,9 @@ func newProducer() (*process.Process, error) {
 	chain := []flow.Element{begin}
 
 	for _, id := range orders {
-		send, err := newSend(id)
-		if err != nil {
-			return nil, err
+		send, sendErr := newSend(id)
+		if sendErr != nil {
+			return nil, sendErr
 		}
 
 		chain = append(chain, send)

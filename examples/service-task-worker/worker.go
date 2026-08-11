@@ -26,7 +26,7 @@ func reserveWorker() localdispatcher.WorkerFunc {
 		lastRID int
 	)
 
-	return func(ctx context.Context, lj tasks.LockedJob) (*data.ItemDefinition, error) {
+	return func(_ context.Context, lj tasks.LockedJob) (*data.ItemDefinition, error) {
 		mu.Lock()
 		tries[lj.ID]++
 		n := tries[lj.ID]

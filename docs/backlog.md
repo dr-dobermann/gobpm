@@ -63,6 +63,50 @@ and "examples assert their own outcome" as plain commits on
   It blocks a multi-iteration restore test for correlated routing (SRD-085
   covers only the single-remaining-iteration shortcut), and if the shared state
   is real it is a recovery-window defect rather than a test one.
+
+  **A second symptom, measured 2026-08-10 on `feat/adr-003-layout-close`, may
+  share that root cause.** `TestIterationCorrelatedRouting` and
+  `TestIterationRoutingKillAndResume` (`pkg/thresher/delivery_payload_test.go`)
+  fail intermittently in a full-package run by **hanging until their deadline**,
+  while passing in **0.021s** when run alone and passing when run with each
+  other. No `-race` report — the delivery simply never arrives.
+
+  What this is **not**, since the obvious hypothesis was tested and refuted: it
+  is not a deadline too tight for a loaded machine. Raising the wait from 3s to
+  30s moved the failure from 3.01s to 30.03s and changed nothing else. Failing
+  *exactly at* the deadline is the signature of an event that never arrives, not
+  of a slow one — a slow-but-arriving delivery would pass once the wait was
+  extended. (The 40-site deadline sweep built on that hypothesis was reverted
+  for the same reason; nothing in the tree depends on it.)
+
+  Cross-test interference losing a delivery is what #314's second candidate
+  cause predicts — "the message-routing fixture shares an event broker/hub
+  between the two instances". Different surface (a hang in `pkg/thresher`, not
+  `-race` in `internal/instance`), plausibly one shared object. Naming that
+  object is #314's first DoD item, and this symptom is a cheaper reproduction
+  of it: no race detector needed, just a full-package run.
+
+  **Correction, same day, after more measurement: the two tests do NOT share
+  one mechanism, and the paragraph above generalizes from one to both.** They
+  are separated by what happens when the deadline moves:
+
+  - `TestIterationCorrelatedRouting` **hangs regardless of the deadline** —
+    raising the wait from 3s to 30s moved the failure from 3.01s to 30.03s.
+    That is a delivery that never arrives, and the paragraphs above describe
+    it correctly.
+  - `TestIterationRoutingKillAndResume` is **load-sensitive**, not
+    deadline-independent. It failed twice consecutively in `make ci`, then
+    passed **9/9** when the gate's exact conditions were reproduced by hand
+    (`GOMAXPROCS=4`, `-race`, `-coverprofile`, the whole package list). The
+    two failures happened while `make ci` was piped through an
+    output-summarizing wrapper teeing ~10k lines; the run without it passed at
+    the same commit. That points at total machine load rather than at the
+    engine.
+
+  So a red gate on `KillAndResume` alone is not evidence of a lost delivery,
+  and it is worth re-running before investigating. `CorrelatedRouting` failing
+  IS evidence, at any deadline. Whether one root cause produces both remains
+  open — which is the point of naming the shared object.
 - **Audit findings** — disposition in
   [`audit/remediation-status.md`](audit/remediation-status.md), design deferrals
   in [`audit/audit-backlog.md`](audit/audit-backlog.md). Both maintain their own

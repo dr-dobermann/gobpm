@@ -25,7 +25,7 @@ func fraudCheckOp(ran *pathSet) (service.Operation, error) {
 }
 
 // paymentOp is a long-running, context-honoring charge. When the fraud branch
-// terminates the instance, this operation's context is cancelled and it abandons the
+// terminates the instance, this operation's context is canceled and it abandons the
 // charge instead of completing.
 func paymentOp(ran *pathSet) (service.Operation, error) {
 	return gooper.New("process-payment",

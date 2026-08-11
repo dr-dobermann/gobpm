@@ -75,13 +75,33 @@ func wire(id string, mid flow.Element) (*process.Process, error) {
 		}
 	}
 
-	if _, err := flow.Link(start, mid.(flow.SequenceTarget)); err != nil {
-		return nil, fmt.Errorf("link start->mid: %w", err)
+	if err := link(start, mid); err != nil {
+		return nil, fmt.Errorf("start->mid: %w", err)
 	}
 
-	if _, err := flow.Link(mid.(flow.SequenceSource), end); err != nil {
-		return nil, fmt.Errorf("link mid->end: %w", err)
+	if err := link(mid, end); err != nil {
+		return nil, fmt.Errorf("mid->end: %w", err)
 	}
 
 	return proc, nil
+}
+
+// link connects two flow elements with a sequence flow, reporting an element
+// that cannot carry one rather than panicking on the assertion.
+func link(src, trg flow.Element) error {
+	s, ok := src.(flow.SequenceSource)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence source", src.Name())
+	}
+
+	t, ok := trg.(flow.SequenceTarget)
+	if !ok {
+		return fmt.Errorf("%q is not a sequence target", trg.Name())
+	}
+
+	if _, err := flow.Link(s, t); err != nil {
+		return fmt.Errorf("link: %w", err)
+	}
+
+	return nil
 }

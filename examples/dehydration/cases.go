@@ -31,9 +31,9 @@ type demo struct {
 }
 
 type demoCase struct {
+	run   func() error
 	title string
 	note  string
-	run   func() error
 }
 
 // registerAll builds and registers one process per case.

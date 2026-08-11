@@ -20,18 +20,24 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
 	"github.com/dr-dobermann/gobpm/pkg/script"
+	"github.com/dr-dobermann/gobpm/pkg/script/gofunc"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 	"github.com/stretchr/testify/require"
 )
 
 // e2eScriptEngine is a routing-observable stub engine: it "executes" by
 // returning a fixed named output and records what it ran.
+// A non-nil failWith makes it claim the format and then fail executing it —
+// the way a real engine reports a bad script body. Since SRD-088 FR-8 refuses
+// an unclaimed format at registration, this is how a test reaches the
+// script-execution failure path at all.
 type e2eScriptEngine struct {
-	mu      sync.Mutex
-	kind    string
-	formats []string
-	outName string
-	ran     []string
+	mu       sync.Mutex
+	kind     string
+	formats  []string
+	outName  string
+	failWith error
+	ran      []string
 }
 
 func (e *e2eScriptEngine) Type() string { return e.kind }
@@ -43,9 +49,26 @@ func (e *e2eScriptEngine) Execute(
 ) (script.Outputs, error) {
 	e.mu.Lock()
 	e.ran = append(e.ran, format+"|"+body)
+	failWith := e.failWith
 	e.mu.Unlock()
 
+	if failWith != nil {
+		return nil, failWith
+	}
+
 	return script.Outputs{e.outName: values.NewVariable(e.kind)}, nil
+}
+
+// boomEngine claims text/x-lua and fails every script it is handed. The
+// incident tests need a Script Task that reaches the runner and fails THERE:
+// a format nothing claims no longer gets that far, since registration refuses
+// the model outright (SRD-088 FR-8).
+func boomEngine() *e2eScriptEngine {
+	return &e2eScriptEngine{
+		kind:     "##Boom",
+		formats:  []string{"text/x-lua"},
+		failWith: errors.New("script engine blew up"),
+	}
 }
 
 func (e *e2eScriptEngine) runs() []string {
@@ -263,8 +286,10 @@ func TestScriptTaskE2E(t *testing.T) {
 	require.Equal(t, "##Beta", kinds["TEXT/X-BETA"])
 }
 
-// TestScriptTaskUnclaimedFormat: a format nobody claims faults the
-// instance with the claims-listing error.
+// TestScriptTaskUnclaimedFormat (SRD-088 FR-8, T-13): a format nobody claims
+// is refused at REGISTRATION, with the claims-listing error — the caller
+// learns the model cannot run while still holding an error return, instead of
+// discovering it asynchronously inside a track that has already started.
 func TestScriptTaskUnclaimedFormat(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -290,10 +315,16 @@ func TestScriptTaskUnclaimedFormat(t *testing.T) {
 	alpha := &e2eScriptEngine{kind: "##Alpha",
 		formats: []string{"text/x-alpha"}, outName: "x"}
 
-	_, werr := runScripts(t, proc, thresher.WithScriptEngine(alpha))
-	require.Error(t, werr)
-	require.Contains(t, werr.Error(), "text/x-ruby")
-	require.Contains(t, werr.Error(), "text/x-alpha",
+	th, err := thresher.New("test-st-unclaimed", thresher.WithoutBanner(),
+		thresher.WithScriptEngine(alpha))
+	require.NoError(t, err)
+
+	_, rerr := th.RegisterProcess(proc)
+	require.Error(t, rerr)
+	require.Contains(t, rerr.Error(), "ruby",
+		"the failure must name the task that demands the format")
+	require.Contains(t, rerr.Error(), "text/x-ruby")
+	require.Contains(t, rerr.Error(), "text/x-alpha",
 		"the failure must list the registered claims")
 }
 
@@ -323,7 +354,8 @@ func TestIncidentHandleSurface(t *testing.T) {
 	link(t, start, lua)
 	link(t, lua, end)
 
-	th, err := thresher.New("test-incident-surface", thresher.WithoutBanner())
+	th, err := thresher.New("test-incident-surface", thresher.WithoutBanner(),
+		thresher.WithScriptEngine(boomEngine()))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -345,7 +377,7 @@ func TestIncidentHandleSurface(t *testing.T) {
 	require.Equal(t, "calc", incs[0].NodeName)
 	require.Equal(t, "open", incs[0].State)
 	require.Equal(t, 1, incs[0].Attempts)
-	require.Contains(t, incs[0].Cause, "WithScriptEngine")
+	require.Contains(t, incs[0].Cause, "script engine blew up")
 	require.False(t, incs[0].FirstAt.IsZero())
 
 	var found bool
@@ -361,7 +393,7 @@ func TestIncidentHandleSurface(t *testing.T) {
 	require.True(t, found, "the incident token must be visible on the handle")
 }
 
-// incidentParkedInstance runs start → lua(script, no engine) → end to its
+// incidentParkedInstance runs start → lua(script, failing engine) → end to its
 // incident park and returns the handle and the incident id.
 func incidentParkedInstance(
 	t *testing.T, procID string,
@@ -389,7 +421,8 @@ func incidentParkedInstance(
 	link(t, lua, end)
 
 	th, err := thresher.New("test-"+procID, thresher.WithoutBanner(),
-		thresher.WithRepository(memrepo.New()))
+		thresher.WithRepository(memrepo.New()),
+		thresher.WithScriptEngine(boomEngine()))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -478,7 +511,8 @@ func TestIncidentOpOnVolatileParkedInstance(t *testing.T) {
 	link(t, start, lua)
 	link(t, lua, end)
 
-	th, err := thresher.New("test-inc-volatile", thresher.WithoutBanner())
+	th, err := thresher.New("test-inc-volatile", thresher.WithoutBanner(),
+		thresher.WithScriptEngine(boomEngine()))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -565,8 +599,9 @@ func TestIncidentOpRetryNow(t *testing.T) {
 	require.EqualValues(t, 2, atomic.LoadInt32(&calls))
 }
 
-// TestScriptTaskNoEngine: the zero-config ##None default fails loud with
-// the wiring hint.
+// TestScriptTaskNoEngine (SRD-088 FR-8, T-13): the zero-config ##None default
+// stays a legitimate engine — it just refuses, at registration, a model that
+// demands a script format, and says loudly how to wire one.
 func TestScriptTaskNoEngine(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -589,7 +624,107 @@ func TestScriptTaskNoEngine(t *testing.T) {
 	link(t, start, lua)
 	link(t, lua, end)
 
-	_, werr := runScripts(t, proc)
+	th, err := thresher.New("test-st-none", thresher.WithoutBanner())
+	require.NoError(t, err)
+
+	_, rerr := th.RegisterProcess(proc)
+	require.Error(t, rerr)
+	require.Contains(t, rerr.Error(), "WithScriptEngine")
+	require.Contains(t, rerr.Error(), "text/x-lua")
+}
+
+// TestScriptTaskGoFuncBattery (SRD-088 FR-8, T-11): the in-core, dependency-
+// free battery actually runs a Script Task end to end. Every other port ships
+// a default that costs nothing to compile in; before this, the script port's
+// only working engine lived in adapters/lua and brought an interpreter with
+// it, so a stock build could not execute a Script Task at all.
+func TestScriptTaskGoFuncBattery(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	var ran atomic.Int32
+
+	eng, err := gofunc.New(
+		gofunc.WithScript("total",
+			func(
+				_ context.Context, r service.DataReader,
+			) (script.Outputs, error) {
+				ran.Add(1)
+
+				require.NotNil(t, r, "the body gets the instance's reader")
+
+				return script.Outputs{"sum": values.NewVariable(7)}, nil
+			}))
+	require.NoError(t, err)
+
+	proc, err := process.New("st-gofunc")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	// The script text names the registered Go function — the same move gooper
+	// makes for a Service Task.
+	calc, err := activities.NewScriptTask("calc", "gofunc", "total")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, calc, end} {
+		require.NoError(t, proc.Add(e))
+	}
+
+	link(t, start, calc)
+	link(t, calc, end)
+
+	facts, werr := runScripts(t, proc, thresher.WithScriptEngine(eng))
+	require.NoError(t, werr)
+	require.EqualValues(t, 1, ran.Load())
+
+	executed := scriptFacts(facts, observability.PhaseExecuted)
+	require.Len(t, executed, 1)
+	require.Equal(t, gofunc.GoFuncType,
+		executed[0].Details[observability.AttrImplementation],
+		"the fact must attribute the run to the gofunc engine")
+}
+
+// TestScriptTaskGoFuncUnknownName (SRD-088 FR-8, T-12): the format IS claimed,
+// so registration passes — the name is only resolvable at execution, and the
+// failure lists the scripts that ARE registered.
+func TestScriptTaskGoFuncUnknownName(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	eng, err := gofunc.New(
+		gofunc.WithScript("total",
+			func(
+				context.Context, service.DataReader,
+			) (script.Outputs, error) {
+				return nil, nil
+			}))
+	require.NoError(t, err)
+
+	proc, err := process.New("st-gofunc-unknown")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	calc, err := activities.NewScriptTask("calc", "gofunc", "nosuch")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, calc, end} {
+		require.NoError(t, proc.Add(e))
+	}
+
+	link(t, start, calc)
+	link(t, calc, end)
+
+	_, werr := runScripts(t, proc, thresher.WithScriptEngine(eng))
 	require.Error(t, werr)
-	require.Contains(t, werr.Error(), "WithScriptEngine")
+	require.Contains(t, werr.Error(), "nosuch")
+	require.Contains(t, werr.Error(), "total",
+		"the failure must list the registered scripts")
 }

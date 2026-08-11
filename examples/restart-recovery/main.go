@@ -51,14 +51,14 @@ func run() error {
 		return err
 	}
 
-	if _, err := e1.RegisterProcess(proc1); err != nil {
+	if _, err = e1.RegisterProcess(proc1); err != nil {
 		return fmt.Errorf("engine-1 register: %w", err)
 	}
 
 	ctx1, crash := context.WithCancel(context.Background())
 	defer crash()
 
-	if err := e1.Run(ctx1); err != nil {
+	if err = e1.Run(ctx1); err != nil {
 		return fmt.Errorf("engine-1 run: %w", err)
 	}
 

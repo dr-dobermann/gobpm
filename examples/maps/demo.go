@@ -44,7 +44,12 @@ func mapDemos() error {
 		return fmt.Errorf("wrap native map: %w", err)
 	}
 
-	if err := w.(data.Map).SetEntry(ctx, "week", 500); err != nil {
+	m, ok := w.(data.Map)
+	if !ok {
+		return fmt.Errorf("wrapped value is not a data.Map")
+	}
+
+	if err := m.SetEntry(ctx, "week", 500); err != nil {
 		return fmt.Errorf("set week: %w", err)
 	}
 

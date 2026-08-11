@@ -2,7 +2,7 @@
 // signal is caught by EVERY waiting catcher, across independent instances.
 //
 // Two instances of a "watcher" process each park on an intermediate catch of
-// the signal "order-cancelled"; a single "canceller" instance throws it once,
+// the signal "order-canceled"; a single "canceller" instance throws it once,
 // and BOTH watchers resume — a signal has no correlation, it broadcasts to all
 // catchers in reach (ADR-006 §2.1).
 //
@@ -27,11 +27,11 @@ func main() {
 func run() error {
 	fmt.Print(`
   signal-broadcast (one throw → every catcher):
-    watcher ×2:  start → catch(order-cancelled) → end
-    canceller:   start → throw(order-cancelled) → end
+    watcher ×2:  start → catch(order-canceled) → end
+    canceller:   start → throw(order-canceled) → end
 
 `)
-	const signal = "order-cancelled"
+	const signal = "order-canceled"
 
 	engine, err := thresher.New("signal-broadcast-engine")
 	if err != nil {
@@ -48,18 +48,18 @@ func run() error {
 		return fmt.Errorf("build thrower: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(catcher); err != nil {
+	if _, err = engine.RegisterProcess(catcher); err != nil {
 		return fmt.Errorf("register catcher: %w", err)
 	}
 
-	if _, err := engine.RegisterProcess(thrower); err != nil {
+	if _, err = engine.RegisterProcess(thrower); err != nil {
 		return fmt.Errorf("register thrower: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := engine.Run(ctx); err != nil {
+	if err = engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
@@ -75,7 +75,7 @@ func run() error {
 	}
 
 	time.Sleep(200 * time.Millisecond) // both reach and park on the catch
-	fmt.Println("  ▶ two watcher instances are waiting on \"order-cancelled\"")
+	fmt.Println("  ▶ two watcher instances are waiting on \"order-canceled\"")
 
 	if _, err := engine.StartLatest(thrower.ID()); err != nil { // one broadcast
 		return fmt.Errorf("start canceller: %w", err)

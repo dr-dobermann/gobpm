@@ -254,6 +254,17 @@ test_coverage:
 # the pin automatic rather than a step someone has to remember.
 BPMN_SPEC_SHA = $(shell git rev-parse HEAD:docs/bpmn-spec)
 
+# `tag` cuts the CORE module's tag, which is why VERSION is a bare `vX.Y.Z`.
+#
+# The other modules are tagged by PATH-PREFIXED semver, the convention Go's
+# module resolver requires for a submodule (ADR-003 §4.4, §5):
+#
+#	runtime/v0.2.0            → the runtime module
+#	adapters/postgres/v0.1.0  → one adapter module
+#
+# They version independently — core can reach v1.0 while runtime is still
+# v0.x — so there is no target that tags them together, and tagging one is a
+# deliberate act: `git tag -a adapters/postgres/v0.1.0 -m "..."`.
 tag:
 	@git tag -a ${VERSION} -m "version ${VERSION}" -m "bpmn-spec snapshot: ${BPMN_SPEC_SHA}"
 	@echo "Tag ${VERSION} created locally, pinned to bpmn-spec ${BPMN_SPEC_SHA}."
