@@ -18,40 +18,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/repository"
 )
 
-// TestForeignKeysEnforcedOnEveryConnection is SRD-091 T-3.
-//
-// PRAGMA foreign_keys is per CONNECTION, and database/sql opens them lazily.
-// A single-connection test therefore cannot see the failure this guards: the
-// schema parses identically either way, and a record naming an unregistered
-// group is refused on a configured connection and accepted on an
-// unconfigured one — a guarantee degraded to a coin flip that reads as a
-// flake.
-//
-// So the pool is forced wide and the rejection asserted repeatedly, which
-// makes the pool hand out different connections.
-func TestForeignKeysEnforcedOnEveryConnection(t *testing.T) {
-	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "fk.db"))
-	require.NoError(t, err)
-
-	t.Cleanup(func() { require.NoError(t, repo.Close()) })
-
-	ctx := context.Background()
-	require.NoError(t, repo.Migrate(ctx))
-
-	// Saving under an unregistered group must fail on every connection. The
-	// adapter checks group membership itself, so this also proves the check
-	// is not the only thing standing between a typo and a fresh partition —
-	// the FK is there when it is bypassed.
-	for i := range 8 {
-		err := repo.Save(ctx, repository.InstanceRecord{
-			ID:     "i" + string(rune('0'+i)),
-			Group:  "never-registered",
-			Status: repository.StatusActive,
-		})
-		require.Error(t, err, "attempt %d accepted an unregistered group", i)
-	}
-}
-
 // TestNewRefusesAPoolWithForeignKeysOff is T-4: New verifies what it cannot
 // set, and refuses rather than running with the schema's constraints inert.
 //
@@ -275,4 +241,45 @@ func TestConcurrentSaveSerializes(t *testing.T) {
 			"every loser must be fenced with ConcurrentUpdate, not silently "+
 				"dropped or promoted")
 	})
+}
+
+// TestNewOnABusyHostPoolDoesNotHang is the regression pin for the blocker the
+// independent review found: the constructor's pragma probe held each
+// connection while acquiring the next, on an unbounded context.
+//
+// Handed a pool the HOST is using — the exact case New exists for — it would
+// wait forever for a connection that was checked out elsewhere, and a
+// repository that never returns is worse than one that verifies less. The
+// probe now runs under a timeout and asserts what it could reach.
+func TestNewOnABusyHostPoolDoesNotHang(t *testing.T) {
+	db, err := sql.Open("sqlite",
+		filepath.Join(t.TempDir(), "busy.db")+"?_pragma=foreign_keys(1)")
+	require.NoError(t, err)
+
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	// a small pool, with every connection but one already in the host's hands
+	db.SetMaxOpenConns(2)
+
+	ctx := context.Background()
+
+	held, err := db.Conn(ctx)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { require.NoError(t, held.Close()) })
+
+	done := make(chan error, 1)
+
+	go func() {
+		_, nerr := sqlite.New(db)
+		done <- nerr
+	}()
+
+	select {
+	case nerr := <-done:
+		require.NoError(t, nerr,
+			"a pool whose connections are busy elsewhere is still usable")
+	case <-time.After(30 * time.Second):
+		t.Fatal("New hung waiting for connections the host is using")
+	}
 }

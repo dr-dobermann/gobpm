@@ -34,6 +34,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
@@ -47,6 +48,11 @@ const errorClass = "SQLITE_REPO"
 
 // driverName is modernc.org/sqlite's registered name.
 const driverName = "sqlite"
+
+// probeTimeout bounds the constructor's pragma verification. It is short
+// because the probe competes with the HOST for connections of a pool it does
+// not own; waiting longer would trade a slow start for a hung one.
+const probeTimeout = 2 * time.Second
 
 // requiredPragmas are the connection settings the adapter's guarantees rest
 // on. They are DSN parameters rather than post-open statements because
@@ -153,14 +159,30 @@ func openDSN(
 	return r, nil
 }
 
-// dsn builds the connection string for path, appending the required pragmas.
+// dsn builds the connection string for path, appending the required pragmas
+// and the transaction mode.
+//
+// The separator is chosen rather than assumed: SQLite accepts URI filenames
+// that already carry parameters ("file:app.db?cache=shared"), and appending a
+// second "?" would fold every pragma into the previous parameter's VALUE —
+// leaving the settings silently unapplied, which for foreign_keys means the
+// schema's constraints quietly stop being enforced.
 func dsn(path string) string {
-	q := make(url.Values, len(requiredPragmas))
+	q := make(url.Values, len(requiredPragmas)+1)
 	for _, p := range requiredPragmas {
 		q.Add("_pragma", p)
 	}
 
-	return path + "?" + q.Encode()
+	// Migrations must take the write lock at BEGIN rather than upgrading to
+	// it mid-transaction — see Migrate.
+	q.Set("_txlock", "immediate")
+
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+
+	return path + sep + q.Encode()
 }
 
 // New wraps an already-open *sql.DB, for a host that manages its own pool.
@@ -189,9 +211,13 @@ func newRepo(db *sql.DB, owns bool, opts ...Option) (*Repo, error) {
 		}
 	}
 
-	if err := r.checkForeignKeys(context.Background()); err != nil {
+	ctx := context.Background()
+
+	if err := r.checkForeignKeys(ctx); err != nil {
 		return nil, err
 	}
+
+	r.warnMissingConcurrencyPragmas(ctx)
 
 	return r, nil
 }
@@ -206,12 +232,19 @@ func (r *Repo) checkForeignKeys(ctx context.Context) error {
 	probes := 4
 
 	// Never ask for more connections than the pool may open. A pool capped at
-	// one — which OpenMemory needs — would otherwise block forever on the
-	// second probe, since this holds each connection while acquiring the next.
+	// one — which OpenMemory needs — would otherwise block on the second
+	// probe, since this holds each connection while acquiring the next.
 	if maxConns := r.db.Stats().MaxOpenConnections; maxConns > 0 &&
 		maxConns < probes {
 		probes = maxConns
 	}
+
+	// And never wait indefinitely for one. New may be handed a pool the HOST
+	// is using, whose connections are checked out elsewhere; holding what we
+	// get while blocking for more would hang the constructor, and a
+	// repository that never returns is worse than one that verifies less.
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
 
 	conns := make([]*sql.Conn, 0, probes)
 
@@ -228,7 +261,17 @@ func (r *Repo) checkForeignKeys(ctx context.Context) error {
 		// connection four times over.
 		c, err := r.db.Conn(ctx)
 		if err != nil {
-			return opErr("acquiring a connection", "", err)
+			if i == 0 {
+				return opErr("acquiring a connection", "", err)
+			}
+
+			// The pool would not give us another within the timeout — the
+			// host is using them. What we could reach was configured, which
+			// is the most this constructor can honestly assert.
+			r.logger.Debug("sqlite: verified foreign keys on a subset of the"+
+				" pool", "checked", i, "wanted", probes)
+
+			return nil
 		}
 
 		conns = append(conns, c)
@@ -251,6 +294,35 @@ func (r *Repo) checkForeignKeys(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// warnMissingConcurrencyPragmas reports, without refusing, a pool that lacks
+// the settings which make contention survivable.
+//
+// The asymmetry with foreign_keys is deliberate and is about what each pragma
+// costs to get wrong. foreign_keys decides whether the schema's constraints
+// exist at all, so a pool without it is REFUSED — the store would silently
+// accept rows it must reject. WAL and busy_timeout decide how the store
+// behaves when two writers meet: without them a contended write fails
+// immediately with SQLITE_BUSY instead of waiting. That is a degraded store,
+// not an incorrect one, and refusing a host's pool over it would be this
+// adapter overruling a choice that is legitimately the host's.
+func (r *Repo) warnMissingConcurrencyPragmas(ctx context.Context) {
+	var mode string
+	if err := r.db.QueryRowContext(
+		ctx, "PRAGMA journal_mode",
+	).Scan(&mode); err == nil && !strings.EqualFold(mode, "wal") {
+		r.logger.Warn("sqlite: journal_mode is not WAL; readers will block "+
+			"behind a writer", "journal_mode", mode)
+	}
+
+	var busy int
+	if err := r.db.QueryRowContext(
+		ctx, "PRAGMA busy_timeout",
+	).Scan(&busy); err == nil && busy == 0 {
+		r.logger.Warn("sqlite: busy_timeout is 0; a contended write will fail " +
+			"immediately instead of waiting")
+	}
 }
 
 // ClusterCompatibility declares the adapter unsafe to share between engines

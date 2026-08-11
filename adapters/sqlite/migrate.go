@@ -73,11 +73,18 @@ func parseMigrations(names []string) ([]migration, error) {
 // transaction that re-checks the current version. Re-running over an
 // up-to-date database is a no-op.
 //
-// There is no advisory lock, unlike the postgres adapter. SQLite permits a
-// single writer at a time and a write transaction takes that lock, so two
-// engines migrating the same file serialize on the database itself — the
-// property that makes SQLite unsuitable for a cluster is the one that makes
-// this simple.
+// There is no advisory lock, unlike the postgres adapter: SQLite permits a
+// single writer, so two engines migrating one file serialize on the database
+// itself. That only holds because the connection is opened with
+// _txlock=immediate.
+//
+// The default is DEFERRED, under which a transaction takes no write lock at
+// BEGIN. Two concurrent migrators would then both read the current version
+// under a shared lock and both try to upgrade while the other holds one,
+// which SQLite cannot grant — they deadlock rather than serialize, and the
+// loser gets SQLITE_BUSY rather than waiting its turn. IMMEDIATE takes the
+// write lock up front, which is what turns "one writer" into "one at a
+// time".
 func (r *Repo) Migrate(ctx context.Context) error {
 	if _, err := r.db.ExecContext(ctx,
 		"CREATE TABLE IF NOT EXISTS schema_version ("+
