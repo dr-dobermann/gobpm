@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Adapter lifecycle and observation hooks** (SRD-088, closes #269).
+  `renv.Starter`, `renv.Stopper`, `renv.HealthChecker` and
+  `renv.RuntimeAware` join `Migrator` and `ClusterAware` in
+  `pkg/renv/capabilities.go`. All are optional and satisfied
+  structurally — an adapter implements one by having the method. The
+  engine calls them at named per-seam sites in a fixed order, because
+  shutdown has one: the message broker stops accepting before the
+  repository closes, and telemetry flushes after everything it
+  observes. `Stop` is idempotent by contract, so an adapter the host
+  started before the engine existed can be stopped by either.
+  `Thresher.HealthCheck` asks every seam and joins what they report.
+- **Four conformance helpers for adapter authors** (SRD-088):
+  `messagingtest`, `expressiontest`, `taskstest` and `authtest`, the
+  names ADR-003 §4.2 had listed but nothing provided. Each publishes
+  its port's contract as `Conformance(t, factory)` — one line in an
+  adapter's test — and each carries a negative control proving the
+  suite can fail. `messagingtest` and `taskstest` also publish
+  `Waits()`/`SetWaits()`, so an adapter over a remote backend can widen
+  bounds tuned for an in-process one.
+- **A dependency-free Script Task engine** (SRD-088):
+  `pkg/script/gofunc` runs a Go function the host registered under a
+  name, the same move `gooper` makes for Service Tasks. It is opt-in —
+  an auto-wired empty registry would be `##None` with a longer name —
+  and `adapters/lua` remains the choice for interpreted source.
+
+### Changed
+
+- **A process whose Script Task no configured engine can run is refused
+  at registration** (SRD-088). `RegisterProcess` walks the model, nested
+  Sub-Processes included, and rejects any Script Task whose
+  `scriptFormat` no wired engine claims — naming the task, the format,
+  the formats that ARE registered, and the option to wire one. This
+  moves an existing failure earlier: it previously surfaced
+  asynchronously, inside an already-running instance, as an incident.
+  **Migration:** a model with a Script Task now needs its engine wired
+  before `RegisterProcess`, not before the token arrives.
+- **`pkg/**` may not import `internal/`** (SRD-088), enforced by
+  depguard, excepting the `pkg/thresher` facade. This is what makes a
+  bundled battery a reference implementation an outside author can
+  copy.
+- **The examples are linted** (SRD-088). An `exclusions.paths` entry had
+  been suppressing every finding across all 49 example modules, so the
+  `examples-no-internal` rule had never fired. 198 real issues surfaced
+  and are fixed.
+
+### Fixed
+
+- **`goexpr.Engine.Evaluate` panicked on a nil expression** (SRD-088)
+  where `lite` returns a named error — a public extension point turning
+  a caller's bug into a library crash. A nil *source* is still passed
+  through, deliberately: a `GExpression` may carry one bound at
+  construction.
+- **A failed start left already-started adapters running** (SRD-088).
+  `startSeams` now unwinds the started prefix in reverse before
+  returning, joining any rollback failure onto the cause rather than
+  replacing it.
+- **A replaced Data Store stayed in the lifecycle** (SRD-088).
+  `WithDataStore` documented replace-by-ref and the registry honoured
+  it, but the lifecycle list appended — so a superseded store was still
+  started, health-checked and stopped while serving no reference.
+- **`gofunc` could register an unreachable script** (SRD-088): the name
+  was stored untrimmed and looked up trimmed, so a padded registration
+  failed as "no script registered" on a name plainly in the registry.
+
 ### Changed
 
 - **BREAKING: instance discovery queries compose** (SRD-084, closes
