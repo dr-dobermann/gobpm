@@ -25,6 +25,13 @@ var ErrInjected = errors.New("messagingtest: injected failure")
 // nothing. Tests that need real delivery use membroker; tests that need a
 // refusal use this. Mixing the two concerns into one double would make every
 // caller carry the configuration of the half it does not use.
+//
+// CONFIGURATION IS NOT CONCURRENCY-SAFE. Every exported field below is read on
+// the calling component's goroutine, when it calls the broker — set them all
+// before handing the broker to whatever will use it, and do not change them
+// afterwards. There are deliberately no setters: a test that needs to change a
+// broker's behavior mid-run builds a second broker, and mutex-guarded knobs
+// would buy an API nobody needs at the cost of hiding that fact.
 type FailingBroker struct {
 	// SubscribeErr, when set, makes Subscribe fail.
 	SubscribeErr error
@@ -38,7 +45,14 @@ type FailingBroker struct {
 	// caller cannot reach that window from outside, because Subscribe
 	// returning is what closes it.
 	OnSubscribe func()
-	subs        []*FailingSubscription
+	// OnAddKey, when set, runs INSIDE AddKey on every subscription this broker
+	// hands out, before the key is recorded or refused. A test that blocks in
+	// it holds the caller inside the broker call for as long as it likes,
+	// which is how a timing property — "the engine is not holding its lock
+	// while it talks to me" — becomes assertable: the real broker returns too
+	// fast to observe, and sleeping instead only makes the assertion flaky.
+	OnAddKey func(key string)
+	subs     []*FailingSubscription
 	// AddKeyAfter lets the first N AddKey calls succeed before AddKeyErr
 	// starts being returned — for the path where a subscription is built
 	// with some keys and then refuses a later one. Ignored when AddKeyErr
@@ -79,6 +93,7 @@ func (b *FailingBroker) Subscribe(
 		ch:       make(chan messaging.Envelope),
 		addErr:   b.AddKeyErr,
 		addAfter: b.AddKeyAfter,
+		onAddKey: b.OnAddKey,
 	}
 
 	b.mu.Lock()
@@ -108,6 +123,7 @@ type FailingSubscription struct {
 
 	ch       chan messaging.Envelope
 	addErr   error
+	onAddKey func(key string)
 	added    []string
 	addAfter int
 	closed   bool
@@ -119,6 +135,13 @@ func (s *FailingSubscription) C() <-chan messaging.Envelope { return s.ch }
 
 // AddKey records the key, or fails as configured.
 func (s *FailingSubscription) AddKey(key string) error {
+	// Before the lock: a test may block here for as long as it likes, and a
+	// blocked hook must not also freeze Added() or Unsubscribe() — the very
+	// calls the test uses to observe what it is blocking.
+	if s.onAddKey != nil {
+		s.onAddKey(key)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -137,6 +160,18 @@ func (s *FailingSubscription) Added() []string {
 	defer s.mu.Unlock()
 
 	return append([]string(nil), s.added...)
+}
+
+// Unsubscribed reports whether the subscription has been torn down. It is the
+// observable behind "the engine gave the subscription back instead of leaving
+// it partly keyed" — an assertion on the error alone would pass for code that
+// reports the failure and keeps the subscription, which is the bug (FIX-041
+// §4.3).
+func (s *FailingSubscription) Unsubscribed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.closed
 }
 
 // Unsubscribe closes the channel once; a second call is a no-op, as the

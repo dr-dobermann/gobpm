@@ -3,6 +3,7 @@ package messagingtest
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -172,6 +173,63 @@ func TestFailingSubscriptionUnsubscribeIsIdempotent(t *testing.T) {
 	// tests for a reason that has nothing to do with what they assert.
 	if err = sub.Unsubscribe(); err != nil {
 		t.Fatalf("second Unsubscribe: %v", err)
+	}
+}
+
+func TestFailingSubscriptionReportsUnsubscribed(t *testing.T) {
+	b := &FailingBroker{}
+
+	sub, err := b.Subscribe(context.Background(), "order placed")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	fs, ok := sub.(*FailingSubscription)
+	if !ok {
+		t.Fatalf("Subscribe returned %T, want *FailingSubscription", sub)
+	}
+
+	if fs.Unsubscribed() {
+		t.Error("a fresh subscription must not report itself unsubscribed")
+	}
+
+	if err = fs.Unsubscribe(); err != nil {
+		t.Fatalf("Unsubscribe: %v", err)
+	}
+
+	if !fs.Unsubscribed() {
+		t.Error("Unsubscribed must report the teardown that happened")
+	}
+}
+
+func TestFailingSubscriptionRunsTheAddKeyHook(t *testing.T) {
+	var seen []string
+
+	b := &FailingBroker{
+		AddKeyErr:   ErrInjected,
+		AddKeyAfter: 1,
+		OnAddKey:    func(key string) { seen = append(seen, key) },
+	}
+
+	sub, err := b.Subscribe(context.Background(), "order placed")
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	if err = sub.AddKey("first"); err != nil {
+		t.Fatalf("AddKey(first): %v", err)
+	}
+
+	// The hook runs on the REFUSED call too: a test that blocks in it to hold
+	// the caller inside the broker must not have that window depend on whether
+	// the key is about to be accepted.
+	if err = sub.AddKey("second"); !errors.Is(err, ErrInjected) {
+		t.Fatalf("AddKey(second) = %v, want ErrInjected", err)
+	}
+
+	want := []string{"first", "second"}
+	if !slices.Equal(seen, want) {
+		t.Errorf("hook saw %v, want %v", seen, want)
 	}
 }
 
