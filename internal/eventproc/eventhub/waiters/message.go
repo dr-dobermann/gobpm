@@ -44,20 +44,43 @@ type messageWaiter struct {
 	name       string
 	id         string
 	processors []eventproc.EventProcessor
-	state      eventproc.EventWaiterState
-	m          sync.Mutex
+	// pendingKeys holds correlation keys learned BEFORE the broker
+	// subscription exists. They used to be dropped, which lost a
+	// Multi-Instance iteration's key whenever it was derived while a
+	// sibling's registration was still inside Subscribe — the envelope
+	// then matched no subscription and waited in the broker's inbox
+	// forever (#320).
+	pendingKeys []string
+	state       eventproc.EventWaiterState
+	m           sync.Mutex
 }
 
 // AddKey extends the waiter's broker subscription with key (SRD-017 §4.5 lazy
-// association). It is safe before Service has subscribed (a nil subscription is
-// a no-op) — the receiver then picks the key up from its instance's grown
-// key-set when it does subscribe.
+// association).
+//
+// Before Service has subscribed the key is BUFFERED, not discarded. v.1
+// returned nil there, reasoning that the receiver would pick the key up from
+// its instance's grown key-set when it did subscribe — true only when the key
+// reaches the instance before Service reads it. A Multi-Instance iteration
+// that derived its key while a sibling's registration was inside Subscribe
+// lost it silently, and its envelope then matched no subscription and waited
+// in the broker's inbox forever (#320).
 func (mw *messageWaiter) AddKey(key string) error {
+	mw.m.Lock()
+
 	if mw.sub == nil {
+		mw.pendingKeys = append(mw.pendingKeys, key)
+		mw.m.Unlock()
+
 		return nil
 	}
 
-	return mw.sub.AddKey(key)
+	sub := mw.sub
+	mw.m.Unlock()
+
+	// outside the lock: the subscription belongs to the host's broker, and
+	// the engine does not hold its own lock across a host call.
+	return sub.AddKey(key)
 }
 
 // NewMessageWaiter builds a messageWaiter for a MessageEventDefinition. It
@@ -135,13 +158,60 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	}
 
 	mw.m.Lock()
-	defer mw.m.Unlock()
 
-	if idx := slices.Index(mw.processors, ep); idx == -1 {
-		mw.processors = append(mw.processors, ep)
+	if idx := slices.Index(mw.processors, ep); idx != -1 {
+		mw.m.Unlock()
+
+		return nil
+	}
+
+	mw.processors = append(mw.processors, ep)
+
+	// A JOINING processor brings its own correlation keys, and the
+	// subscription was created from the keys of whoever registered first.
+	// Without this, a Multi-Instance iteration that joins an existing
+	// waiter is unreachable by its own key: its envelope matches no
+	// subscription and waits in the broker's inbox (#320). The lazy
+	// AddEventKey path cannot be relied on for it — it silently no-ops
+	// while the waiter is not yet in the hub's map.
+	keys := processorKeys(ep)
+
+	if mw.sub == nil {
+		mw.pendingKeys = append(mw.pendingKeys, keys...)
+		mw.m.Unlock()
+
+		return nil
+	}
+
+	sub := mw.sub
+	mw.m.Unlock()
+
+	for _, k := range keys {
+		if err := sub.AddKey(k); err != nil {
+			return errs.New(
+				errs.M("couldn't extend the subscription for a joining "+
+					"processor"),
+				errs.C(MessageWaiterError, errs.OperationFailed),
+				errs.D(observability.AttrMessageName, mw.name),
+				errs.E(err))
+		}
 	}
 
 	return nil
+}
+
+// processorKeys reads the correlation keys a processor answers to, if it
+// answers to any: a plain track has none, an instance carrying conversation
+// or iteration keys has several.
+func processorKeys(ep eventproc.EventProcessor) []string {
+	kp, ok := ep.(interface {
+		CorrelationKeys() []string
+	})
+	if !ok {
+		return nil
+	}
+
+	return kp.CorrelationKeys()
 }
 
 // RemoveEventProcessor removes ep from the waiter's processor list.
@@ -198,14 +268,10 @@ func (mw *messageWaiter) Process(eDef flow.EventDefinition) error {
 // processor that declares none (the instance-starter) contributes nothing,
 // leaving a wildcard subscription.
 func (mw *messageWaiter) subscriptionKeys() []string {
-	var keys []string
+	keys := make([]string, 0, len(mw.processors))
 
 	for _, p := range mw.processors {
-		if kp, ok := p.(interface {
-			CorrelationKeys() []string
-		}); ok {
-			keys = append(keys, kp.CorrelationKeys()...)
-		}
+		keys = append(keys, processorKeys(p)...)
 	}
 
 	return keys
@@ -219,7 +285,14 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.D("current_state", mw.state.String()))
 	}
 
-	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, mw.subscriptionKeys()...)
+	// Snapshot the keys known now — the processors' own, plus anything
+	// buffered by AddKey before this point.
+	mw.m.Lock()
+	consumed := len(mw.pendingKeys)
+	keys := append(mw.subscriptionKeys(), mw.pendingKeys...)
+	mw.m.Unlock()
+
+	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, keys...)
 	if err != nil {
 		mw.state = eventproc.WSFailed
 
@@ -230,7 +303,25 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.E(err))
 	}
 
+	// Publishing the subscription and collecting whatever AddKey buffered
+	// WHILE Subscribe was running is one step: after this, AddKey applies
+	// directly and nothing more accumulates.
+	mw.m.Lock()
 	mw.sub = sub
+	late := append([]string(nil), mw.pendingKeys[consumed:]...)
+	mw.pendingKeys = nil
+	mw.m.Unlock()
+
+	for _, k := range late {
+		if aerr := sub.AddKey(k); aerr != nil {
+			return errs.New(
+				errs.M("couldn't apply a key learned during subscribe"),
+				errs.C(MessageWaiterError, errs.OperationFailed),
+				errs.D(observability.AttrMessageName, mw.name),
+				errs.E(aerr))
+		}
+	}
+
 	mw.state = eventproc.WSRunned
 	mw.stopCh = make(chan struct{})
 	mw.done = make(chan struct{})
