@@ -17,6 +17,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // importer converts BPMN 2.0 XML into a *process.Process over the
@@ -569,7 +570,17 @@ func (p *parser) parseServiceTask(
 	// BPMN carries `implementation` on the serviceTask itself. Without the
 	// carrier the attribute had nowhere to land, so export wrote a value
 	// import could never read back.
-	if impl := strings.TrimSpace(attrValue(se, "implementation")); impl != "" {
+	//
+	// The name comes from the observability vocabulary because the two
+	// collide by spelling and the repo enforces the constant
+	// (internal/lintcfg TestNoLiteralAttrKeys). They are NOT the same thing
+	// — BPMN fixes this attribute name, a log key can be renamed — so
+	// TestImplementationAttrNameMatchesTheStandard pins the equality; a
+	// vocabulary rename fails there instead of silently reading an
+	// attribute no document carries.
+	if impl := strings.TrimSpace(
+		attrValue(se, observability.AttrImplementation),
+	); impl != "" {
 		opts = append(opts, activities.WithImplementation(impl))
 	}
 

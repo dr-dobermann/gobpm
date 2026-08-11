@@ -7,6 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // implDoc is a serviceTask carrying the BPMN implementation hint.
@@ -81,5 +82,28 @@ func TestServiceTaskImplementationDefaultsToTheOperation(t *testing.T) {
 
 	if out := exportOnce(t, doc); strings.Contains(out, "implementation=") {
 		t.Errorf("export wrote an unspecified implementation:\n%s", out)
+	}
+}
+
+// TestImplementationAttrNameMatchesTheStandard guards the one risk in
+// reading a BPMN attribute name out of the observability vocabulary.
+//
+// The importer uses observability.AttrImplementation as the attribute
+// name because the repo enforces the constant wherever its spelling
+// appears (internal/lintcfg TestNoLiteralAttrKeys). But the two are
+// different things that merely spell the same: BPMN fixes
+// `implementation` on the serviceTask permanently, while a log key may be
+// renamed at any time. Without this pin, such a rename would make the
+// parser read an attribute no document carries — and the hint would go
+// back to being silently dropped, with every other test still green.
+func TestImplementationAttrNameMatchesTheStandard(t *testing.T) {
+	const bpmnAttr = "implementation"
+
+	if observability.AttrImplementation != bpmnAttr {
+		t.Fatalf("observability.AttrImplementation = %q, but BPMN names the "+
+			"serviceTask attribute %q (elements/activities.md:92) — the importer "+
+			"reads the attribute through that constant, so they must agree; "+
+			"give the converter its own constant if the vocabulary needs to move",
+			observability.AttrImplementation, bpmnAttr)
 	}
 }
