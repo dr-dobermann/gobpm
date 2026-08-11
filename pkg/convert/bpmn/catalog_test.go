@@ -38,6 +38,35 @@ func catalogDoc(rootElements string) string {
 </bpmn:definitions>`
 }
 
+// TestCatalogTagsMatchTheStandard guards the risk in reading three BPMN
+// element names out of the observability vocabulary.
+//
+// The converter uses the Attr* constants because the repo enforces them
+// wherever their spelling appears (internal/lintcfg TestNoLiteralAttrKeys).
+// But a BPMN element name and a log key are different things that merely
+// spell alike: the standard fixes <signal>, <error> and <escalation>
+// permanently, while a log key may be renamed at any time. Without this
+// pin such a rename would make the parser look for elements no document
+// contains — every catalog would come up empty, and every other test
+// would still be green.
+func TestCatalogTagsMatchTheStandard(t *testing.T) {
+	for _, tc := range []struct {
+		constant, got, want string
+	}{
+		{"observability.AttrSignal", tagSignal, "signal"},
+		{"observability.AttrError", tagError, "error"},
+		{"observability.AttrEscalation", tagEscalation, "escalation"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %q, but BPMN names the element <%s> "+
+				"(elements/event-definitions.md:230-318) — the parser reads "+
+				"the element through that constant, so they must agree; give "+
+				"the converter its own constant if the vocabulary needs to move",
+				tc.constant, tc.got, tc.want)
+		}
+	}
+}
+
 // TestCatalogElementsImport covers SRD-089.D §6 T-1 (FR-1): the four
 // definitions-level objects an event definition refers to become model
 // objects indexed by id, and the two that carry a code carry it through.

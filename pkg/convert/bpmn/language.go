@@ -83,53 +83,97 @@ func resolveLanguage(declared, docDefault, body string) (exprLang, string) {
 	return languages[lang], lang
 }
 
-// newCondition builds a sequence flow's condition, or reports why it
-// cannot be built. docLang is the document's expressionLanguage, which an
-// expression declaring none inherits.
-func newCondition(fs flowSpec, docLang string) (data.FormalExpression, error) {
-	kind, lang := resolveLanguage(fs.condLang, docLang, fs.condBody)
+// exprSpec is one expression as a document wrote it, detached from
+// whatever element carried it.
+//
+// A sequence flow's <conditionExpression> is one; so is the condition of
+// a <conditionalEventDefinition> and the instant of a <timeDate>, neither
+// of which belongs to a flow. The expression layer is about a body and a
+// language, and taking a flowSpec would make every non-flow caller
+// invent one.
+type exprSpec struct {
+	// ownerKind and ownerID name the element carrying the expression, so
+	// a refusal points at something a reader can find in the file.
+	ownerKind string
+	ownerID   string
+	// role is what that element calls this expression — "condition",
+	// "timeDate". It names the expression in a refusal and supplies the
+	// id when the expression declared none.
+	role string
+	// id is the expression's own id, empty when it declared none.
+	id   string
+	lang string
+	body string
+}
 
-	body := fs.condBody
+// exprID is the id to mint the expression under: its own, or one derived
+// from its owner when BPMN's optional id is absent.
+func (s exprSpec) exprID() string {
+	if s.id != "" {
+		return s.id
+	}
+
+	return s.ownerID + ":" + s.role
+}
+
+// runnableBody resolves which language an expression is written in and
+// returns the body to mint, translating JUEL on the way. docLang is the
+// document's expressionLanguage, which an expression declaring none
+// inherits.
+func runnableBody(s exprSpec, docLang string) (string, error) {
+	kind, lang := resolveLanguage(s.lang, docLang, s.body)
 
 	switch kind {
 	case langLite:
-		// as written
+		return s.body, nil
 
 	case langJUEL:
-		translated, err := translateJUEL(fs.condBody)
-		if err != nil {
-			return nil, err
-		}
-
-		body = translated
-
-	case langRefused:
-		return nil, unsupportedLanguage(fs.id, lang)
+		return translateJUEL(s.body)
 	}
 
-	id := fs.condID
-	if id == "" {
-		id = fs.id + ":condition"
+	return "", unsupportedLanguage(s, lang)
+}
+
+// newBoolExpression mints an expression that must evaluate to a boolean:
+// a sequence flow's condition, or a conditional event definition's.
+//
+// lite.Cond, not a hand-rolled TextExpression: it is the library's own
+// way to mint a condition, and it already declares the bool result the
+// condition paths require before evaluating. Duplicating that here would
+// be a second place for the requirement to drift from.
+func newBoolExpression(s exprSpec, docLang string) (data.FormalExpression, error) {
+	body, err := runnableBody(s, docLang)
+	if err != nil {
+		return nil, err
 	}
 
-	// lite.Cond, not a hand-rolled TextExpression: it is the library's own
-	// way to mint a condition, and it already declares the bool result the
-	// condition paths require before evaluating. Duplicating that here
-	// would be a second place for the requirement to drift from.
-	return lite.Cond(body, foundation.WithID(id))
+	return lite.Cond(body, foundation.WithID(s.exprID()))
+}
+
+// newCondition builds a sequence flow's condition, or reports why it
+// cannot be built.
+func newCondition(fs flowSpec, docLang string) (data.FormalExpression, error) {
+	return newBoolExpression(exprSpec{
+		ownerKind: tagSequenceFlow,
+		ownerID:   fs.id,
+		role:      "condition",
+		id:        fs.condID,
+		lang:      fs.condLang,
+		body:      fs.condBody,
+	}, docLang)
 }
 
 // unsupportedLanguage reports an expression the converter cannot make
 // runnable, naming the language so the modeler knows what to change.
-func unsupportedLanguage(flowID, lang string) error {
+func unsupportedLanguage(s exprSpec, lang string) error {
 	named := lang
 	if named == "" {
 		named = "(none declared, and none inferable)"
 	}
 
 	return errs.New(
-		errs.M("bpmn: sequenceFlow %q carries a condition in %s, which this "+
-			"converter cannot evaluate; %s is the supported language",
-			flowID, named, lite.Language),
+		errs.M("bpmn: %s %q carries a %s in %s, which this converter cannot "+
+			"evaluate; %s is the supported language",
+			s.ownerKind, s.ownerID, s.role, named, lite.Language),
 		errs.C(errorClass, errs.InvalidParameter))
 }

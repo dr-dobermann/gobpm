@@ -142,6 +142,25 @@ type flowSpec struct {
 	hasCond          bool
 }
 
+// nodeSpec is a flow node as pass 1 read it: its element, its id and
+// name, and what its children contributed — everything its constructor
+// will need.
+//
+// The node is not built yet, and the reason is the document's own
+// freedom of order. Definitions.rootElements is an unordered 0..*
+// collection and Process is itself a RootElement
+// (elements/foundation.md:23), so the <message> a message start event
+// refers to may be declared AFTER the <process> containing it. A
+// constructor that takes that message positionally cannot run until the
+// whole document has been read, and building only SOME nodes late would
+// mean two construction paths and two places for an element to be
+// wired differently.
+type nodeSpec struct {
+	se       xml.StartElement
+	id, name string
+	body     nodeBody
+}
+
 // opSpec is a definitions-level <bpmn:operation> collected before process
 // wiring so serviceTask operationRef can resolve (SRD-051 §4.6).
 type opSpec struct {
@@ -171,9 +190,13 @@ type assembly struct {
 	// refers to it — rootElements is an unordered 0..* collection
 	// (elements/foundation.md:23) — so entries keep arriving while the
 	// assembly exists.
-	cat   *catalog
-	nodes []flow.Node // document order
-	flows []flowSpec
+	cat *catalog
+	// declared is the pass-1 id table: which element claimed each id.
+	// byID cannot serve, because the nodes it maps to do not exist until
+	// pass 2 (see nodeSpec).
+	declared map[string]string
+	specs    []nodeSpec // document order
+	flows    []flowSpec
 	// refs are the forward references pass 1 could not resolve because
 	// their target had not been parsed yet (SRD-089.A §FR-2).
 	refs []pendingRef
@@ -233,7 +256,7 @@ func (p *parser) parse() (*process.Process, error) {
 		return nil, err
 	}
 
-	return build(asm)
+	return build(p, asm)
 }
 
 // rootElement advances the stream to the root start element and checks it is
@@ -462,6 +485,7 @@ func (p *parser) newAssembly(id, name string, docs []docSpec) (*assembly, error)
 	return &assembly{
 		proc:         proc,
 		byID:         make(map[string]flow.Node),
+		declared:     make(map[string]string),
 		interfaces:   p.interfaces,
 		ops:          p.ops,
 		cat:          p.cat,
@@ -479,25 +503,23 @@ func (p *parser) parseFlowElement(asm *assembly, se xml.StartElement) error {
 	return p.settle(ctxProcess, se)
 }
 
-// parseNode parses a single flow node element (event, task or gateway),
-// builds the corresponding model node with its BPMN id and records it in the
-// assembly.
+// parseNode reads a single flow node element (event, task or gateway)
+// and records what its constructor will need. The node itself is built in
+// pass 2 — see nodeSpec.
 func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 	id, err := requiredID(se)
 	if err != nil {
 		return err
 	}
 
-	if _, dup := asm.byID[id]; dup {
+	if kind, dup := asm.declared[id]; dup {
 		return errs.New(
-			errs.M("bpmn: duplicate flow-element id %q on <%s>", id, se.Name.Local),
+			errs.M("bpmn: duplicate flow-element id %q on <%s>; <%s> already "+
+				"declared it", id, se.Name.Local, kind),
 			errs.C(errorClass, errs.DuplicateObject))
 	}
 
-	name := attrValue(se, "name")
-
-	build, ok := nodeBuilders[se.Name.Local]
-	if !ok {
+	if _, ok := nodeBuilders[se.Name.Local]; !ok {
 		// Unreachable through the process table, which only routes names
 		// this table also carries — a guard against the two drifting.
 		return errs.New(
@@ -506,8 +528,8 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 	}
 
 	// The body is read BEFORE the node is built: documentation can only
-	// reach an element through a construction option, and from the next
-	// stage on the children decide which node to construct at all.
+	// reach an element through a construction option, and the children
+	// decide which node to construct at all.
 	outer := p.owner
 	p.owner = id
 
@@ -519,19 +541,60 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 		return err
 	}
 
-	node, err := build(p, asm, se, id, name, body)
-	if err != nil {
-		// Do not re-wrap already-classified converter errors (unknown
-		// operationRef, invalid gatewayDirection, …) — preserve class for
-		// errors.As / HasClass (k8s/docker-style root-cause visibility).
-		return wrapErr(
-			fmt.Sprintf("bpmn: couldn't create %s %q", se.Name.Local, id),
-			errs.BulidingFailed,
-			err)
-	}
+	asm.specs = append(asm.specs, nodeSpec{
+		se:   se,
+		id:   id,
+		name: attrValue(se, "name"),
+		body: body,
+	})
+	asm.declared[id] = se.Name.Local
 
-	asm.nodes = append(asm.nodes, node)
-	asm.byID[id] = node
+	return nil
+}
+
+// buildNodes is the first half of pass 2: every flow node the document
+// declared, constructed in document order and added to the process.
+//
+// The owner is set around each construction so a report raised while
+// building — a dialect attribute the model cannot hold, say — names the
+// element that carried it rather than whatever was parsed last.
+func buildNodes(p *parser, asm *assembly) error {
+	// Indexed rather than ranged by value: a nodeSpec carries an element,
+	// a body and two names, and copying it per node buys nothing.
+	for i := range asm.specs {
+		s := &asm.specs[i]
+
+		// Presence was checked in pass 1, when refusing still had the
+		// element's position in the file to point at.
+		build := nodeBuilders[s.se.Name.Local]
+
+		outer := p.owner
+		p.owner = s.id
+
+		node, err := build(p, asm, s.se, s.id, s.name, s.body)
+
+		p.owner = outer
+
+		if err != nil {
+			// Do not re-wrap already-classified converter errors (unknown
+			// operationRef, invalid gatewayDirection, …) — preserve class for
+			// errors.As / HasClass (k8s/docker-style root-cause visibility).
+			return wrapErr(
+				fmt.Sprintf("bpmn: couldn't create %s %q", s.se.Name.Local, s.id),
+				errs.BulidingFailed,
+				err)
+		}
+
+		if err := asm.proc.Add(node); err != nil {
+			return errs.New(
+				errs.M("bpmn: couldn't add node %q to process %q",
+					node.ID(), asm.proc.ID()),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+		}
+
+		asm.byID[s.id] = node
+	}
 
 	return nil
 }
@@ -969,17 +1032,13 @@ func fallbackName(id, name string) string {
 	return name
 }
 
-// build is pass 2: nodes are added to the process, flows are linked
-// through the complete id→node table, every deferred reference is
-// resolved against the finished index, and the graph is validated.
-func build(asm *assembly) (*process.Process, error) {
-	for _, n := range asm.nodes {
-		if err := asm.proc.Add(n); err != nil {
-			return nil, errs.New(
-				errs.M("bpmn: couldn't add node %q to process %q", n.ID(), asm.proc.ID()),
-				errs.C(errorClass, errs.BulidingFailed),
-				errs.E(err))
-		}
+// build is pass 2: nodes are constructed and added to the process, flows
+// are linked through the complete id→node table, every deferred
+// reference is resolved against the finished index, and the graph is
+// validated.
+func build(p *parser, asm *assembly) (*process.Process, error) {
+	if err := buildNodes(p, asm); err != nil {
+		return nil, err
 	}
 
 	flowByID := make(map[string]*flow.SequenceFlow, len(asm.flows))

@@ -1,6 +1,9 @@
 package bpmn
 
-import "github.com/dr-dobermann/gobpm/pkg/convert"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/convert"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
+)
 
 // nsBPMN is the BPMN 2.0 model namespace (SRD-051 §FR-5).
 const nsBPMN = "http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -50,9 +53,19 @@ const (
 	tagScript           = "script"
 	tagBusinessRuleTask = "businessRuleTask"
 	tagMessage          = "message"
-	tagSignal           = "signal"
-	tagError            = "error"
-	tagEscalation       = "escalation"
+)
+
+// Three catalog element names collide by spelling with the observability
+// vocabulary, which the repo enforces wherever those spellings appear
+// (internal/lintcfg TestNoLiteralAttrKeys). They are NOT the same thing —
+// BPMN fixes these element names permanently, a log key may be renamed at
+// any time — so TestCatalogTagsMatchTheStandard pins the equality: a
+// vocabulary rename fails there instead of silently making the parser
+// look for elements no document contains.
+const (
+	tagSignal     = observability.AttrSignal
+	tagError      = observability.AttrError
+	tagEscalation = observability.AttrEscalation
 )
 
 func init() { //nolint:gochecknoinits // SRD-051 §FR-4: blank-import self-registration, the image.RegisterFormat idiom (ADR-024 §2.2)

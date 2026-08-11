@@ -457,6 +457,49 @@ func TestImportGatewayDefaultNotOutgoing(t *testing.T) {
 	})
 }
 
+// buildWithNode runs pass 2 over count specs whose constructor yields the
+// given node.
+//
+// The builder table is the seam because pass 2 constructs from specs, not
+// from ready nodes: a node cannot be handed to build() any more, since
+// construction is what pass 2 does (the catalog an event definition needs
+// may be declared after the process it is used in). What is under test
+// here is build's error handling, not how a node came to exist, so the
+// table stands in for a document that produces one.
+func buildWithNode(
+	t *testing.T, proc *process.Process, node flow.Node, count int,
+) (*process.Process, error) {
+	t.Helper()
+
+	saved := nodeBuilders[tagStartEvent]
+	nodeBuilders[tagStartEvent] = func(
+		_ *parser, _ *assembly, _ xml.StartElement, _, _ string, _ nodeBody,
+	) (flow.Node, error) {
+		return node, nil
+	}
+
+	t.Cleanup(func() { nodeBuilders[tagStartEvent] = saved })
+
+	specs := make([]nodeSpec, 0, count)
+	for i := 0; i < count; i++ {
+		specs = append(specs, nodeSpec{
+			se: xml.StartElement{
+				Name: xml.Name{Space: nsBPMN, Local: tagStartEvent},
+			},
+			id:   node.ID(),
+			name: node.Name(),
+		})
+	}
+
+	return build(
+		newParser(context.Background(), strings.NewReader("")),
+		&assembly{
+			proc:  proc,
+			byID:  map[string]flow.Node{},
+			specs: specs,
+		})
+}
+
 // TestBuildDefensiveBranches verifies pass-2 error propagation for a duplicate
 // node and for a process that fails its final model-level validation.
 func TestBuildDefensiveBranches(t *testing.T) {
@@ -471,10 +514,7 @@ func TestBuildDefensiveBranches(t *testing.T) {
 			t.Fatalf("NewStartEvent: %v", err)
 		}
 
-		got, err := build(&assembly{
-			proc:  proc,
-			nodes: []flow.Node{start, start},
-		})
+		got, err := buildWithNode(t, proc, start, 2)
 		if got != nil || err == nil || !strings.Contains(err.Error(), "couldn't add node") {
 			t.Fatalf("build = %v, %v; want node-add failure", got, err)
 		}
@@ -502,10 +542,7 @@ func TestBuildDefensiveBranches(t *testing.T) {
 			t.Fatalf("NewStartEvent: %v", err)
 		}
 
-		got, err := build(&assembly{
-			proc:  proc,
-			nodes: []flow.Node{start},
-		})
+		got, err := buildWithNode(t, proc, start, 1)
 		if got != nil || err == nil || !strings.Contains(err.Error(), "process \"invalid\" is invalid") {
 			t.Fatalf("build = %v, %v; want process-validation failure", got, err)
 		}
