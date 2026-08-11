@@ -2,7 +2,9 @@ package waiters_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
+	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -604,4 +607,118 @@ func TestJoinBeforeServiceAddsNoKeys(t *testing.T) {
 	// no Service yet — the join must succeed and simply record the processor
 	require.NoError(t, w.AddEventProcessor(joiner))
 	require.Len(t, w.EventProcessors(), 2)
+}
+
+// flakyKeyBroker wraps a real broker and fails the first AddKey on every
+// subscription it hands out.
+type flakyKeyBroker struct {
+	messaging.MessageBroker
+
+	mu    sync.Mutex
+	calls int
+}
+
+func (b *flakyKeyBroker) Subscribe(
+	ctx context.Context, name string, keys ...string,
+) (messaging.Subscription, error) {
+	sub, err := b.MessageBroker.Subscribe(ctx, name, keys...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &flakyKeySub{Subscription: sub, owner: b}, nil
+}
+
+func (b *flakyKeyBroker) addKeyCalls() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.calls
+}
+
+type flakyKeySub struct {
+	messaging.Subscription
+
+	owner *flakyKeyBroker
+}
+
+func (s *flakyKeySub) AddKey(key string) error {
+	s.owner.mu.Lock()
+	n := s.owner.calls
+	s.owner.calls++
+	s.owner.mu.Unlock()
+
+	if n == 0 {
+		return errors.New("broker refused the key")
+	}
+
+	return s.Subscription.AddKey(key)
+}
+
+// flakyKeyRuntime is enginert.Default with the broker swapped.
+type flakyKeyRuntime struct {
+	renv.EngineRuntime
+
+	broker messaging.MessageBroker
+}
+
+func (r flakyKeyRuntime) MessageBroker() messaging.MessageBroker {
+	return r.broker
+}
+
+// TestRetryAfterAKeyFailureReSubscribes pins the blocker the independent
+// review found in the joining-key fix.
+//
+// The processor is appended to the list BEFORE its keys are subscribed, so a
+// failed AddKey leaves it registered with its key missing. If the retry — the
+// very thing a caller does after this method returns an error — saw "already
+// present" and returned nil, the processor would be stranded exactly as it
+// was before the fix: registered, parked, and unreachable, now with a success
+// reported to the caller.
+func TestRetryAfterAKeyFailureReSubscribes(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	broker := &flakyKeyBroker{MessageBroker: membroker.New()}
+	rt := flakyKeyRuntime{EngineRuntime: enginert.Default(), broker: broker}
+
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
+
+	firstMock := mockeventproc.NewMockEventProcessor(t)
+	firstMock.EXPECT().ID().Return("first").Maybe()
+	firstMock.EXPECT().ProcessEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+
+	first := keyedProc{MockEventProcessor: firstMock, keys: []string{"k-a"}}
+
+	w, err := waiters.NewMessageWaiter(hub, first, eDef, "", rt)
+	require.NoError(t, err)
+	require.NoError(t, w.Service(ctx))
+
+	t.Cleanup(func() { require.NoError(t, w.Stop()) })
+
+	joinerMock := mockeventproc.NewMockEventProcessor(t)
+	joinerMock.EXPECT().ID().Return("joiner").Maybe()
+	joinerMock.EXPECT().ProcessEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+
+	joiner := keyedProc{MockEventProcessor: joinerMock, keys: []string{"k-b"}}
+
+	// first attempt: the broker refuses the key, so the join must FAIL rather
+	// than report a processor that cannot be reached.
+	require.Error(t, w.AddEventProcessor(joiner),
+		"a key the broker refused must surface, not be swallowed")
+
+	// the retry must actually retry
+	require.NoError(t, w.AddEventProcessor(joiner))
+	require.Equal(t, 2, broker.addKeyCalls(),
+		"the retry re-issued AddKey; returning early on 'already present' "+
+			"would have reported success without subscribing the key")
+
+	// and the joiner is now genuinely reachable
+	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
+		Name: "order placed", Payload: "k-b", CorrelationKey: "k-b"}))
 }

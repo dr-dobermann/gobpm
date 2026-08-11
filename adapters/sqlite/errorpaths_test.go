@@ -64,17 +64,44 @@ func TestEveryOperationReportsABrokenDatabase(t *testing.T) {
 	}
 }
 
-// TestSaveUpdatePathReportsABrokenDatabase covers the update branch, which the
-// create branch above does not reach: a non-zero RecVersion takes the other
-// road through Save.
-func TestSaveUpdatePathReportsABrokenDatabase(t *testing.T) {
-	repo := closedRepo(t)
+// TestSaveUpdatePathReportsABrokenTable covers the UPDATE branch's failure,
+// which a closed pool cannot reach.
+//
+// The first version of this test used closedRepo and a non-zero RecVersion,
+// claiming to take the other road through Save. It did not: Save calls
+// GroupExists first, that query fails on a closed pool, and the function
+// returns before RecVersion is ever examined. require.Error was satisfied by
+// the wrong failure — the test passed while covering nothing it named.
+//
+// Reaching the update path needs a database that is HEALTHY enough to answer
+// GroupExists and resolve the tenant, and broken only where the update lands.
+// Dropping the instances table leaves exactly that.
+func TestSaveUpdatePathReportsABrokenTable(t *testing.T) {
+	repo, err := OpenMemory()
+	require.NoError(t, err)
 
-	require.Error(t, repo.Save(context.Background(),
-		repository.InstanceRecord{
-			ID: "i1", Group: "g", Status: repository.StatusActive,
-			RecVersion: 7,
-		}))
+	t.Cleanup(func() { require.NoError(t, repo.Close()) })
+
+	ctx := context.Background()
+	require.NoError(t, repo.Migrate(ctx))
+	require.NoError(t, repo.RegisterGroup(ctx, "g"))
+
+	rec := repository.InstanceRecord{
+		ID: "i1", Group: "g", Status: repository.StatusActive,
+	}
+	require.NoError(t, repo.Save(ctx, rec))
+
+	// groups and tenants survive; only the update's target is gone
+	_, err = repo.db.ExecContext(ctx, "DROP TABLE instances")
+	require.NoError(t, err)
+
+	rec.RecVersion = 1
+
+	err = repo.Save(ctx, rec)
+	require.Error(t, err, "the update path must report a broken table")
+	require.Contains(t, err.Error(), "update",
+		"the error must name the operation that failed, so it is "+
+			"distinguishable from the create path's")
 }
 
 // TestCASRejectsAStaleVersion covers casOutcome's zero-rows branch through the

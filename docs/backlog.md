@@ -50,7 +50,14 @@ and "examples assert their own outcome" as plain commits on
 - **Audit findings** — disposition in
   [`audit/remediation-status.md`](audit/remediation-status.md), design deferrals
   in [`audit/audit-backlog.md`](audit/audit-backlog.md). Both maintain their own
-  counts; this file does not restate them. Note that the single remaining open
-  row (`memrepo` can evict an Active instance after a terminal→Active re-save)
-  was deferred *"until persistence lands"*, and persistence has since landed
-  (ADR-033) — it belongs to the durable-Repository work in **E2**.
+  counts; this file does not restate them.
+
+  The note that used to sit here — that row 11 (`memrepo` can evict an Active
+  instance after a terminal→Active re-save) was the single remaining open row,
+  deferred *"until persistence lands"* and now belonging to **E2** — was
+  **stale**. It was remediated by SRD-078 FR-9: `Save` untracks a revived
+  record from the eviction ledger, `remediation-status.md` row 11 reads
+  ✅, and `TestTerminalRevivedToActiveNotEvicted` pins it. This file kept
+  pointing at work that had already landed, which is the failure mode a
+  backlog has: an entry costs nothing to leave behind and reads as open
+  forever.

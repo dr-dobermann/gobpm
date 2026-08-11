@@ -149,17 +149,28 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 			errs.C(MessageWaiterError, errs.EmptyNotAllowed))
 	}
 
-	sub, added := mw.addProcessor(ep)
+	sub := mw.addProcessor(ep)
 
-	if !added || sub == nil {
+	if sub == nil {
 		// Not serving yet: Service will read this processor's keys itself.
 		return nil
 	}
 
+	// The keys are (re-)subscribed even when ep was ALREADY on the list.
+	//
+	// Returning early on "already present" would make a retry a no-op, and a
+	// retry is exactly what a caller does after this method fails: the
+	// processor is appended before the subscription is extended, so a failed
+	// AddKey leaves ep registered with its key missing. Reporting success on
+	// the second call would then strand it — registered, parked, and
+	// unreachable — which is the very failure this method was changed to
+	// prevent. AddKey is idempotent at the broker, so re-issuing costs
+	// nothing and makes the retry mean something.
 	return mw.subscribeKeysOf(ep, sub)
 }
 
-// addProcessor records ep and returns the live subscription, if any.
+// addProcessor records ep (idempotently) and returns the live subscription,
+// if the waiter is serving.
 //
 // It exists so the lock is released by DEFER rather than by hand. The first
 // version of this unlocked explicitly before the foreign AddKey call below,
@@ -167,17 +178,15 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 // recoverable fault into a deadlocked Stop, which is how it presented.
 func (mw *messageWaiter) addProcessor(
 	ep eventproc.EventProcessor,
-) (messaging.Subscription, bool) {
+) messaging.Subscription {
 	mw.m.Lock()
 	defer mw.m.Unlock()
 
-	if slices.IndexFunc(mw.processors, sameProcessor(ep)) != -1 {
-		return mw.sub, false
+	if slices.IndexFunc(mw.processors, sameProcessor(ep)) == -1 {
+		mw.processors = append(mw.processors, ep)
 	}
 
-	mw.processors = append(mw.processors, ep)
-
-	return mw.sub, true
+	return mw.sub
 }
 
 // subscribeKeysOf extends sub with the correlation keys ep declares.
