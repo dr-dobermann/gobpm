@@ -52,7 +52,13 @@ type FailingBroker struct {
 	// while it talks to me" — becomes assertable: the real broker returns too
 	// fast to observe, and sleeping instead only makes the assertion flaky.
 	OnAddKey func(key string)
-	subs     []*FailingSubscription
+	// OnUnsubscribe, when set, runs INSIDE Unsubscribe on every subscription
+	// this broker hands out, before the teardown. Same purpose as OnAddKey: a
+	// test that blocks in it holds the caller inside the broker call, which is
+	// how "the engine is not holding its lock while it talks to me" becomes
+	// assertable for a teardown path.
+	OnUnsubscribe func()
+	subs          []*FailingSubscription
 	// AddKeyAfter lets the first N AddKey calls succeed before AddKeyErr
 	// starts being returned — for the path where a subscription is built
 	// with some keys and then refuses a later one. Ignored when AddKeyErr
@@ -94,6 +100,7 @@ func (b *FailingBroker) Subscribe(
 		addErr:   b.AddKeyErr,
 		addAfter: b.AddKeyAfter,
 		onAddKey: b.OnAddKey,
+		onUnsub:  b.OnUnsubscribe,
 	}
 
 	b.mu.Lock()
@@ -124,6 +131,7 @@ type FailingSubscription struct {
 	ch       chan messaging.Envelope
 	addErr   error
 	onAddKey func(key string)
+	onUnsub  func()
 	added    []string
 	addAfter int
 	closed   bool
@@ -177,6 +185,13 @@ func (s *FailingSubscription) Unsubscribed() bool {
 // Unsubscribe closes the channel once; a second call is a no-op, as the
 // port requires.
 func (s *FailingSubscription) Unsubscribe() error {
+	// Before the lock, for the same reason as AddKey's hook: a test may block
+	// here, and a blocked hook must not freeze Unsubscribed() — the call the
+	// test uses to observe what it is blocking.
+	if s.onUnsub != nil {
+		s.onUnsub()
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

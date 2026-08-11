@@ -332,7 +332,7 @@ func (eh *EventHub) applyProcessorKeys(
 		return nil
 	}
 
-	eh.dropFailedWaiter(w, ep)
+	eh.undoFailedJoin(w, ep)
 
 	return errs.New(
 		errs.M("couldn't apply the correlation keys of a joining processor"),
@@ -342,21 +342,25 @@ func (eh *EventHub) applyProcessorKeys(
 		errs.E(err))
 }
 
-// dropFailedWaiter unregisters ep and takes the waiter out of the registry
-// after it discarded its subscription over a key it could not apply.
+// undoFailedJoin unregisters ep, and buries the waiter only if the failed key
+// actually killed it.
 //
-// The waiter is DEAD, not merely degraded: shedding an unrepairable key-set
-// costs it the whole subscription (FIX-041 §3.1 D2), and nothing will ever be
-// delivered through it again. Left mapped, it would be joined by every later
-// registration for the same definition and deliver to none of them — FIX-038
-// §1.3's stranding, arrived at from the other direction. Unmapping it means the
-// next registration builds a fresh waiter with a fresh subscription.
+// Both outcomes are real. A key refused after an earlier one landed leaves a
+// key-set the port cannot repair — there is no RemoveKey — so the waiter sheds
+// the whole subscription and is DEAD (FIX-041 §3.1 D2). Left mapped it would be
+// joined by every later registration for the same definition and deliver to none
+// of them, which is FIX-038 §1.3's stranding arrived at from the other
+// direction; the processors already parked on it lose their registration, which
+// is the cost §3.2 B3 accepts and the reason this logs at Error.
 //
-// The processors already parked on it lose their registration, which is the
-// cost §3.2 B3 accepts and the reason this logs at Error: the alternative is an
-// orphan key quietly eating messages addressed to somebody else, and a loud
-// recoverable failure beats a silent permanent one.
-func (eh *EventHub) dropFailedWaiter(
+// But a key refused as the FIRST of the join's set changes nothing: the
+// subscription is exactly as it was, the waiter keeps serving everyone parked
+// on it, and only this join is turned away. Unmapping it there would tear down
+// a healthy waiter — and every other processor's subscription with it — to
+// punish a registration that failed harmlessly.
+//
+// So the waiter's own state decides, not the fact that an error came back.
+func (eh *EventHub) undoFailedJoin(
 	w eventproc.EventWaiter, ep eventproc.EventProcessor,
 ) {
 	if rerr := w.RemoveEventProcessor(ep); rerr != nil {
@@ -364,6 +368,10 @@ func (eh *EventHub) dropFailedWaiter(
 			observability.AttrWaiterID, w.ID(),
 			observability.AttrEventProcessorID, ep.ID(),
 			observability.AttrError, rerr.Error())
+	}
+
+	if w.State() != eventproc.WSFailed {
+		return // the join failed; the waiter did not
 	}
 
 	eDefID := w.EventDefinition().ID()

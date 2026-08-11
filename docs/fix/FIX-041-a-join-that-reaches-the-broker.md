@@ -739,6 +739,72 @@ subscription at all, since a keyless subscription is a wildcard a spurious
 branch, which was removed rather than tested: the Error log belongs on both
 paths, so only the unmapping is conditional now.
 
+**8.2.8 — the independent review found six more, and the worst was a repeat of
+§8.2.7 one function away.** `/pr-review` (three doc-blind lenses, `agy` /
+gemini-3.1-pro-high, 3/3 chunks each) returned twelve notes. Six were agreed and
+fixed here, one partly, five rejected with reasons.
+
+The one that justifies the gate: **`AddKey` buffered into a failed waiter and
+returned nil.** §8.2.7 closed exactly this hole in `ApplyProcessorKeys` and did
+not sweep for its shape — `AddKey` sat fifteen lines away with the same
+`mw.sub == nil` test meaning the opposite thing, and it is reachable through
+`EventHub.AddEventKey`, which reads the waiter from the registry, releases the
+lock, and only then calls it. Both readers now go through one `acceptKeys`, so
+the field's two meanings are disambiguated once rather than per caller; the
+refusal covers every terminal state, not just `WSFailed`, as a package-level
+set.
+
+The other five agreed notes:
+
+- **A key the broker already has is no longer re-sent.** `Service`
+  de-duplicated; the join path did not — and since `AddEventProcessor` is
+  idempotent while `ApplyProcessorKeys` is not, re-registering a processor
+  re-sent its whole key-set. The waiter now tracks what the broker has been
+  given (creation keys included) and sends each key once, which subsumes the
+  `uniqueKeys` helper D3 introduced.
+- **A first-key refusal no longer destroys a healthy subscription.** D2 discards
+  because a *partly* applied key-set cannot be repaired — but a refusal on the
+  first key applies nothing, leaving the subscription exactly as it was.
+  Tearing it down there strands every processor already parked on it to punish a
+  join that failed harmlessly. Only a genuinely partial failure discards, and
+  the hub unmaps only a waiter whose own state says it died
+  (`TestFirstKeyRefusalSparesTheWaiter`).
+- **The two lock-drops this fix introduced had no tests.**
+  `messageWaiter.Stop` and `gorules.Register` (§8.2.4) both moved a host call
+  out of a critical section, and only the hub's equivalent was pinned. Both are
+  now pinned by the same technique — a broker/reporter that blocks inside the
+  host call while the test proves an unrelated caller still gets the lock.
+- **`startedHub` leaked its hub on a mid-test failure**, because `Shutdown` was
+  the last line of each test rather than a `t.Cleanup`.
+
+Rejected, with the reason each time — a rejected note whose reason is written
+down does not return next release:
+
+- **"`Stop` refuses a `WSReady` waiter, so a concurrent `UnregisterEvent` during
+  `Subscribe` leaks the goroutine"** (raised independently by two lenses, both
+  as a blocker). The interleaving does not exist: a waiter enters the registry
+  in `publishWaiter`, which runs *after* `Service` returns, so while it is
+  `WSReady` no other goroutine can obtain it. All three `Stop` call sites agree
+  — `eventhub.go:504` stops a waiter that same call just serviced, and `:549` /
+  `:653` take theirs from the registry. Two lenses agreeing is not evidence that
+  a race exists.
+- **"`Service` overwrites a concurrent `WSFailed` with `WSRunned`"** — same
+  reason; the concurrent party it needs cannot reach the waiter yet.
+- **"The split join traps a caller who performs only half of it."** The hazard
+  is real for future code, but both proposed remedies reintroduce the defect: a
+  unified `Join` puts the broker call back inside the method the hub calls under
+  its lock, and "extract the keys under the lock and pass them in" *is* a host
+  call under the lock, since `CorrelationKeys()` belongs to the processor.
+  Answered by stating the pairing on `EventWaiter.AddEventProcessor` instead.
+- **"`FailingBroker`'s zero value fails nothing despite its name; use functional
+  options."** `NewFailingBroker()` does fail; the zero value is the documented
+  observe-only default and four tests use it that way. Options on a test double
+  buy immutability no caller needs.
+- **"`FailingSubscription.Keys` is an exported mutable slice."** It is a
+  recorded observation the test itself reads; a test mutating it corrupts only
+  its own assertion input, and the defensive copy at creation already protects
+  the double from the engine, which is the boundary that matters.
+
 ### 8.3 What this fix deliberately leaves alone
 
 - **`make lock-sweep` is not in the required gate.** §5 said this would be so

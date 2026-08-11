@@ -315,7 +315,10 @@ func TestApplyProcessorKeysRejectsAFailedWaiter(t *testing.T) {
 	hub := mockeventproc.NewMockEventHub(t)
 	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
 
-	broker := messagingtest.NewFailingBroker() // every AddKey refused
+	broker := &messagingtest.FailingBroker{
+		AddKeyErr:   messagingtest.ErrInjected,
+		AddKeyAfter: 1, // the first key lands, the second is refused
+	}
 	rt := brokerRT{EngineRuntime: enginert.Default(), broker: broker}
 
 	w, err := waiters.NewMessageWaiter(hub, newKeyedProcessor("iter-0", "a"),
@@ -324,8 +327,10 @@ func TestApplyProcessorKeysRejectsAFailedWaiter(t *testing.T) {
 
 	require.NoError(t, w.Service(ctx))
 
-	// fail it the ordinary way: a refused key
-	require.Error(t, join(t, w, newKeyedProcessor("iter-1", "b")))
+	// Fail it the ordinary way: a PARTIAL key failure, which is the only kind
+	// that costs the waiter its subscription. A first-key refusal turns the
+	// join away and leaves the waiter serving.
+	require.Error(t, join(t, w, newKeyedProcessor("iter-1", "b", "c")))
 	require.Equal(t, eventproc.WSFailed, w.State())
 
 	err = keyed(t, w).ApplyProcessorKeys(newKeyedProcessor("iter-2", "c"))
@@ -334,6 +339,190 @@ func TestApplyProcessorKeysRejectsAFailedWaiter(t *testing.T) {
 			"rather than buffer them into a waiter nothing will service")
 	require.NotErrorIs(t, err, messagingtest.ErrInjected,
 		"the refusal is the waiter's own state, not another broker call")
+}
+
+// TestStopDoesNotHoldTheWaiterLock pins the waiter-side half of the
+// foreignness rule, which the hub-side TestJoinDoesNotHoldTheHubLock does not
+// reach.
+//
+// Stop unsubscribes, and unsubscribing is a call into the host's broker. While
+// mw.m was held across it, State, EventProcessors and every delivery snapshot
+// queued behind a call this engine cannot hurry. The state change and the
+// stopCh close stay under the lock — nothing may observe a half-stopped waiter
+// — and only the broker call moves out.
+func TestStopDoesNotHoldTheWaiterLock(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
+
+	var (
+		entered = make(chan struct{})
+		release = make(chan struct{})
+	)
+
+	broker := &messagingtest.FailingBroker{
+		OnUnsubscribe: func() {
+			select {
+			case <-entered: // the service goroutine's own teardown; let it pass
+			default:
+				close(entered)
+				<-release
+			}
+		},
+	}
+	rt := brokerRT{EngineRuntime: enginert.Default(), broker: broker}
+
+	w, err := waiters.NewMessageWaiter(hub, newKeyedProcessor("iter-0", "a"),
+		eDef, "", rt)
+	require.NoError(t, err)
+
+	require.NoError(t, w.Service(ctx))
+
+	stopped := make(chan error, 1)
+
+	go func() { stopped <- w.Stop() }()
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop never reached the broker")
+	}
+
+	// The waiter is pinned inside a host call. Reading its state takes mw.m,
+	// so it answers only if Stop let the lock go.
+	read := make(chan eventproc.EventWaiterState, 1)
+
+	go func() { read <- w.State() }()
+
+	select {
+	case st := <-read:
+		require.Equal(t, eventproc.WSStopped, st,
+			"the state change belongs under the lock, before the host call")
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("State blocked while Stop was inside the broker: the waiter " +
+			"is holding mw.m across a host call (FIX-038 §1.1)")
+	}
+
+	close(release)
+	require.NoError(t, <-stopped)
+}
+
+// TestFinishedWaiterRefusesALazyKey is the sibling of
+// TestApplyProcessorKeysRejectsAFailedWaiter, and the reason both checks now
+// live in one place.
+//
+// `mw.sub == nil` means two opposite things. Before Service it means "not
+// subscribed YET", and a key is buffered for Service to pick up. After a
+// teardown — discardSubscription hands the subscription back, and the hub
+// unmaps the waiter — it means "not subscribed ANY MORE", and buffering there
+// takes a key into a waiter nothing will ever service while returning nil to a
+// caller that believes it was accepted. That is #320's silence exactly: the key
+// is taken, never routed, and nothing reports it.
+//
+// It is reachable through EventHub.AddEventKey, which reads the waiter from the
+// registry under RLock, releases, and only then calls AddKey.
+func TestFinishedWaiterRefusesALazyKey(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	for _, tc := range []struct {
+		name string
+		kill func(t *testing.T, w eventproc.EventWaiter, ctx context.Context)
+	}{
+		{
+			name: "failed",
+			kill: func(t *testing.T, w eventproc.EventWaiter, _ context.Context) {
+				// a PARTIAL key failure is what costs a waiter its subscription
+				require.Error(t, join(t, w, newKeyedProcessor("iter-1", "b", "c")))
+				require.Equal(t, eventproc.WSFailed, w.State())
+			},
+		},
+		{
+			name: "stopped",
+			kill: func(t *testing.T, w eventproc.EventWaiter, _ context.Context) {
+				require.NoError(t, w.Stop())
+				require.Equal(t, eventproc.WSStopped, w.State())
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			eDef := msgEventDef(t)
+
+			hub := mockeventproc.NewMockEventHub(t)
+			hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
+
+			broker := &messagingtest.FailingBroker{
+				AddKeyErr:   messagingtest.ErrInjected,
+				AddKeyAfter: 1,
+			}
+			rt := brokerRT{EngineRuntime: enginert.Default(), broker: broker}
+
+			w, err := waiters.NewMessageWaiter(hub,
+				newKeyedProcessor("iter-0", "a"), eDef, "", rt)
+			require.NoError(t, err)
+
+			require.NoError(t, w.Service(ctx))
+
+			tc.kill(t, w, ctx)
+
+			require.Error(t, keyed(t, w).AddKey("late"),
+				"a finished waiter must refuse a lazy key rather than buffer "+
+					"it: buffering returns nil to a caller that believes the "+
+					"key was accepted, and nothing will ever apply it")
+		})
+	}
+}
+
+// TestKeysReachTheBrokerOnce pins that the waiter sends a correlation key to
+// the broker exactly once, however many times it is offered.
+//
+// Three ways it is offered more than once: two processors answering to the same
+// key, one processor repeating a key, and — because AddEventProcessor is
+// idempotent while ApplyProcessorKeys is not — the same processor joined twice,
+// which used to re-send its whole key-set. membroker hides all three (its
+// key-set is a map); a host adapter that turns each key into a queue-level
+// binding makes a second binding each time.
+func TestKeysReachTheBrokerOnce(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
+
+	broker := &messagingtest.FailingBroker{}
+	rt := brokerRT{EngineRuntime: enginert.Default(), broker: broker}
+
+	w, err := waiters.NewMessageWaiter(hub, newKeyedProcessor("iter-0", "a"),
+		eDef, "", rt)
+	require.NoError(t, err)
+
+	require.NoError(t, w.Service(ctx))
+
+	t.Cleanup(func() { _ = w.Stop() })
+
+	second := newKeyedProcessor("iter-1", "b", "b", "a")
+
+	require.NoError(t, join(t, w, second))
+	require.Equal(t, []string{"b"}, broker.Subscriptions()[0].Added(),
+		"a key the subscription was CREATED with is not re-sent, and a key "+
+			"the processor repeats is sent once")
+
+	// the same processor joined again — the registry half is idempotent, so
+	// the broker half must be too
+	require.NoError(t, join(t, w, second))
+	require.Equal(t, []string{"b"}, broker.Subscriptions()[0].Added(),
+		"re-joining a processor must not re-send its key-set")
+
+	require.NoError(t, keyed(t, w).AddKey("b"))
+	require.Equal(t, []string{"b"}, broker.Subscriptions()[0].Added(),
+		"a lazy key the broker already has is not sent again")
 }
 
 // TestPartialKeyFailureDiscardsTheSubscription pins D2: a key the broker

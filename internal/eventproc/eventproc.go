@@ -115,6 +115,18 @@ type EventWaiter interface {
 	// AddEventProcessor adds single EventProcessor into waiter's list of
 	// EventProcessors, waiting for the EventDefinition.
 	// If the EventProcessor already exists in waiters queue, no errors returned.
+	//
+	// REGISTRY WORK ONLY, and only HALF of a join when the waiter is also a
+	// KeyedWaiter: the processor's correlation keys reach the broker through
+	// ApplyProcessorKeys, which the caller invokes with its own locks
+	// RELEASED. Calling this alone against a keyed waiter registers a
+	// processor whose keys the broker never learns — which is #320, the defect
+	// the split exists to fix.
+	//
+	// The two are separate rather than one method because the second half is a
+	// call into the host and the first is called under the EventHub's
+	// engine-wide lock; merging them puts a host call back inside that lock
+	// (FIX-038 §1.1). EventHub.registerWaiter is the reference caller.
 	AddEventProcessor(EventProcessor) error
 
 	// RemoveEventProcessor removes the ep EventProcessor from waiter's event

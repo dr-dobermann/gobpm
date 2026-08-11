@@ -49,6 +49,12 @@ func (p *hubKeyedProcessor) ProcessEvent(
 var _ eventproc.KeyedProcessor = (*hubKeyedProcessor)(nil)
 
 // startedHub builds a hub over broker and starts it.
+//
+// Shutdown is registered as cleanup rather than left to the end of each test:
+// a require that fails mid-test returns immediately, and a hub whose waiters
+// were never stopped leaks its goroutines into whatever runs next. Shutdown is
+// idempotent enough for the tests that also call it explicitly to assert it
+// succeeds.
 func startedHub(t *testing.T, broker messaging.MessageBroker) *eventhub.EventHub {
 	t.Helper()
 
@@ -58,6 +64,13 @@ func startedHub(t *testing.T, broker messaging.MessageBroker) *eventhub.EventHub
 		hubBrokerRT{EngineRuntime: enginert.Default(), broker: broker})
 	require.NoError(t, err)
 	require.NoError(t, hub.Start(t.Context()))
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		_ = hub.Shutdown(ctx)
+	})
 
 	return hub
 }
@@ -177,15 +190,63 @@ func TestJoinRegistersBeforeItReachesTheBroker(t *testing.T) {
 }
 
 // TestRefusedJoinKeyLeavesNoWaiterBehind pins what the hub does with the
-// wreckage of a refused key (FIX-041 §3.1 D2).
+// wreckage of a PARTIALLY applied key-set (FIX-041 §3.1 D2).
 //
-// The waiter discards its whole subscription, because the port can grow a
-// key-set but not shrink one and a partly-applied set cannot be repaired in
-// place. That leaves it DEAD — and a dead waiter left in the registry is worse
-// than the bug it came from: every later registration for the same definition
-// joins it and receives nothing, forever, with no error anywhere. So the hub
-// unmaps it, and the next registration builds a fresh one.
+// One key landed and the next was refused. messaging.Subscription can grow a
+// key-set but not shrink one, so the applied key cannot be taken back and the
+// waiter can only discard the subscription whole — which leaves it DEAD. A dead
+// waiter left in the registry is worse than the bug it came from: every later
+// registration for the same definition joins it and receives nothing, forever,
+// with no error anywhere. So the hub unmaps it, and the next registration
+// builds a fresh one.
 func TestRefusedJoinKeyLeavesNoWaiterBehind(t *testing.T) {
+	broker := &messagingtest.FailingBroker{
+		AddKeyErr:   messagingtest.ErrInjected,
+		AddKeyAfter: 1, // the first key lands, the second is refused
+	}
+	hub := startedHub(t, broker)
+	eDef := msgEDef(t, "order placed")
+
+	first := &hubKeyedProcessor{id: "iter-0", keys: []string{"a"}}
+	require.NoError(t, hub.RegisterEvent(first, eDef))
+
+	second := &hubKeyedProcessor{id: "iter-1", keys: []string{"b", "c"}}
+
+	err := hub.RegisterEvent(second, eDef)
+	require.Error(t, err, "a refused correlation key must fail the registration")
+	require.ErrorIs(t, err, messagingtest.ErrInjected)
+
+	// Not half-joined: were the processor left listed, a retry would find it
+	// on the duplicate check, return nil and report success while the
+	// iteration stayed unreachable by its own key — #320, restored by the code
+	// meant to prevent it.
+	require.Error(t, hub.UnregisterEvent(second, eDef.ID()),
+		"the processor whose key was refused must not be left registered")
+
+	// And the waiter it killed is gone, not sitting dead in the registry.
+	require.Error(t, hub.UnregisterEvent(first, eDef.ID()),
+		"a waiter that gave up its subscription must be unmapped: left in "+
+			"place it is joined by every later registration and delivers to none")
+
+	require.NoError(t, hub.RegisterEvent(first, eDef),
+		"the next registration must build a fresh waiter")
+
+	require.Len(t, broker.Subscriptions(), 2,
+		"the fresh waiter subscribes anew rather than inheriting the "+
+			"subscription the failed one gave back")
+
+	require.NoError(t, hub.Shutdown(t.Context()))
+}
+
+// TestFirstKeyRefusalSparesTheWaiter is the other half, and the one that keeps
+// D2 proportionate.
+//
+// When the refusal lands on the FIRST key of a join, nothing was applied: the
+// subscription is exactly as it was, and every processor already parked on it
+// is still served. Discarding it there would tear down a healthy waiter — and
+// every sibling iteration's wait with it — to punish a registration that failed
+// harmlessly. Only the join is turned away.
+func TestFirstKeyRefusalSparesTheWaiter(t *testing.T) {
 	broker := messagingtest.NewFailingBroker() // every AddKey refused
 	hub := startedHub(t, broker)
 	eDef := msgEDef(t, "order placed")
@@ -199,24 +260,15 @@ func TestRefusedJoinKeyLeavesNoWaiterBehind(t *testing.T) {
 	require.Error(t, err, "a refused correlation key must fail the registration")
 	require.ErrorIs(t, err, messagingtest.ErrInjected)
 
-	// Not half-joined: were the processor left listed, a retry would find it
-	// on the duplicate check, return nil and report success while the
-	// iteration stayed unreachable by its own key — #320, restored by the code
-	// meant to prevent it.
 	require.Error(t, hub.UnregisterEvent(second, eDef.ID()),
 		"the processor whose key was refused must not be left registered")
 
-	// And the waiter it failed is gone, not sitting dead in the registry.
-	require.Error(t, hub.UnregisterEvent(first, eDef.ID()),
-		"a waiter that gave up its subscription must be unmapped: left in "+
-			"place it is joined by every later registration and delivers to none")
+	require.NoError(t, hub.UnregisterEvent(first, eDef.ID()),
+		"the waiter must still serve the processor already parked on it: no "+
+			"key of its was ever applied, so nothing about it changed")
 
-	require.NoError(t, hub.RegisterEvent(first, eDef),
-		"the next registration must build a fresh waiter")
-
-	require.Len(t, broker.Subscriptions(), 2,
-		"the fresh waiter subscribes anew rather than inheriting the "+
-			"subscription the failed one gave back")
+	require.Len(t, broker.Subscriptions(), 1,
+		"the surviving waiter keeps the subscription it already had")
 
 	require.NoError(t, hub.Shutdown(t.Context()))
 }

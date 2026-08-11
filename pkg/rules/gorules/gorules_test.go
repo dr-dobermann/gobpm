@@ -3,6 +3,7 @@ package gorules_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -259,4 +260,75 @@ func TestRegistrarFacts(t *testing.T) {
 
 			require.Len(t, sink.facts, 1, "only the success is audited")
 		})
+}
+
+// blockingSink holds its caller inside Report until released — the only way to
+// observe that the registry is not talking to the host with its lock held.
+type blockingSink struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (bs *blockingSink) Report(_ observability.Fact) {
+	close(bs.entered)
+	<-bs.release
+}
+
+// TestRegisterDoesNotHoldTheRegistryLock pins the foreignness rule here.
+//
+// The reporter is whatever the embedding application passed to BindReporter, so
+// Report is a call into the HOST. While reg.mu was held across it, every other
+// registration and every Evaluate lookup queued behind a latency this engine
+// does not control (FIX-038 §1.1). Evaluate had it right all along — read under
+// the lock, call outside it — which is what made Register the outlier.
+//
+// The decision must already be registered by the time the report goes out: the
+// audit fact says a registration happened, so a concurrent Evaluate that sees
+// the fact and then misses the decision would be reading a lie.
+func TestRegisterDoesNotHoldTheRegistryLock(t *testing.T) {
+	noop := func(_ context.Context, _ service.DataReader) (rules.Row, error) {
+		return nil, nil
+	}
+
+	sink := &blockingSink{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+
+	reg := gorules.New()
+	reg.BindReporter(sink)
+
+	registered := make(chan error, 1)
+
+	go func() { registered <- reg.Register("slow", noop) }()
+
+	select {
+	case <-sink.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Register never reached the reporter")
+	}
+
+	// Register is pinned inside the host call. Evaluate takes reg.mu, so it
+	// answers only if Register let the lock go.
+	evaluated := make(chan error, 1)
+
+	go func() {
+		_, err := reg.Evaluate(context.Background(), "slow", stubReader{})
+		evaluated <- err
+	}()
+
+	select {
+	case err := <-evaluated:
+		require.NoError(t, err,
+			"the decision must be in the registry before its audit fact is "+
+				"reported: a fact for a registration a lookup cannot find is a lie")
+	case <-time.After(2 * time.Second):
+		close(sink.release)
+		t.Fatal("Evaluate blocked while Register was inside the host's " +
+			"reporter: the registry is holding reg.mu across a host call " +
+			"(FIX-038 §1.1)")
+	}
+
+	close(sink.release)
+	require.NoError(t, <-registered)
 }

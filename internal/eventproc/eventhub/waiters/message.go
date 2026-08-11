@@ -35,14 +35,20 @@ const MessageWaiterError = "MESSAGE_WAITER_ERROR"
 // the receiving instance loop's job, not the waiter's (ADR-017 v.1 §2): the loop
 // runs the correlation gate and drops a mismatch, keeping its track parked.
 type messageWaiter struct {
-	hub        eventproc.EventHub
-	rt         renv.EngineRuntime
-	eDef       *events.MessageEventDefinition
-	stopCh     chan struct{}
-	done       chan struct{}
-	sub        messaging.Subscription
-	name       string
-	id         string
+	hub    eventproc.EventHub
+	rt     renv.EngineRuntime
+	eDef   *events.MessageEventDefinition
+	stopCh chan struct{}
+	done   chan struct{}
+	sub    messaging.Subscription
+	name   string
+	id     string
+	// sent is every correlation key the broker has already been given — the
+	// ones Subscribe was created with, plus everything applied since. A key is
+	// sent once: membroker collapses a repeat (its key-set is a map), but the
+	// port is host-implementable and an adapter that turns each key into a
+	// queue-level binding makes a second one.
+	sent       map[string]struct{}
 	processors []eventproc.EventProcessor
 	// pendingKeys holds correlation keys learned BEFORE the broker
 	// subscription exists. They used to be dropped, which lost a
@@ -66,21 +72,67 @@ type messageWaiter struct {
 // lost it silently, and its envelope then matched no subscription and waited
 // in the broker's inbox forever (#320).
 func (mw *messageWaiter) AddKey(key string) error {
-	mw.m.Lock()
-
-	if mw.sub == nil {
-		mw.pendingKeys = append(mw.pendingKeys, key)
-		mw.m.Unlock()
-
-		return nil
+	sub, fresh, err := mw.acceptKeys(key)
+	if err != nil || sub == nil || len(fresh) == 0 {
+		// refused, buffered for Service to pick up, or already at the broker
+		return err
 	}
-
-	sub := mw.sub
-	mw.m.Unlock()
 
 	// outside the lock: the subscription belongs to the host's broker, and
 	// the engine does not hold its own lock across a host call.
 	return sub.AddKey(key)
+}
+
+// terminalStates are the waiter states from which no key can reach a broker
+// again: the subscription is gone (or about to be) and no goroutine will serve
+// one. Declared as data because the question "is this waiter finished?" is a
+// lookup, and a switch invites the next state to be added to one of its
+// readers and not the others.
+var terminalStates = map[eventproc.EventWaiterState]struct{}{
+	eventproc.WSEnded:   {},
+	eventproc.WSStopped: {},
+	eventproc.WSFailed:  {},
+}
+
+// acceptKeys stages keys on the waiter and returns the live subscription to
+// apply them to — or nil when it buffered them instead, for Service to pick up
+// when it subscribes.
+//
+// It exists so that `mw.sub == nil` is interpreted in exactly ONE place. That
+// test means "not subscribed YET" before Service, and "not subscribed ANY
+// MORE" after discardSubscription hands the subscription back — and reading
+// the second as the first buffers a key into a waiter the hub has unmapped and
+// nothing will ever service, returning nil to a caller that believes the key
+// was accepted. That is #320's silence, restored inside the fix for #320: the
+// key is taken, never routed, and no error is reported anywhere.
+//
+// The two readers were fifteen lines apart and only one of them checked the
+// state, which is why the check now lives with the field rather than with each
+// reader.
+func (mw *messageWaiter) acceptKeys(
+	keys ...string,
+) (messaging.Subscription, []string, error) {
+	mw.m.Lock()
+	defer mw.m.Unlock()
+
+	if _, done := terminalStates[mw.state]; done {
+		return nil, nil, errs.New(
+			errs.M("couldn't add a correlation key to a finished waiter"),
+			errs.C(MessageWaiterError, errs.InvalidState),
+			errs.D("current_state", mw.state.String()),
+			errs.D(observability.AttrWaiterID, mw.id),
+			errs.D(observability.AttrMessageName, mw.name))
+	}
+
+	if mw.sub == nil {
+		// Buffered whole, and deliberately NOT recorded as sent: Service
+		// de-duplicates the buffer against the same set when it subscribes.
+		mw.pendingKeys = append(mw.pendingKeys, keys...)
+
+		return nil, nil, nil
+	}
+
+	return mw.sub, mw.freshLocked(keys), nil
 }
 
 // NewMessageWaiter builds a messageWaiter for a MessageEventDefinition. It
@@ -135,6 +187,7 @@ func NewMessageWaiter(
 		hub:        eh,
 		rt:         rt,
 		processors: []eventproc.EventProcessor{ep},
+		sent:       map[string]struct{}{},
 		state:      eventproc.WSReady,
 	}, nil
 }
@@ -211,47 +264,79 @@ func (mw *messageWaiter) ApplyProcessorKeys(ep eventproc.EventProcessor) error {
 		return nil
 	}
 
-	mw.m.Lock()
-
-	// A failed waiter has given its subscription back and the hub has unmapped
-	// it, so buffering into it would report success for keys that reach no
-	// broker — #320's silence, restored. This is reachable: a registration that
-	// read the waiter out of the registry can arrive here just after another
-	// one failed it.
-	if mw.state == eventproc.WSFailed {
-		mw.m.Unlock()
-
-		return errs.New(
-			errs.M("couldn't apply correlation keys to a failed waiter"),
-			errs.C(MessageWaiterError, errs.InvalidState),
-			errs.D(observability.AttrWaiterID, mw.id),
-			errs.D(observability.AttrMessageName, mw.name))
+	// acceptKeys BUFFERS when there is no subscription yet — it does not skip.
+	// It is tempting to reason that a registered processor is in Service's
+	// snapshot and will have its keys read there, but that is false for exactly
+	// the window #320 was lost in: a processor joining after Service snapshots
+	// its processors and before it publishes mw.sub is in neither, and its key
+	// would vanish as before.
+	// `fresh` is only what the broker does not already have. A processor may
+	// answer to a key another one already brought, may repeat one of its own,
+	// and — since AddEventProcessor is idempotent while this step is not — may
+	// be joined twice, which used to re-send its whole key-set. membroker
+	// collapses the repeat (its key-set is a map); a host adapter that turns
+	// each key into a queue-level binding makes a second binding.
+	sub, fresh, err := mw.acceptKeys(keys...)
+	if err != nil || sub == nil || len(fresh) == 0 {
+		return err
 	}
 
-	// No subscription yet — BUFFER, do not skip. It is tempting to reason
-	// that a registered processor is in Service's snapshot and will have its
-	// keys read there, but that is false for exactly the window #320 was lost
-	// in: a processor joining after Service snapshots its processors and
-	// before it publishes mw.sub is in neither, and its key would vanish as
-	// before. The duplicate this can produce is Service's to remove.
-	if mw.sub == nil {
-		mw.pendingKeys = append(mw.pendingKeys, keys...)
-		mw.m.Unlock()
-
-		return nil
-	}
-
-	sub := mw.sub
-	mw.m.Unlock()
-
-	for _, k := range keys {
+	for i, k := range fresh {
 		if err := sub.AddKey(k); err != nil {
+			// Discard ONLY once something has actually landed. A key-set the
+			// broker took part of cannot be repaired — the port has no
+			// RemoveKey — so it can only be thrown away whole. But a failure on
+			// the FIRST key leaves the subscription exactly as it was, and
+			// tearing down a healthy subscription would strand every processor
+			// already parked on it for nothing.
+			if i == 0 {
+				return errs.New(
+					errs.M("couldn't extend the subscription for a joining "+
+						"processor"),
+					errs.C(MessageWaiterError, errs.OperationFailed),
+					errs.D(observability.AttrMessageName, mw.name),
+					errs.D(observability.AttrWaiterID, mw.id),
+					errs.E(err))
+			}
+
 			return mw.discardSubscription(sub, err,
 				"couldn't extend the subscription for a joining processor")
 		}
 	}
 
 	return nil
+}
+
+// unsentKeys returns the subset of keys the broker has not been given yet, and
+// records them as sent in the same critical section.
+//
+// Recorded on the DECISION to send rather than on a successful send: two
+// concurrent joins carrying the same key would otherwise both find it unsent
+// and both send it, which is the duplicate this set exists to prevent. A key
+// whose AddKey then fails costs the waiter its subscription (or, on the first
+// key, costs the join), so there is nothing left to un-record.
+func (mw *messageWaiter) unsentKeys(keys []string) []string {
+	mw.m.Lock()
+	defer mw.m.Unlock()
+
+	return mw.freshLocked(keys)
+}
+
+// freshLocked is unsentKeys' body for a caller that already holds mw.m.
+func (mw *messageWaiter) freshLocked(keys []string) []string {
+	fresh := make([]string, 0, len(keys))
+
+	for _, k := range keys {
+		if _, ok := mw.sent[k]; ok {
+			continue
+		}
+
+		// guards a repeat within this very call, too
+		mw.sent[k] = struct{}{}
+		fresh = append(fresh, k)
+	}
+
+	return fresh
 }
 
 // discardSubscription drops the whole broker subscription after a key could not
@@ -394,11 +479,10 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 
 	// A joining processor's keys have two homes — the processor itself and the
 	// buffer that carries them across the subscribe window — and a key that
-	// arrived before Service reaches both. membroker collapses the duplicate
-	// (its key-set is a map), but the port is host-implementable and an adapter
-	// that turns each key into a queue-level registration would make two
-	// (FIX-041 §1.5).
-	keys = uniqueKeys(keys)
+	// arrived before Service reaches both, so the raw set holds duplicates
+	// (FIX-041 §1.5). unsentKeys removes them AND records what the broker is
+	// about to be given, so nothing sends any of them a second time later.
+	keys = mw.unsentKeys(keys)
 
 	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, keys...)
 	if err != nil {
@@ -420,10 +504,14 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 	mw.pendingKeys = nil
 	mw.m.Unlock()
 
-	for _, k := range late {
+	// Unlike ApplyProcessorKeys, this loop discards on ANY failure, including
+	// the first key. There the subscription survives a first-key failure
+	// because only the joining processor is turned away and the waiter keeps
+	// serving everyone else; here the waiter itself is being abandoned — the
+	// hub never publishes a waiter whose Service returned an error — so a
+	// subscription left behind is one nobody will ever unsubscribe (§1.4).
+	for _, k := range mw.unsentKeys(late) {
 		if aerr := sub.AddKey(k); aerr != nil {
-			// The subscription goes with it: some of the late keys are on it
-			// and the port cannot take them off again (FIX-041 §3.1 D2).
 			return mw.discardSubscription(sub, aerr,
 				"couldn't apply a key learned during subscribe")
 		}
@@ -441,28 +529,6 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 	go mw.runMessageService(ctx, sub)
 
 	return nil
-}
-
-// uniqueKeys returns keys with duplicates removed, keeping first-seen order so
-// a broker adapter that logs or indexes by position sees a stable list.
-func uniqueKeys(keys []string) []string {
-	if len(keys) < 2 {
-		return keys
-	}
-
-	seen := make(map[string]struct{}, len(keys))
-	unique := make([]string, 0, len(keys))
-
-	for _, k := range keys {
-		if _, ok := seen[k]; ok {
-			continue
-		}
-
-		seen[k] = struct{}{}
-		unique = append(unique, k)
-	}
-
-	return unique
 }
 
 // runMessageService waits for matching envelopes (or a stop/cancel) and
