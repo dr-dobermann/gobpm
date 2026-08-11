@@ -59,13 +59,7 @@ func (imp importer) Import(ctx context.Context, r io.Reader) (*process.Process, 
 func (importer) parse(
 	ctx context.Context, r io.Reader,
 ) (*process.Process, []convert.Dropped, error) {
-	p := &parser{
-		dec:        xml.NewDecoder(r),
-		ctx:        ctx,
-		newProcess: process.New,
-		interfaces: make(map[string]string),
-		ops:        make(map[string]opSpec),
-	}
+	p := newParser(ctx, r)
 
 	proc, err := p.parse()
 	if err != nil {
@@ -171,7 +165,13 @@ type assembly struct {
 	// reconstruction when ServiceTask.Operation() is available.
 	interfaces map[string]string
 	// ops indexes every operation under those interfaces by operation id.
-	ops   map[string]opSpec
+	ops map[string]opSpec
+	// cat is the parser's catalog, shared by pointer rather than copied:
+	// <definitions> may declare a <message> AFTER the <process> that
+	// refers to it — rootElements is an unordered 0..* collection
+	// (elements/foundation.md:23) — so entries keep arriving while the
+	// assembly exists.
+	cat   *catalog
 	nodes []flow.Node // document order
 	flows []flowSpec
 	// refs are the forward references pass 1 could not resolve because
@@ -188,6 +188,9 @@ type parser struct {
 	// before/while the process is parsed.
 	interfaces map[string]string
 	ops        map[string]opSpec
+	// cat holds the message/signal/error/escalation objects an event
+	// definition refers to (SRD-089.D §FR-1).
+	cat *catalog
 	// exprLanguage is <definitions expressionLanguage>, the default an
 	// expression that declares none inherits (ADR-024 v.4 §2.10).
 	exprLanguage string
@@ -199,6 +202,23 @@ type parser struct {
 	// so ImportDocument can hand them to the host instead of losing them
 	// (ADR-024 v.4 §2.14 rule 2).
 	dropped []convert.Dropped
+}
+
+// newParser wires a parser over r with its catalogs empty and its
+// process constructor bound.
+//
+// It is the one place the parser's state is initialized: a map left nil
+// here would only fail on the file that first writes to it, which is a
+// class of bug the import stages keep being in a position to introduce.
+func newParser(ctx context.Context, r io.Reader) *parser {
+	return &parser{
+		dec:        xml.NewDecoder(r),
+		ctx:        ctx,
+		newProcess: process.New,
+		interfaces: make(map[string]string),
+		ops:        make(map[string]opSpec),
+		cat:        newCatalog(),
+	}
 }
 
 // parse decodes <bpmn:definitions> and its (single) <bpmn:process>.
@@ -444,6 +464,7 @@ func (p *parser) newAssembly(id, name string, docs []docSpec) (*assembly, error)
 		byID:         make(map[string]flow.Node),
 		interfaces:   p.interfaces,
 		ops:          p.ops,
+		cat:          p.cat,
 		exprLanguage: p.exprLanguage,
 	}, nil
 }

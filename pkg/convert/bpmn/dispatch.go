@@ -27,6 +27,7 @@ const (
 	ctxSequenceFlow
 	ctxInterface
 	ctxOperation
+	ctxCatalog
 )
 
 // elementKey identifies one element in one parse context.
@@ -253,8 +254,19 @@ type defsParser func(p *parser, asm *assembly, se xml.StartElement) (*assembly, 
 
 // definitionsParsers claims the children of <bpmn:definitions>.
 var definitionsParsers = map[string]defsParser{
-	tagInterface: parseInterfaceElem,
-	tagProcess:   parseProcessElem,
+	tagInterface:  parseInterfaceElem,
+	tagProcess:    parseProcessElem,
+	tagMessage:    parseCatalogElem,
+	tagSignal:     parseCatalogElem,
+	tagError:      parseCatalogElem,
+	tagEscalation: parseCatalogElem,
+}
+
+// parseCatalogElem parses one definitions-level catalog object — the
+// <message>, <signal>, <error> or <escalation> an event definition refers
+// to.
+func parseCatalogElem(p *parser, _ *assembly, se xml.StartElement) (*assembly, error) {
+	return nil, p.parseCatalogElement(se)
 }
 
 // parseInterfaceElem parses a definitions-level service catalog entry.
