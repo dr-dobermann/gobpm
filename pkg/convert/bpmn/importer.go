@@ -124,6 +124,9 @@ type opSpec struct {
 type assembly struct {
 	proc *process.Process
 	byID map[string]flow.Node
+	// exprLanguage is the document's expressionLanguage, carried here so
+	// pass 2 can resolve a condition's language without the parser.
+	exprLanguage string
 	// interfaces is the definitions-level catalog (id → name) for export
 	// reconstruction when ServiceTask.Operation() is available.
 	interfaces map[string]string
@@ -145,6 +148,9 @@ type parser struct {
 	// before/while the process is parsed.
 	interfaces map[string]string
 	ops        map[string]opSpec
+	// exprLanguage is <definitions expressionLanguage>, the default an
+	// expression that declares none inherits (ADR-024 v.4 §2.10).
+	exprLanguage string
 }
 
 // parse decodes <bpmn:definitions> and its (single) <bpmn:process>.
@@ -182,6 +188,8 @@ func (p *parser) rootElement() (xml.StartElement, error) {
 					se.Name.Space, se.Name.Local, nsBPMN, tagDefinitions),
 				errs.C(errorClass, errs.InvalidObject))
 		}
+
+		p.exprLanguage = strings.TrimSpace(attrValue(se, "expressionLanguage"))
 
 		return se, nil
 	}
@@ -372,10 +380,11 @@ func (p *parser) newAssembly(id, name string, docs []docSpec) (*assembly, error)
 	}
 
 	return &assembly{
-		proc:       proc,
-		byID:       make(map[string]flow.Node),
-		interfaces: p.interfaces,
-		ops:        p.ops,
+		proc:         proc,
+		byID:         make(map[string]flow.Node),
+		interfaces:   p.interfaces,
+		ops:          p.ops,
+		exprLanguage: p.exprLanguage,
 	}, nil
 }
 
@@ -860,13 +869,12 @@ func linkFlow(asm *assembly, fs flowSpec) (*flow.SequenceFlow, error) {
 	}
 
 	if fs.hasCond {
-		condID := fs.condID
-		if condID == "" {
-			condID = fs.id + ":condition"
+		cond, err := newCondition(fs, asm.exprLanguage)
+		if err != nil {
+			return nil, err
 		}
 
-		opts = append(opts, flow.WithCondition(
-			newFormalExpression(condID, fs.condLang, fs.condBody)))
+		opts = append(opts, flow.WithCondition(cond))
 	}
 
 	ss, ok := src.(flow.SequenceSource)

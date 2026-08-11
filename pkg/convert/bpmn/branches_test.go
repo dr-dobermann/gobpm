@@ -153,15 +153,15 @@ func TestImportSequenceFlowChildBranches(t *testing.T) {
 	runImportCases(t, map[string]struct{ doc, want string }{
 		"blank condition is dropped": {
 			doc: wrapDefs(linearProcess("",
-				`<bpmn:conditionExpression>   </bpmn:conditionExpression>`)),
+				`<bpmn:conditionExpression language="gobpm:lite">   </bpmn:conditionExpression>`)),
 		},
 		"condition skips foreign-namespace child": {
 			doc: wrapDefs(linearProcess("",
-				`<bpmn:conditionExpression>ok<x:hint/></bpmn:conditionExpression>`)),
+				`<bpmn:conditionExpression language="gobpm:lite">ok<x:hint/></bpmn:conditionExpression>`)),
 		},
 		"condition rejects nested bpmn element": {
 			doc: wrapDefs(linearProcess("",
-				`<bpmn:conditionExpression><bpmn:script>x</bpmn:script></bpmn:conditionExpression>`)),
+				`<bpmn:conditionExpression language="gobpm:lite"><bpmn:script>x</bpmn:script></bpmn:conditionExpression>`)),
 			want: "unsupported element",
 		},
 		"flow skips foreign-namespace child": {
@@ -200,7 +200,7 @@ func TestImportTruncatedNestedStructures(t *testing.T) {
 			`<bpmn:process id="p"><bpmn:sequenceFlow id="f" sourceRef="s" targetRef="e">`,
 		"foreign condition child": definitionsOpen +
 			`<bpmn:process id="p"><bpmn:sequenceFlow id="f" sourceRef="s" targetRef="e">` +
-			`<bpmn:conditionExpression>ok<x:hint>`,
+			`<bpmn:conditionExpression language="gobpm:lite">ok<x:hint>`,
 	}
 
 	for name, doc := range tests {
@@ -487,7 +487,7 @@ func TestBuildDefensiveBranches(t *testing.T) {
 		}
 
 		definition, err := events.NewConditionalEventDefinition(
-			newFormalExpression("condition", "", "true"),
+			liteCondition(t, "condition", "true"),
 		)
 		if err != nil {
 			t.Fatalf("NewConditionalEventDefinition: %v", err)

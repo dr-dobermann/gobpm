@@ -203,7 +203,7 @@ func TestDocumentationPrecedesTheCondition(t *testing.T) {
     <bpmn:sequenceFlow id="f0" sourceRef="s1" targetRef="g1"/>
     <bpmn:sequenceFlow id="f1" sourceRef="g1" targetRef="e1">
       <bpmn:documentation>note</bpmn:documentation>
-      <bpmn:conditionExpression>x &gt; 1</bpmn:conditionExpression>
+      <bpmn:conditionExpression language="gobpm:lite">x &gt; 1</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
   </bpmn:process>
 </bpmn:definitions>`

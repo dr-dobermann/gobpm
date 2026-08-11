@@ -9,7 +9,7 @@
     <bpmn:sequenceFlow id="to-review" sourceRef="start" targetRef="review"/>
     <bpmn:sequenceFlow id="to-decision" sourceRef="review" targetRef="decision"/>
     <bpmn:sequenceFlow id="approved" sourceRef="decision" targetRef="approved-end">
-      <bpmn:conditionExpression id="approved-condition" language="text/plain">approved == true</bpmn:conditionExpression>
+      <bpmn:conditionExpression id="approved-condition" language="gobpm:lite">approved == true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="rejected" sourceRef="decision" targetRef="rejected-end"/>
   </bpmn:process>
