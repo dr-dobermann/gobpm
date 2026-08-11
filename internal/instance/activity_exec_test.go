@@ -1,48 +1,57 @@
 package instance
 
 import (
-	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
-// TestNodeExecRunsTheNode pins SRD-088.A M1's seam: a non-iterated node is
-// executed THROUGH an activityExec, and what comes back — the outgoing
-// flows — is what the track follows. Running the whole process is what
-// proves the seam is wired; asserting on the executor alone would pass with
-// executeStep still calling executeNode directly.
-func TestNodeExecRunsTheNode(t *testing.T) {
-	got := make(chan string, 2)
-
-	s, _ := routedMIProcess(t, "ae-run", got, true)
+// TestExecForRoutesByLoopCharacteristics pins the SEAM, which is the thing
+// M1/M2 actually introduced: which executor a node gets.
+//
+// Its predecessor ran a whole process and asserted that tokens parked — which
+// would have passed just as well with the seam deleted and executeStep
+// calling executeNode directly, since the side effects are identical. A test
+// that cannot fail on the change it guards is worse than no test, because it
+// reports coverage of something it never checked.
+func TestExecForRoutesByLoopCharacteristics(t *testing.T) {
+	s, _ := routedMIProcess(t, "ef-route", make(chan string, 2), true)
 
 	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
 		&recordingProducer{}, nil)
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	require.NoError(t, inst.Run(ctx))
+	tr := &track{instance: inst}
 
-	// the start event and the MI host are non-iterated steps on this path;
-	// reaching the parked catches means both ran through the executor.
-	require.Eventually(t, func() bool {
-		parked := 0
+	var plain, seqMI flow.Node
 
-		for _, tk := range inst.GetTokens() {
-			if tk.State == TokenWaitForEvent {
-				parked++
+	for _, n := range inst.s.Nodes {
+		if mi := multiInstanceOf(n); mi != nil && mi.IsSequential() {
+			if _, composite := n.(scopeHost); !composite {
+				seqMI = n
 			}
+
+			continue
 		}
 
-		return parked >= 2
-	}, 3*time.Second, 5*time.Millisecond,
-		"execution must reach the parked catches through the executor")
+		if plain == nil && multiInstanceOf(n) == nil {
+			plain = n
+		}
+	}
+
+	require.NotNil(t, plain, "the fixture must offer a non-iterated node")
+	require.IsType(t, &nodeExec{}, execFor(tr, &stepInfo{node: plain}),
+		"a node with no loop characteristics runs as one instance")
+
+	if seqMI != nil {
+		require.IsType(t, &leafDecorator{},
+			execFor(tr, &stepInfo{node: seqMI}),
+			"a sequentially iterated leaf runs through a decorator")
+	}
 }
 
 // TestNodeExecAwaits pins the member M3's residency rule depends on: a leaf
@@ -128,4 +137,52 @@ func TestLeafDecoratorSatisfiesActivityExec(t *testing.T) {
 
 	require.Implements(t, (*activityExec)(nil), newLeafDecorator(
 		&track{}, &stepInfo{}, nil))
+}
+
+// TestRefuseIfParked pins the guard's DECISION: an instance still waiting
+// stops the iteration, and the refusal names which instance — a sequential
+// decorator that advanced past a parked one would run the next ordinal over
+// the same step and publish output as though every instance had finished.
+//
+// Reaching this from runInstance requires the construct the snapshot refuses
+// (an activity that both iterates and parks), so SRD-088.B covers the path;
+// what is testable now is what the guard decides, and that is tested here
+// rather than assumed.
+func TestRefuseIfParked(t *testing.T) {
+	s, _ := routedMIProcess(t, "guard", make(chan string, 2), true)
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
+		&recordingProducer{}, nil)
+	require.NoError(t, err)
+
+	var host flow.Node
+
+	for _, n := range inst.s.Nodes {
+		if multiInstanceOf(n) != nil {
+			host = n
+
+			break
+		}
+	}
+
+	require.NotNil(t, host)
+
+	tr := &track{instance: inst}
+	d := newLeafDecorator(tr, &stepInfo{node: host}, nil)
+
+	require.NoError(t, d.refuseIfParked(0),
+		"no live instance is not a parked one")
+
+	d.live = newNodeExec(tr, &stepInfo{node: host}, 3)
+	tr.state = TrackExecutingStep
+	require.NoError(t, d.refuseIfParked(3),
+		"an executing instance does not stop the iteration")
+
+	tr.state = TrackWaitForEvent
+
+	err = d.refuseIfParked(3)
+	require.Error(t, err, "a waiting instance stops the iteration")
+	require.ErrorContains(t, err, "instance 3",
+		"and the refusal names WHICH instance is waiting")
+	require.ErrorContains(t, err, host.Name())
 }

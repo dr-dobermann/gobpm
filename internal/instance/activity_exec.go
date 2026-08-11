@@ -3,7 +3,9 @@ package instance
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // awaitKind classifies what an activity instance is currently waiting on.
@@ -93,7 +95,13 @@ func execFor(t *track, step *stepInfo) activityExec {
 		}
 	}
 
-	return newNodeExec(t, step, 0)
+	// A spawned parallel-leaf instance is ordinal 0 of nothing until it
+	// says otherwise: the track it runs on carries the pass ordinal the
+	// fan-out bound (setLoopCounter), and that IS this instance's
+	// identity. Reading it here keeps the ordinal meaningful before
+	// anything consumes it, rather than leaving a plausible zero for the
+	// milestone that starts keying records on it.
+	return newNodeExec(t, step, t.loopCounterSnap())
 }
 
 // leafDecorator drives the instances of an iterated LEAF activity, holding
@@ -174,13 +182,54 @@ func (d *leafDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	return nextFlows, nil
 }
 
-// runInstance executes instance i through its own executor.
+// runInstance executes instance i through its own executor, and refuses if
+// that instance PARKS.
+//
+// A sequential decorator drives its instances one after another, which is
+// only sound while an instance runs to completion: an instance that parked
+// would return no flows, the loop would advance to the next ordinal over the
+// same step, and the activity would publish its output as though every
+// instance had finished. It cannot happen today — an activity that both
+// iterates and parks is refused when the process is built — and this guard
+// exists for the milestone that lifts that refusal, so the day the construct
+// becomes reachable it fails loudly here rather than iterating past a
+// waiting instance in silence.
+//
+// Its DECISION is tested (refuseIfParked); what stays untested is reaching
+// it, which requires building the construct the snapshot refuses. SRD-088.B
+// covers that end to end, in the slice that makes the construct buildable.
 func (d *leafDecorator) runInstance(
 	ctx context.Context, it miIterator, i, n int,
 ) ([]*flow.SequenceFlow, bool, error) {
 	d.live = newNodeExec(d.t, d.step, i)
 
-	return d.t.runLeafPass(ctx, it, d.mi, d.step, i, n, d.live)
+	flows, stop, err := d.runPass(ctx, it, i, n)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if perr := d.refuseIfParked(i); perr != nil {
+		return nil, false, perr
+	}
+
+	return flows, stop, nil
+}
+
+// refuseIfParked is the guard's decision, separated from its call site so it
+// can be tested: reaching it from runInstance requires building the construct
+// the snapshot refuses, but WHAT it decides — a waiting instance stops the
+// iteration, naming which one — is ordinary logic and is pinned as such.
+func (d *leafDecorator) refuseIfParked(i int) error {
+	if d.live == nil || d.live.awaits() == awaitNothing {
+		return nil
+	}
+
+	return errs.New(
+		errs.M("instance %d of %q parked mid-iteration: a sequential "+
+			"decorator cannot advance past a waiting instance",
+			i, d.step.node.Name()),
+		errs.C(errorClass, errs.InvalidState),
+		errs.D(observability.AttrNodeID, d.step.node.ID()))
 }
 
 // awaits reports what the decorator's live instance awaits — the conjunction
@@ -238,4 +287,101 @@ func (e *nodeExec) state() instanceState {
 		await:   a,
 		done:    a == awaitNothing && e.step.state == StepEnded,
 	}
+}
+
+// runPass executes ONE instance of a sequential leaf activity through the
+// executor the decorator holds for it. It lives on the decorator because the
+// decorator OWNS the iteration (ADR-025 v.3 §2.13) — leaving it on the track
+// left the driver split across both types, so the decorator delegated back to
+// the thing it was replacing. Originally SRD-086 FR-1's pass: bind,
+// execute in a fresh frame, capture the output, post the pass to the
+// loop's iteration mirror (the checkpoint's position — a leaf opens no
+// scope, so the record rides this roundtrip instead of the drain),
+// evaluate the completionCondition with pass-start counts, and throw
+// the behavior event. stop reports a fired condition, posted to the
+// mirror the same way the composite's is (SRD-082 FR-2).
+func (d *leafDecorator) runPass(
+	ctx context.Context, it miIterator, i, n int,
+) ([]*flow.SequenceFlow, bool, error) {
+	t, step, mi := d.t, d.step, d.mi
+
+	t.setLoopCounter(i)
+
+	// bind loopCounter, the §2.9 counts and inputItem=collection[i] at
+	// the host scope — the activity's frame resolves them by walk-up,
+	// exactly as a seeded composite body does.
+	if err := it.bindInstance(ctx, t, i); err != nil {
+		return nil, false, err
+	}
+
+	// re-arm the step for another execution (the runStandardLoop
+	// idiom): finalizeNodeExecution ended the previous pass.
+	step.state = StepCreated
+
+	flows, err := d.live.run(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if err := d.captureOutput(ctx, i); err != nil {
+		return nil, false, err
+	}
+
+	t.miState.completed++
+
+	if _, err := t.instance.scopeExchange(ctx, scopeRequest{
+		op: scopeLeafPass, host: t, n: t.miState.completed,
+	}); err != nil {
+		return nil, false, err
+	}
+
+	stop := false
+
+	if t.miState.completed < n && mi.CompletionCondition() != nil {
+		met, cerr := it.evalCompletion(ctx, t, step.node)
+		if cerr != nil {
+			return nil, false, cerr
+		}
+
+		stop = met
+	}
+
+	// the behavior event carries the CURRENT §2.9 counts (SRD-056.B):
+	// republish post-drain, then throw.
+	if err := t.bindMICounters(n, t.miState.completed, 0); err != nil {
+		return nil, false, err
+	}
+
+	if err := t.throwMIBehavior(
+		ctx, mi, step.node, t.miState.completed); err != nil {
+		return nil, false, err
+	}
+
+	if stop {
+		if _, err := t.instance.scopeExchange(ctx,
+			scopeRequest{op: scopeNote, host: t}); err != nil {
+			return nil, false, err
+		}
+	}
+
+	return flows, stop, nil
+}
+
+// captureOutput reads the instance's declared output item from the
+// host scope — where the leaf's UploadData just committed it — into
+// the staging slot for ordinal i (SRD-086 FR-1); a no-op when the
+// activity assembles no output.
+func (d *leafDecorator) captureOutput(ctx context.Context, i int) error {
+	t := d.t
+	st := t.miState
+	if st == nil || st.staging == nil {
+		return nil
+	}
+
+	out, err := t.instance.sc.plane.GetData(t.scopePath, st.outputItem)
+	if err != nil {
+		return err
+	}
+
+	return st.staging.SetAt(ctx, i, out.Value().Get(ctx))
 }
