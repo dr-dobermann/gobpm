@@ -226,7 +226,7 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 
 // ListInFlight returns the IDs of the CLAIMABLE in-flight instances of the
 // given engine group — not terminal, not suspended, with no live lease at
-// now — ordered by id for determinism (ADR-033 v.5 §2.8).
+// now — ordered by id for determinism (ADR-033 §2.8).
 func (r *Repo) ListInFlight(
 	ctx context.Context, group string, now time.Time,
 ) ([]string, error) {
@@ -265,7 +265,7 @@ func (r *Repo) ListInFlight(
 }
 
 // RegisterGroup establishes the engine group in the store's registry,
-// idempotently (ADR-033 v.5 §2.8).
+// idempotently (ADR-033 §2.8).
 func (r *Repo) RegisterGroup(ctx context.Context, group string) error {
 	if group == "" {
 		return errs.New(

@@ -223,7 +223,7 @@ Advisory, not gating — for the implementing SRD(s):
   public/internal split (§3.3), the per-execution `RuntimeEnvironment` (§4.3),
   and the §4.7 versioning discipline this ADR refines and completes for the
   execution contracts.
-- [ADR-003 v.1 Module Layout](ADR-003-module-layout.md) — §4.4 (import-direction
+- [ADR-003 Module Layout](ADR-003-module-layout.md) — §4.4 (import-direction
   rules) prescribed the depguard checks; this ADR adds the missing
   `pkg/model ↛ internal` rule.
 - [ADR-011 v.5 Process Data Flow](ADR-011-process-data-flow.md) — §2.6 deferred
@@ -239,5 +239,5 @@ Advisory, not gating — for the implementing SRD(s):
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-14 | Ruslan Gabitov | Draft. Fixes audit 2.1 as an **encapsulation** fix (not extensibility): `pkg/model` keeps its execution methods and the closed node set, but the contracts it implements/consumes — the node-executor interface (+ synchronizing-join marker), the per-execution environment, the data-binding consumer/producer + frame operations, the interaction registrator, the event producer — move to **public** packages; `internal/*` keeps the implementations; `pkg/model` imports zero `internal/*`. A CI depguard `pkg/model ↛ internal` rule (ADR-003 §4.4) makes it permanent. **No registry / visitor / user-defined nodes** (SAD-001 §14 closed node set) — dispatch is unchanged (§2.3). Placement of the public reader/node-executor contracts that ADR-011 v.5 §2.6 deferred here is decided (§2.2). Out of scope: data-flow/eventing/lifecycle redesign, the Instance god-object split (2.3), exact package layout. Refines ADR-002 v.1; siblings ADR-001 v.5, ADR-003 v.1, ADR-011 v.5, ADR-014 v.1. |
+| v.1 | 2026-06-14 | Ruslan Gabitov | Draft. Fixes audit 2.1 as an **encapsulation** fix (not extensibility): `pkg/model` keeps its execution methods and the closed node set, but the contracts it implements/consumes — the node-executor interface (+ synchronizing-join marker), the per-execution environment, the data-binding consumer/producer + frame operations, the interaction registrator, the event producer — move to **public** packages; `internal/*` keeps the implementations; `pkg/model` imports zero `internal/*`. A CI depguard `pkg/model ↛ internal` rule (ADR-003 §4.4) makes it permanent. **No registry / visitor / user-defined nodes** (SAD-001 §14 closed node set) — dispatch is unchanged (§2.3). Placement of the public reader/node-executor contracts that ADR-011 v.5 §2.6 deferred here is decided (§2.2). Out of scope: data-flow/eventing/lifecycle redesign, the Instance god-object split (2.3), exact package layout. Refines ADR-002 v.1; siblings ADR-001 v.5, ADR-003, ADR-011 v.5, ADR-014 v.1. |
 | v.1 | 2026-06-15 | Ruslan Gabitov | **Accepted** — implemented via SRD-012 v.1 (5 milestones; the five contracts relocated to `pkg/exec`/`pkg/renv`/`pkg/eventproc`/`pkg/interactor`; `internal/exec`+`internal/renv` retired; `pkg/model` imports zero `internal/*`; `model-no-internal` depguard rule live; no behaviour change; `make ci` green, 5 examples exit 0). No content change from the Draft conception. |

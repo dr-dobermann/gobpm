@@ -226,7 +226,7 @@ gobpm предоставляет **закрытый, определённый с
   public/internal-split (§3.3), per-execution `RuntimeEnvironment` (§4.3) и
   §4.7-дисциплина версионирования, которую этот ADR уточняет и завершает для
   execution-контрактов.
-- [ADR-003 v.1 Module Layout](../ADR-003-module-layout.md) — §4.4
+- [ADR-003 Module Layout](../ADR-003-module-layout.md) — §4.4
   (правила направления импортов) предписал проверки depguard; этот ADR добавляет
   недостающее правило `pkg/model ↛ internal`.
 - [ADR-011 v.5 Process Data Flow](ADR-011-process-data-flow.ru.md) — §2.6 отложил
@@ -242,5 +242,5 @@ gobpm предоставляет **закрытый, определённый с
 
 | Версия | Дата | Автор | Изменение |
 |---|---|---|---|
-| v.1 | 2026-06-14 | Руслан Габитов | Draft. Чинит аудит 2.1 как **инкапсуляционный** фикс (не расширяемость): `pkg/model` сохраняет методы исполнения и закрытый набор узлов, но контракты, которые он реализует/потребляет — интерфейс node-executor (+ synchronizing-join-маркер), per-execution-окружение, consumer/producer + frame-операции data-binding, interaction-registrator, event-producer — переезжают в **публичные** пакеты; `internal/*` хранит реализации; `pkg/model` импортирует ноль `internal/*`. Правило depguard `pkg/model ↛ internal` (ADR-003 §4.4) делает это постоянным. **Без реестра / visitor / пользовательских узлов** (закрытый набор SAD-001 §14) — диспетчеризация не меняется (§2.3). Размещение публичных reader/node-executor-контрактов, отложенное ADR-011 v.5 §2.6 сюда, решено (§2.2). Вне охвата: передизайн data-flow/событий/жизненного цикла, расщепление god-object'а Instance (2.3), точная раскладка пакетов. Уточняет ADR-002 v.1; siblings ADR-001 v.5, ADR-003 v.1, ADR-011 v.5, ADR-014 v.1. |
+| v.1 | 2026-06-14 | Руслан Габитов | Draft. Чинит аудит 2.1 как **инкапсуляционный** фикс (не расширяемость): `pkg/model` сохраняет методы исполнения и закрытый набор узлов, но контракты, которые он реализует/потребляет — интерфейс node-executor (+ synchronizing-join-маркер), per-execution-окружение, consumer/producer + frame-операции data-binding, interaction-registrator, event-producer — переезжают в **публичные** пакеты; `internal/*` хранит реализации; `pkg/model` импортирует ноль `internal/*`. Правило depguard `pkg/model ↛ internal` (ADR-003 §4.4) делает это постоянным. **Без реестра / visitor / пользовательских узлов** (закрытый набор SAD-001 §14) — диспетчеризация не меняется (§2.3). Размещение публичных reader/node-executor-контрактов, отложенное ADR-011 v.5 §2.6 сюда, решено (§2.2). Вне охвата: передизайн data-flow/событий/жизненного цикла, расщепление god-object'а Instance (2.3), точная раскладка пакетов. Уточняет ADR-002 v.1; siblings ADR-001 v.5, ADR-003, ADR-011 v.5, ADR-014 v.1. |
 | v.1 | 2026-06-15 | Руслан Габитов | **Принято** — реализовано через SRD-012 v.1 (5 milestone'ов; пять контрактов перенесены в `pkg/exec`/`pkg/renv`/`pkg/eventproc`/`pkg/interactor`; `internal/exec`+`internal/renv` упразднены; `pkg/model` импортирует ноль `internal/*`; правило depguard `model-no-internal` работает; без изменения поведения; `make ci` зелёный, 5 примеров exit 0). Без изменения содержания от Draft-концепции. |

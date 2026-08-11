@@ -280,7 +280,7 @@ v3.1's §2.3 document-status inventory is **deleted**, not migrated. It was a 6,
 - [SAD-001 v.1.1 Vision & Architecture](../design/SAD-001-vision-and-architecture.md) — the architecture this roadmap delivers; §2 two journeys, §9.1 import rules, §14 registered deviations.
 - [docs/design/conformance-status.md](../design/conformance-status.md) — the authoritative per-element tracker.
 - [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — the in/out-of-scope element list.
-- [ADR-002 v.2 Extension Architecture](../design/ADR-002-extension-architecture.md) · [ADR-003 v.1 Module Layout](../design/ADR-003-module-layout.md) · [ADR-004 v.1 Runtime Environment Contract](../design/ADR-004-runtime-environment-contract.md) — the seams, their placement, and the server contract.
+- [ADR-002 v.2 Extension Architecture](../design/ADR-002-extension-architecture.md) · [ADR-003 Module Layout](../design/ADR-003-module-layout.md) · [ADR-004 v.1 Runtime Environment Contract](../design/ADR-004-runtime-environment-contract.md) — the seams, their placement, and the server contract.
 - [docs/backlog.md](../backlog.md) — the short-term working list. Long-term and blocked work lives in GitHub issues.
 
 ## Changes

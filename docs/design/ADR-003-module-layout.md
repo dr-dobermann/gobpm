@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.1 |
-| Date | 2026-05-30 |
+| Status | Draft |
+| Version | v.2 |
+| Date | 2026-08-11 |
 | Owner | Ruslan Gabitov |
 | Supersedes | — |
-| Refines | [SAD-001 v.1 §9 Module Layout](SAD-001-vision-and-architecture.md) |
+| Refines | [SAD-001 §9 Module Layout](SAD-001-vision-and-architecture.md) |
 
 ## 1. Context
 
@@ -23,11 +23,11 @@ Current code state (relevant to module layout):
 
 - **One module today**: `github.com/dr-dobermann/gobpm` at the repo root (`go.mod`).
 - **`pkg/`** contains: `errs/`, `model/`, `set/`, `thresher/`. Only `pkg/model/data/` exposes any extension-relevant types today (`FormalExpression`, `Source`, `PropertyAdder`).
-- **`internal/`** contains: `eventproc/` (EventHub interface lives here), `exec/`, `instance/` (Instance + track; token is a projection — per ADR-001 v.3), `interactor/` (TaskDistributor-equivalent), `renv/` (RuntimeEnvironment lives here), `runner/`, `scope/`.
+- **`internal/`** contains: `eventproc/` (EventHub interface lives here), `exec/`, `instance/` (Instance + track; token is a projection — per ADR-001), `interactor/` (TaskDistributor-equivalent), `renv/` (RuntimeEnvironment lives here), `runner/`, `scope/`.
 - **`examples/`** already follows the multi-module pattern — three subdirectories, each with its own `go.mod`.
 - **No `runtime/`, no `adapters/`** yet.
 
-Per ADR-002 §5, the engine-level extension accessors are factored into a public **`EngineRuntime`** interface promoted to `pkg/`. Three things an earlier draft planned to promote **stay internal** instead: `EventHub` (execution plumbing, not an extension point — ADR-002 §4.2); `RuntimeEnvironment` (it embeds internal types and now embeds the public `EngineRuntime`); and the human-interaction cluster `Registrator`/`Interactor` (its promotion + the `TaskDistributor` rename are deferred to a dedicated human-interaction ADR — ADR-001 v.4 §9). Eight new extension interfaces are introduced (Repository, Logger, Tracer, MetricsRecorder, Clock, MessageBroker, AuthorizationProvider, WorkerDispatcher) plus `ExpressionEngine` (which wraps existing `FormalExpression`). This ADR places them.
+Per ADR-002 §5, the engine-level extension accessors are factored into a public **`EngineRuntime`** interface promoted to `pkg/`. Three things an earlier draft planned to promote **stay internal** instead: `EventHub` (execution plumbing, not an extension point — ADR-002 §4.2); `RuntimeEnvironment` (it embeds internal types and now embeds the public `EngineRuntime`); and the human-interaction cluster `Registrator`/`Interactor` (its promotion + the `TaskDistributor` rename are deferred to a dedicated human-interaction ADR — ADR-001 §9). Eight new extension interfaces are introduced (Repository, Logger, Tracer, MetricsRecorder, Clock, MessageBroker, AuthorizationProvider, WorkerDispatcher) plus `ExpressionEngine` (which wraps existing `FormalExpression`). This ADR places them.
 
 ## 2. Decision
 
@@ -132,7 +132,7 @@ github.com/dr-dobermann/gobpm/                       ← repo root
 │   │   └── localdispatcher/                          In-process WorkerDispatcher default
 │   └── extension/                                    Optional capabilities (Starter, Stopper, HealthChecker)
 ├── internal/                                         ← PRIVATE IMPLEMENTATION (post-migration target)
-│   ├── instance/                                     Instance, track, stepInfo; Token projection (per ADR-001 v.3)
+│   ├── instance/                                     Instance, track, stepInfo; Token projection (per ADR-001)
 │   ├── scope/                                        Scope tree implementation
 │   ├── runner/                                       Process runner
 │   └── exec/                                         Execution machinery
@@ -178,7 +178,7 @@ All interface packages are **interface-only**. Defaults always live in sibling s
 | `pkg/messaging/` | `MessageBroker` | `pkg/messaging/membroker/` (in-memory MessageBroker) | External message ingress / correlation. `EventHub` is **not** here — it stays internal (execution plumbing, ADR-002 §4.2). |
 | `pkg/auth/` | `AuthorizationProvider` | `pkg/auth/allowall/` (allow-all default) | Standalone concern; identity-providers and tenancy belong in `runtime/`, not core. |
 | `pkg/tasks/` | `WorkerDispatcher` | `pkg/tasks/localdispatcher/` (in-process default) | Remote-execution task dispatch. Human interaction is **not** here — it has its own package, below. |
-| `pkg/interactor/` | `TaskDistributor` (human-task announcement/withdrawal) | `pkg/interactor/console/`; the engine's zero-config default is the no-op `NopDistributor` | **A promoted seam.** §4.6 step 5 deferred human interaction to `internal/`, and the code has outrun that: under a closed port list, a package in `pkg/` *is* a public extension point, so the position is already taken. What stays open is the human-interaction DESIGN that ADR-001 v.4 §9 reserves — the naming and the contract — not whether the seam is public. |
+| `pkg/interactor/` | `TaskDistributor` (human-task announcement/withdrawal) | `pkg/interactor/console/`; the engine's zero-config default is the no-op `NopDistributor` | **A promoted seam.** §4.6 step 5 deferred human interaction to `internal/`, and the code has outrun that: under a closed port list, a package in `pkg/` *is* a public extension point, so the position is already taken. What stays open is the human-interaction DESIGN that ADR-001 §9 reserves — the naming and the contract — not whether the seam is public. |
 | `pkg/rules/` | `rules.Engine` (Business Rule Task evaluation) | `pkg/rules/gorules/` (Go-functor default) | Decision evaluation. A DMN decision-table engine is `adapters/dtable` rather than a battery — see §4.2.1. |
 | `pkg/script/` | `script.Engine` (Script Task evaluation) | `pkg/script/gofunc/` (named Go functions, zero dependency, opt-in); `adapters/lua` for interpreted source | The one port whose interpreted-source implementation cannot be a battery: it needs an interpreter, and the core holds to stdlib + `uuid` (SAD-001 G2). The zero-config default is the empty `##None` registry, and `RegisterProcess` refuses a model whose script formats no configured engine claims. |
 | `pkg/datastore/` | `datastore.DataStore` (BPMN Data Store, §10.4.1) | `pkg/datastore/memstore/` (in-memory) | Engine-global data outliving any instance. |
@@ -246,18 +246,18 @@ What stays in `internal/` is purely-internal supporting machinery the public int
 |---|---|---|
 | `internal/eventproc/EventHub` (+ `eventhub/` impl) | **stays internal** | Execution plumbing, not an extension point (ADR-002 §4.2). No move. |
 | `internal/renv` engine-level accessors → **`EngineRuntime`** | `pkg/renv/` (the public `EngineRuntime` interface only) | Only the engine-level accessors go public as `EngineRuntime` (implemented by `Thresher`). `RuntimeEnvironment` **stays in `internal/renv`** — it embeds internal `scope.Scope`/`EventProducer`/`RenderRegistrator` plus the public `EngineRuntime`; `Instance` implements it. |
-| `internal/interactor/Registrator` cluster | **stays internal (deferred)** | Promotion + the `Registrator → TaskDistributor` rename are owned by a dedicated human-interaction ADR (ADR-001 v.4 §9). No move. |
+| `internal/interactor/Registrator` cluster | **stays internal (deferred)** | Promotion + the `Registrator → TaskDistributor` rename are owned by a dedicated human-interaction ADR (ADR-001 §9). No move. |
 | `pkg/model/data/FormalExpression` interface (already in `pkg/`) | `pkg/model/expression/ExpressionEngine` (new interface that wraps FormalExpression evaluation) | FormalExpression stays in `pkg/model/data/` — it IS a BPMN model element. ExpressionEngine is a new extension point that evaluates FormalExpressions; it lives under `pkg/model/expression/` because it directly evaluates a BPMN spec concept, and everything BPMN-adjacent stays in the `pkg/model/` tree. Default impl in `pkg/model/expression/goexpr/`. |
 
 #### What stays in `internal/`
 
 | `internal/` package | Role | Why internal |
 |---|---|---|
-| `internal/instance/` | `Instance`, `track`, `stepInfo` types + the `Token` projection per ADR-001 v.3 | The execution machinery is implementation; users interact with it via the `pkg/thresher/` façade and the `pkg/renv.RuntimeEnvironment` interface that `Instance` implements. **`track` stays here — no package split.** A split behind a host interface (to compiler-enforce ADR-001's event-only invariant) was considered and **decided against (2026-07-02)**: `track` is internal, non-extension-point code sharing the event-loop hot path with `Instance`, so a package boundary + host-interface indirection is ceremony that harms the effectiveness and observability of Instance execution without a real extensibility need. (This is separate from the `Instance` *size*-decomposition — splitting `instance.go` into more files in the **same** package — deferred in ADR-012 v.1 §2.5.) |
+| `internal/instance/` | `Instance`, `track`, `stepInfo` types + the `Token` projection per ADR-001 | The execution machinery is implementation; users interact with it via the `pkg/thresher/` façade and the `pkg/renv.RuntimeEnvironment` interface that `Instance` implements. **`track` stays here — no package split.** A split behind a host interface (to compiler-enforce ADR-001's event-only invariant) was considered and **decided against (2026-07-02)**: `track` is internal, non-extension-point code sharing the event-loop hot path with `Instance`, so a package boundary + host-interface indirection is ceremony that harms the effectiveness and observability of Instance execution without a real extensibility need. (This is separate from the `Instance` *size*-decomposition — splitting `instance.go` into more files in the **same** package — deferred in ADR-012 §2.5.) |
 | `internal/scope/` | Scope tree implementation backing `pkg/renv.RuntimeEnvironment.Scope()` | Implementation detail of how data scoping works; the `Scope` interface is exposed via the RuntimeEnvironment embedding. |
 | `internal/runner/`, `internal/exec/` | Execution machinery (the orchestration loop, node-execution dispatch) | Implementation detail; no extension points here. |
 | `internal/eventproc/` | The full event-distribution mechanism — `EventHub`, `EventProducer`, `EventProcessor`, `EventWaiter`, and the `eventhub/` impl | Execution plumbing; stays internal in full (ADR-002 §4.2). |
-| `internal/interactor/` | The human-interaction cluster (`Registrator`/`Interactor`/`RenderController`) + impl | Stays internal; promotion deferred to the human-interaction ADR (ADR-001 v.4 §9). |
+| `internal/interactor/` | The human-interaction cluster (`Registrator`/`Interactor`/`RenderController`) + impl | Stays internal; promotion deferred to the human-interaction ADR (ADR-001 §9). |
 | `internal/renv/` | `RuntimeEnvironment` (embeds the public `EngineRuntime`) + composition glue | Stays internal; only `EngineRuntime` is promoted to `pkg/`. |
 
 **The boundary discipline**: `pkg/` contains complete, self-contained extension contracts (interface + working default impl). External adapters and users import `pkg/` and get everything they need. `internal/` contains the engine machinery that consumes those `pkg/` interfaces but doesn't publish anything externally.
@@ -357,7 +357,7 @@ Incremental, no big-bang reorg. Each step is a small focused change.
 2. **Scaffold `adapters/` directory.** Create at least one placeholder (e.g., `adapters/memrepo-tests/` with the conformance helper that the in-memory Repository default passes — establishes the adapter testing pattern).
 3. **`EventHub` stays internal** — no move (execution plumbing, not an extension point; ADR-002 §4.2). `internal/eventproc/` keeps the full mechanism.
 4. **Factor `EngineRuntime`** (the engine-level extension accessors) into `pkg/renv/` (public), implemented by `Thresher`. *(Landed, and further than planned: `RuntimeEnvironment` moved to `pkg/renv/` as well, rather than staying in `internal/renv/`. It is the interface a node execution receives, so an out-of-tree implementation of any port has to name its type; keeping it internal would have made the public accessors reachable only through an unnameable one. `internal/instance/Instance` still implements it.)*
-5. ~~**Human interaction is deferred** — the `internal/interactor/` cluster stays internal.~~ *(Superseded. `pkg/interactor/` is public, with `TaskDistributor` and a `console` battery — see §4.2. Under a closed port list, a package in `pkg/` IS a public extension point, so the seam's position was taken by the code. What ADR-001 v.4 §9 still reserves is the human-interaction DESIGN — the contract and the naming — not whether the seam is public.)*
+5. ~~**Human interaction is deferred** — the `internal/interactor/` cluster stays internal.~~ *(Superseded. `pkg/interactor/` is public, with `TaskDistributor` and a `console` battery — see §4.2. Under a closed port list, a package in `pkg/` IS a public extension point, so the seam's position was taken by the code. What ADR-001 §9 still reserves is the human-interaction DESIGN — the contract and the naming — not whether the seam is public.)*
 6. **Create new `pkg/` subpackages** for the seven net-new interfaces (Repository, Logger, Tracer, MetricsRecorder, Clock, MessageBroker, AuthorizationProvider, WorkerDispatcher, ExpressionEngine) with their default implementations.
 7. **Add functional options** in `pkg/thresher/` (`WithRepository`, `WithLogger`, etc., per ADR-002 §4.4).
 8. **Refactor `Thresher.New`** to accept options and wire defaults internally.
@@ -375,7 +375,7 @@ Each row records what the code did with the departure. **Closed** at
 
 | Topic | Original state | This ADR | Status |
 |---|---|---|---|
-| Number of modules | One (`go.mod` at root) | Three categories: core (1), runtime (1), adapters (N) — scaffolded incrementally | **CLOSED.** Six `go.mod` files: core, `runtime/`, and `adapters/{sqlite,dtable,lua,postgres}/`. `adapters/sqlite` is still a `doc.go` placeholder, tracked as [#316](https://github.com/dr-dobermann/gobpm/issues/316). |
+| Number of modules | One (`go.mod` at root) | Three categories: core (1), runtime (1), adapters (N) — scaffolded incrementally | **CLOSED.** Six `go.mod` files: core, `runtime/`, and `adapters/{sqlite,dtable,lua,postgres}/`. Every one of them is implemented — the last placeholder, `adapters/sqlite`, was built out in [#316](https://github.com/dr-dobermann/gobpm/issues/316), so the catalogue no longer advertises a module a user cannot reach for. |
 | Extension interface location | `internal/eventproc/`, `internal/renv/`, `internal/interactor/`, `pkg/model/data/` (scattered; mostly internal) | The cohesive `pkg/*` subpackages of §4.2; `EventHub` stays internal | **CLOSED, with one departure from the departure.** Every port named in §4.2 is public, and `EventHub` is still `internal/eventproc/` as intended. Human interaction did NOT stay internal: `pkg/interactor/` exists, and §4.2 now records it as a promoted seam rather than pretending otherwise. |
 | Default implementation location | Existing defaults are in `internal/*` packages | **Always in a sibling subpackage** of the interface (§3.3), so users who swap a default pay nothing for it | **CLOSED.** Every port's battery is a sibling subpackage — `memrepo`, `allowall`, `syscl`, `membroker`, `localdispatcher`, `gorules`, `memstore`, `gofunc`, `console`, `noop`/`memtrace`/`memmetrics`. `find internal -type d -empty` returns nothing (§4.6 step 12). The one deliberate exception is `Logger`, whose default is `slog.Default()` — see §4.2. |
 | Thresher constructor | `Thresher.New(id string)` — no options | `Thresher.New(id, opts ...Option)` (per ADR-002 §4.4) | **CLOSED.** 24 `With*` options in `pkg/thresher/options.go`. |
@@ -508,3 +508,4 @@ Once an interface is published in `pkg/*`, its import path is a stability contra
 | Version | Date | Author | Change |
 |---|---|---|---|
 | v.1 | 2026-08-10 | Ruslan Gabitov | **Accepted.** Iterated as a Draft since 2026-05-30, with amendments folded in rather than versioned — an intermediate version nobody accepted is noise a later reader has to reconcile, and a stale pin in every document that referenced it. The final round ([#269](https://github.com/dr-dobermann/gobpm/issues/269)) reconciled §4.2 with the code the migration actually produced: no `pkg/extension/` (the ADR-002 §8.3 traits live in `pkg/renv` beside `Migrator` and `ClusterAware`), no `pkg/observability/slog/` (`slog.Default()` satisfies `Logger` directly), `pkg/interactor/` recorded as a promoted seam rather than deferred, and `rules`, `script` and `datastore` added — they existed and the catalogue had never named them. It also added §4.2.1's battery-vs-adapter criterion, amended §4.4 to permit `examples/* → adapters/*`, and closed §5's departure table row by row. From here the document is Accepted, so the next change to it is a v.2 — which starts as `Draft` until its own changes are implemented. |
+| v.2 | 2026-08-11 | Ruslan Gabitov | **The adapter catalogue no longer advertises a module a user cannot reach for.** §5's module-count row recorded `adapters/sqlite` as a `doc.go` placeholder tracked by [#316](https://github.com/dr-dobermann/gobpm/issues/316); the adapter is now implemented, so the row states what is true. Six modules, six implementations. Also drops the version pins from this document's outgoing SAD/ADR references: a pin exists so a historical reader can tell which redaction was meant, and that premise does not hold in a process where bumping a document updates everything related to it in the same change-set — the pin then only supplies something for a later bump to falsify. Direction is unaffected and still binding: up or sideways, never down. |

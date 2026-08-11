@@ -23,7 +23,7 @@ type queries struct {
 
 // claimExcluded are the statuses ListInFlight must never return: a settled
 // instance has nothing to recover, and a suspended one is withheld from
-// recovery by an operator's decision (ADR-033 v.5 §2.6).
+// recovery by an operator's decision (ADR-033 §2.6).
 var claimExcluded = fmt.Sprintf("(%d, %d, %d)",
 	repository.StatusCompleted,
 	repository.StatusTerminated,

@@ -354,7 +354,7 @@ func (mw *messageWaiter) subscriptionKeys() []string {
 // Service subscribes the broker for the waiter's message name and starts the
 // delivery goroutine. The subscription is registered synchronously, so a
 // message published after Service returns is delivered (subscribe-before-
-// publish, ADR-006 v.1 §2.4).
+// publish, ADR-006 §2.4).
 //
 // The key list is read BEFORE the blocking Subscribe and mw.sub is published
 // only after it, so a processor joining in between defers to a Service that

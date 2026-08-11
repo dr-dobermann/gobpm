@@ -7,7 +7,7 @@
 | Date | 2026-08-11 |
 | Owner | Ruslan Gabitov |
 | Supersedes | — |
-| Refines | [ADR-033 v.5 §2.7, §2.8](ADR-033-persistence-and-state.md) · [ADR-002 v.2 §4.2, §8.3](ADR-002-extension-architecture.md) |
+| Refines | [ADR-033 §2.7, §2.8](ADR-033-persistence-and-state.md) · [ADR-002 §4.2, §8.3](ADR-002-extension-architecture.md) |
 
 ---
 

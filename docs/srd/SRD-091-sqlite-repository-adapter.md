@@ -5,7 +5,7 @@
 | Status | Draft |
 | Date | 2026-08-11 |
 | Owner | Ruslan Gabitov |
-| Implements | [ADR-037 v.1](../design/ADR-037-sql-repository-adapters.md) §2.1–§2.6 · [ADR-033 v.5](../design/ADR-033-persistence-and-state.md) §2.7, §2.8 · [ADR-003 v.1](../design/ADR-003-module-layout.md) §4.2, §4.4 · [ADR-002 v.2](../design/ADR-002-extension-architecture.md) §4.2, §8.3 |
+| Implements | [ADR-037](../design/ADR-037-sql-repository-adapters.md) §2.1–§2.6 · [ADR-033](../design/ADR-033-persistence-and-state.md) §2.7, §2.8 · [ADR-003](../design/ADR-003-module-layout.md) §4.2, §4.4 · [ADR-002](../design/ADR-002-extension-architecture.md) §4.2, §8.3 |
 | Milestone | E2 — durable persistence |
 | Issue | [#316](https://github.com/dr-dobermann/gobpm/issues/316) |
 
@@ -83,10 +83,14 @@ adapter than for postgres, and §4.2 says why.
   idempotently, as postgres does.
 - **FR-5 — it reports itself NOT cluster-safe** through
   `ClusterCompatibility()`, naming the reason. A single-file database cannot
-  honour the lease semantics ADR-033 v.5 §2.8 gives a cluster, and the engine
+  honour the lease semantics ADR-033 §2.8 gives a cluster, and the engine
   must learn that from the adapter rather than from documentation.
-- **FR-6 — `adapters/sqlite/doc.go` stops describing unbuilt work.** Its
+- **FR-6 — the package documentation stops describing unbuilt work.** The
   scaffold notice and the #316 pointer are replaced by what the package does.
+  The scaffold's `doc.go` existed only to hold that notice for a package with
+  no code; once there is code, the package comment belongs at the head of
+  `sqlite.go` with the constructors it describes, so `doc.go` goes rather than
+  being rewritten.
 
 ### Non-functional
 
@@ -230,7 +234,7 @@ contract is a change every adapter author inherits.
 | T-2 | `TestConformanceInMemory` | the same suite through `OpenMemory`, proving the adapter does not depend on a file — and that the two constructors agree |
 | T-3 | `TestForeignKeysEnforcedOnEveryConnection` | with the pool forced to several connections, a record naming an unregistered group is refused on each — the §3.3 failure mode, which a single-connection test cannot see |
 | T-4 | `TestNewRefusesAPoolWithForeignKeysOff` | `New` fails when handed a `*sql.DB` whose DSN omits the pragma, rather than silently running without the guarantee (§3.1's verify half) |
-| T-4b | `TestOpenSetsTheRequiredPragmas` | a database `Open`ed by the adapter reports `foreign_keys=1` and WAL **on a connection the pool created later**, which is the property a post-open `PRAGMA` exec does not have (§3.1's set half) |
+| T-4b | `TestOpenSetsPragmasOnLaterConnections` | a database `Open`ed by the adapter reports `foreign_keys=1` and WAL **on a connection the pool created later**, which is the property a post-open `PRAGMA` exec does not have (§3.1's set half) |
 | T-5 | `TestMigrateIsIdempotent` | applying the migrations twice leaves the same schema and no error (FR-4) |
 | T-6 | `TestConcurrentSaveSerializes` | N goroutines saving distinct records under WAL + busy timeout all succeed, and CAS still rejects a stale version under contention — the case §4.2 says the conformance suite cannot reach |
 | T-7 | `TestClusterCompatibilityReportsUnsafe` | `ClusterCompatibility()` returns false with a reason naming the single-writer limit (FR-5) |
@@ -247,19 +251,25 @@ contract is a change every adapter author inherits.
   filed here as a follow-up because it had one data point. It has two: this
   adapter and `adapters/postgres` decided the same things independently, which
   is what makes a repeated decision a contract rather than one adapter's
-  habit. It is recorded as [ADR-037 v.1](../design/ADR-037-sql-repository-adapters.md)
+  habit. It is recorded as [ADR-037](../design/ADR-037-sql-repository-adapters.md)
   §2.2, landing in this branch — the SRD was the wrong long-term home,
   because a one-shot landing record is not where the third adapter's author
   looks.
+
 ## 7 Cross-document references
 
-| Doc | Version | Used for |
-|---|---|---|
-| [ADR-037](../design/ADR-037-sql-repository-adapters.md) | v.1 | §2.1 the module shape, §2.2 connection ownership, §2.3 refuse-vs-warn, §2.4 portable encodings, §2.5 the cluster declaration, §2.6 migration serialization |
-| [ADR-033](../design/ADR-033-persistence-and-state.md) | v.5 | §2.7 the storage-composition rule and its tenant-linkage principle, §2.8 engine groups and cluster-safe locking |
-| [ADR-003](../design/ADR-003-module-layout.md) | v.1 | §4.2 the adapter catalogue, §4.4 import direction |
-| [ADR-002](../design/ADR-002-extension-architecture.md) | v.2 | §4.2 the Repository extension, §8.3 optional capabilities |
-| [SRD-078](SRD-078-postgres-repository-adapter.md) | — | the postgres adapter this one mirrors |
+References to a SAD or ADR name the document and the section, not a version:
+bumping one of them updates everything related to it in the same change-set,
+so every reference is current by construction and a pin would only be
+something for the next bump to falsify.
+
+| Doc | Used for |
+|---|---|
+| [ADR-037](../design/ADR-037-sql-repository-adapters.md) | §2.1 the module shape, §2.2 connection ownership, §2.3 refuse-vs-warn, §2.4 portable encodings, §2.5 the cluster declaration, §2.6 migration serialization |
+| [ADR-033](../design/ADR-033-persistence-and-state.md) | §2.7 the storage-composition rule and its tenant-linkage principle, §2.8 engine groups and cluster-safe locking |
+| [ADR-003](../design/ADR-003-module-layout.md) | §4.2 the adapter catalogue, §4.4 import direction |
+| [ADR-002](../design/ADR-002-extension-architecture.md) | §4.2 the Repository extension, §8.3 optional capabilities |
+| [SRD-078](SRD-078-postgres-repository-adapter.md) | the postgres adapter this one mirrors |
 
 ## 8 Definition of Done
 
@@ -268,11 +278,12 @@ contract is a change every adapter author inherits.
 - Diff-coverage ≥95% on changed lines.
 - The conformance suite runs **in CI**, unskipped — demonstrated by the run's
   own output, not asserted.
-- `adapters/sqlite/doc.go` describes the package, and the PR body carries
-  `Closes #316`, so the issue does not stay open against a landed adapter.
+- The package comment describes what the adapter does rather than what it will
+  become, and the PR body carries `Closes #316`, so the issue does not stay
+  open against a landed adapter.
 
 ## 9 Open questions
 
-None. The driver is settled by §4.1 and `doc.go`'s existing commitment; the
+None. The driver is settled by §4.1 and the scaffold's existing commitment; the
 absent `WithSchema` is settled by §3.1; and the suite's concurrency gap is
 filed as §6 rather than left hanging.

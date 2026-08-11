@@ -1,5 +1,5 @@
 // Package sqlite provides the embedded Repository adapter (SRD-091,
-// ADR-033 v.5): Process Instance checkpoints in a SQLite database the
+// ADR-033): Process Instance checkpoints in a SQLite database the
 // adapter migrates itself (renv.Migrator). It implements the full grown
 // contract — CAS saves, ownership leases, the group registry and the
 // group-scoped recovery listing — and declares itself NOT cluster-safe
