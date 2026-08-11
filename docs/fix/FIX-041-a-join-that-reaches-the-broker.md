@@ -1,7 +1,7 @@
 # FIX-041 — a join that reaches the broker: a foreign call under the hub lock, and the windows around it
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft.
+**Status:** Accepted.
 **Date:** 2026-08-11.
 **Author:** Руслан Габитов.
 **Branch:** `fix/lost-iteration-correlation-key` (the same branch as the #320
