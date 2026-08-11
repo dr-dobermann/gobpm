@@ -46,6 +46,8 @@ const (
 	tagInclusiveGateway = "inclusiveGateway"
 	tagEventBasedGtw    = "eventBasedGateway"
 	tagComplexGateway   = "complexGateway"
+	tagScriptTask       = "scriptTask"
+	tagScript           = "script"
 )
 
 func init() { //nolint:gochecknoinits // SRD-051 §FR-4: blank-import self-registration, the image.RegisterFormat idiom (ADR-024 §2.2)

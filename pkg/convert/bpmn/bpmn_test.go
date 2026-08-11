@@ -1016,7 +1016,7 @@ func TestImportInvalidFixtures(t *testing.T) {
 		{file: "duplicate-element-id.bpmn", want: "duplicate flow-element id"},
 		{file: "dangling-target.bpmn", want: "unknown targetRef"},
 		{file: "unknown-operation.bpmn", want: "unknown operationRef"},
-		{file: "unsupported-element.bpmn", want: `unsupported element "scriptTask"`, wantUEE: true},
+		{file: "unsupported-element.bpmn", want: `unsupported element "subProcess"`, wantUEE: true},
 	}
 
 	for _, tc := range tests {

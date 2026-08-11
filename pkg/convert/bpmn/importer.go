@@ -104,7 +104,11 @@ func docOptions(docs []docSpec) []options.Option {
 // element stages fill it with the children that decide which node to build
 // at all — event definitions, loop characteristics, io specifications.
 type nodeBody struct {
-	docs []docSpec
+	// script is <bpmn:script> — the first child that decides WHAT is
+	// built rather than decorating it. A script task cannot be
+	// constructed without one.
+	script string
+	docs   []docSpec
 }
 
 // opts renders the body as construction options, with the element's id

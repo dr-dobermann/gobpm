@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -272,6 +274,21 @@ type nodeChildParser func(p *parser, body *nodeBody, se xml.StartElement) error
 // built, not how it is decorated.
 var nodeChildParsers = map[string]nodeChildParser{
 	tagDocumentation: parseNodeDocElem,
+	tagScript:        parseScriptElem,
+}
+
+// parseScriptElem records a script task's body. It is read as text, not
+// interpreted: whether the engine can run it is the format's question,
+// answered before the task is built.
+func parseScriptElem(p *parser, body *nodeBody, se xml.StartElement) error {
+	text, err := p.readText(se)
+	if err != nil {
+		return err
+	}
+
+	body.script = text
+
+	return nil
 }
 
 // parseNodeDocElem records one <documentation> child of a flow node.
@@ -338,6 +355,32 @@ var nodeBuilders = map[string]nodeBuilder{
 	tagParallelGateway:  buildGateway,
 	tagInclusiveGateway: buildGateway,
 	tagEventBasedGtw:    buildGateway,
+	tagScriptTask:       buildScriptTask,
+}
+
+// buildScriptTask builds a script task, or reports why its script cannot
+// be run here. The format decides that (SRD-089.B §FR-5) and is checked
+// BEFORE the body, so a file carrying a language this engine has no
+// engine for is told about the language rather than about a missing
+// script.
+func buildScriptTask(
+	_ *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,
+) (flow.Node, error) {
+	format := attrValue(se, "scriptFormat")
+
+	if classifyScriptFormat(format) != scriptLua {
+		return nil, refuseScriptFormat(id, format)
+	}
+
+	if strings.TrimSpace(body.script) == "" {
+		return nil, errs.New(
+			errs.M("bpmn: scriptTask %q declares scriptFormat %q but carries no "+
+				"<script>; there is nothing to run", id, format),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return activities.NewScriptTask(
+		fallbackName(id, name), format, body.script, body.opts(id)...)
 }
 
 // buildManualTask backs both <bpmn:task> and <bpmn:manualTask>: the
