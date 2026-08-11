@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/convert"
+	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 )
 
 // TestVisualArtifactsAreSkipped covers SRD-089.A §6 T-6 (FR-8). A file was
@@ -114,5 +115,57 @@ func TestChoreographyAndConversationAreRefused(t *testing.T) {
 					tag, uee.Section, section)
 			}
 		})
+	}
+}
+
+// TestParallelGatewayDefaultIsIgnoredOnImport pins what import does with
+// an attribute BPMN does not define on the element.
+//
+// The export side refuses to write `default` on a parallel gateway
+// (§13.4.1 defines none), and its test reaches that state programmatically
+// because the importer cannot produce it — which left the import side's
+// behaviour unpinned. It is IGNORED, deliberately and consistently: the
+// importer silently ignores every attribute it does not map (isExecutable,
+// startQuantity, isImmediate and the rest), and singling this one out for
+// a refusal would be inconsistent with the other twenty. What must not
+// happen is the gateway acquiring a default flow from an attribute the
+// standard does not give it.
+func TestParallelGatewayDefaultIsIgnoredOnImport(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="P" name="P">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:parallelGateway id="g1" default="f2"/>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="g1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="g1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	p, err := importer{}.Import(context.Background(), strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	var pg *gateways.ParallelGateway
+
+	for _, n := range p.Nodes() {
+		if g, ok := n.(*gateways.ParallelGateway); ok {
+			pg = g
+		}
+	}
+
+	if pg == nil {
+		t.Fatal("parallel gateway missing after import")
+	}
+
+	if df := pg.DefaultFlow(); df != nil {
+		t.Errorf("parallel gateway acquired default flow %q from an attribute "+
+			"BPMN §13.4.1 does not define on it", df.ID())
+	}
+
+	// And it must not reappear on the way out.
+	if out := exportOnce(t, doc); strings.Contains(out, "default=") {
+		t.Errorf("export re-emitted a default on the parallel gateway:\n%s", out)
 	}
 }

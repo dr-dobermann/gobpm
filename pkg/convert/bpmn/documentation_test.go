@@ -62,10 +62,35 @@ func TestDocumentationRoundTrips(t *testing.T) {
 		t.Errorf("start-event doc text = %q, want the unescaped markup", got)
 	}
 
+	// Find the flow first and fail if it is missing: a bare
+	// `if f.ID() == "f1" && …` inside the loop passes vacuously when no
+	// flow matches, which is a test that cannot fail for the reason it
+	// was written.
+	var f1 *flow.SequenceFlow
+
 	for _, f := range p.Flows() {
-		if f.ID() == "f1" && len(f.Docs()) != 1 {
-			t.Errorf("sequence-flow docs = %v, want one", f.Docs())
+		if f.ID() == "f1" {
+			f1 = f
 		}
+	}
+
+	if f1 == nil {
+		t.Fatal("sequence flow f1 missing after import")
+	}
+
+	flowDocs := f1.Docs()
+	if len(flowDocs) != 1 {
+		t.Fatalf("sequence-flow docs = %v, want one", flowDocs)
+	}
+
+	// The TEXT is the invariant; the count alone would pass on garbage.
+	if got := flowDocs[0].Text(); got != "the only path" {
+		t.Errorf("sequence-flow doc text = %q, want %q", got, "the only path")
+	}
+
+	if got := flowDocs[0].Format(); got != defaultDocFormat {
+		t.Errorf("sequence-flow doc format = %q, want the %s default",
+			got, defaultDocFormat)
 	}
 
 	out := exportOnce(t, docDoc)

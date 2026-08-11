@@ -277,3 +277,54 @@ func TestOrderingGuardsAgainstNilFlows(t *testing.T) {
 		}
 	})
 }
+
+// TestOrderFlowsIsATotalOrder pins the comparator itself, which a
+// two-element nil test cannot reach.
+//
+// Answering 0 for every pair involving a nil reads like the defensive
+// guard the rest of this file carries, but it makes nil equal to
+// everything, so unrelated flows become transitively equal.
+// slices.SortFunc does not reject that ordering — it returns an UNSORTED
+// slice. The old comparator put "f5" ahead of "f1" on the input below
+// while every other test, and 100% statement coverage of this function,
+// stayed green.
+func TestOrderFlowsIsATotalOrder(t *testing.T) {
+	p := importedLinear(t)
+
+	// Enough real flows that the sort actually partitions, plus nils to
+	// exercise the guard.
+	var flows []*flow.SequenceFlow
+	flows = append(flows, p.Flows()...)
+	flows = append(flows, nil, nil)
+
+	got := orderFlows(flows)
+
+	if len(got) != len(flows) {
+		t.Fatalf("orderFlows returned %d flows, want %d — nothing may be dropped",
+			len(got), len(flows))
+	}
+
+	// Every nil leads, and the non-nil tail is strictly ascending by id.
+	seenNonNil := false
+	prev := ""
+
+	for i, f := range got {
+		if f == nil {
+			if seenNonNil {
+				t.Errorf("nil at position %d follows a non-nil flow; nils must "+
+					"sort together, not float", i)
+			}
+
+			continue
+		}
+
+		seenNonNil = true
+
+		if prev != "" && f.ID() <= prev {
+			t.Errorf("flow %q at position %d follows %q — the tail is not sorted",
+				f.ID(), i, prev)
+		}
+
+		prev = f.ID()
+	}
+}

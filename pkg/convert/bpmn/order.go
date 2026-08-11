@@ -145,8 +145,22 @@ func sortedByID(nn []flow.Node) []flow.Node {
 func orderFlows(flows []*flow.SequenceFlow) []*flow.SequenceFlow {
 	sorted := slices.Clone(flows)
 	slices.SortFunc(sorted, func(a, b *flow.SequenceFlow) int {
-		if a == nil || b == nil {
+		// Nils sort first, and sort EQUAL only to each other. Answering
+		// 0 for every pair involving a nil looks like the same defensive
+		// guard the rest of this file carries, but it is not an ordering:
+		// it makes nil equal to everything, so a nil in the slice makes
+		// unrelated flows transitively equal. slices.SortFunc does not
+		// reject that — it returns an UNSORTED slice, silently defeating
+		// the determinism this file exists to provide.
+		switch {
+		case a == nil && b == nil:
 			return 0
+
+		case a == nil:
+			return -1
+
+		case b == nil:
+			return 1
 		}
 
 		return cmp.Compare(a.ID(), b.ID())
