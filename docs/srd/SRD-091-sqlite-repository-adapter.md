@@ -5,7 +5,7 @@
 | Status | Draft |
 | Date | 2026-08-11 |
 | Owner | Ruslan Gabitov |
-| Implements | [ADR-033 v.5](../design/ADR-033-persistence-and-state.md) §2.7, §2.8 · [ADR-003 v.1](../design/ADR-003-module-layout.md) §4.2, §4.4 · [ADR-002 v.2](../design/ADR-002-extension-architecture.md) §4.2, §8.3 |
+| Implements | [ADR-037 v.1](../design/ADR-037-sql-repository-adapters.md) §2.1–§2.6 · [ADR-033 v.5](../design/ADR-033-persistence-and-state.md) §2.7, §2.8 · [ADR-003 v.1](../design/ADR-003-module-layout.md) §4.2, §4.4 · [ADR-002 v.2](../design/ADR-002-extension-architecture.md) §4.2, §8.3 |
 | Milestone | E2 — durable persistence |
 | Issue | [#316](https://github.com/dr-dobermann/gobpm/issues/316) |
 
@@ -243,22 +243,19 @@ contract is a change every adapter author inherits.
   it. Widening the contract is a change every adapter author inherits, so it
   gets its own document rather than riding here.
 
-- **No ADR owns adapter connection ownership.** §3.1's rule — an adapter that
-  depends on correctness-critical connection settings should OWN the
-  connection (`Open`), and only VERIFY one it is handed (`New`) — is a
-  convention with no home: ADR-002 owns the adapter-module conventions but
-  says nothing about it, and a grep of `docs/design/` for DSN or pool
-  ownership returns nothing. It is not promoted to ADR-002 here because it has
-  one data point. Postgres does not need it, since no postgres DSN setting
-  decides whether the schema's constraints hold, so this branch cannot tell a
-  general rule from a SQLite peculiarity. Promote it when a second adapter
-  meets the same decision — and note that an SRD is the wrong long-term home,
-  since a one-shot document is not where a later adapter author looks.
-
+- **RESOLVED — adapter connection ownership now has a home.** §3.1's rule was
+  filed here as a follow-up because it had one data point. It has two: this
+  adapter and `adapters/postgres` decided the same things independently, which
+  is what makes a repeated decision a contract rather than one adapter's
+  habit. It is recorded as [ADR-037 v.1](../design/ADR-037-sql-repository-adapters.md)
+  §2.2, landing in this branch — the SRD was the wrong long-term home,
+  because a one-shot landing record is not where the third adapter's author
+  looks.
 ## 7 Cross-document references
 
 | Doc | Version | Used for |
 |---|---|---|
+| [ADR-037](../design/ADR-037-sql-repository-adapters.md) | v.1 | §2.1 the module shape, §2.2 connection ownership, §2.3 refuse-vs-warn, §2.4 portable encodings, §2.5 the cluster declaration, §2.6 migration serialization |
 | [ADR-033](../design/ADR-033-persistence-and-state.md) | v.5 | §2.7 the storage-composition rule and its tenant-linkage principle, §2.8 engine groups and cluster-safe locking |
 | [ADR-003](../design/ADR-003-module-layout.md) | v.1 | §4.2 the adapter catalogue, §4.4 import direction |
 | [ADR-002](../design/ADR-002-extension-architecture.md) | v.2 | §4.2 the Repository extension, §8.3 optional capabilities |
