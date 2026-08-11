@@ -487,16 +487,6 @@ func TestIterationRoutingKillAndResume(t *testing.T) {
 			return false
 		}
 
-		fmt.Printf("DBG doc: groups=%d open=%v tracks=%d\n",
-			len(doc.MIGroups),
-			func() any {
-				if len(doc.MIGroups) > 0 {
-					return doc.MIGroups[0].Open
-				}
-				return nil
-			}(),
-			len(doc.Tracks))
-
 		return len(doc.MIGroups) == 1 && len(doc.MIGroups[0].Open) == 1
 	}, 3*time.Second, 500*time.Millisecond,
 		"the checkpoint must freeze the one-open-iteration position")

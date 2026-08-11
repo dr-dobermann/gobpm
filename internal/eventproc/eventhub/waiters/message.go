@@ -45,7 +45,12 @@ type messageWaiter struct {
 	id         string
 	processors []eventproc.EventProcessor
 	state      eventproc.EventWaiterState
-	m          sync.Mutex
+	// keyed records whether the subscription was created with a key-set, i.e.
+	// whether it filters at all. SyncKeys reads it to leave a wildcard
+	// subscription alone; the broker offers no way back from keyed to wildcard,
+	// so the distinction has to be kept here.
+	keyed bool
+	m     sync.Mutex
 }
 
 // AddKey extends the waiter's broker subscription with key (SRD-017 §4.5 lazy
@@ -53,11 +58,62 @@ type messageWaiter struct {
 // a no-op) — the receiver then picks the key up from its instance's grown
 // key-set when it does subscribe.
 func (mw *messageWaiter) AddKey(key string) error {
-	if mw.sub == nil {
+	mw.m.Lock()
+	sub := mw.sub
+	mw.m.Unlock()
+
+	if sub == nil {
 		return nil
 	}
 
-	return mw.sub.AddKey(key)
+	return sub.AddKey(key)
+}
+
+// SyncKeys re-reads the processors' declared correlation keys and grows the
+// broker subscription with each of them (SRD-017 §4.5). Adding a key the
+// subscription already holds is a no-op, so the call is idempotent.
+//
+// It exists because neither of the two paths that key a subscription covers the
+// moment BETWEEN them. Service reads the declared keys before the hub installs
+// the waiter in its registry, and EventHub.AddEventKey — the lazy-association
+// path — no-ops while the waiter is not yet installed, since it cannot find it.
+// A key a concurrent sibling declares inside that window therefore reaches
+// neither, and every message carrying it is buffered by the broker unrouted,
+// forever. Two parallel Multi-Instance iterations parking at one shared message
+// catch (SRD-085 FR-3) hit it whenever the second declares its iteration key
+// while the first is still subscribing.
+//
+// The hub calls this once the waiter is reachable, which closes the window from
+// the other side: a key declared before the re-read is picked up here, and one
+// declared after it finds the waiter installed and takes the AddEventKey path.
+//
+// A WILDCARD subscription is left alone. It already receives every message for
+// its name, so it can gain nothing — while keying it would NARROW it, silently
+// cutting off the keyless processor (an instance-starter, or a held
+// subscription for an instance that has established no conversation key) that
+// asked for everything.
+func (mw *messageWaiter) SyncKeys() error {
+	mw.m.Lock()
+	sub, keyed := mw.sub, mw.keyed
+	mw.m.Unlock()
+
+	if sub == nil || !keyed {
+		return nil
+	}
+
+	var errList []error
+
+	for _, k := range mw.subscriptionKeys() {
+		if k == "" {
+			continue
+		}
+
+		if err := sub.AddKey(k); err != nil {
+			errList = append(errList, err)
+		}
+	}
+
+	return errors.Join(errList...)
 }
 
 // NewMessageWaiter builds a messageWaiter for a MessageEventDefinition. It
@@ -197,10 +253,18 @@ func (mw *messageWaiter) Process(eDef flow.EventDefinition) error {
 // instance's conversation key values, so the message routes to that instance; a
 // processor that declares none (the instance-starter) contributes nothing,
 // leaving a wildcard subscription.
+// The processor list is copied under the lock and read outside it: a
+// processor's CorrelationKeys reaches into its instance's own lock, and
+// SyncKeys calls this on a live waiter whose processors a concurrent
+// registration may be appending to.
 func (mw *messageWaiter) subscriptionKeys() []string {
+	mw.m.Lock()
+	processors := append([]eventproc.EventProcessor(nil), mw.processors...)
+	mw.m.Unlock()
+
 	var keys []string
 
-	for _, p := range mw.processors {
+	for _, p := range processors {
 		if kp, ok := p.(interface {
 			CorrelationKeys() []string
 		}); ok {
@@ -219,7 +283,9 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.D("current_state", mw.state.String()))
 	}
 
-	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, mw.subscriptionKeys()...)
+	keys := mw.subscriptionKeys()
+
+	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, keys...)
 	if err != nil {
 		mw.state = eventproc.WSFailed
 
@@ -230,7 +296,13 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.E(err))
 	}
 
+	mw.m.Lock()
 	mw.sub = sub
+	// the broker drops empty keys, so an all-empty key-set is a wildcard there
+	// and must read as one here (SyncKeys never keys a wildcard).
+	mw.keyed = slices.ContainsFunc(keys, func(k string) bool { return k != "" })
+	mw.m.Unlock()
+
 	mw.state = eventproc.WSRunned
 	mw.stopCh = make(chan struct{})
 	mw.done = make(chan struct{})
