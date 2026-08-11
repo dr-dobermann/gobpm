@@ -556,9 +556,42 @@ its own changes are implemented.
 | T-11 | `TestScriptTaskGoFuncBattery` | a Script Task naming a registered Go function executes end to end on a one-line-wired `gofunc` engine, and the observability fact attributes the run to `##GoFunc` — the battery's whole point (FR-8) |
 | T-12 | `TestScriptTaskGoFuncUnknownName` | the format IS claimed, so registration passes and the name resolves only at execution; the failure lists the registered names. Plus `TestGoFuncIdentity`, `TestGoFuncBadRegistration`, `TestGoFuncExecute` at the unit level (empty/nil/duplicate registration, nil reader, the body's own error) |
 | T-13 | `TestScriptTaskNoEngine`, `TestScriptTaskUnclaimedFormat` | `RegisterProcess` refuses a model demanding an unclaimed format, naming the task, the format, the registered claims and `WithScriptEngine` — under both the `##None` default and a non-empty registry that simply does not claim it (FR-8) |
-| T-14 | `make depguard-check` | a throwaway file in a battery package importing `internal/` is denied (FR-9); `pkg/thresher` importing `internal/` still passes, since the facade legitimately does |
+| T-14 | depguard probe (manual; there is no `make depguard-check` target — the fixture cannot be committed, see T-10) | a throwaway file in a battery package importing `internal/` is denied (FR-9); `pkg/thresher` importing `internal/` still passes, since the facade legitimately does |
 | T-15 | `make lint-all-modules MODULES="$(EXAMPLE_MODULES)"` | reports real issues rather than an unconditional 0 — verified by the probe that returns 1 issue with the exclusion removed and 0 with it present (FR-10) |
-| T-10 | `make depguard-check` | a throwaway file under `examples/` importing `runtime/` is denied (FR-6). Not a committed fixture: once FR-10 lands the examples are genuinely linted, so a permanent violating file would keep the gate red — the check mirrors `consumer-smoke`, which builds a throwaway module for the same reason |
+| T-10 | depguard probe (manual) | a throwaway file under `examples/` importing `runtime/` is denied (FR-6). Not a committed fixture: once FR-10 lands the examples are genuinely linted, so a permanent violating file would keep the gate red — the check mirrors `consumer-smoke`, which builds a throwaway module for the same reason |
+
+**How T-10 and T-14 are actually run**, since neither can be a committed
+fixture and no make target wraps them — write the violating file, lint, delete:
+
+```bash
+# T-14 — a battery importing internal/ is denied (FR-9)
+printf 'package memrepo\n\nimport "github.com/dr-dobermann/gobpm/internal/scope"\n\ntype probeType = scope.Scope\n' \
+  > pkg/repository/memrepo/zz_probe.go
+golangci-lint run ./pkg/repository/memrepo/...   # → depguard: public-api-no-internal
+rm pkg/repository/memrepo/zz_probe.go
+golangci-lint run ./pkg/thresher/...             # → 0 issues (the facade may import internal/)
+```
+
+Use a REAL import, not a blank one: `revive`'s blank-imports rule fires first
+and masks the depguard finding, which reads as "the rule did not fire".
+
+T-10 has a further wrinkle worth recording, because the naive probe reports
+nothing and looks like a dead rule. An example module has no `require` on the
+runtime module, so `import ".../runtime"` fails at **typecheck** before
+depguard is consulted — the module system is the primary enforcement, and
+`examples-no-runtime` is the guard for the case where someone adds the
+require. Demonstrating the depguard rule therefore takes an extra step:
+
+```bash
+cd examples/timer-event
+go mod edit -require=github.com/dr-dobermann/gobpm/runtime@v0.0.0 \
+            -replace=github.com/dr-dobermann/gobpm/runtime=../../runtime
+printf 'package main\n\nimport _ "github.com/dr-dobermann/gobpm/runtime"\n' > zz_probe.go
+go mod tidy && golangci-lint run ./...           # → depguard: examples-no-runtime
+rm zz_probe.go && git checkout go.mod go.sum
+```
+
+Both were run at `dd08894b` and both denied as specified.
 
 ## 6 Follow-ups (filed, not deferred)
 
@@ -579,7 +612,11 @@ its own changes are implemented.
 
 ## 8 Definition of Done
 
-- FR-1…FR-7 landed and wired; T-1…T-10 green.
+- FR-1…FR-10 landed and wired; T-1…T-15 green. (The ranges read FR-1…FR-7 /
+  T-1…T-10 when this section was written; FR-8 the `script` battery, FR-9 the
+  `pkg/**` depguard rule and FR-10 the examples lint were added during the
+  work, and a DoD that does not cover them closes on less than the document
+  asks for.)
 - `make ci` PASS end to end (verdict in `.ci/last-run.json`, per FIX-039).
 - Diff-coverage ≥95% on changed lines; every touched function ≥80%, aim 100%.
 - ADR-003 §5's departure table closed row by row; ADR-003 `Draft` → `Accepted`,
