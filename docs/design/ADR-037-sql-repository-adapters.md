@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-08-11 |
 | Owner | Ruslan Gabitov |
@@ -179,4 +179,4 @@ adapter author inherits and needs its own document.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-08-11 | Ruslan Gabitov | Initial Draft, written once a SECOND SQL Repository adapter made the shared decisions a contract rather than one adapter's habit. Records the module shape, connection ownership ("set what you own, verify what you are handed"), the refuse/warn split, portable value encodings, the cluster declaration and per-dialect migration serialization. |
+| v.1 | 2026-08-11 | Ruslan Gabitov | **Accepted.** Written once a SECOND SQL Repository adapter made the shared decisions a contract rather than one adapter's habit. Records the module shape, connection ownership ("set what you own, verify what you are handed"), the refuse/warn split, portable value encodings, the cluster declaration and per-dialect migration serialization. Both existing adapters conform to §2.1–§2.6 as written, which is what makes this a record of a decision rather than a proposal. |

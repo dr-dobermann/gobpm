@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-11 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-037](../design/ADR-037-sql-repository-adapters.md) §2.1–§2.6 · [ADR-033](../design/ADR-033-persistence-and-state.md) §2.7, §2.8 · [ADR-003](../design/ADR-003-module-layout.md) §4.2, §4.4 · [ADR-002](../design/ADR-002-extension-architecture.md) §4.2, §8.3 |
@@ -99,8 +99,9 @@ adapter than for postgres, and §4.2 says why.
   §4.4 already forbid the reverse edge, and `make ci`'s `consumer-smoke` step
   proves the core still builds without it.
 - **NFR-2 — no CGo.** `modernc.org/sqlite` is a pure-Go translation, so the
-  adapter cross-compiles and needs no toolchain beyond Go. This is `doc.go`'s
-  existing commitment, not a new decision.
+  adapter cross-compiles and needs no toolchain beyond Go. The scaffold
+  committed to this before any code existed; it is honoured here, not decided
+  here.
 - **NFR-3 — the gate stays green**, including the diff-coverage floor on
   changed lines.
 
