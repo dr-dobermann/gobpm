@@ -218,13 +218,30 @@ the §9 absence check enforced; §10 filled.
 Then: `/check-srd`, **`/pr-review` (obligatory)**, sync linked docs, and only
 then the PR description.
 
-## Open question for the owner (not blocking)
+## A plain composite is instance zero of one (fold into M3c)
 
-A **plain** (non-iterated) Sub-Process host is not `Dehydratable` either, so it
-pins its instance exactly as an iterated one does today. FR-8 names only
-executors, so M3c as specified leaves that case alone. Widening it would change
-dehydration for every composite in the engine — the owner's call, and a
-separate slice if wanted.
+A plain (non-iterated) Sub-Process host pins its instance today, and the
+reason is a category error rather than a missing capability: it parks as
+`TrackWaitForEvent` (`parkScopeHost`), so `dehydratableParked` reaches
+`waitReleasable`, which asks the NODE whether its wait kind can be
+externalized to a holder. A composite host is not a wait at all — its token
+forked into a child scope, and the only real waits are the body's own
+event-related tracks, which already answer for themselves. `dehydration_test.go`
+covers no composite, so this has never been exercised.
+
+Do NOT answer it by making `SubProcess` implement `Dehydratable`. Route the
+plain composite through the executor instead: it is instance zero of one, a
+`scopeExec` with ordinal 0 — which is what FR-2 already asks for ("a decorator
+when the node carries loop characteristics, a bare executor otherwise"), and
+which the plain composite evades today by deciding earlier, in
+`enterComposite`. FR-8 then covers iterated and plain composites with one rule
+and no special case.
+
+The cost, so it is not assumed free: a plain composite's scope is opened by
+the LOOP-driven path (`parkScopeHost` emits `evScopeOpen` → `onScopeOpen`),
+not the executor-driven `handleScopeOpen`, and the re-entry queue lives in the
+loop-driven one. The two open paths have to merge. That deletes a branch
+rather than adding one, but it is real work and belongs in M3c's estimate.
 
 ## Discipline that cost time this session — do not relearn it
 
