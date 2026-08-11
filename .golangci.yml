@@ -72,8 +72,8 @@ linters:
         # adapters/ is deliberately NOT denied here, though §4.4 as written
         # forbids it: decision-table demonstrates adapters/dtable and
         # script-task demonstrates adapters/lua, and an adapter nobody
-        # demonstrates is an adapter nobody can learn to wire. ADR-003 v.2
-        # amends §4.4 to permit it (SRD-088 FR-6).
+        # demonstrates is an adapter nobody can learn to wire. ADR-003 §4.4
+        # is amended to permit it (SRD-088 FR-6).
         examples-no-runtime:
           files:
             - "**/examples/**/*.go"

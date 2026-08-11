@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-05-30 |
 | Owner | Ruslan Gabitov |
@@ -169,16 +169,19 @@ All interface packages are **interface-only**. Defaults always live in sibling s
 | Subpackage | Interfaces | Default impl location | Cohesion rationale |
 |---|---|---|---|
 | `pkg/thresher/` | `Thresher` (the engine façade); `Option` type; `WithRepository(...)`, `WithLogger(...)`, etc. | n/a — the engine itself is the entry point | The public engine entry point. |
-| `pkg/renv/` | `RuntimeEnvironment` (extended per ADR-002 §4.3) | n/a — implemented by `internal/instance/Instance` | One interface, one package; central enough that nesting it elsewhere would obscure it. |
+| `pkg/renv/` | `RuntimeEnvironment`, `EngineRuntime`; and the optional side-capability traits of ADR-002 §8.3 — `Migrator`, `ClusterAware`, `Starter`, `Stopper`, `HealthChecker`, `RuntimeAware` | n/a — `RuntimeEnvironment` is implemented by `internal/instance/Instance`; the traits are implemented by whichever adapter needs them | One interface, one package; central enough that nesting it elsewhere would obscure it. **There is no `pkg/extension/` package**: the traits are about what a seam can do for the runtime, `Migrator` and `ClusterAware` already lived here, and splitting six related optional interfaces across two packages buys nothing — an adapter implements them structurally, importing nothing. |
 | `pkg/model/` | BPMN STANDARD types (existing — Activity, Event, Gateway, FormalExpression, …) | n/a — these are model types, not extension points | **Everything from the BPMN standard lives in this tree.** Extension points that evaluate BPMN concepts (e.g., `ExpressionEngine`) live as `pkg/model/<concern>/` subpackages, not at the `pkg/` root. |
-| `pkg/model/expression/` | `ExpressionEngine` (NEW — extension point for evaluating BPMN `FormalExpression`) | `pkg/model/expression/goexpr/` (Go-native default) | Evaluates a BPMN spec concept (FormalExpression) — kept under the model tree per BPMN-standard-locality preference. |
+| `pkg/model/expression/` | `expression.Engine` (extension point for evaluating BPMN `FormalExpression`) | `pkg/model/expression/goexpr/` (Go-native functors) and `lite/` (a small text expression language); both auto-wired, routed by language claim | Evaluates a BPMN spec concept (FormalExpression) — kept under the model tree per BPMN-standard-locality preference. |
 | `pkg/repository/` | `Repository` | `pkg/repository/memrepo/` (in-memory, non-durable) | The persistence concern stands alone. |
-| `pkg/observability/` | `Logger`, `Tracer`, `MetricsRecorder` | `pkg/observability/slog/` (slog-default Logger); `pkg/observability/noop/` (no-op Tracer + MetricsRecorder) | All three are observability sinks consumed together (a span typically logs + records metrics + adds attributes); separating their interfaces forces awkward multi-import wiring. Defaults split because slog is a real default; tracer/metrics defaults are no-ops. |
+| `pkg/observability/` | `Logger`, `Tracer`, `MetricsRecorder` | **no `slog` subpackage**: `Logger` is defined as the leveled subset of `*slog.Logger`, so `slog.Default()` satisfies it directly and the engine wires it. `pkg/observability/noop/` (no-op Tracer + MetricsRecorder), plus `memtrace/` and `memmetrics/` for tests and local inspection | All three are observability sinks consumed together (a span typically logs + records metrics + adds attributes); separating their interfaces forces awkward multi-import wiring. A gobpm `slog` package would wrap a type that already satisfies the interface. |
 | `pkg/clock/` | `Clock` | `pkg/clock/syscl/` (system clock — `time.Now` wrapper) | Distinct from observability — used by Timer events, not by sinks; deserves its own package for testability injection. |
 | `pkg/messaging/` | `MessageBroker` | `pkg/messaging/membroker/` (in-memory MessageBroker) | External message ingress / correlation. `EventHub` is **not** here — it stays internal (execution plumbing, ADR-002 §4.2). |
 | `pkg/auth/` | `AuthorizationProvider` | `pkg/auth/allowall/` (allow-all default) | Standalone concern; identity-providers and tenancy belong in `runtime/`, not core. |
-| `pkg/tasks/` | `WorkerDispatcher` | `pkg/tasks/localdispatcher/` (in-process default) | Remote-execution task dispatch. (`TaskDistributor` / human-interaction is **deferred** — ADR-001 v.4 §9 — so it is not in this package yet.) |
-| `pkg/extension/` | `Starter`, `Stopper`, `HealthChecker` (optional side-capability interfaces per ADR-002 §8.3) | n/a — these are pure marker interfaces | The cross-cutting "lifecycle hook" trait set; lives alone so adapters can implement them without importing concern-specific packages. |
+| `pkg/tasks/` | `WorkerDispatcher` | `pkg/tasks/localdispatcher/` (in-process default) | Remote-execution task dispatch. Human interaction is **not** here — it has its own package, below. |
+| `pkg/interactor/` | `TaskDistributor` (human-task announcement/withdrawal) | `pkg/interactor/console/`; the engine's zero-config default is the no-op `NopDistributor` | **A promoted seam.** §4.6 step 5 deferred human interaction to `internal/`, and the code has outrun that: under a closed port list, a package in `pkg/` *is* a public extension point, so the position is already taken. What stays open is the human-interaction DESIGN that ADR-001 v.4 §9 reserves — the naming and the contract — not whether the seam is public. |
+| `pkg/rules/` | `rules.Engine` (Business Rule Task evaluation) | `pkg/rules/gorules/` (Go-functor default) | Decision evaluation. A DMN decision-table engine is `adapters/dtable` rather than a battery — see §4.2.1. |
+| `pkg/script/` | `script.Engine` (Script Task evaluation) | `pkg/script/gofunc/` (named Go functions, zero dependency, opt-in); `adapters/lua` for interpreted source | The one port whose interpreted-source implementation cannot be a battery: it needs an interpreter, and the core holds to stdlib + `uuid` (SAD-001 G2). The zero-config default is the empty `##None` registry, and `RegisterProcess` refuses a model whose script formats no configured engine claims. |
+| `pkg/datastore/` | `datastore.DataStore` (BPMN Data Store, §10.4.1) | `pkg/datastore/memstore/` (in-memory) | Engine-global data outliving any instance. |
 
 #### Conformance test helpers
 
@@ -190,10 +193,46 @@ Each interface package SHOULD ship its conformance helper as an exported functio
 | `pkg/messaging/messagingtest/` | Any `MessageBroker` implementation |
 | `pkg/clock/clocktest/` | Any `Clock` implementation (incl. fake clocks for time-dependent tests) |
 | `pkg/model/expression/expressiontest/` | Any `ExpressionEngine` implementation |
-| `pkg/tasks/taskstest/` | Any `TaskDistributor` / `WorkerDispatcher` implementation |
+| `pkg/tasks/taskstest/` | Any `WorkerDispatcher` implementation. **Not `TaskDistributor`** — that interface lives in `pkg/interactor/`, so its suite, if one is wanted, belongs there |
 | `pkg/auth/authtest/` | Any `AuthorizationProvider` implementation |
 
 `Logger`, `Tracer`, `MetricsRecorder` don't need conformance suites — their interfaces are too simple (single-method sinks) to warrant one. Adapters self-test directly.
+
+#### 4.2.1 Battery or adapter
+
+The tree holds two kinds of implementation, and until this was written down
+nothing said which was which — `adapters/dtable` (a dependency-free
+`rules.Engine`) sat beside `pkg/rules/gorules` (also dependency-free) with no
+stated reason for the difference.
+
+| | Battery | Adapter |
+|---|---|---|
+| **Test** | every user wants it available | you opt into it |
+| **Lives in** | `pkg/<port>/<name>/` — a subpackage of its port | `adapters/<name>/` — its own Go module |
+| **Dependencies** | stdlib + `uuid` only (SAD-001 G2) | may take third-party ones |
+| **Wiring** | available with no module dependency; auto-wired when it is complete on its own | wired explicitly by the user |
+| **Examples** | `memrepo`, `allowall`, `syscl`, `membroker`, `gorules`, `memstore`; `gooper` and `gofunc` for the host-content case | `postgres` (pgx), `lua` (gopher-lua), `dtable` (optional DMN capability) |
+
+Two clarifications, both of which the tree already demonstrates:
+
+It is **not** "needs a dependency → its own module". `dtable` needs none and is
+still an adapter, because a DMN decision-table engine is not something every
+build should carry.
+
+And **auto-wiring is a consequence of the battery test, not part of it.** A
+battery is auto-wired when it is useful the moment it exists — `memrepo` is a
+working repository as constructed. A battery whose content comes from the host
+is empty until the host fills it, so auto-wiring one would install a default
+that can do nothing: `gooper` (Service Tasks) and `gofunc` (Script Tasks) are
+both constructed by the user for that reason, and both are batteries —
+`pkg/`-located, dependency-free, reachable without adding a module.
+
+**Batteries are not moved to `adapters/`.** They are separate Go modules there,
+so core could not wire one without taking a module dependency — which ends
+batteries-included at the module boundary. The pay-for-what-you-use property
+§3.3 wanted is already delivered by the subpackage split: a user wiring
+`postgres` compiles no `memrepo`. The standard library arranges itself the same
+way (`database/sql` + `database/sql/driver`).
 
 ### 4.3 What moves to `pkg/` vs what stays in `internal/`
 
@@ -236,7 +275,8 @@ The rules are enforced by `golangci-lint depguard` (or equivalent) in CI from da
 | `internal/*` → `internal/*` | YES | Implementation packages cooperate freely. |
 | `examples/*` → `pkg/*` | YES | Each example module imports core. |
 | `examples/*` → `internal/*` | NO | Examples demonstrate the public surface; reaching into internal would mislead users. Enforced at the Go module level (Go's `internal/` rule already blocks external imports). |
-| `examples/*` → `runtime/*`, `adapters/*` | NO | Examples demonstrate the embedded library use case; runtime/adapter wiring is its own example category later. |
+| `examples/*` → `runtime/*` | NO | Examples demonstrate the embedded library use case; server wiring is its own example category later. |
+| `examples/*` → `adapters/*` | YES | **Amended.** The original rule forbade this, and the code had already gone the other way: `decision-table` demonstrates `dtable` and `script-task` demonstrates `lua`. An adapter nobody demonstrates is an adapter nobody can learn to wire, and adapters exist to be wired by users — showing that is the example's job. Only the server boundary stays closed. |
 | `runtime/*` → `pkg/*` | YES | Runtime composes the engine. |
 | `runtime/*` → `internal/*` | NO | Runtime is a SEPARATE Go module; Go's `internal/` rule blocks the import at language level. This is the architectural enforcement. |
 | `runtime/*` → `adapters/*` | YES, by user choice | Runtime imports the adapter modules the user wires in. |
@@ -316,12 +356,12 @@ Incremental, no big-bang reorg. Each step is a small focused change.
 1. **Scaffold `runtime/` submodule.** Create `runtime/go.mod`, `runtime/doc.go`, `runtime/cmd/gobpm-server/main.go` (stub). Adds the boundary; no code yet.
 2. **Scaffold `adapters/` directory.** Create at least one placeholder (e.g., `adapters/memrepo-tests/` with the conformance helper that the in-memory Repository default passes — establishes the adapter testing pattern).
 3. **`EventHub` stays internal** — no move (execution plumbing, not an extension point; ADR-002 §4.2). `internal/eventproc/` keeps the full mechanism.
-4. **Factor `EngineRuntime`** (the engine-level extension accessors) into `pkg/renv/` (public), implemented by `Thresher`. `RuntimeEnvironment` **stays in `internal/renv/`**, embedding the public `EngineRuntime`; `internal/instance/Instance` implements it.
-5. **Human interaction is deferred** — the `internal/interactor/` cluster stays internal; the `Registrator → TaskDistributor` rename + promotion ride a dedicated human-interaction ADR (ADR-001 v.4 §9).
+4. **Factor `EngineRuntime`** (the engine-level extension accessors) into `pkg/renv/` (public), implemented by `Thresher`. *(Landed, and further than planned: `RuntimeEnvironment` moved to `pkg/renv/` as well, rather than staying in `internal/renv/`. It is the interface a node execution receives, so an out-of-tree implementation of any port has to name its type; keeping it internal would have made the public accessors reachable only through an unnameable one. `internal/instance/Instance` still implements it.)*
+5. ~~**Human interaction is deferred** — the `internal/interactor/` cluster stays internal.~~ *(Superseded. `pkg/interactor/` is public, with `TaskDistributor` and a `console` battery — see §4.2. Under a closed port list, a package in `pkg/` IS a public extension point, so the seam's position was taken by the code. What ADR-001 v.4 §9 still reserves is the human-interaction DESIGN — the contract and the naming — not whether the seam is public.)*
 6. **Create new `pkg/` subpackages** for the seven net-new interfaces (Repository, Logger, Tracer, MetricsRecorder, Clock, MessageBroker, AuthorizationProvider, WorkerDispatcher, ExpressionEngine) with their default implementations.
 7. **Add functional options** in `pkg/thresher/` (`WithRepository`, `WithLogger`, etc., per ADR-002 §4.4).
 8. **Refactor `Thresher.New`** to accept options and wire defaults internally.
-9. **Add `pkg/extension/`** with `Starter`, `Stopper`, `HealthChecker`.
+9. ~~**Add `pkg/extension/`** with `Starter`, `Stopper`, `HealthChecker`.~~ *(Superseded. The traits live in `pkg/renv/capabilities.go` beside `Migrator` and `ClusterAware`, which were already there — see §4.2. They are implemented structurally, so an adapter imports nothing to satisfy them, and a separate package would have split six related optional interfaces across two locations for no gain.)*
 10. **Add CI rule for import-direction enforcement** (golangci-lint depguard) to `.github/workflows/check.yml`.
 11. **Add conformance test helper packages** (`pkg/repository/repositorytest/`, etc.) for the extension types where they apply.
 12. **Remove only genuinely-empty `internal/` directories.** Note that `internal/eventproc/`, `internal/interactor/`, and `internal/renv/` **remain** (EventHub internal; human-interaction deferred; `RuntimeEnvironment` internal). Delete a directory only if it genuinely ends up empty; do NOT leave empty markers. Remove any other obsolete docs that surface during the migration audit.
@@ -330,18 +370,24 @@ Each step is its own SRD-class change (per project SDD discipline) after this AD
 
 ## 5. Conception vs Current Code — Deliberate Departures
 
-| Topic | Current state | This ADR | Required change |
-|---|---|---|---|
-| Number of modules | One (`go.mod` at root) | Three categories: core (1), runtime (1), adapters (N) — scaffolded incrementally | Add `runtime/go.mod`, `runtime/doc.go`, `runtime/cmd/gobpm-server/main.go` stub. Add `adapters/` directory with at least one placeholder per ADR-002 §4.6. |
-| Extension interface location | `internal/eventproc/`, `internal/renv/`, `internal/interactor/`, `pkg/model/data/` (scattered; mostly internal) | The cohesive `pkg/*` subpackages of §4.2 (9 public extension contracts + `EngineRuntime`); `EventHub`/human-interaction/`RuntimeEnvironment` stay internal | Per the §4.6 migration list. |
-| Default implementation location | Existing defaults are in `internal/*` packages (e.g., `internal/eventproc/eventhub/`) | **Always in a sibling subpackage** of the interface, never bundled in the interface package (§3.3). E.g., `pkg/repository/` has only the interface; `pkg/repository/memrepo/` has the in-memory default. Adapter authors and users who configure different impls pay nothing for unused defaults. | Move existing internal defaults to `pkg/<concern>/<default>/` subpackages. Empty resulting `internal/` directories are deleted (§4.6 step 12). |
-| Thresher constructor | `Thresher.New(id string)` — no options | `Thresher.New(id, opts ...Option)` (per ADR-002 §4.4) | Implementation lives in `pkg/thresher/`; `Option` type defined there; per-extension `WithXxx` functions defined there. |
-| Conformance test helpers | Not present | One `<pkg>test/` sibling subpackage per applicable interface | Add `pkg/repository/repositorytest/`, `pkg/messaging/messagingtest/`, etc. |
-| Import-direction enforcement | None in CI | golangci-lint depguard rules in `.golangci.yml`, enforced by `check.yml` | Add depguard config and CI step. |
-| `examples/*` content | Demonstrate `pkg/thresher/` + `pkg/model/` | Eventually demonstrate the extension wiring (each `WithXxx` shown in a small example) | New example files added as the extensions land; doesn't require restructuring. |
-| Tag conventions | Single tag `v0.0.1` for the whole repo | Per-module tags using path-prefixed semver (`vX.Y.Z` for core; `<path>/vX.Y.Z` for submodules) | Update `make tag` target (per `chore/ci-audit` already merged on remote master) to default to core tags; document the submodule tag pattern in the Makefile. |
+Each row records what the code did with the departure. **Closed** at
+`59f8461`, by SRD-088 unless another document is named.
 
-Each departure becomes a focused SRD-class implementation after this ADR is Accepted.
+| Topic | Original state | This ADR | Status |
+|---|---|---|---|
+| Number of modules | One (`go.mod` at root) | Three categories: core (1), runtime (1), adapters (N) — scaffolded incrementally | **CLOSED.** Six `go.mod` files: core, `runtime/`, and `adapters/{sqlite,dtable,lua,postgres}/`. `adapters/sqlite` is still a `doc.go` placeholder, tracked as [#316](https://github.com/dr-dobermann/gobpm/issues/316). |
+| Extension interface location | `internal/eventproc/`, `internal/renv/`, `internal/interactor/`, `pkg/model/data/` (scattered; mostly internal) | The cohesive `pkg/*` subpackages of §4.2; `EventHub` stays internal | **CLOSED, with one departure from the departure.** Every port named in §4.2 is public, and `EventHub` is still `internal/eventproc/` as intended. Human interaction did NOT stay internal: `pkg/interactor/` exists, and §4.2 now records it as a promoted seam rather than pretending otherwise. |
+| Default implementation location | Existing defaults are in `internal/*` packages | **Always in a sibling subpackage** of the interface (§3.3), so users who swap a default pay nothing for it | **CLOSED.** Every port's battery is a sibling subpackage — `memrepo`, `allowall`, `syscl`, `membroker`, `localdispatcher`, `gorules`, `memstore`, `gofunc`, `console`, `noop`/`memtrace`/`memmetrics`. `find internal -type d -empty` returns nothing (§4.6 step 12). The one deliberate exception is `Logger`, whose default is `slog.Default()` — see §4.2. |
+| Thresher constructor | `Thresher.New(id string)` — no options | `Thresher.New(id, opts ...Option)` (per ADR-002 §4.4) | **CLOSED.** 24 `With*` options in `pkg/thresher/options.go`. |
+| Conformance test helpers | Not present | One `<pkg>test/` sibling subpackage per applicable interface | **CLOSED.** All six exist: `repositorytest`, `clocktest`, `messagingtest`, `expressiontest`, `taskstest`, `authtest`. Each publishes `Conformance(t, factory)` and carries a negative control proving it can fail — a helper that cannot fail proves nothing about what it accepts. |
+| Import-direction enforcement | None in CI | golangci-lint depguard rules in `.golangci.yml`, enforced by `check.yml` | **CLOSED.** Six depguard rule groups, each citing this §4.4. Note the rules only became load-bearing for examples once the lint gate actually reached them — an `exclusions.paths` entry had been suppressing every finding in all 49 example modules, so `examples-no-internal` had never fired (SRD-088 §4.7). |
+| `examples/*` content | Demonstrate `pkg/thresher/` + `pkg/model/` | Eventually demonstrate the extension wiring | **PARTLY CLOSED, and deliberately open-ended.** 49 example modules exist, each built AND run under CI; adapter wiring is demonstrated (`decision-table`, `script-task`), which is why §4.4's `examples/* → adapters/*` ban is amended. "Each `WithXxx` shown in a small example" is not a finishable requirement — options keep arriving — so it is a standing practice, not a gate. |
+| Tag conventions | Single tag `v0.0.1` for the whole repo | Per-module tags using path-prefixed semver (`vX.Y.Z` for core; `<path>/vX.Y.Z` for submodules) | **CLOSED.** `make tag` cuts the core tag from `.version`, additionally pinning the vendored BPMN-spec tree hash (SAD-001 §14); the submodule pattern is documented above the target. No submodule has been tagged yet — none has shipped. |
+
+Every row is closed or explicitly standing, which is what lets this ADR move
+to `Accepted`. The migration landed incrementally rather than as the named
+project of §4.6, so the value of this table is no longer the plan — it is the
+record of which departures were real and what became of each.
 
 ## 6. Consequences
 
@@ -461,4 +507,4 @@ Once an interface is published in `pkg/*`, its import path is a stability contra
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-05-30 | Ruslan Gabitov | Initial Draft. Pre-acceptance iteration ongoing; amendments folded into this Draft without per-round history rows (per project doc-history discipline). When v.1 flips to Accepted, this row records the Accepted state. |
+| v.1 | 2026-08-10 | Ruslan Gabitov | **Accepted.** Iterated as a Draft since 2026-05-30, with amendments folded in rather than versioned — an intermediate version nobody accepted is noise a later reader has to reconcile, and a stale pin in every document that referenced it. The final round (SRD-088) reconciled §4.2 with the code the migration actually produced: no `pkg/extension/` (the ADR-002 §8.3 traits live in `pkg/renv` beside `Migrator` and `ClusterAware`), no `pkg/observability/slog/` (`slog.Default()` satisfies `Logger` directly), `pkg/interactor/` recorded as a promoted seam rather than deferred, and `rules`, `script` and `datastore` added — they existed and the catalogue had never named them. It also added §4.2.1's battery-vs-adapter criterion, amended §4.4 to permit `examples/* → adapters/*`, and closed §5's departure table row by row. From here the document is Accepted, so the next change to it is a v.2 — which starts as `Draft` until its own changes are implemented. |

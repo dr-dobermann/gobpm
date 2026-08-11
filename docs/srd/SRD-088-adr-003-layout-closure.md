@@ -90,8 +90,9 @@ Two consequences shape §3:
   path), and the engine stops what it holds. Idempotency is what makes that
   seam safe.
 - **FR-4 — ADR-003's catalogue is reconciled with the code** (three stale
-  entries, §4.1) **and gains the battery-vs-adapter criterion** (§4.6), carried
-  by an ADR-003 v.1 → v.2 amendment.
+  entries, §4.1) **and gains the battery-vs-adapter criterion** (§4.6). Both
+  are edited into ADR-003 **v.1**, which is still `Draft` — not carried by a
+  v.2, for the reason §4.9 gives.
 - **FR-5 — the four conformance helpers named by §4.2 exist**: `messagingtest`,
   `expressiontest`, `taskstest`, `authtest`. Each publishes its port's contract
   as a `Conformance(t, factory)` an adapter calls in one line, in the shape
@@ -110,12 +111,12 @@ Two consequences shape §3:
   `WorkerDispatcher`". Only `WorkerDispatcher` lives in `pkg/tasks`;
   `TaskDistributor` is in `pkg/interactor` (§9's promotion). `taskstest`
   therefore covers `WorkerDispatcher`, and the catalogue row is corrected by
-  the same ADR-003 v.2 amendment as FR-4's three stale entries — a
+  the same ADR-003 amendment as FR-4's three stale entries — a
   `TaskDistributor` suite, if wanted, belongs in `pkg/interactor/`.
 - **FR-6 — depguard denies `examples/* → runtime/*`.** §4.4 also forbids
   `examples/* → adapters/*`, but two examples demonstrate adapters today
   (`decision-table` → `dtable`, `script-task` → `lua`) and an adapter nobody
-  demonstrates is an adapter nobody can learn to wire. ADR-003 v.2 amends §4.4
+  demonstrates is an adapter nobody can learn to wire. ADR-003 amends §4.4
   to permit it; only the server boundary stays closed.
 - **FR-7 — ADR-003 §5's departure table is closed row by row**, and the document
   moves `Draft` → `Accepted`.
@@ -331,16 +332,17 @@ consequences worth recording, because they are visible in the diff:
 |---|---|---|
 | `pkg/observability/slog/` is the `Logger` default | the battery already exists and is `slog.Default()`, wired by the engine: `Logger` is defined as "the leveled subset of `*slog.Logger`, so the standard library's `*slog.Logger` satisfies it directly", asserted at `pkg/observability/logger.go:28` | drop the entry — a gobpm package would wrap a type that already satisfies the interface, and the port is not battery-less |
 | `pkg/extension/` holds the lifecycle traits | `pkg/renv/capabilities.go` holds `Migrator` and `ClusterAware`, both citing ADR-002 §8.3, both structurally satisfied | drop the entry; the traits join their siblings in `pkg/renv` (FR-1) |
-| §4.6 step 5 — human interaction "stays internal" | `pkg/interactor/` exists, with `console` as its battery | record the promotion in v.2 (decided at the doc gate) |
+| §4.6 step 5 — human interaction "stays internal" | `pkg/interactor/` exists, with `console` as its battery | record the promotion in the amendment (decided at the doc gate) |
 
 All three are the document lagging the code, but the third differently: the
 first two describe packages that should not exist, while `pkg/interactor/`
 describes a package that does. Under a closed seam list a package in `pkg/` *is*
-a public extension point, so the position is already taken — v.2 records
+a public extension point, so the position is already taken — the amendment
+records
 `TaskDistributor` as a promoted seam with `console` as its battery, and drops
 step 5's "human interaction is deferred" clause, which the code has outrun.
 
-What v.2 does **not** do is settle the human-interaction design that ADR-001
+What the amendment does **not** do is settle the human-interaction design that ADR-001
 v.4 §9 reserves. Recording that the seam is public is a statement about layout,
 which is ADR-003's subject; the `Registrator → TaskDistributor` naming and the
 interaction model remain that ADR's to decide, and it may still reshape the
@@ -432,7 +434,7 @@ and which this battery does not close.
 The tree holds two kinds of implementation and nothing states which is which,
 so `adapters/dtable` (a dependency-free `rules.Engine`) looks arbitrarily
 placed beside `pkg/rules/gorules` (also dependency-free). The criterion that
-actually fits, to be recorded in ADR-003 v.2:
+actually fits, to be recorded in ADR-003:
 
 | | Battery | Adapter |
 |---|---|---|
@@ -515,6 +517,29 @@ examples-specific subset excluding `shadow` and `forcetypeassert` (130 of the
 standard is a second thing to keep true, and an example is the first code a
 user copies.
 
+### 4.9 Why the amendment is not a v.2
+
+This document said throughout that ADR-003 goes `v.1 → v.2`. That was wrong,
+and the correction is recorded here rather than quietly applied, because the
+version a document carries is what every cross-reference pins.
+
+**ADR-003 has never been `Accepted`.** It is `v.1`, `Draft`, dated 2026-05-30.
+The project's versioning rule is that a `Draft` is simply edited: a version
+bump exists to record a **change of contract on an already-accepted
+document**, and there is no accepted contract here to change. A v.2 would be
+an intermediate version nobody accepted — noise a later reader has to
+reconcile, and a stale pin in every document that referenced it.
+
+So FR-4, FR-6 and FR-7 all land in **v.1**, which then flips `Draft` →
+`Accepted` at the PR handover, with one `Document History` row covering the
+whole amendment. Nothing outside this document pinned "ADR-003 v.2" — the ten
+references were all here — so the correction costs nothing beyond this
+section.
+
+The rule that *does* apply after this lands: ADR-003 is `Accepted` from then
+on, so the next change to it IS a v.2, and that v.2 starts as `Draft` until
+its own changes are implemented.
+
 ## 5 Tests
 
 | # | Test | Asserts |
@@ -547,7 +572,7 @@ user copies.
 
 | Doc | Version | Used for |
 |---|---|---|
-| [ADR-003](../design/ADR-003-module-layout.md) | v.1 → v.2 | §4.2 catalogue, §4.4 import rules, §4.6 steps, §5 gate |
+| [ADR-003](../design/ADR-003-module-layout.md) | v.1, `Draft` → `Accepted` | §4.2 catalogue, §4.4 import rules, §4.6 steps, §5 gate |
 | [ADR-002](../design/ADR-002-extension-architecture.md) | v.2 | §8.3 side-capability interfaces and their call points; §8.2 adapter operational expectations |
 | [ADR-004](../design/ADR-004-runtime-environment-contract.md) | v.1 | §3.5 config model, §4.3 phase order, §4.4 graceful shutdown |
 | [SAD-001](../design/SAD-001-vision-and-architecture.md) | v.1.1 | §9.1 — the division is enforced by import direction |
@@ -558,7 +583,8 @@ user copies.
 - `make ci` PASS end to end (verdict in `.ci/last-run.json`, per FIX-039).
 - Diff-coverage ≥95% on changed lines; every touched function ≥80%, aim 100%.
 - ADR-003 §5's departure table closed row by row; ADR-003 `Draft` → `Accepted`,
-  v.1 → v.2, with a `Document History` row.
+  edited in place at v.1 and flipped `Draft` → `Accepted`, with a
+  `Document History` row (§4.9).
 - #269's stale claims corrected in the issue by comment, its delivered
   checkboxes ticked.
 
@@ -566,4 +592,4 @@ user copies.
 
 None. Both items raised during review are decided: the `script` battery rides
 this document as FR-8, and `pkg/interactor/`'s promotion is recorded in
-ADR-003 v.2 (§4.1).
+the ADR-003 amendment (§4.1).
