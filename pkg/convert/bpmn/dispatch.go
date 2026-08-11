@@ -8,7 +8,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
 // parseCtx names the position in the document where an element was met.
@@ -54,7 +53,12 @@ const (
 // semantics, skipped in every context that can hold one. They are
 // near-universal in modeler output, so refusing them would reject files
 // whose flow graph is entirely supported (ADR-024 v.4 §2.6).
-var annotations = []string{tagDocumentation, tagExtensionElems}
+//
+// <documentation> left this list when the model gained a place to put it:
+// it is now parsed wherever a gobpm element can carry it (a process, a
+// flow node, a sequence flow) and skipped by declaration where none can
+// (see policy).
+var annotations = []string{tagExtensionElems}
 
 // policy declares every non-default disposition that is not context-wide.
 // Lookup order is: the context's parser table, then this table, then
@@ -72,6 +76,14 @@ var policy = map[elementKey]dispositionKind{
 	// slice does not bind, so it is skipped by declaration rather than by
 	// a lenient default.
 	{local: tagErrorRef, ctx: ctxOperation}: skipped,
+
+	// <documentation> is imported wherever the model can hold it. These
+	// three contexts have no model element to attach it to — <definitions>
+	// and <interface> are not gobpm objects at all, and an operation is a
+	// catalog stub — so it is dropped here by declaration.
+	{local: tagDocumentation, ctx: ctxDefinitions}: skipped,
+	{local: tagDocumentation, ctx: ctxInterface}:   skipped,
+	{local: tagDocumentation, ctx: ctxOperation}:   skipped,
 }
 
 // sections pins the BPMN 2.0 § for elements the converter refuses, so the
@@ -203,42 +215,77 @@ func parseSequenceFlowElem(p *parser, asm *assembly, se xml.StartElement) error 
 	return nil
 }
 
+// nodeChildParser parses one child of a flow node into the body being
+// collected before the node is built.
+type nodeChildParser func(p *parser, body *nodeBody, se xml.StartElement) error
+
+// nodeChildParsers claims the children of a flow node that take part in
+// building it. The node's children are read BEFORE its constructor runs,
+// because the model has no way to attach documentation afterwards —
+// foundation.BaseElement exposes ID() and Docs() and nothing that sets
+// either. The later element stages need the same order for a stronger
+// reason: an event definition or a loop characteristic decides WHAT is
+// built, not how it is decorated.
+var nodeChildParsers = map[string]nodeChildParser{
+	tagDocumentation: parseNodeDocElem,
+}
+
+// parseNodeDocElem records one <documentation> child of a flow node.
+func parseNodeDocElem(p *parser, body *nodeBody, se xml.StartElement) error {
+	d, err := p.parseDoc(se)
+	if err != nil {
+		return err
+	}
+
+	body.docs = append(body.docs, d)
+
+	return nil
+}
+
 // nodeBuilder builds the model node behind one flow-node element. id and
 // name are already resolved (name falls back to the id where the model
-// demands one).
+// demands one), and body carries what the element's children contributed.
 type nodeBuilder func(
-	p *parser, asm *assembly, se xml.StartElement, id, name string,
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error)
 
 // nodeBuilders maps a flow-node element to its model constructor — the
 // heart of the import mapping, kept as a table so a new element is a row
 // rather than a case.
 var nodeBuilders = map[string]nodeBuilder{
-	tagStartEvent: func(_ *parser, _ *assembly, _ xml.StartElement, id, name string) (flow.Node, error) {
-		return events.NewStartEvent(name, foundation.WithID(id))
+	tagStartEvent: func(
+		_ *parser, _ *assembly, _ xml.StartElement, id, name string, body nodeBody,
+	) (flow.Node, error) {
+		return events.NewStartEvent(name, body.opts(id)...)
 	},
 
-	tagEndEvent: func(_ *parser, _ *assembly, _ xml.StartElement, id, name string) (flow.Node, error) {
-		return events.NewEndEvent(name, foundation.WithID(id))
+	tagEndEvent: func(
+		_ *parser, _ *assembly, _ xml.StartElement, id, name string, body nodeBody,
+	) (flow.Node, error) {
+		return events.NewEndEvent(name, body.opts(id)...)
 	},
 
 	tagTask:       buildManualTask,
 	tagManualTask: buildManualTask,
 
-	tagUserTask: func(_ *parser, _ *assembly, _ xml.StartElement, id, name string) (flow.Node, error) {
+	tagUserTask: func(
+		_ *parser, _ *assembly, _ xml.StartElement, id, name string, body nodeBody,
+	) (flow.Node, error) {
 		// gobpm's UserTask demands at least one output resource parameter
 		// (bpmncommon.NewResource rejects an empty parameter list), while
 		// this slice carries no ioSpecification — so import synthesizes one
 		// optional placeholder output. It is model plumbing, not BPMN
 		// content, and is not written back on export.
-		return activities.NewUserTask(name,
-			foundation.WithID(id),
-			activities.WithoutParams(),
-			activities.WithOutput("result", typeBool, false))
+		return activities.NewUserTask(fallbackName(id, name),
+			append(body.opts(id),
+				activities.WithoutParams(),
+				activities.WithOutput("result", typeBool, false))...)
 	},
 
-	tagServiceTask: func(p *parser, _ *assembly, se xml.StartElement, id, name string) (flow.Node, error) {
-		return p.parseServiceTask(se, id, name)
+	tagServiceTask: func(
+		p *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,
+	) (flow.Node, error) {
+		return p.parseServiceTask(se, id, name, body)
 	},
 
 	tagExclusiveGateway: buildGateway,
@@ -249,17 +296,17 @@ var nodeBuilders = map[string]nodeBuilder{
 // abstract task is non-operational (§13.1), which is what ManualTask
 // models.
 func buildManualTask(
-	_ *parser, _ *assembly, _ xml.StartElement, id, name string,
+	_ *parser, _ *assembly, _ xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
-	return activities.NewManualTask(name, foundation.WithID(id))
+	return activities.NewManualTask(fallbackName(id, name), body.opts(id)...)
 }
 
 // buildGateway backs the exclusive and parallel gateways, which differ
 // only in their constructor and in whether a default flow is recorded.
 func buildGateway(
-	_ *parser, asm *assembly, se xml.StartElement, id, name string,
+	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
-	return parseGateway(asm, se, id, name)
+	return parseGateway(asm, se, id, name, body)
 }
 
 // flowChildParser parses one child of <bpmn:sequenceFlow>.
@@ -268,6 +315,19 @@ type flowChildParser func(p *parser, fs *flowSpec, se xml.StartElement) error
 // sequenceFlowParsers claims the children of <bpmn:sequenceFlow>.
 var sequenceFlowParsers = map[string]flowChildParser{
 	tagConditionExpr: parseConditionElem,
+	tagDocumentation: parseFlowDocElem,
+}
+
+// parseFlowDocElem records one <documentation> child of a sequence flow.
+func parseFlowDocElem(p *parser, fs *flowSpec, se xml.StartElement) error {
+	d, err := p.parseDoc(se)
+	if err != nil {
+		return err
+	}
+
+	fs.docs = append(fs.docs, d)
+
+	return nil
 }
 
 // parseConditionElem records a sequence flow's condition as inert text.

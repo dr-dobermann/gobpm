@@ -59,12 +59,51 @@ func (importer) Import(ctx context.Context, r io.Reader) (*process.Process, erro
 	return p.parse()
 }
 
+// docSpec is one <bpmn:documentation>: its text and the mime type of that
+// text (BPMN elements/foundation.md:277-278 — textFormat is 0..1 with a
+// text/plain default).
+type docSpec struct {
+	text   string
+	format string
+}
+
+// defaultDocFormat is the textFormat the standard assumes when the
+// attribute is absent.
+const defaultDocFormat = "text/plain"
+
+// docOptions turns collected documentation into construction options —
+// the only way a gobpm element can receive it, since foundation.BaseElement
+// exposes Docs() and no setter.
+func docOptions(docs []docSpec) []options.Option {
+	opts := make([]options.Option, 0, len(docs))
+	for _, d := range docs {
+		opts = append(opts, foundation.WithDoc(d.text, d.format))
+	}
+
+	return opts
+}
+
+// nodeBody is what a flow node's children contributed, collected BEFORE
+// the node is built. This slice only carries documentation; the later
+// element stages fill it with the children that decide which node to build
+// at all — event definitions, loop characteristics, io specifications.
+type nodeBody struct {
+	docs []docSpec
+}
+
+// opts renders the body as construction options, with the element's id
+// always first.
+func (b nodeBody) opts(id string) []options.Option {
+	return append([]options.Option{foundation.WithID(id)}, docOptions(b.docs)...)
+}
+
 // flowSpec is the pass-1 record of a <bpmn:sequenceFlow>.
 type flowSpec struct {
 	id, name         string
 	srcRef, trgRef   string
 	condID, condLang string
 	condBody         string // set only when a non-empty conditionExpression was seen
+	docs             []docSpec
 	hasCond          bool
 }
 
@@ -214,25 +253,10 @@ func (p *parser) parseProcess(se xml.StartElement) (*assembly, error) {
 	}
 
 	// process.New demands a non-empty name; fall back to the id.
-	name := attrValue(se, "name")
-	if strings.TrimSpace(name) == "" {
-		name = id
-	}
+	name := fallbackName(id, attrValue(se, "name"))
 
-	proc, err := p.newProcess(name, foundation.WithID(id))
-	if err != nil {
-		return nil, errs.New(
-			errs.M("bpmn: couldn't create process %q", id),
-			errs.C(errorClass, errs.BulidingFailed),
-			errs.E(err))
-	}
-
-	asm := &assembly{
-		proc:       proc,
-		byID:       make(map[string]flow.Node),
-		interfaces: p.interfaces,
-		ops:        p.ops,
-	}
+	// The process is built LAZILY — see procBuild.
+	pb := &procBuild{p: p, id: id, name: name}
 
 	for {
 		tok, err := p.token()
@@ -242,24 +266,116 @@ func (p *parser) parseProcess(se xml.StartElement) (*assembly, error) {
 
 		switch t := tok.(type) {
 		case xml.StartElement:
-			if t.Name.Space != nsBPMN {
-				if err := p.skipElement(); err != nil {
-					return nil, err
-				}
-
-				continue
-			}
-
-			if err := p.parseFlowElement(asm, t); err != nil {
+			if err := pb.child(t); err != nil {
 				return nil, err
 			}
 
 		case xml.EndElement:
 			if t.Name == se.Name {
-				return asm, nil
+				return pb.finish()
 			}
 		}
 	}
+}
+
+// procBuild defers building the process until its first flow element.
+//
+// A process's own documentation is a child, and documentation can only
+// reach an element through a construction option — but a process's other
+// children are every flow element in the file, so buffering them all to
+// construct late is not an option. Buffering the LEADING documentation is:
+// documentation is inherited from BaseElement, whose properties serialize
+// ahead of a Process's own flowElements, so a schema-valid file always
+// presents it first.
+type procBuild struct {
+	p        *parser
+	asm      *assembly
+	id, name string
+	docs     []docSpec
+}
+
+// child handles one child element of <bpmn:process>, constructing the
+// process on the first one that is not documentation.
+func (pb *procBuild) child(se xml.StartElement) error {
+	if se.Name.Space != nsBPMN {
+		return pb.p.skipElement()
+	}
+
+	if se.Name.Local == tagDocumentation {
+		return pb.doc(se)
+	}
+
+	if pb.asm == nil {
+		if err := pb.build(); err != nil {
+			return err
+		}
+	}
+
+	return pb.p.parseFlowElement(pb.asm, se)
+}
+
+// doc records a leading <documentation>, or refuses one that arrives after
+// the process has already been built — dropping it silently is the failure
+// this converter's feedback contract exists to prevent.
+func (pb *procBuild) doc(se xml.StartElement) error {
+	if pb.asm != nil {
+		return errs.New(
+			errs.M("bpmn: <process> %q carries <documentation> after its flow elements; "+
+				"BaseElement documentation precedes a container's own content", pb.id),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	d, err := pb.p.parseDoc(se)
+	if err != nil {
+		return err
+	}
+
+	pb.docs = append(pb.docs, d)
+
+	return nil
+}
+
+// build constructs the process and the pass-1 state around it.
+func (pb *procBuild) build() error {
+	asm, err := pb.p.newAssembly(pb.id, pb.name, pb.docs)
+	if err != nil {
+		return err
+	}
+
+	pb.asm = asm
+
+	return nil
+}
+
+// finish returns the assembly, building an empty process when the element
+// carried no flow elements at all.
+func (pb *procBuild) finish() (*assembly, error) {
+	if pb.asm == nil {
+		if err := pb.build(); err != nil {
+			return nil, err
+		}
+	}
+
+	return pb.asm, nil
+}
+
+// newAssembly builds the process and the pass-1 state around it.
+func (p *parser) newAssembly(id, name string, docs []docSpec) (*assembly, error) {
+	proc, err := p.newProcess(name,
+		append([]options.Option{foundation.WithID(id)}, docOptions(docs)...)...)
+	if err != nil {
+		return nil, errs.New(
+			errs.M("bpmn: couldn't create process %q", id),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
+	}
+
+	return &assembly{
+		proc:       proc,
+		byID:       make(map[string]flow.Node),
+		interfaces: p.interfaces,
+		ops:        p.ops,
+	}, nil
 }
 
 // parseFlowElement dispatches one child of <bpmn:process> through the
@@ -298,7 +414,15 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 			errs.C(errorClass, errs.InvalidObject))
 	}
 
-	node, err := build(p, asm, se, id, name)
+	// The body is read BEFORE the node is built: documentation can only
+	// reach an element through a construction option, and from the next
+	// stage on the children decide which node to construct at all.
+	body, err := p.parseNodeBody(se)
+	if err != nil {
+		return err
+	}
+
+	node, err := build(p, asm, se, id, name, body)
 	if err != nil {
 		// Do not re-wrap already-classified converter errors (unknown
 		// operationRef, invalid gatewayDirection, …) — preserve class for
@@ -307,14 +431,6 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 			fmt.Sprintf("bpmn: couldn't create %s %q", se.Name.Local, id),
 			errs.BulidingFailed,
 			err)
-	}
-
-	// node bodies: wiring duplicates (incoming/outgoing) and non-executable
-	// annotations are skipped; anything else in the BPMN namespace — event
-	// definitions, io specifications, loop characteristics — is not in the
-	// subset (SRD-051 §FR-7).
-	if err := p.consumeNodeBody(se); err != nil {
-		return err
 	}
 
 	asm.nodes = append(asm.nodes, node)
@@ -439,10 +555,9 @@ func (p *parser) parseOperationChild(spec *opSpec, se xml.StartElement) error {
 func (p *parser) parseServiceTask(
 	se xml.StartElement,
 	id, name string,
+	body nodeBody,
 ) (flow.Node, error) {
-	if strings.TrimSpace(name) == "" {
-		name = id
-	}
+	name = fallbackName(id, name)
 
 	op, err := p.resolveOperation(se, id, name)
 	if err != nil {
@@ -450,8 +565,7 @@ func (p *parser) parseServiceTask(
 	}
 
 	return activities.NewServiceTask(name, op,
-		foundation.WithID(id),
-		activities.WithoutParams())
+		append(body.opts(id), activities.WithoutParams())...)
 }
 
 // resolveOperation looks up operationRef in the definitions catalog, or mints
@@ -488,8 +602,9 @@ func parseGateway(
 	asm *assembly,
 	se xml.StartElement,
 	id, name string,
+	body nodeBody,
 ) (flow.Node, error) {
-	opts := []options.Option{foundation.WithID(id)}
+	opts := body.opts(id)
 
 	if name != "" {
 		opts = append(opts, options.WithName(name))
@@ -587,41 +702,79 @@ func (p *parser) parseSequenceFlowChild(fs *flowSpec, se xml.StartElement) error
 	return p.settle(ctxSequenceFlow, se)
 }
 
-// consumeNodeBody swallows a node's children: incoming/outgoing (redundant
-// with sequenceFlow wiring) and non-executable annotations are skipped; any
-// other in-namespace element is an UnsupportedElementError (SRD-051 §FR-7).
-func (p *parser) consumeNodeBody(se xml.StartElement) error {
+// parseNodeBody reads a flow node's children and returns what they
+// contributed to its construction. incoming/outgoing duplicate the
+// sequenceFlow wiring and are skipped; anything else in the BPMN namespace
+// that no child parser claims is an UnsupportedElementError.
+func (p *parser) parseNodeBody(se xml.StartElement) (nodeBody, error) {
+	var body nodeBody
+
 	for {
 		tok, err := p.token()
 		if err != nil {
-			return err
+			return nodeBody{}, err
 		}
 
 		switch t := tok.(type) {
 		case xml.StartElement:
-			if err := p.consumeNodeChild(t); err != nil {
-				return err
+			if err := p.parseNodeChild(&body, t); err != nil {
+				return nodeBody{}, err
 			}
 
 		case xml.EndElement:
 			if t.Name == se.Name {
-				return nil
+				return body, nil
 			}
 		}
 	}
 }
 
-// consumeNodeChild handles one child start tag of a flow node.
-func (p *parser) consumeNodeChild(se xml.StartElement) error {
+// parseNodeChild handles one child start tag of a flow node.
+func (p *parser) parseNodeChild(body *nodeBody, se xml.StartElement) error {
 	if se.Name.Space != nsBPMN {
 		return p.skipElement()
 	}
 
-	// A flow node has no children this slice builds: incoming/outgoing
-	// duplicate the sequence-flow wiring, annotations carry no semantics,
-	// and everything else — event definitions, io specifications, loop
-	// characteristics — is a later stage's element.
+	if parse, ok := nodeChildParsers[se.Name.Local]; ok {
+		return parse(p, body, se)
+	}
+
 	return p.settle(ctxNode, se)
+}
+
+// parseDoc reads one <bpmn:documentation> element: its text plus the mime
+// type of that text, defaulting per the standard when the attribute is
+// absent.
+func (p *parser) parseDoc(se xml.StartElement) (docSpec, error) {
+	text, err := p.readText(se)
+	if err != nil {
+		return docSpec{}, err
+	}
+
+	format := strings.TrimSpace(attrValue(se, "textFormat"))
+	if format == "" {
+		format = defaultDocFormat
+	}
+
+	return docSpec{text: strings.TrimSpace(text), format: format}, nil
+}
+
+// fallbackName returns name, or the element's id when the model demands a
+// non-empty one and BPMN did not supply it — `name` is 0..1 on every flow
+// element, and modelers emit unlabelled boxes routinely, so refusing them
+// would reject ordinary files. The process and the serviceTask already did
+// this; FR-4 makes it the rule.
+//
+// The cost is visible on the way out: such an element re-exports carrying
+// name="<its id>", because the model has nowhere to record that the name
+// was synthesized. ADR-024 §2.8 makes the round-trip semantic rather than
+// byte-lossless, and a name equal to the id asserts nothing the id did not.
+func fallbackName(id, name string) string {
+	if strings.TrimSpace(name) == "" {
+		return id
+	}
+
+	return name
 }
 
 // build is pass 2: nodes are added to the process, flows are linked
@@ -639,7 +792,9 @@ func build(asm *assembly) (*process.Process, error) {
 
 	flowByID := make(map[string]*flow.SequenceFlow, len(asm.flows))
 
-	for _, fs := range asm.flows {
+	for i := range asm.flows {
+		fs := asm.flows[i]
+
 		sf, err := linkFlow(asm, fs)
 		if err != nil {
 			return nil, err
@@ -679,7 +834,7 @@ func linkFlow(asm *assembly, fs flowSpec) (*flow.SequenceFlow, error) {
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
-	opts := []options.Option{foundation.WithID(fs.id)}
+	opts := append([]options.Option{foundation.WithID(fs.id)}, docOptions(fs.docs)...)
 
 	if fs.name != "" {
 		opts = append(opts, options.WithName(fs.name))

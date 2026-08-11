@@ -23,11 +23,8 @@ func TestDispositionForEveryContext(t *testing.T) {
 	}{
 		"documentation under definitions":     {tagDocumentation, ctxDefinitions, skipped},
 		"extensionElements under definitions": {tagExtensionElems, ctxDefinitions, skipped},
-		"documentation under process":         {tagDocumentation, ctxProcess, skipped},
 		"extensionElements under process":     {tagExtensionElems, ctxProcess, skipped},
-		"documentation under node":            {tagDocumentation, ctxNode, skipped},
 		"extensionElements under node":        {tagExtensionElems, ctxNode, skipped},
-		"documentation under sequenceFlow":    {tagDocumentation, ctxSequenceFlow, skipped},
 		"documentation under interface":       {tagDocumentation, ctxInterface, skipped},
 		"documentation under operation":       {tagDocumentation, ctxOperation, skipped},
 
@@ -57,6 +54,29 @@ func TestDispositionForEveryContext(t *testing.T) {
 					tc.ctx, tc.local, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestDocumentationIsClaimedWhereTheModelHoldsIt pins which side of the
+// dispatch answers for <documentation>. Under a flow node and a sequence
+// flow a parser table claims it, so it never reaches dispositionFor; under
+// <process> parseProcess intercepts it, because the process is built
+// lazily and its documentation must arrive as a construction option. The
+// contexts with no model element to attach it to keep skipping it.
+func TestDocumentationIsClaimedWhereTheModelHoldsIt(t *testing.T) {
+	if _, ok := nodeChildParsers[tagDocumentation]; !ok {
+		t.Error("a flow node's documentation is not claimed by nodeChildParsers")
+	}
+
+	if _, ok := sequenceFlowParsers[tagDocumentation]; !ok {
+		t.Error("a sequence flow's documentation is not claimed by sequenceFlowParsers")
+	}
+
+	for _, ctx := range []parseCtx{ctxDefinitions, ctxInterface, ctxOperation} {
+		if got := dispositionFor(ctx, tagDocumentation); got != skipped {
+			t.Errorf("dispositionFor(%d, documentation) = %d, want skipped — "+
+				"there is no model element in that context to carry it", ctx, got)
+		}
 	}
 }
 
