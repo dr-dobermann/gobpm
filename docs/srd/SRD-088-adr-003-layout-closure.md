@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-09 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-003 v.1](../design/ADR-003-module-layout.md) §4.2, §4.4, §4.6, §5 · [ADR-002 v.2](../design/ADR-002-extension-architecture.md) §8.3 |
