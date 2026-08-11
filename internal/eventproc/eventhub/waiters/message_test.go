@@ -646,12 +646,17 @@ func TestJoinBeforeServiceIsSubscribedByService(t *testing.T) {
 // gatedBroker holds Subscribe open until release is closed, so a test can put
 // a join inside the window between Service reading the processors' keys and
 // publishing the subscription those keys were passed to.
+//
+// With deadKeys set, the subscriptions it hands out refuse every AddKey —
+// which is how the catch-up's failure path is reached.
 type gatedBroker struct {
 	messaging.MessageBroker
 
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
+	entered   chan struct{}
+	release   chan struct{}
+	once      sync.Once
+	deadKeys  bool
+	deadUnsub bool
 }
 
 func (b *gatedBroker) Subscribe(
@@ -661,7 +666,32 @@ func (b *gatedBroker) Subscribe(
 
 	<-b.release
 
-	return b.MessageBroker.Subscribe(ctx, name, keys...)
+	sub, err := b.MessageBroker.Subscribe(ctx, name, keys...)
+	if err != nil || !b.deadKeys {
+		return sub, err
+	}
+
+	return &deadKeySub{Subscription: sub, deadUnsub: b.deadUnsub}, nil
+}
+
+// deadKeySub is a subscription that cannot be extended, and — with deadUnsub
+// — cannot be torn down either.
+type deadKeySub struct {
+	messaging.Subscription
+
+	deadUnsub bool
+}
+
+func (s *deadKeySub) AddKey(string) error {
+	return errors.New("the broker refused the key")
+}
+
+func (s *deadKeySub) Unsubscribe() error {
+	if s.deadUnsub {
+		return errors.New("the broker refused the unsubscribe")
+	}
+
+	return s.Subscription.Unsubscribe()
 }
 
 // TestJoinDuringSubscribeIsCaughtUp pins the window both independent review
@@ -854,4 +884,225 @@ func TestRetryAfterAKeyFailureReSubscribes(t *testing.T) {
 	// and the joiner is now genuinely reachable
 	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
 		Name: "order placed", Payload: "k-b", CorrelationKey: "k-b"}))
+}
+
+// TestServiceFailsWhenALateJoinerCannotBeSubscribed covers the catch-up's
+// failure path, which is the one that must not leave a half-started waiter.
+//
+// If the broker refuses the joiner's key there is no way to serve it — the
+// instance would park on a subscription that cannot reach it, which is the
+// exact failure the catch-up exists to prevent. Service therefore tears the
+// subscription down and fails, rather than starting a goroutine over a
+// subscription it knows is incomplete.
+func TestServiceFailsWhenALateJoinerCannotBeSubscribed(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	broker := &gatedBroker{
+		MessageBroker: membroker.New(),
+		entered:       make(chan struct{}),
+		release:       make(chan struct{}),
+		deadKeys:      true,
+	}
+	rt := flakyKeyRuntime{EngineRuntime: enginert.Default(), broker: broker}
+
+	hub := mockeventproc.NewMockEventHub(t)
+
+	firstMock := mockeventproc.NewMockEventProcessor(t)
+	firstMock.EXPECT().ID().Return("a").Maybe()
+	first := keyedProc{MockEventProcessor: firstMock, keys: []string{"k-a"}}
+
+	w, err := waiters.NewMessageWaiter(hub, first, eDef, "", rt)
+	require.NoError(t, err)
+
+	served := make(chan error, 1)
+
+	go func() { served <- w.Service(ctx) }()
+
+	<-broker.entered
+
+	joinerMock := mockeventproc.NewMockEventProcessor(t)
+	joinerMock.EXPECT().ID().Return("b").Maybe()
+	joiner := keyedProc{MockEventProcessor: joinerMock, keys: []string{"k-b"}}
+	require.NoError(t, w.AddEventProcessor(joiner))
+
+	close(broker.release)
+
+	serr := <-served
+	require.Error(t, serr,
+		"a waiter that cannot subscribe a joined key must fail to start, "+
+			"not serve a subscription it knows is missing one")
+	require.Contains(t, serr.Error(), "correlation key")
+
+	require.Equal(t, eventproc.WSFailed, w.State(),
+		"the waiter must be left failed, not ready or running")
+
+	require.Error(t, w.Stop(),
+		"no goroutine was started, so there is nothing to stop")
+}
+
+// TestServiceReportsTheJoinerFailureEvenIfTeardownAlsoFails: when the
+// catch-up fails AND the subscription cannot be torn down, the error the
+// CALLER gets must still be the one it can act on.
+//
+// The teardown failure is logged and swallowed deliberately — a broker that
+// refuses an unsubscribe tells the caller nothing about why the waiter would
+// not start, and returning it instead would replace a diagnosable cause with
+// a symptom.
+func TestServiceReportsTheJoinerFailureEvenIfTeardownAlsoFails(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	broker := &gatedBroker{
+		MessageBroker: membroker.New(),
+		entered:       make(chan struct{}),
+		release:       make(chan struct{}),
+		deadKeys:      true,
+		deadUnsub:     true,
+	}
+	rt := flakyKeyRuntime{EngineRuntime: enginert.Default(), broker: broker}
+
+	hub := mockeventproc.NewMockEventHub(t)
+
+	firstMock := mockeventproc.NewMockEventProcessor(t)
+	firstMock.EXPECT().ID().Return("a").Maybe()
+	first := keyedProc{MockEventProcessor: firstMock, keys: []string{"k-a"}}
+
+	w, err := waiters.NewMessageWaiter(hub, first, eDef, "", rt)
+	require.NoError(t, err)
+
+	served := make(chan error, 1)
+
+	go func() { served <- w.Service(ctx) }()
+
+	<-broker.entered
+
+	joinerMock := mockeventproc.NewMockEventProcessor(t)
+	joinerMock.EXPECT().ID().Return("b").Maybe()
+	joiner := keyedProc{MockEventProcessor: joinerMock, keys: []string{"k-b"}}
+	require.NoError(t, w.AddEventProcessor(joiner))
+
+	close(broker.release)
+
+	serr := <-served
+	require.Error(t, serr)
+	require.Contains(t, serr.Error(), "correlation key",
+		"the reported cause must be the key that could not be subscribed, "+
+			"not the unsubscribe that failed while cleaning up after it")
+	require.NotContains(t, serr.Error(), "unsubscribe")
+
+	require.Equal(t, eventproc.WSFailed, w.State())
+}
+
+// TestAddKeyRecordsTheKeyItSubscribed covers the lazy-association path
+// (SRD-017 §4.5) that correlation.go drives when an instance LEARNS a key
+// mid-flight, and the record it must leave behind.
+//
+// The waiter's key record is what a joining processor consults to decide
+// whether its own key still needs subscribing. A key added here and not
+// recorded would make the record understate the subscription — harmless in
+// itself, since re-adding is idempotent, but it is the field a correctness
+// decision is made against.
+func TestAddKeyRecordsTheKeyItSubscribed(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+	rt := enginert.Default()
+
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
+
+	delivered := make(chan flow.EventDefinition, 1)
+	epMock := mockeventproc.NewMockEventProcessor(t)
+	epMock.EXPECT().ID().Return("a").Maybe()
+	epMock.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, ed flow.EventDefinition) error {
+			delivered <- ed
+
+			return nil
+		}).Maybe()
+
+	ep := keyedProc{MockEventProcessor: epMock, keys: []string{"k-a"}}
+
+	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt)
+	require.NoError(t, err)
+
+	adder, ok := w.(interface{ AddKey(string) error })
+	require.True(t, ok, "a message waiter carries the lazy-association seam")
+
+	// before Service there is no subscription to extend: a no-op, not an error
+	require.NoError(t, adder.AddKey("learned"))
+
+	require.NoError(t, w.Service(ctx))
+
+	t.Cleanup(func() { require.NoError(t, w.Stop()) })
+
+	require.NoError(t, adder.AddKey("learned"))
+
+	// the learned key now routes to this waiter
+	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
+		Name: "order placed", Payload: "x", CorrelationKey: "learned"}))
+
+	select {
+	case <-delivered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a key added through AddKey never reached the subscription")
+	}
+
+	// A processor declaring the SAME key now joins. Its key is already
+	// carried, so the join must not re-issue it — which is only knowable if
+	// AddKey recorded what it subscribed.
+	joinerMock := mockeventproc.NewMockEventProcessor(t)
+	joinerMock.EXPECT().ID().Return("b").Maybe()
+	joinerMock.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	joiner := keyedProc{
+		MockEventProcessor: joinerMock, keys: []string{"learned"},
+	}
+	require.NoError(t, w.AddEventProcessor(joiner))
+}
+
+// TestAddKeyReportsABrokerRefusal: the lazy-association seam is best-effort at
+// its CALLER (correlation.go logs and continues), which only works if this
+// side actually reports the failure rather than swallowing it.
+func TestAddKeyReportsABrokerRefusal(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	broker := &gatedBroker{
+		MessageBroker: membroker.New(),
+		entered:       make(chan struct{}),
+		release:       make(chan struct{}),
+		deadKeys:      true,
+	}
+	close(broker.release) // no gating wanted here, only the dead keys
+
+	rt := flakyKeyRuntime{EngineRuntime: enginert.Default(), broker: broker}
+	hub := mockeventproc.NewMockEventHub(t)
+
+	epMock := mockeventproc.NewMockEventProcessor(t)
+	epMock.EXPECT().ID().Return("a").Maybe()
+	ep := keyedProc{MockEventProcessor: epMock, keys: []string{"k-a"}}
+
+	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt)
+	require.NoError(t, err)
+	require.NoError(t, w.Service(ctx))
+
+	t.Cleanup(func() { require.NoError(t, w.Stop()) })
+
+	adder, ok := w.(interface{ AddKey(string) error })
+	require.True(t, ok)
+
+	require.Error(t, adder.AddKey("learned"),
+		"a refused key must be reported, not silently dropped — the caller "+
+			"decides whether to degrade")
 }

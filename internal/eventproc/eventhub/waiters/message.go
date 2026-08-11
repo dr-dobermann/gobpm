@@ -190,13 +190,7 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 		return nil
 	}
 
-	if len(mw.pendingKeys(ep)) == 0 {
-		// Already carried — either Service included it, or a previous join
-		// subscribed it. Nothing to do, and nothing silently skipped.
-		return nil
-	}
-
-	// The keys are (re-)subscribed even when ep was ALREADY on the list.
+	// What is MISSING is subscribed, even when ep was ALREADY on the list.
 	//
 	// Returning early on "already present" would make a retry a no-op, and a
 	// retry is exactly what a caller does after this method fails: the
@@ -204,9 +198,9 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	// AddKey leaves ep registered with its key missing. Reporting success on
 	// the second call would then strand it — registered, parked, and
 	// unreachable — which is the very failure this method was changed to
-	// prevent. AddKey is idempotent at the broker, so re-issuing costs
-	// nothing and makes the retry mean something.
-	return mw.subscribeKeysOf(ep, sub)
+	// prevent. Deciding on the keys rather than on the membership makes the
+	// retry mean something, and makes the no-op case genuinely a no-op.
+	return mw.subscribeKeys(ep, mw.pendingKeys(ep), sub)
 }
 
 // addProcessor records ep (idempotently) and returns the live subscription,
@@ -258,29 +252,24 @@ func (mw *messageWaiter) pendingKeys(ep eventproc.EventProcessor) []string {
 	return missing
 }
 
-// subscribeKeysOf extends sub with the correlation keys ep declares.
+// subscribeKeys extends sub with keys, which the caller obtained from
+// pendingKeys — so an empty slice means "the subscription already carries
+// everything ep declares", including the case of a processor that declares
+// nothing at all (an instance-starter, which wants the wildcard).
+//
+// Taking the keys rather than re-deriving them from ep is what keeps the
+// filtering in ONE place. Deriving them here as well left this function with
+// a no-keys branch and an empty-key branch that no caller could reach, since
+// pendingKeys had already excluded both.
 //
 // It runs OUTSIDE the waiter's lock: AddKey reaches the host's broker, which
 // may be remote and may block, and holding a lock across a foreign call is
 // what FIX-038 §1.1 removed from the hub's registration path.
-func (mw *messageWaiter) subscribeKeysOf(
-	ep eventproc.EventProcessor, sub messaging.Subscription,
+func (mw *messageWaiter) subscribeKeys(
+	ep eventproc.EventProcessor, keys []string, sub messaging.Subscription,
 ) error {
-	kp, ok := ep.(interface{ CorrelationKeys() []string })
-	if !ok {
-		// A processor declaring no keys wants the wildcard the subscription
-		// already has — an instance-starter, for one.
-		return nil
-	}
-
-	for _, k := range kp.CorrelationKeys() {
-		if k == "" {
-			continue
-		}
-
-		if err := sub.AddKey(k); err == nil {
-			mw.recordKey(k)
-		} else {
+	for _, k := range keys {
+		if err := sub.AddKey(k); err != nil {
 			return errs.New(
 				errs.M("couldn't extend the subscription with a joining "+
 					"processor's correlation key"),
@@ -289,6 +278,8 @@ func (mw *messageWaiter) subscribeKeysOf(
 				errs.D(observability.AttrEventProcessorID, ep.ID()),
 				errs.E(err))
 		}
+
+		mw.recordKey(k)
 	}
 
 	return nil
@@ -448,11 +439,7 @@ func (mw *messageWaiter) subscribeLateJoiners(
 	mw.m.Unlock()
 
 	for _, ep := range processors {
-		if len(mw.pendingKeys(ep)) == 0 {
-			continue
-		}
-
-		if err := mw.subscribeKeysOf(ep, sub); err != nil {
+		if err := mw.subscribeKeys(ep, mw.pendingKeys(ep), sub); err != nil {
 			return err
 		}
 	}
