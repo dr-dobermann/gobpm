@@ -36,7 +36,7 @@ type importer struct{}
 // (SRD-051 §FR-7); nodes are built first (with foundation.WithID — ids are
 // never auto-generated, ADR-019), then flows are linked, exclusive-gateway
 // defaults re-resolved, and the graph validated before returning.
-func (importer) Import(ctx context.Context, r io.Reader) (*process.Process, error) {
+func (imp importer) Import(ctx context.Context, r io.Reader) (*process.Process, error) {
 	if ctx == nil {
 		return nil, errs.New(
 			errs.M("bpmn.Import: ctx is nil"),
@@ -49,6 +49,16 @@ func (importer) Import(ctx context.Context, r io.Reader) (*process.Process, erro
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	proc, _, err := imp.parse(ctx, r)
+
+	return proc, err
+}
+
+// parse is the one parse both entry points share. It returns the report
+// alongside the process; Import discards it, ImportDocument does not.
+func (importer) parse(
+	ctx context.Context, r io.Reader,
+) (*process.Process, []convert.Dropped, error) {
 	p := &parser{
 		dec:        xml.NewDecoder(r),
 		ctx:        ctx,
@@ -57,7 +67,12 @@ func (importer) Import(ctx context.Context, r io.Reader) (*process.Process, erro
 		ops:        make(map[string]opSpec),
 	}
 
-	return p.parse()
+	proc, err := p.parse()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return proc, p.dropped, nil
 }
 
 // docSpec is one <bpmn:documentation>: its text and the mime type of that
@@ -96,6 +111,27 @@ type nodeBody struct {
 // always first.
 func (b nodeBody) opts(id string) []options.Option {
 	return append([]options.Option{foundation.WithID(id)}, docOptions(b.docs)...)
+}
+
+// ImportDocument parses r and returns the process together with every
+// recognized construct the import deliberately did not map.
+//
+// It is the same parse as Import — the report is a by-product the parser
+// collects either way — so a host pays nothing for asking, and a host
+// that does not ask is not silently misled: Import's contract never
+// promised a report, while this one does.
+func (imp importer) ImportDocument(
+	ctx context.Context, r io.Reader,
+) (*convert.Result, error) {
+	p, dropped, err := imp.parse(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+
+	return &convert.Result{
+		Processes: []*process.Process{p},
+		Dropped:   dropped,
+	}, nil
 }
 
 // flowSpec is the pass-1 record of a <bpmn:sequenceFlow>.
@@ -151,6 +187,14 @@ type parser struct {
 	// exprLanguage is <definitions expressionLanguage>, the default an
 	// expression that declares none inherits (ADR-024 v.4 §2.10).
 	exprLanguage string
+	// owner is the id of the element currently being parsed, so a report
+	// about its <extensionElements> — which carries no id of its own —
+	// names the element a reader can find in the file.
+	owner string
+	// dropped collects the recognized constructs the import did not map,
+	// so ImportDocument can hand them to the host instead of losing them
+	// (ADR-024 v.4 §2.14 rule 2).
+	dropped []convert.Dropped
 }
 
 // parse decodes <bpmn:definitions> and its (single) <bpmn:process>.
@@ -190,6 +234,10 @@ func (p *parser) rootElement() (xml.StartElement, error) {
 		}
 
 		p.exprLanguage = strings.TrimSpace(attrValue(se, "expressionLanguage"))
+
+		// <definitions> carries dialect attributes too (a modeler's own
+		// bookkeeping); they are reported against the document.
+		p.reportUnmappedAttrs(se, attrValue(se, "id"), nil)
 
 		return se, nil
 	}
@@ -265,6 +313,14 @@ func (p *parser) parseProcess(se xml.StartElement) (*assembly, error) {
 	name := fallbackName(id, attrValue(se, "name"))
 
 	// The process is built LAZILY — see procBuild.
+	p.owner = id
+
+	// The process element carries dialect attributes of its own —
+	// versionTag, historyTimeToLive, the starter authorizations — and
+	// nothing else scans them, so they would vanish exactly as the
+	// coverage audit found them vanishing.
+	p.reportUnmappedAttrs(se, id, nil)
+
 	pb := &procBuild{p: p, id: id, name: name}
 
 	for {
@@ -427,7 +483,13 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 	// The body is read BEFORE the node is built: documentation can only
 	// reach an element through a construction option, and from the next
 	// stage on the children decide which node to construct at all.
+	outer := p.owner
+	p.owner = id
+
 	body, err := p.parseNodeBody(se)
+
+	p.owner = outer
+
 	if err != nil {
 		return err
 	}
@@ -575,6 +637,7 @@ func (p *parser) parseServiceTask(
 	}
 
 	opts := append(body.opts(id), activities.WithoutParams())
+	opts = append(opts, p.camundaOptions(se, id)...)
 
 	// BPMN carries `implementation` on the serviceTask itself. Without the
 	// carrier the attribute had nowhere to land, so export wrote a value
@@ -955,6 +1018,40 @@ func (p *parser) skipElement() error {
 		switch tok.(type) {
 		case xml.StartElement:
 			depth++
+		case xml.EndElement:
+			depth--
+		}
+	}
+
+	return nil
+}
+
+// skipReporting swallows a subtree like skipElement, but reports every
+// element it passes that belongs to a recognized dialect.
+//
+// <extensionElements> is where a Camunda file keeps its listeners, its
+// form data and its I/O mapping, and swallowing it whole is exactly how
+// those went missing without a word. Reporting only the OUTERMOST
+// recognized element keeps one report per construct: a formData with six
+// formFields is one thing the converter did not map, not seven.
+func (p *parser) skipReporting(element string) error {
+	depth := 1
+
+	for depth > 0 {
+		tok, err := p.token()
+		if err != nil {
+			return err
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if depth == 1 && t.Name.Space == nsCamunda {
+				p.report(element, "camunda:"+t.Name.Local,
+					dialectReason(t.Name.Local))
+			}
+
+			depth++
+
 		case xml.EndElement:
 			depth--
 		}

@@ -182,12 +182,21 @@ func dispositionFor(ctx parseCtx, local string) dispositionKind {
 
 // settle applies the disposition of an unclaimed in-namespace element:
 // skip its subtree, or refuse it with its pinned spec section.
+//
+// <extensionElements> is skipped THROUGH the reporting walk: it carries
+// no execution semantics of its own, which is why it is skipped, but it
+// is also where a recognized dialect keeps the constructs a host needs
+// to be told about.
 func (p *parser) settle(ctx parseCtx, se xml.StartElement) error {
-	if dispositionFor(ctx, se.Name.Local) == skipped {
-		return p.skipElement()
+	if dispositionFor(ctx, se.Name.Local) != skipped {
+		return unsupported(se)
 	}
 
-	return unsupported(se)
+	if se.Name.Local == tagExtensionElems {
+		return p.skipReporting(p.owner)
+	}
+
+	return p.skipElement()
 }
 
 // defsParser parses one child of <bpmn:definitions>. It returns a
@@ -306,17 +315,19 @@ var nodeBuilders = map[string]nodeBuilder{
 	tagManualTask: buildManualTask,
 
 	tagUserTask: func(
-		_ *parser, _ *assembly, _ xml.StartElement, id, name string, body nodeBody,
+		p *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,
 	) (flow.Node, error) {
 		// gobpm's UserTask demands at least one output resource parameter
 		// (bpmncommon.NewResource rejects an empty parameter list), while
 		// this slice carries no ioSpecification — so import synthesizes one
 		// optional placeholder output. It is model plumbing, not BPMN
 		// content, and is not written back on export.
+		opts := append(body.opts(id),
+			activities.WithoutParams(),
+			activities.WithOutput("result", typeBool, false))
+
 		return activities.NewUserTask(fallbackName(id, name),
-			append(body.opts(id),
-				activities.WithoutParams(),
-				activities.WithOutput("result", typeBool, false))...)
+			append(opts, p.camundaOptions(se, id)...)...)
 	},
 
 	tagServiceTask: func(
