@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -356,6 +357,56 @@ var nodeBuilders = map[string]nodeBuilder{
 	tagInclusiveGateway: buildGateway,
 	tagEventBasedGtw:    buildGateway,
 	tagScriptTask:       buildScriptTask,
+	tagBusinessRuleTask: buildBusinessRuleTask,
+}
+
+// buildBusinessRuleTask builds a rule task around the decision reference
+// the document carries.
+//
+// The reference is OPAQUE here by design (ADR-024 v.4 §2.12): the
+// converter parses no DMN and resolves nothing — the host's configured
+// rule engine does that. What the converter must not do is import a rule
+// task with no decision at all, which would fail at its first execution
+// with far less context than this refusal has.
+func buildBusinessRuleTask(
+	p *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,
+) (flow.Node, error) {
+	ref := decisionReference(se)
+	if ref == "" {
+		return nil, errs.New(
+			errs.M("bpmn: businessRuleTask %q names no decision; BPMN gives the "+
+				"element only `implementation`, so the reference comes from "+
+				"there or from a recognized dialect's decisionRef — a rule task "+
+				"with no decision cannot be run", id),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	opts := append(body.opts(id), p.camundaOptions(se, id)...)
+
+	return activities.NewBusinessRuleTask(fallbackName(id, name), ref, opts...)
+}
+
+// decisionReference finds the decision a rule task evaluates.
+//
+// BPMN gives BusinessRuleTask only `implementation`
+// (elements/activities.md:253), so a decision reference is vendor
+// vocabulary by construction — the dialect's decisionRef is checked
+// first, and `implementation` is accepted as the standard-shaped
+// fallback when it names something other than the "unspecified" default.
+func decisionReference(se xml.StartElement) string {
+	if ref := strings.TrimSpace(
+		nsAttrValue(se, nsCamunda, camundaDecisionRef)); ref != "" {
+		return ref
+	}
+
+	impl := strings.TrimSpace(attrValue(se, observability.AttrImplementation))
+	if impl == "" || strings.HasPrefix(impl, "##") {
+		// "##unspecified" and its siblings name a mechanism, not a
+		// decision.
+		return ""
+	}
+
+	return impl
 }
 
 // buildScriptTask builds a script task, or reports why its script cannot

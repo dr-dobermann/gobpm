@@ -119,6 +119,11 @@ func (p *parser) camundaOptions(se xml.StartElement, id string) []options.Option
 		return v
 	}
 
+	// A rule task's decisionRef is consumed by its builder; claiming it
+	// here keeps it out of the report, since a construct is either mapped
+	// or reported and never both.
+	claim(camundaDecisionRef)
+
 	if v := claim(camundaAssignee); v != "" {
 		opts = append(opts, activities.WithAssignee(v))
 	}

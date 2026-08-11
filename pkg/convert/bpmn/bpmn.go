@@ -48,6 +48,7 @@ const (
 	tagComplexGateway   = "complexGateway"
 	tagScriptTask       = "scriptTask"
 	tagScript           = "script"
+	tagBusinessRuleTask = "businessRuleTask"
 )
 
 func init() { //nolint:gochecknoinits // SRD-051 §FR-4: blank-import self-registration, the image.RegisterFormat idiom (ADR-024 §2.2)
