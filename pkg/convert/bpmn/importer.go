@@ -714,11 +714,7 @@ func parseGateway(
 		opts = append(opts, gateways.WithDirection(gd))
 	}
 
-	if se.Name.Local == tagParallelGateway {
-		return gateways.NewParallelGateway(opts...)
-	}
-
-	gw, err := gateways.NewExclusiveGateway(opts...)
+	gw, err := newGatewayOfKind(se.Name.Local, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -726,14 +722,94 @@ func parseGateway(
 	// The default names a sequence flow that almost never exists yet —
 	// modelers emit gateways before the flows leaving them — so it is
 	// deferred to pass 2 like every other forward reference.
-	if def := attrValue(se, "default"); def != "" {
-		asm.refs = append(asm.refs, flowRef{
-			refSite: refSite{from: "exclusiveGateway " + id, attr: "default", target: def},
-			apply:   gw.UpdateDefaultFlow,
-		})
+	//
+	// Only the kinds the standard gives a default get one; the parallel
+	// and event-based gateways have none, so the attribute is not read
+	// for them at all (BPMN §13.4.1, §13.4.4).
+	def := attrValue(se, "default")
+	if def == "" || !gatewayTakesDefault(se.Name.Local) {
+		return gw, nil
+	}
+
+	if err := deferDefaultFlow(asm, se.Name.Local, id, def, gw); err != nil {
+		return nil, err
 	}
 
 	return gw, nil
+}
+
+// deferDefaultFlow records the gateway's default as a pass-2 reference.
+//
+// The type assertion is a guard rather than a formality: every gateway the
+// model has today embeds the shared Gateway and so can hold a default, but
+// nothing in the type system says a future one must — and a gateway that
+// silently kept no default would route tokens by a rule the file did not
+// describe.
+func deferDefaultFlow(
+	asm *assembly, local, id, def string, gw flow.Node,
+) error {
+	defaulter, ok := gw.(interface {
+		UpdateDefaultFlow(*flow.SequenceFlow) error
+	})
+	if !ok {
+		return errs.New(
+			errs.M("bpmn: %s %q carries a default, which %T cannot hold",
+				local, id, gw),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	asm.refs = append(asm.refs, flowRef{
+		refSite: refSite{from: local + " " + id, attr: "default", target: def},
+		apply:   defaulter.UpdateDefaultFlow,
+	})
+
+	return nil
+}
+
+// gatewayKinds maps a gateway element to its constructor. The complex
+// gateway is deliberately absent — see SRD-089.C §4.1.
+var gatewayKinds = map[string]func(...options.Option) (flow.Node, error){
+	tagExclusiveGateway: func(o ...options.Option) (flow.Node, error) {
+		return gateways.NewExclusiveGateway(o...)
+	},
+	tagParallelGateway: func(o ...options.Option) (flow.Node, error) {
+		return gateways.NewParallelGateway(o...)
+	},
+	tagInclusiveGateway: func(o ...options.Option) (flow.Node, error) {
+		return gateways.NewInclusiveGateway(o...)
+	},
+	tagEventBasedGtw: func(o ...options.Option) (flow.Node, error) {
+		return gateways.NewEventBasedGateway(o...)
+	},
+}
+
+// gatewaysWithDefault are the kinds BPMN gives a default sequence flow:
+// the ones that CHOOSE among their outgoing flows by condition. A parallel
+// gateway takes every outgoing flow and an event-based one is decided by
+// its events, so neither has a condition to fall through.
+var gatewaysWithDefault = map[string]bool{
+	tagExclusiveGateway: true,
+	tagInclusiveGateway: true,
+	tagComplexGateway:   true,
+}
+
+// gatewayTakesDefault reports whether the element kind has a default.
+func gatewayTakesDefault(local string) bool {
+	return gatewaysWithDefault[local]
+}
+
+// newGatewayOfKind builds the gateway the element names.
+func newGatewayOfKind(
+	local string, opts []options.Option,
+) (flow.Node, error) {
+	build, ok := gatewayKinds[local]
+	if !ok {
+		return nil, errs.New(
+			errs.M("bpmn: no gateway constructor for %q", local),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	return build(opts...)
 }
 
 // parseSequenceFlow parses a <bpmn:sequenceFlow> into a flowSpec for pass 2.

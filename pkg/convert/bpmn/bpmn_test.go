@@ -167,11 +167,11 @@ func TestImportErrors(t *testing.T) {
 		{
 			name: "unsupported in-namespace element",
 			doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
-  <bpmn:process id="p"><bpmn:inclusiveGateway id="ig"/></bpmn:process>
+  <bpmn:process id="p"><bpmn:subProcess id="sub"/></bpmn:process>
 </bpmn:definitions>`,
-			want:    `unsupported element "inclusiveGateway"`,
+			want:    `unsupported element "subProcess"`,
 			wantUee: true,
-			wantSec: "§13.4.3",
+			wantSec: "§13.3.4",
 		},
 		{
 			name: "unknown operationRef",
@@ -1050,8 +1050,6 @@ func TestSectionFor(t *testing.T) {
 	tests := map[string]string{
 		"sendTask":                         "§13.3.3",
 		"subProcess":                       "§13.3.4",
-		"inclusiveGateway":                 "§13.4.3",
-		"eventBasedGateway":                "§13.4",
 		"intermediateCatchEvent":           "§13.5",
 		"boundaryEvent":                    "§13.5.5",
 		"messageEventDefinition":           "§13.5",

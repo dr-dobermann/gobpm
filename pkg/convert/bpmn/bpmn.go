@@ -43,6 +43,9 @@ const (
 	tagRelationship     = "relationship"
 	tagImport           = "import"
 	tagAssociation      = "association"
+	tagInclusiveGateway = "inclusiveGateway"
+	tagEventBasedGtw    = "eventBasedGateway"
+	tagComplexGateway   = "complexGateway"
 )
 
 func init() { //nolint:gochecknoinits // SRD-051 §FR-4: blank-import self-registration, the image.RegisterFormat idiom (ADR-024 §2.2)

@@ -124,8 +124,6 @@ var sections = map[string]string{
 	"subProcess":                       "§13.3.4",
 	"adHocSubProcess":                  "§13.3.4",
 	"transaction":                      "§13.3.4",
-	"inclusiveGateway":                 "§13.4.3",
-	"eventBasedGateway":                "§13.4",
 	"complexGateway":                   "§13.4",
 	"intermediateCatchEvent":           "§13.5",
 	"intermediateThrowEvent":           "§13.5",
@@ -338,6 +336,8 @@ var nodeBuilders = map[string]nodeBuilder{
 
 	tagExclusiveGateway: buildGateway,
 	tagParallelGateway:  buildGateway,
+	tagInclusiveGateway: buildGateway,
+	tagEventBasedGtw:    buildGateway,
 }
 
 // buildManualTask backs both <bpmn:task> and <bpmn:manualTask>: the
