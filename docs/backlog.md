@@ -84,8 +84,29 @@ and "examples assert their own outcome" as plain commits on
   between the two instances". Different surface (a hang in `pkg/thresher`, not
   `-race` in `internal/instance`), plausibly one shared object. Naming that
   object is #314's first DoD item, and this symptom is a cheaper reproduction
-  of it: no race detector needed, just `go test ./pkg/thresher/` under
-  coverage instrumentation.
+  of it: no race detector needed, just a full-package run.
+
+  **Correction, same day, after more measurement: the two tests do NOT share
+  one mechanism, and the paragraph above generalizes from one to both.** They
+  are separated by what happens when the deadline moves:
+
+  - `TestIterationCorrelatedRouting` **hangs regardless of the deadline** —
+    raising the wait from 3s to 30s moved the failure from 3.01s to 30.03s.
+    That is a delivery that never arrives, and the paragraphs above describe
+    it correctly.
+  - `TestIterationRoutingKillAndResume` is **load-sensitive**, not
+    deadline-independent. It failed twice consecutively in `make ci`, then
+    passed **9/9** when the gate's exact conditions were reproduced by hand
+    (`GOMAXPROCS=4`, `-race`, `-coverprofile`, the whole package list). The
+    two failures happened while `make ci` was piped through an
+    output-summarizing wrapper teeing ~10k lines; the run without it passed at
+    the same commit. That points at total machine load rather than at the
+    engine.
+
+  So a red gate on `KillAndResume` alone is not evidence of a lost delivery,
+  and it is worth re-running before investigating. `CorrelatedRouting` failing
+  IS evidence, at any deadline. Whether one root cause produces both remains
+  open — which is the point of naming the shared object.
 - **Audit findings** — disposition in
   [`audit/remediation-status.md`](audit/remediation-status.md), design deferrals
   in [`audit/audit-backlog.md`](audit/audit-backlog.md). Both maintain their own
