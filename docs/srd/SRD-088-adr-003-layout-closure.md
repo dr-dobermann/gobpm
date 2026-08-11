@@ -168,6 +168,14 @@ Two consequences shape §3:
 - **NFR-3 — the conformance helpers are usable by an out-of-repo adapter
   author**: exported, documented, depending only on the public surface.
 
+  This is why `messagingtest` and `taskstest` publish `Waits()`/`SetWaits()`.
+  The independent review (§4.10) pointed out that the suites' time bounds were
+  unexported constants tuned for an in-process implementation, so an adapter
+  over a remote queue — a 20-second long-poll, a network hop slower than the
+  absence windows — would have been failed for reasons that have nothing to do
+  with the contract. A suite published FOR remote adapters cannot assume
+  delivery is instant.
+
 ## 3 Shapes
 
 ### 3.1 The hooks
@@ -540,6 +548,36 @@ The rule that *does* apply after this lands: ADR-003 is `Accepted` from then
 on, so the next change to it IS a v.2, and that v.2 starts as `Draft` until
 its own changes are implemented.
 
+### 4.10 What the independent review changed
+
+The branch reached the PR handover with `/check-srd` at 0 🔴, `make ci` green
+14/14 and diff-coverage at 95.5%. An external reviewer (a different model
+family, doc-blind, four lenses) then found **two blockers**, both introduced
+by this document's own work:
+
+- **`startSeams` left running what it had already started.** A later seam's
+  `Start` failing aborted the run with the earlier seams live and unreferenced.
+  §3.2 argues at length that abandoning a seam mid-shutdown "leaves live
+  resources with no second chance" — and the start path did exactly that, in
+  the same file, unnoticed.
+- **`WithDataStore` appended where the registry replaced.** Re-registering a
+  ref left the superseded store in the lifecycle list, so the engine started
+  it, folded its health into its own, and stopped it — for a store serving no
+  reference.
+
+Neither is a conformance gap, a style violation, or an uncovered line, which
+is precisely why none of the self-review gates could see them: `/check-srd`
+asks whether the code matches this document, and this document did not say
+"unwind a partial start" because its author had not thought of it.
+
+Eleven further defects came from the same pass, most of them one mistake in
+several costumes — **an assertion that reads strict and is weak**. `exactly 1`
+that only caught same-instant duplicates; a fan-out check budgeted on the
+silence window so a slow broker passed either way; two `time.Sleep`s standing
+in for a handshake, which passed without exercising the path they existed for.
+The full triage, including the three findings refuted with reasons, is in the
+commit that fixed them.
+
 ## 5 Tests
 
 | # | Test | Asserts |
@@ -558,6 +596,7 @@ its own changes are implemented.
 | T-13 | `TestScriptTaskNoEngine`, `TestScriptTaskUnclaimedFormat` | `RegisterProcess` refuses a model demanding an unclaimed format, naming the task, the format, the registered claims and `WithScriptEngine` — under both the `##None` default and a non-empty registry that simply does not claim it (FR-8) |
 | T-14 | depguard probe (manual; there is no `make depguard-check` target — the fixture cannot be committed, see T-10) | a throwaway file in a battery package importing `internal/` is denied (FR-9); `pkg/thresher` importing `internal/` still passes, since the facade legitimately does |
 | T-15 | `make lint-all-modules MODULES="$(EXAMPLE_MODULES)"` | reports real issues rather than an unconditional 0 — verified by the probe that returns 1 issue with the exclusion removed and 0 with it present (FR-10) |
+| T-16 | `TestStartRollsBackWhatItAlreadyStarted`, `TestRollbackSkipsWhatItNeverStarted`, `TestRollbackReportsItsOwnFailures`, `TestReplacedDataStoreLeavesTheLifecycle`, `TestGoFuncTrimsTheRegisteredName`, `TestWaitsAreTunable` (×2), `TestHandshakeCatchesANonBlockingFetch` | the regressions the independent review found (§4.10). Each was confirmed to FAIL with its fix reverted — a regression test that passes either way records the fix's name and nothing else |
 | T-10 | depguard probe (manual) | a throwaway file under `examples/` importing `runtime/` is denied (FR-6). Not a committed fixture: once FR-10 lands the examples are genuinely linted, so a permanent violating file would keep the gate red — the check mirrors `consumer-smoke`, which builds a throwaway module for the same reason |
 
 **How T-10 and T-14 are actually run**, since neither can be a committed

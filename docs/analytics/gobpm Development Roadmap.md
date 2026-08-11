@@ -58,7 +58,7 @@ flowchart TB
 | Dependencies | stdlib + `uuid` (SAD-001 G2) | whatever it needs |
 | Rule | MUST NOT carry runtime baggage | MUST NOT reimplement the engine |
 
-The division is enforced by **import direction**, not by convention — which is why executing ADR-003's layout ([#269](https://github.com/dr-dobermann/gobpm/issues/269)) is the structural prerequisite it is: nothing in CI checks import direction today.
+The division is enforced by **import direction**, not by convention — which is why executing ADR-003's layout ([#269](https://github.com/dr-dobermann/gobpm/issues/269)) was the structural prerequisite it was. CI now enforces it: six depguard rule groups, each citing ADR-003 §4.4.
 
 **The converter stays in the engine.** SAD-001 N7 justifies it: the parser is stdlib `encoding/xml`, so it costs core no dependency, and the engine never imports the converter — the invariant holds by import direction. The server consumes it.
 
@@ -134,14 +134,13 @@ Grounded in the code, not aspiration. Baseline **v0.11.0** (2026-08-02).
 | **No conformance gate** | The ledger is asserted, not checked — a refactor can regress a green row silently |
 | **Two role systems** | The Camunda triad and BPMN `ResourceRole` resolve separately and compose badly |
 | **No listeners** | Extension is observe-only; nothing can react in-band |
-| **Layout unexecuted** | ADR-003's `pkg/` catalogue and import-direction CI are not started |
-| **Four documents Draft** | SAD-001 v.1.1, ADR-003 v.1, ADR-004 v.1, ADR-023 v.3 |
+| **Three documents Draft** | SAD-001 v.1.1, ADR-004 v.1, ADR-023 v.3. ADR-003 is `Accepted` — its catalogue is reconciled with the code and its §5 departure table closed ([#269](https://github.com/dr-dobermann/gobpm/issues/269)) |
 
 ### 3.2 What v1.0.0 commits to
 
 **For a library, 1.0 is an API commitment, not a feature claim.** The question is not what is built but what can still change shape. Sorted by that test:
 
-- **Still breaking** — the ADR-003 layout migration (it relocates every public package) and the postgres adapter (the first *second* implementation of `Repository`; validating an interface routinely changes it).
+- **Still breaking** — the postgres adapter (the first *second* implementation of `Repository`; validating an interface routinely changes it). The ADR-003 layout is no longer on this list: it landed incrementally rather than as one relocation, and `pkg/**` is now depguard-fenced against importing `internal/`, which is what makes the public surface implementable from outside and therefore committable.
 - **Additive** — everything else, and safe in any 1.x minor.
 
 1.0 therefore contains **E0 + E1 + E2** and nothing beyond:
@@ -156,7 +155,7 @@ The **core stays fully in-memory** on stdlib + `uuid` (G2); durability arrives t
 
 | # | Milestone | Contains | Done when |
 |---|---|---|---|
-| **E0** | **Conception & layout stabilization** | ADR-003's `pkg/` catalogue, its 11 migration steps and depguard import rules ([#269](https://github.com/dr-dobermann/gobpm/issues/269)); SAD-001 accepted by reducing §13 to a stated non-design ([#270](https://github.com/dr-dobermann/gobpm/issues/270)); ADR-004 and ADR-023 re-accepted | No Draft document remains; CI fails on a disallowed import edge; the public package layout is final |
+| **E0** | **Conception & layout stabilization** | ~~ADR-003's `pkg/` catalogue, its 12 migration steps and depguard import rules~~ ([#269](https://github.com/dr-dobermann/gobpm/issues/269)) — **done**; SAD-001 accepted by reducing §13 to a stated non-design ([#270](https://github.com/dr-dobermann/gobpm/issues/270)); ADR-004 and ADR-023 re-accepted | No Draft document remains; CI fails on a disallowed import edge; the public package layout is final |
 | **E1** | **Conformance evidence** | The element-coverage suite behind a CI target that fails ([#265](https://github.com/dr-dobermann/gobpm/issues/265)); §10.4.3 instance-attribute binding ([#263](https://github.com/dr-dobermann/gobpm/issues/263)); the process-level `ResourceRole` decision ([#264](https://github.com/dr-dobermann/gobpm/issues/264)); the directory / resource-query seam; **roles convergence**; **`timeDuration` + `timeCycle`** | A green run *is* the tracker — `conformance-status.md` becomes checked rather than asserted |
 | **E2** | **Fault tolerance & durable state** | Incidents, retry, token preservation ([#80](https://github.com/dr-dobermann/gobpm/issues/80)); `adapters/postgres`; checkpoint fidelity for in-flight Call/MI/compensation; suspend/resume; the history / audit store; **event listeners**; **business key** | An engine survives a kill and resumes from a real database; a failure is recorded, retried and visible |
 | → | **v1.0.0 — the public API frozen** | | E0–E2 green; the semver commitment begins |
