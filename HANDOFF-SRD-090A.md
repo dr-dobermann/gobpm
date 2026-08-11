@@ -258,6 +258,51 @@ not the executor-driven `handleScopeOpen`, and the re-entry queue lives in the
 loop-driven one. The two open paths have to merge. That deletes a branch
 rather than adding one, but it is real work and belongs in M3c's estimate.
 
+## SRD-090.B — ground truth for authoring it (verified at `5e72f073`)
+
+B is what closes #313, and its design is already accepted-in-draft as
+**ADR-006 v.6 §2.9.5** (the decorator as subscriber). What follows is the code
+it has to be written against — gathered by grep, not from memory.
+
+**The refusal it lifts.** `internal/instance/snapshot/snapshot.go:365` — the
+message names #313 verbatim and tells the modeller to "Model it as an iterated
+Sub-Process containing the wait". It refuses **leaves only**: a composite
+returns nil at `:357`, which is why an iterated Sub-Process containing a User
+Task works today and an iterated User Task does not.
+
+**Who owns a wait today — the track, not the instance executor.**
+`track.armWaiters` (`track.go:640`) registers the processor:
+
+```go
+proc := eventproc.EventProcessor(t)      // the TRACK
+if d.Type() == flow.TriggerMessage {
+    proc = t.instance                    // ...except a MESSAGE, which
+}                                        //    registers the INSTANCE
+```
+
+Two consequences B must answer, and they are the substance of it:
+
+1. **A message wait is registered by the shared `Instance`,** not per waiter.
+   So N iteration instances parking at one message catch present ONE processor
+   to the hub — the joining-processor case, and the reason routing to the right
+   ordinal is a CORRELATION question rather than a subscription question. The
+   iteration key mechanism already exists (`correlator.iterKeys`, SRD-085
+   FR-3), and this session's M2c fixed the two ways a key was silently lost
+   in exactly this path. B has to say how an envelope reaches instance *k* and
+   not its sibling.
+2. **The residency hold is per-TRACK.** `t.held.Store(allHeld && len(defs) > 0)`
+   (`track.go:677`) — all of a node's arms must find a holder or the track
+   counts unheld. Under executors this becomes per-instance, which is FR-8's
+   "releasability over a decorator is the conjunction of its executors'". B and
+   M3c meet here, so do M3c first.
+
+**What is already in place**, so B is not starting cold: `awaitEvent` is an
+`awaitKind` (its comment already reads "a hub subscription (SRD-090.B arms
+it)"); `iterDecorator.refuseIfParked` is the guard written for the day the
+refusal lifts, tested for its decision and unreachable until then; and
+`holdWait` (`track.go:689`) already offers a definition to durable holders
+before any in-hub waiter is made — B changes WHO offers, not the offering.
+
 ## Discipline that cost time this session — do not relearn it
 
 - **Judge `make ci` by `.ci/last-run.json`, never by an exit code.** A trailing
