@@ -393,8 +393,10 @@ type nodeBuilder func(
 // heart of the import mapping, kept as a table so a new element is a row
 // rather than a case.
 var nodeBuilders = map[string]nodeBuilder{
-	tagStartEvent: buildStartEvent,
-	tagEndEvent:   buildEndEvent,
+	tagStartEvent:        buildStartEvent,
+	tagEndEvent:          buildEndEvent,
+	tagIntermediateCatch: buildIntermediateCatch,
+	tagIntermediateThrow: buildIntermediateThrow,
 
 	tagTask:       buildManualTask,
 	tagManualTask: buildManualTask,
@@ -476,6 +478,77 @@ func eventOptions(
 	}
 
 	return append(body.opts(id), triggers...), nil
+}
+
+// buildIntermediateCatch builds an intermediate catch event around the
+// single definition it waits for.
+func buildIntermediateCatch(
+	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+) (flow.Node, error) {
+	def, err := soleDefinition(asm, se, id, body)
+	if err != nil {
+		return nil, err
+	}
+
+	return events.NewIntermediateCatchEvent(
+		fallbackName(id, name), def, body.opts(id)...)
+}
+
+// buildIntermediateThrow builds an intermediate throw event around the
+// single definition it throws.
+func buildIntermediateThrow(
+	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+) (flow.Node, error) {
+	def, err := soleDefinition(asm, se, id, body)
+	if err != nil {
+		return nil, err
+	}
+
+	return events.NewIntermediateThrowEvent(
+		fallbackName(id, name), def, body.opts(id)...)
+}
+
+// soleDefinition returns the one definition an intermediate event
+// carries.
+//
+// Both constructors take it POSITIONALLY and reject nil
+// (intermediate_catch.go:43, intermediate_throw.go:49), so an
+// intermediate event with no definition cannot be built — and the
+// standard has no untyped intermediate event either, so nothing legal is
+// lost by saying so.
+//
+// More than one is refused rather than silently reduced. BPMN lets a
+// catch event list several triggers, while this model takes exactly one
+// (§4.10); importing the first would produce an event that waits for
+// less than the file asked for, and nothing downstream would ever say so.
+func soleDefinition(
+	asm *assembly, se xml.StartElement, id string, body nodeBody,
+) (flow.EventDefinition, error) {
+	owner := se.Name.Local + " " + strconv.Quote(id)
+
+	defs, err := buildDefs(asm, owner, body)
+	if err != nil {
+		return nil, err
+	}
+
+	switch len(defs) {
+	case 1:
+		return defs[0].def, nil
+
+	case 0:
+		return nil, errs.New(
+			errs.M("bpmn: %s carries no event definition; an intermediate "+
+				"event is defined by what it waits for or throws, and BPMN "+
+				"has no untyped one", owner),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return nil, errs.New(
+		errs.M("bpmn: %s carries %d event definitions, and this model's "+
+			"intermediate events take exactly one; splitting the triggers "+
+			"across separate events keeps the meaning the file described",
+			owner, len(defs)),
+		errs.C(errorClass, errs.InvalidParameter))
 }
 
 // startAttrOptions carries the two start-event attributes the model
