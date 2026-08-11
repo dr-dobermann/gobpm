@@ -23,6 +23,11 @@ type scopeExec struct {
 	t    *track
 	step *stepInfo
 
+	// drain is closed by the loop when this instance's scope has drained.
+	// It belongs to the INSTANCE rather than to the host track, which is
+	// what lets N of them wait at once (SRD-090.A M3b).
+	drain chan struct{}
+
 	// parked is written by this instance's own goroutine and read by the
 	// LOOP goroutine, so it is atomic. A reader wants the CURRENT answer
 	// and never a consistent pair with anything else, which is what makes
@@ -35,7 +40,12 @@ type scopeExec struct {
 
 // newScopeExec builds the executor for one instance of a composite activity.
 func newScopeExec(t *track, step *stepInfo, ordinal int) *scopeExec {
-	return &scopeExec{t: t, step: step, ord: ordinal}
+	return &scopeExec{
+		t:     t,
+		step:  step,
+		ord:   ordinal,
+		drain: make(chan struct{}),
+	}
 }
 
 // run opens this instance's child scope and awaits its drain.
@@ -46,7 +56,7 @@ func newScopeExec(t *track, step *stepInfo, ordinal int) *scopeExec {
 // of a non-iterated composite.
 func (e *scopeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	if _, err := e.t.instance.scopeRoundtrip(ctx, scopeRequest{
-		op: scopeOpen, host: e.t, node: e.step.node,
+		op: scopeOpen, host: e.t, node: e.step.node, drain: e.drain,
 	}); err != nil {
 		return nil, err
 	}
@@ -58,11 +68,33 @@ func (e *scopeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	e.parked.Store(true)
 	defer e.parked.Store(false)
 
-	if err := e.t.awaitScopeDrained(ctx); err != nil {
+	if err := e.awaitDrain(ctx); err != nil {
 		return nil, err
 	}
 
 	return nil, nil
+}
+
+// awaitDrain parks this instance until the loop reports its scope drained,
+// honoring cancellation and instance shutdown so a mid-pass interrupt or
+// terminate unblocks it rather than hanging (SRD-054 NFR-4).
+//
+// It waits on the instance's OWN channel. The host track's evtCh — which the
+// single-park protocol used — could only ever serve one waiter, so a second
+// instance of the same activity would have consumed the first one's drain.
+func (e *scopeExec) awaitDrain(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+
+	case <-e.t.instance.loopDone:
+		// the loop stopped mid-pass; the scope will never drain. Reported
+		// as a cancellation, which is how the evtCh close read before.
+		return context.Canceled
+
+	case <-e.drain:
+		return nil
+	}
 }
 
 // awaits reports the drain this instance is parked for, which is the only

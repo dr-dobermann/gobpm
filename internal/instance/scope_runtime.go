@@ -74,6 +74,14 @@ func seedDataObjects(
 // accompanying SRD) reopens the scope after the close.
 type scopeEntry struct {
 	host *track
+	// drain is the activity instance waiting for this scope, signaled when
+	// it closes. An entry opened by an executor is signaled DIRECTLY rather
+	// than by resuming the host: N instances of one activity share one host
+	// track, and a track has one park — which is the entire reason a
+	// loop-owned group barrier had to serialize N concurrent drains onto it
+	// (SRD-090.A M3b). nil for a scope no executor opened, which still
+	// resumes its parked host the original way.
+	drain chan struct{}
 	// group is the parallel Multi-Instance group this scope is an instance of
 	// (SRD-056.A), nil for every serial scope; ordinal is the instance's 0-based
 	// index. When set, the scope's drain decrements the group barrier instead of
@@ -689,6 +697,16 @@ func (ls *loopState) completeScope(
 
 	ls.reportScope(observability.PhaseCompleted, entry.node, path, ordinal)
 	ls.reportAdHocSettled(entry, observability.PhaseCompleted)
+
+	// an executor's own scope drains to the executor (SRD-090.A M3b). The
+	// close is the signal — one scope drains exactly once, and a closed
+	// channel needs no reader to be present yet, so an instance still
+	// between its open and its wait cannot miss it.
+	if entry.drain != nil {
+		close(entry.drain)
+
+		return
+	}
 
 	// a parallel Multi-Instance instance drains into its group's N-of-N barrier
 	// (SRD-056.A): the off-loop decorator (runMIParallel) owns the counting and the

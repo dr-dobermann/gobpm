@@ -81,16 +81,20 @@ func TestRunMISequentialBindError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestRunMISequentialDrainError: a stand-in loop opens instance 0's scope then
-// closes evtCh (a mid-instance stop) — the decorator's drain wait unblocks with an
-// error rather than hanging.
+// TestRunMISequentialDrainError: a stand-in loop opens instance 0's scope and
+// then stops (a mid-instance shutdown) — the instance's drain wait unblocks
+// with an error rather than hanging on a scope that will never close.
+//
+// The stop is signaled by closing loopDone rather than the host's evtCh: an
+// instance now waits on its OWN drain channel (SRD-090.A M3b), so the host's
+// park is no longer what a shutdown has to interrupt.
 func TestRunMISequentialDrainError(t *testing.T) {
 	inst, node, host := miSeqFixture(t)
 
 	go func() {
 		req := <-inst.scopeReq
 		req.reply <- scopeReply{scopePath: host.scopePath}
-		close(host.evtCh) // the loop closes evtCh on stop
+		close(inst.loopDone) // the loop stops without ever draining the scope
 	}()
 
 	_, err := newIterDecorator(

@@ -65,6 +65,10 @@ type scopeRequest struct {
 	host  *track
 	node  flow.Node
 	reply chan scopeReply
+	// drain is the channel the requesting INSTANCE waits on for its scope's
+	// completion (SRD-090.A M3b). Recorded on the entry, closed when the
+	// scope drains.
+	drain chan struct{}
 	// insts carries a LEAF decorator's executor set to the loop's
 	// iteration mirror on a scopeLeafPass (SRD-090.A FR-6): a leaf opens
 	// no scope and spawns no track, so this post is the ONLY thing that
@@ -209,6 +213,11 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 
 		entry.awaitAttach = false
 
+		// the re-attaching instance is a NEW executor over an old scope, so
+		// the entry adopts its channel: the restored scope was rebuilt by
+		// the loop and has none of its own (SRD-090.A M3b).
+		entry.drain = req.drain
+
 		req.reply <- scopeReply{scopePath: child}
 
 		// a drain that arrived before the re-attach completes now — the
@@ -232,14 +241,16 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 		return
 	}
 
-	// the host parked on its evtCh for this pass's drain — record it
-	// parked-and-undelivered so the drain's synthetic completion can dispatch to
-	// it (the onScopeOpen discipline).
+	// the host is recorded parked-and-undelivered (the onScopeOpen
+	// discipline) — a scope this host opened is outstanding, which is what
+	// keeps the loop from treating it as idle. The DRAIN itself goes to the
+	// instance that opened the scope, over the channel on the entry.
 	ls.waiting[req.host.ID()] = struct{}{}
 	ls.scopes[child] = &scopeEntry{
 		host:   req.host,
 		node:   req.node,
 		parent: req.host.scopePath,
+		drain:  req.drain,
 	}
 
 	// mirror the decorator's position for the capture (SRD-082 FR-2);

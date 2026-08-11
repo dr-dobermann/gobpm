@@ -14,7 +14,7 @@ import (
 // openedScopeExec starts a scope executor for ordinal ord against a stand-in
 // loop that opens its scope and stops, leaving the instance PARKED for the
 // drain. It returns the executor and the channel its run reports on; the
-// caller releases it over the host's evtCh.
+// caller releases it by closing the executor's own drain channel.
 //
 // The park is the state under test and the only one an executor cannot report
 // after the fact, so the fixture holds it open rather than racing it.
@@ -71,7 +71,7 @@ func TestScopeExecAwaitsItsScope(t *testing.T) {
 		"and says WHICH instance is parked — the ordinal is the join key")
 	require.False(t, st.done, "a parked instance is not done")
 
-	host.evtCh <- nil // the loop delivers the scope's drain
+	close(e.drain) // the loop reports THIS instance's scope drained
 
 	require.NoError(t, <-done)
 	require.Equal(t, awaitNothing, e.awaits(),
@@ -87,7 +87,7 @@ func TestScopeExecClearsItsWaitOnFailure(t *testing.T) {
 
 	e, done := openedScopeExec(t, inst, host, node, 0)
 
-	close(host.evtCh) // the loop closes evtCh on stop, mid-pass
+	close(inst.loopDone) // the loop stops mid-pass
 
 	require.Error(t, <-done)
 	require.Equal(t, awaitNothing, e.awaits(),
@@ -131,7 +131,7 @@ func TestLoopDecoratorAwaitsItsLivePass(t *testing.T) {
 	require.Equal(t, 1, d.state().ordinal,
 		"and which pass that is")
 
-	host.evtCh <- nil
+	close(e.drain)
 	require.NoError(t, <-done)
 }
 
