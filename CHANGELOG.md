@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BPMN converter: the import parser is rebuilt, and six of its own
+  defects are fixed** (ADR-024 v.4, SRD-089.A). Element dispatch is now
+  a table keyed by parse context and local name rather than six
+  disagreeing `switch` statements, and forward references (a gateway's
+  `default` today; `attachedToRef`, `calledElement` and link pairing
+  next) resolve through one mechanism that names the referring element,
+  the attribute and the missing id — and distinguishes a target of the
+  **wrong kind** from one that does not exist, since a `default` naming
+  a start event is a modeling mistake, not a typo.
+
+  Six behaviours change. **Export is deterministic**: it walked Go's
+  randomized map iteration, so two exports of one process differed and
+  an exported file could not be diffed; nodes are now emitted from the
+  start events along outgoing flows in flow-id order, unreachable ones
+  by id. A **`<task>`/`<manualTask>`/`<userTask>` with no `name`**
+  imports instead of being refused (BPMN makes `name` optional; the id
+  is the fallback, as `<process>` and `<serviceTask>` already did).
+  **`<bpmn:documentation>`** is imported onto `Docs()` and written back
+  with `textFormat`, instead of being dropped in both directions.
+  **`serviceTask@implementation`** round-trips. A **`parallelGateway`**
+  is no longer exported with a `default` attribute BPMN §13.4.1 does
+  not define. And the **purely visual artifacts** (`<textAnnotation>`,
+  `<group>`, `<category>`, plus `<relationship>`/`<import>`) are
+  skipped rather than refused — a runnable file was being rejected for
+  carrying a comment. `<association>` is deliberately still refused:
+  it carries compensation semantics.
+
+### Added
+
+- **`activities.WithImplementation`** (SRD-089.A). BPMN carries
+  `implementation` on the `ServiceTask` itself, while gobpm derived it
+  from the Operation's `Implementor` — which an imported operation
+  deliberately lacks, so a document's own hint had nowhere to live. The
+  option gives it one; unset, the derived value stands, so no existing
+  caller changes.
+
 ### Added
 
 - **Adapter lifecycle and observation hooks** (SRD-088, closes #269).
