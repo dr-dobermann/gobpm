@@ -165,29 +165,11 @@ func initFailure(f Format) error {
 // Importer. Importing an unregistered format returns an error enumerating
 // Formats() (SRD-051 §FR-2).
 func Import(ctx context.Context, f Format, r io.Reader) (*process.Process, error) {
-	if ctx == nil {
-		return nil, errs.New(
-			errs.M("convert.Import: ctx is nil"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	if f == "" {
-		return nil, errs.New(
-			errs.M("convert.Import: f is empty"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	if r == nil {
-		return nil, errs.New(
-			errs.M("convert.Import: r is nil"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	if err := initFailure(f); err != nil {
-		return nil, errs.New(
-			errs.M("convert.Import: format %q failed to self-register", f),
-			errs.C(errorClass, errs.InvalidParameter),
-			errs.E(err))
+	// The same guards ImportDocument applies, in the same order and with
+	// the same messages — shared so the two entry points cannot drift into
+	// validating differently.
+	if err := checkImportArgs(ctx, "convert.Import", f, r); err != nil {
+		return nil, err
 	}
 
 	mu.RLock()
