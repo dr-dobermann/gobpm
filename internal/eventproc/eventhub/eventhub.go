@@ -228,26 +228,45 @@ type waiterBuilder func(
 // registerWaiter is the shared lookup→build→start→insert path for both
 // RegisterEvent and RegisterPersistentEvent.
 //
-// The lookup, create, start and insert run under ONE critical section so
-// two concurrent registrations of the same eDef.ID() can't both miss the
-// existence check and both create a waiter — the second insert would
-// orphan the first waiter and its serving goroutine (audit 1.5 /
-// FIX-003 C). The build func and AddEventProcessor never re-enter eh.m, and
-// Service() only spawns a detached goroutine that touches eh.m no sooner
-// than its first fire, so holding eh.m across them is safe.
+// The lookup and the insert run under ONE critical section so two concurrent
+// registrations of the same eDef.ID() can't both miss the existence check and
+// both create a waiter — the second insert would orphan the first waiter and
+// its serving goroutine (audit 1.5 / FIX-003 C).
+//
+// What may run under eh.m is decided by ONE property: whether the call is
+// FOREIGN — whether it can reach the host (a broker, a processor, a logger the
+// host supplied). Foreign work does not run under the engine's one lock, no
+// matter how briefly it usually takes, because "usually" is a property of the
+// host's network and not of this engine (FIX-038 §1.1).
+//
+// Re-entrancy is a WEAKER test and answering it is not enough. AddEventProcessor
+// still never re-enters eh.m — that is why the comment this replaces read as
+// true for as long as it did — but it was for a while allowed to call the host's
+// broker, and holding eh.m across that stalled every registration, lookup and
+// unregistration in the engine behind one host call (FIX-041 §1.1). So: before
+// adding a call inside this lock, ask what it can reach, not what it can
+// re-enter.
+//
+// Under the lock: the registry map, the signal index, AddEventProcessor.
+// Outside it: build, Service, Stop, ApplyProcessorKeys.
 func (eh *EventHub) registerWaiter(
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 	build waiterBuilder,
 ) error {
-	// FAST PATH — an existing waiter just gains a processor. That is registry
-	// work and stays under the lock.
+	// FAST PATH — an existing waiter just gains a processor. The registry half
+	// runs under the lock; the joining processor's correlation keys reach the
+	// broker after it is released.
 	joined, w, err := eh.joinExistingWaiter(ep, eDef)
 	if err != nil {
 		return err
 	}
 
 	if joined {
+		if aerr := eh.applyProcessorKeys(w, ep); aerr != nil {
+			return aerr
+		}
+
 		eh.reportEventFlow(observability.PhaseRegistered, map[string]string{
 			observability.AttrEventDefinitionID: eDef.ID(),
 			observability.AttrWaiterID:          w.ID(),
@@ -282,6 +301,93 @@ func (eh *EventHub) registerWaiter(
 	}
 
 	return eh.publishWaiter(ep, eDef, w)
+}
+
+// applyProcessorKeys is the foreign half of a join: it hands the joining
+// processor's correlation keys to the waiter's broker subscription, with eh.m
+// RELEASED. A waiter with no keyed subscription (signal, timer) does not
+// implement KeyedWaiter and is a no-op.
+//
+// It runs AFTER the registration, and that order is deliberate. The window it
+// leaves — processor listed, key not yet subscribed — drops nothing: the broker
+// routes no envelope for a key it has not been given, and an unmatched envelope
+// waits in its inbox until a subscription wants it (ADR-006 v.5 §2.4). It also
+// means a concurrent UnregisterEvent SEES the processor, so it cannot tear the
+// waiter down while this registration is still attaching to it — the stranding
+// FIX-038 §1.3 fixed, which applying keys before registering would reopen.
+//
+// A failure undoes the registration: the caller reports a failed registration,
+// and a processor listed against a waiter nobody registered it with would
+// receive events the caller believes it is not subscribed to.
+func (eh *EventHub) applyProcessorKeys(
+	w eventproc.EventWaiter, ep eventproc.EventProcessor,
+) error {
+	kw, ok := w.(eventproc.KeyedWaiter)
+	if !ok {
+		return nil
+	}
+
+	err := kw.ApplyProcessorKeys(ep)
+	if err == nil {
+		return nil
+	}
+
+	eh.dropFailedWaiter(w, ep)
+
+	return errs.New(
+		errs.M("couldn't apply the correlation keys of a joining processor"),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.D(observability.AttrWaiterID, w.ID()),
+		errs.D(observability.AttrEventProcessorID, ep.ID()),
+		errs.E(err))
+}
+
+// dropFailedWaiter unregisters ep and takes the waiter out of the registry
+// after it discarded its subscription over a key it could not apply.
+//
+// The waiter is DEAD, not merely degraded: shedding an unrepairable key-set
+// costs it the whole subscription (FIX-041 §3.1 D2), and nothing will ever be
+// delivered through it again. Left mapped, it would be joined by every later
+// registration for the same definition and deliver to none of them — FIX-038
+// §1.3's stranding, arrived at from the other direction. Unmapping it means the
+// next registration builds a fresh waiter with a fresh subscription.
+//
+// The processors already parked on it lose their registration, which is the
+// cost §3.2 B3 accepts and the reason this logs at Error: the alternative is an
+// orphan key quietly eating messages addressed to somebody else, and a loud
+// recoverable failure beats a silent permanent one.
+func (eh *EventHub) dropFailedWaiter(
+	w eventproc.EventWaiter, ep eventproc.EventProcessor,
+) {
+	if rerr := w.RemoveEventProcessor(ep); rerr != nil {
+		eh.rt.Logger().Debug("couldn't unregister a processor whose keys failed",
+			observability.AttrWaiterID, w.ID(),
+			observability.AttrEventProcessorID, ep.ID(),
+			observability.AttrError, rerr.Error())
+	}
+
+	eDefID := w.EventDefinition().ID()
+
+	eh.m.Lock()
+
+	mapped, ok := eh.waiters[eDefID]
+	if ok && mapped == w {
+		eh.dropWaiterLocked(eDefID, w)
+	} else {
+		ok = false
+	}
+
+	eh.m.Unlock()
+
+	if !ok {
+		return
+	}
+
+	eh.rt.Logger().Error("a refused correlation key failed a message waiter",
+		observability.AttrWaiterID, w.ID(),
+		observability.AttrEventDefinitionID, eDefID,
+		observability.AttrEventProcessorID, ep.ID(),
+		"orphaned_processors", len(w.EventProcessors()))
 }
 
 // joinExistingWaiter adds ep to the waiter already serving eDef, if there is
@@ -369,6 +475,14 @@ func (eh *EventHub) publishWaiter(
 			errs.D(observability.AttrEventDefinitionID, eDef.ID()),
 			errs.D(observability.AttrEventProcessorID, ep.ID()),
 			errs.E(addErr))
+	}
+
+	// The losing path joined the winner above, under the lock. Its foreign half
+	// belongs here, for the same reason as the fast path's.
+	if lost {
+		if err := eh.applyProcessorKeys(winner, ep); err != nil {
+			return err
+		}
 	}
 
 	// Name the waiter the processor actually landed on. On the losing path
@@ -866,14 +980,13 @@ func (eh *EventHub) AddEventKey(eDefID, key string) error {
 		return nil
 	}
 
-	ka, ok := w.(interface {
-		AddKey(string) error
-	})
+	kw, ok := w.(eventproc.KeyedWaiter)
 	if !ok {
 		return nil
 	}
 
-	return ka.AddKey(key)
+	// Outside the lock, released above: AddKey reaches the host's broker.
+	return kw.AddKey(key)
 }
 
 // ----------------------------------------------------------------------------

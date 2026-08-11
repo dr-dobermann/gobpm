@@ -150,6 +150,15 @@ func (mw *messageWaiter) EventDefinition() flow.EventDefinition {
 }
 
 // AddEventProcessor adds ep to the waiter's processor list (idempotent).
+//
+// Registry work ONLY — it reaches neither the processor nor the broker, so the
+// EventHub may (and does) call it under its own lock. The joining processor's
+// correlation keys are applied by ApplyProcessorKeys once that lock is
+// released: v.1 of the #320 fix applied them here, which put a host-broker call
+// inside the engine-wide hub lock and stalled every registration, lookup and
+// unregistration behind it — FIX-038 §1.1's defect, reintroduced (FIX-041 §1.1).
+//
+// Guarded by TestJoinDoesNotHoldTheHubLock.
 func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	if ep == nil {
 		return errs.New(
@@ -157,28 +166,60 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 			errs.C(MessageWaiterError, errs.EmptyNotAllowed))
 	}
 
-	// Read the keys BEFORE taking the lock: CorrelationKeys is a call into
-	// a processor the host may have supplied, and the engine does not hold
-	// its own lock across another component's call (FIX-038 §1.1).
-	keys := processorKeys(ep)
-
 	mw.m.Lock()
+	defer mw.m.Unlock()
 
-	if idx := slices.Index(mw.processors, ep); idx != -1 {
-		mw.m.Unlock()
+	if idx := slices.Index(mw.processors, ep); idx == -1 {
+		mw.processors = append(mw.processors, ep)
+	}
 
+	return nil
+}
+
+// ApplyProcessorKeys applies ep's correlation keys to the waiter's broker
+// subscription — the foreign half of a join, run by the EventHub after it has
+// released its own lock.
+//
+// A JOINING processor brings its own keys, and the subscription was created
+// from the keys of whoever registered first. Without this step a Multi-Instance
+// iteration that joins an existing waiter is unreachable by its own key: its
+// envelope matches no subscription and waits in the broker's inbox (#320). The
+// lazy AddEventKey path cannot be relied on for it — that one silently no-ops
+// while the waiter is not yet in the hub's map.
+//
+// The order the hub uses — register ep, THEN apply its keys — is the safe one.
+// Its window (processor listed, key not yet subscribed) drops nothing: the
+// broker routes no envelope for a key it has not been given, and an unmatched
+// envelope waits in its inbox until a subscription wants it (ADR-006 v.5 §2.4).
+// The inverse window (key subscribed, processor not listed) consumes and
+// discards.
+//
+// Guarded by TestJoinAppliesKeysAfterRegistering and
+// TestPartialKeyFailureDiscardsTheSubscription.
+func (mw *messageWaiter) ApplyProcessorKeys(ep eventproc.EventProcessor) error {
+	if ep == nil {
+		return errs.New(
+			errs.M("empty EventProcessor isn't allowed"),
+			errs.C(MessageWaiterError, errs.EmptyNotAllowed))
+	}
+
+	// Outside the lock: CorrelationKeys is a call into a processor the host
+	// may have supplied, and the engine does not hold its own lock across
+	// another component's call (FIX-038 §1.1).
+	keys := processorKeys(ep)
+	if len(keys) == 0 {
 		return nil
 	}
 
-	// A JOINING processor brings its own correlation keys, and the
-	// subscription was created from the keys of whoever registered first.
-	// Without this, a Multi-Instance iteration that joins an existing
-	// waiter is unreachable by its own key: its envelope matches no
-	// subscription and waits in the broker's inbox (#320). The lazy
-	// AddEventKey path cannot be relied on for it — it silently no-ops
-	// while the waiter is not yet in the hub's map.
+	mw.m.Lock()
+
+	// No subscription yet — BUFFER, do not skip. It is tempting to reason
+	// that a registered processor is in Service's snapshot and will have its
+	// keys read there, but that is false for exactly the window #320 was lost
+	// in: a processor joining after Service snapshots its processors and
+	// before it publishes mw.sub is in neither, and its key would vanish as
+	// before. The duplicate this can produce is Service's to remove.
 	if mw.sub == nil {
-		mw.processors = append(mw.processors, ep)
 		mw.pendingKeys = append(mw.pendingKeys, keys...)
 		mw.m.Unlock()
 
@@ -190,37 +231,68 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 
 	for _, k := range keys {
 		if err := sub.AddKey(k); err != nil {
-			// ep is deliberately NOT in the processor list yet: a
-			// half-joined processor would make a retry short-circuit on
-			// the duplicate check above and report success while its
-			// keys never reached the subscription.
-			return errs.New(
-				errs.M("couldn't extend the subscription for a joining "+
-					"processor"),
-				errs.C(MessageWaiterError, errs.OperationFailed),
-				errs.D(observability.AttrMessageName, mw.name),
-				errs.E(err))
+			return mw.discardSubscription(sub, err,
+				"couldn't extend the subscription for a joining processor")
 		}
 	}
 
+	return nil
+}
+
+// discardSubscription drops the whole broker subscription after a key could not
+// be applied, marks the waiter failed and wraps err.
+//
+// Discarding is the only repair available: messaging.Subscription can grow a
+// key-set but not shrink one, so a partly-applied set cannot be undone in place
+// (FIX-041 §3.1 D2). It is also a safe one — the messages the discarded keys
+// would have matched go back to waiting in the broker's inbox for a
+// subscription that wants them (ADR-006 v.5 §2.4), whereas an orphan key left
+// on a live subscription eats them permanently, which is the #320 failure mode
+// made durable.
+//
+// This is not a waiter removing itself (ADR-006 v.5 §2.5): it drops its own
+// subscription and marks its own state, exactly as Stop does. Removal from the
+// registry stays the hub's, on the failed registration it is already returning.
+func (mw *messageWaiter) discardSubscription(
+	sub messaging.Subscription,
+	cause error,
+	msg string,
+) error {
+	// Fail the waiter BEFORE unsubscribing, and unsubscribe outside the lock
+	// because it is a host call. The order is what makes the failure stick:
+	// unsubscribing closes the channel the service goroutine is selecting on,
+	// so it wakes immediately and relabels the waiter — and setStateUnlessFailed
+	// can only refuse that relabel if WSFailed is already written. Reversed,
+	// the final state is a coin toss between Failed and Stopped.
 	mw.m.Lock()
-
-	if idx := slices.Index(mw.processors, ep); idx == -1 {
-		mw.processors = append(mw.processors, ep)
-	}
-
+	mw.sub = nil
+	mw.state = eventproc.WSFailed
 	mw.m.Unlock()
 
-	return nil
+	uerr := sub.Unsubscribe()
+
+	e := errs.New(
+		errs.M(msg),
+		errs.C(MessageWaiterError, errs.OperationFailed),
+		errs.D(observability.AttrMessageName, mw.name),
+		errs.D(observability.AttrWaiterID, mw.id),
+		errs.E(cause))
+
+	if uerr != nil {
+		mw.rt.Logger().Error("couldn't unsubscribe a failed message waiter",
+			observability.AttrWaiterID, mw.id,
+			observability.AttrMessageName, mw.name,
+			observability.AttrError, uerr.Error())
+	}
+
+	return e
 }
 
 // processorKeys reads the correlation keys a processor answers to, if it
 // answers to any: a plain track has none, an instance carrying conversation
 // or iteration keys has several.
 func processorKeys(ep eventproc.EventProcessor) []string {
-	kp, ok := ep.(interface {
-		CorrelationKeys() []string
-	})
+	kp, ok := ep.(eventproc.KeyedProcessor)
 	if !ok {
 		return nil
 	}
@@ -275,31 +347,47 @@ func (mw *messageWaiter) Process(eDef flow.EventDefinition) error {
 // delivery goroutine. The subscription is registered synchronously, so a
 // message published after Service returns is delivered (subscribe-before-
 // publish, ADR-006 v.1 §2.4).
-
+//
+// Every state / stopCh / done access below takes mw.m, like State, setState and
+// Stop do. None of the writes is a demonstrated race — they all complete before
+// the hub publishes the waiter — but a field guarded on three paths and bare on
+// a fourth makes the next reader's reasoning wrong (FIX-041 §1.6).
 func (mw *messageWaiter) Service(ctx context.Context) error {
+	// Snapshot the keys known now — the processors' own, plus anything
+	// buffered by AddKey or ApplyProcessorKeys before this point.
+	mw.m.Lock()
+
 	if mw.state != eventproc.WSReady {
+		state := mw.state
+		mw.m.Unlock()
+
 		return errs.New(
 			errs.M("waiter isn't ready to start"),
 			errs.C(MessageWaiterError, errs.InvalidState),
-			errs.D("current_state", mw.state.String()))
+			errs.D("current_state", state.String()))
 	}
 
-	// Snapshot the keys known now — the processors' own, plus anything
-	// buffered by AddKey before this point.
-	mw.m.Lock()
 	consumed := len(mw.pendingKeys)
 	procs := append([]eventproc.EventProcessor(nil), mw.processors...)
 	keys := append([]string(nil), mw.pendingKeys...)
 	mw.m.Unlock()
 
-	// outside the lock, for the same reason as AddEventProcessor
+	// outside the lock, for the same reason as ApplyProcessorKeys
 	for _, p := range procs {
 		keys = append(keys, processorKeys(p)...)
 	}
 
+	// A joining processor's keys have two homes — the processor itself and the
+	// buffer that carries them across the subscribe window — and a key that
+	// arrived before Service reaches both. membroker collapses the duplicate
+	// (its key-set is a map), but the port is host-implementable and an adapter
+	// that turns each key into a queue-level registration would make two
+	// (FIX-041 §1.5).
+	keys = uniqueKeys(keys)
+
 	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, keys...)
 	if err != nil {
-		mw.state = eventproc.WSFailed
+		mw.setState(eventproc.WSFailed)
 
 		return errs.New(
 			errs.M("couldn't subscribe to the message broker"),
@@ -319,21 +407,18 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 
 	for _, k := range late {
 		if aerr := sub.AddKey(k); aerr != nil {
-			mw.m.Lock()
-			mw.state = eventproc.WSFailed
-			mw.m.Unlock()
-
-			return errs.New(
-				errs.M("couldn't apply a key learned during subscribe"),
-				errs.C(MessageWaiterError, errs.OperationFailed),
-				errs.D(observability.AttrMessageName, mw.name),
-				errs.E(aerr))
+			// The subscription goes with it: some of the late keys are on it
+			// and the port cannot take them off again (FIX-041 §3.1 D2).
+			return mw.discardSubscription(sub, aerr,
+				"couldn't apply a key learned during subscribe")
 		}
 	}
 
+	mw.m.Lock()
 	mw.state = eventproc.WSRunned
 	mw.stopCh = make(chan struct{})
 	mw.done = make(chan struct{})
+	mw.m.Unlock()
 
 	mw.rt.Logger().Debug("message waiter serviced",
 		observability.AttrWaiterID, mw.id, observability.AttrMessageName, mw.name)
@@ -341,6 +426,28 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 	go mw.runMessageService(ctx, sub)
 
 	return nil
+}
+
+// uniqueKeys returns keys with duplicates removed, keeping first-seen order so
+// a broker adapter that logs or indexes by position sees a stable list.
+func uniqueKeys(keys []string) []string {
+	if len(keys) < 2 {
+		return keys
+	}
+
+	seen := make(map[string]struct{}, len(keys))
+	unique := make([]string, 0, len(keys))
+
+	for _, k := range keys {
+		if _, ok := seen[k]; ok {
+			continue
+		}
+
+		seen[k] = struct{}{}
+		unique = append(unique, k)
+	}
+
+	return unique
 }
 
 // runMessageService waits for matching envelopes (or a stop/cancel) and
@@ -371,7 +478,7 @@ func (mw *messageWaiter) runMessageService(
 	for {
 		select {
 		case <-ctx.Done():
-			mw.setState(eventproc.WSStopped)
+			mw.setStateUnlessFailed(eventproc.WSStopped)
 
 			return
 
@@ -382,7 +489,7 @@ func (mw *messageWaiter) runMessageService(
 
 		case env, ok := <-ch:
 			if !ok {
-				mw.setState(eventproc.WSStopped)
+				mw.setStateUnlessFailed(eventproc.WSStopped)
 
 				return
 			}
@@ -549,11 +656,39 @@ func (mw *messageWaiter) setState(s eventproc.EventWaiterState) {
 	mw.m.Unlock()
 }
 
+// setStateUnlessFailed updates the state unless the waiter has already failed.
+//
+// WSFailed is terminal and carries the reason a caller was handed. When
+// discardSubscription fails a serviced waiter it closes the very channel the
+// service goroutine is selecting on, so that goroutine wakes immediately and
+// would otherwise relabel the waiter WSStopped — reporting an orderly shutdown
+// for a waiter that broke, and making the failure racy to observe.
+func (mw *messageWaiter) setStateUnlessFailed(s eventproc.EventWaiterState) {
+	mw.m.Lock()
+	defer mw.m.Unlock()
+
+	if mw.state == eventproc.WSFailed {
+		return
+	}
+
+	mw.state = s
+}
+
 // Done returns a channel closed when the service goroutine has exited; nil until
 // Service starts it (a registered waiter is always serviced first). EventHub.
 // Shutdown waits on it to drain goroutines (ADR-006 v.1 §2.5).
+//
+// Under mw.m for the same reason Service now writes it under mw.m: the field is
+// guarded everywhere else, and a lone bare read is what the next change trips
+// over (FIX-041 §1.6).
 func (mw *messageWaiter) Done() <-chan struct{} {
+	mw.m.Lock()
+	defer mw.m.Unlock()
+
 	return mw.done
 }
 
-var _ eventproc.EventWaiter = (*messageWaiter)(nil)
+var (
+	_ eventproc.EventWaiter = (*messageWaiter)(nil)
+	_ eventproc.KeyedWaiter = (*messageWaiter)(nil)
+)

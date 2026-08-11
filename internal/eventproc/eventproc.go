@@ -144,6 +144,55 @@ type EventWaiter interface {
 	Done() <-chan struct{}
 }
 
+// KeyedProcessor is an EventProcessor that answers to correlation keys.
+//
+// OPTIONAL, and deliberately not part of EventProcessor: a plain track answers
+// to no key at all, while an instance carrying conversation or Multi-Instance
+// iteration keys answers to several. Satisfied by *instance.Instance and by
+// thresher's subscription holder; a waiter reads it through a type assertion
+// and treats a processor that does not implement it as keyless.
+//
+// Declared rather than asserted anonymously so both implementors can be
+// compile-checked against one contract and a third is written from it rather
+// than by imitation (FIX-041 §1.8).
+type KeyedProcessor interface {
+	EventProcessor
+
+	// CorrelationKeys returns the keys this processor's messages are routed
+	// by. An empty result is normal and means "route by message name alone".
+	CorrelationKeys() []string
+}
+
+// KeyedWaiter is an EventWaiter whose broker delivery is filtered by
+// correlation key, and whose key-set therefore keeps growing after the
+// subscription exists.
+//
+// OPTIONAL, and deliberately not part of EventWaiter: only the message waiter
+// holds a keyed broker subscription — signal and timer waiters hold none, and a
+// mandatory method they would have to stub is worse than an optional one they
+// simply do not implement.
+//
+// Both methods are FOREIGN — they reach the host's MessageBroker — and MUST be
+// called with no EventHub lock held (FIX-038 §1.1, FIX-041 §1.1).
+type KeyedWaiter interface {
+	EventWaiter
+
+	// AddKey extends the waiter's subscription with a single correlation key
+	// learned after the waiter parked (SRD-017 §4.5 lazy association).
+	AddKey(key string) error
+
+	// ApplyProcessorKeys applies the correlation keys of a processor already
+	// registered with the waiter. It is the second half of a join:
+	// AddEventProcessor does the registry work under the hub lock, this does
+	// the broker work after the lock is released. A processor that is not a
+	// KeyedProcessor is a no-op.
+	//
+	// On failure the waiter has discarded its subscription and is WSFailed:
+	// the port cannot un-apply a key, so a partly-applied key-set can only be
+	// thrown away, never repaired (FIX-041 §3.1 D2).
+	ApplyProcessorKeys(ep EventProcessor) error
+}
+
 // EventWaiterState represents the state of an event waiter.
 type EventWaiterState int
 
