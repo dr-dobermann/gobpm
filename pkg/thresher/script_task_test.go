@@ -28,7 +28,7 @@ import (
 // e2eScriptEngine is a routing-observable stub engine: it "executes" by
 // returning a fixed named output and records what it ran.
 // A non-nil failWith makes it claim the format and then fail executing it —
-// the way a real engine reports a bad script body. Since SRD-090 FR-8 refuses
+// the way a real engine reports a bad script body. Since SRD-088 FR-8 refuses
 // an unclaimed format at registration, this is how a test reaches the
 // script-execution failure path at all.
 type e2eScriptEngine struct {
@@ -62,7 +62,7 @@ func (e *e2eScriptEngine) Execute(
 // boomEngine claims text/x-lua and fails every script it is handed. The
 // incident tests need a Script Task that reaches the runner and fails THERE:
 // a format nothing claims no longer gets that far, since registration refuses
-// the model outright (SRD-090 FR-8).
+// the model outright (SRD-088 FR-8).
 func boomEngine() *e2eScriptEngine {
 	return &e2eScriptEngine{
 		kind:     "##Boom",
@@ -286,7 +286,7 @@ func TestScriptTaskE2E(t *testing.T) {
 	require.Equal(t, "##Beta", kinds["TEXT/X-BETA"])
 }
 
-// TestScriptTaskUnclaimedFormat (SRD-090 FR-8, T-13): a format nobody claims
+// TestScriptTaskUnclaimedFormat (SRD-088 FR-8, T-13): a format nobody claims
 // is refused at REGISTRATION, with the claims-listing error — the caller
 // learns the model cannot run while still holding an error return, instead of
 // discovering it asynchronously inside a track that has already started.
@@ -599,7 +599,7 @@ func TestIncidentOpRetryNow(t *testing.T) {
 	require.EqualValues(t, 2, atomic.LoadInt32(&calls))
 }
 
-// TestScriptTaskNoEngine (SRD-090 FR-8, T-13): the zero-config ##None default
+// TestScriptTaskNoEngine (SRD-088 FR-8, T-13): the zero-config ##None default
 // stays a legitimate engine — it just refuses, at registration, a model that
 // demands a script format, and says loudly how to wire one.
 func TestScriptTaskNoEngine(t *testing.T) {
@@ -633,7 +633,7 @@ func TestScriptTaskNoEngine(t *testing.T) {
 	require.Contains(t, rerr.Error(), "text/x-lua")
 }
 
-// TestScriptTaskGoFuncBattery (SRD-090 FR-8, T-11): the in-core, dependency-
+// TestScriptTaskGoFuncBattery (SRD-088 FR-8, T-11): the in-core, dependency-
 // free battery actually runs a Script Task end to end. Every other port ships
 // a default that costs nothing to compile in; before this, the script port's
 // only working engine lived in adapters/lua and brought an interpreter with
@@ -688,7 +688,7 @@ func TestScriptTaskGoFuncBattery(t *testing.T) {
 		"the fact must attribute the run to the gofunc engine")
 }
 
-// TestScriptTaskGoFuncUnknownName (SRD-090 FR-8, T-12): the format IS claimed,
+// TestScriptTaskGoFuncUnknownName (SRD-088 FR-8, T-12): the format IS claimed,
 // so registration passes — the name is only resolvable at execution, and the
 // failure lists the scripts that ARE registered.
 func TestScriptTaskGoFuncUnknownName(t *testing.T) {

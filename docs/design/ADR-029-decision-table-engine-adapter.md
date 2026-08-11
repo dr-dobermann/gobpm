@@ -6,7 +6,7 @@
 | Version | v.1 |
 | Date | 2026-07-24 |
 | Owner | Ruslan Gabitov |
-| Refines | [ADR-027 v.1](ADR-027-business-rule-task-and-rule-engine-seam.md) §2.4 (the named follow-up: the table-shaped tier — hit policies, output names, rules; and its two pre-made decisions: a rule is a **behavior contract** — match + yield — under a **data-declared table**; the seam's rows result and the deploy+evaluate component split already accommodate this tier), [ADR-002 v.2](ADR-002-extension-architecture.md) §4.1/§4.2 (the interface-with-default extension shape; the adapter tier), [ADR-003 v.1](ADR-003-module-layout.md) §4.4 (adapters as separate modules the core never imports), [SAD-001 v.1](SAD-001-vision-and-architecture.md) N2 (no DMN engine in core; decision evaluation is external/embedder-supplied) |
+| Refines | [ADR-027 v.1](ADR-027-business-rule-task-and-rule-engine-seam.md) §2.4 (the named follow-up: the table-shaped tier — hit policies, output names, rules; and its two pre-made decisions: a rule is a **behavior contract** — match + yield — under a **data-declared table**; the seam's rows result and the deploy+evaluate component split already accommodate this tier), [ADR-002 v.2](ADR-002-extension-architecture.md) §4.1/§4.2 (the interface-with-default extension shape; the adapter tier), [ADR-003](ADR-003-module-layout.md) §4.4 (adapters as separate modules the core never imports), [SAD-001 v.1](SAD-001-vision-and-architecture.md) N2 (no DMN engine in core; decision evaluation is external/embedder-supplied) |
 
 The Business Rule Engine seam landed with a function registry as its in-core
 default. This ADR decides the **table tier**: a minimal Decision Table engine
@@ -48,7 +48,7 @@ the deploy question.
 ### 2.1 Placement — a pluggable adapter module, not core
 
 The engine ships as **`adapters/dtable`** — its own Go module in the
-adapters tier (the ADR-003 v.1 §4.4 layout: adapters import the core, the core
+adapters tier (the ADR-003 §4.4 layout: adapters import the core, the core
 never imports adapters). Consequences, deliberately accepted:
 
 - The core's wired-by-default battery **remains `gorules`** — a zero-option
@@ -198,7 +198,7 @@ contract.
 | Rule = behavior contract (match + yield) under a data table; the table tier named as the follow-up | ADR-027 v.1 §2.4 |
 | Deploy split onto the `Deployer` capability; the task never deploys | ADR-027 v.1 §2.1 (landed: `pkg/rules`) |
 | Hit policy set (Unique, First, Any, Rule Order, Collect); result = list of records | the DMN-minimal component contract recorded at the seam's landing (ADR-027 v.1 §1/§2.6) |
-| Adapters are separate modules; core never imports them | ADR-003 v.1 §4.4 (enforced: the `.golangci.yml` depguard rules) |
+| Adapters are separate modules; core never imports them | ADR-003 §4.4 (enforced: the `.golangci.yml` depguard rules) |
 | The functor precedent — in-process Go bodies over the read surface | ADR-011's `gooper` operations; `gorules` decisions (ADR-027 §2.4) |
 | No DMN engine in core | SAD-001 v.1 N2 |
 

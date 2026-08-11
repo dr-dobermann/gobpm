@@ -159,7 +159,7 @@ func (s shoutingSub) AddKey(string) error          { return nil }
 func (s shoutingSub) Unsubscribe() error           { return nil }
 
 // TestAssertionsRejectBrokenBrokers drives each contract assertion against a
-// broker that violates it (SRD-090 T-9, in-process half). Splitting it this
+// broker that violates it (SRD-088 T-9, in-process half). Splitting it this
 // way is what proves each assertion does its own job: a suite-level check
 // cannot distinguish twelve working assertions from one working assertion and
 // eleven inverted ones.

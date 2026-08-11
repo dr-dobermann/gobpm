@@ -118,7 +118,7 @@ func (brokenEngine) Evaluate(
 	return nil, nil
 }
 
-// TestSuiteRejectsABrokenEngine is the suite's own negative control (SRD-090
+// TestSuiteRejectsABrokenEngine is the suite's own negative control (SRD-088
 // T-9). It runs in a child process for the reason given in the messagingtest
 // twin: a failed subtest marks its parent failed, so "assert this fails"
 // cannot be written in-process.

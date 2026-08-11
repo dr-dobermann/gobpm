@@ -123,7 +123,7 @@ func (sw *signalWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	sw.m.Lock()
 	defer sw.m.Unlock()
 
-	if idx := slices.Index(sw.processors, ep); idx == -1 {
+	if idx := slices.IndexFunc(sw.processors, sameProcessor(ep)); idx == -1 {
 		sw.processors = append(sw.processors, ep)
 	}
 
@@ -142,7 +142,7 @@ func (sw *signalWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error 
 	sw.m.Lock()
 	defer sw.m.Unlock()
 
-	idx := slices.Index(sw.processors, ep)
+	idx := slices.IndexFunc(sw.processors, sameProcessor(ep))
 	if idx == -1 {
 		return errs.New(
 			errs.M("event processor isn't registered with the waiter"),
