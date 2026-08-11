@@ -36,7 +36,7 @@ func TestClassifyScriptFormat(t *testing.T) {
 }
 
 // TestRefuseScriptFormat pins that each refusal explains ITS problem. A
-// modeller reading "unsupported format" learns nothing; reading that the
+// modeler reading "unsupported format" learns nothing; reading that the
 // format is unclaimed learns to register an engine, and reading that the
 // script names host code learns the file was never self-contained.
 func TestRefuseScriptFormat(t *testing.T) {

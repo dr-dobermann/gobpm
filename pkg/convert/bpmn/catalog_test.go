@@ -261,7 +261,7 @@ func TestNamelessCatalogObjectTakesItsID(t *testing.T) {
 // Definitions.rootElements is an unordered 0..* collection
 // (elements/foundation.md:23) and Process is itself a RootElement, so a
 // <message> may legally follow the <process> that will refer to it.
-// Requiring declare-before-use would refuse ordinary modeller output.
+// Requiring declare-before-use would refuse ordinary modeler output.
 func TestCatalogDeclaredAfterProcess(t *testing.T) {
 	doc := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">

@@ -11,6 +11,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/convert"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
@@ -103,6 +104,10 @@ type nodeBody struct {
 	// constructed without one.
 	script string
 	docs   []docSpec
+	// defs are the <*EventDefinition> children, which decide what KIND of
+	// event is built. They are specs rather than definitions because what
+	// they refer to may be declared later in the document (§4.7).
+	defs []defSpec
 }
 
 // opts renders the body as construction options, with the element's id
@@ -553,38 +558,44 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 }
 
 // buildNodes is the first half of pass 2: every flow node the document
-// declared, constructed in document order and added to the process.
+// declared, constructed and added to the process in document order.
 //
-// The owner is set around each construction so a report raised while
-// building — a dialect attribute the model cannot hold, say — names the
-// element that carried it rather than whatever was parsed last.
+// It builds in two sweeps. A compensation event definition names the
+// activity it compensates, and BPMN does not order a process's flow
+// elements any more than it orders its root ones — so that activity may
+// be declared after the event naming it. The nodes that name another node
+// are therefore built last, once the rest are in the index.
+//
+// Two sweeps are enough, and a third could never fire: an activityRef
+// points at an Activity, and no Activity carries an event definition, so
+// nothing built in the second sweep is named by anything built there.
 func buildNodes(p *parser, asm *assembly) error {
-	// Indexed rather than ranged by value: a nodeSpec carries an element,
-	// a body and two names, and copying it per node buys nothing.
-	for i := range asm.specs {
-		s := &asm.specs[i]
+	built := make([]flow.Node, len(asm.specs))
 
-		// Presence was checked in pass 1, when refusing still had the
-		// element's position in the file to point at.
-		build := nodeBuilders[s.se.Name.Local]
+	for _, deferred := range []bool{false, true} {
+		// Indexed rather than ranged by value: a nodeSpec carries an
+		// element, a body and two names, and copying it per node buys
+		// nothing.
+		for i := range asm.specs {
+			s := &asm.specs[i]
+			if s.namesANode() != deferred {
+				continue
+			}
 
-		outer := p.owner
-		p.owner = s.id
+			node, err := buildNode(p, asm, s)
+			if err != nil {
+				return err
+			}
 
-		node, err := build(p, asm, s.se, s.id, s.name, s.body)
-
-		p.owner = outer
-
-		if err != nil {
-			// Do not re-wrap already-classified converter errors (unknown
-			// operationRef, invalid gatewayDirection, …) — preserve class for
-			// errors.As / HasClass (k8s/docker-style root-cause visibility).
-			return wrapErr(
-				fmt.Sprintf("bpmn: couldn't create %s %q", s.se.Name.Local, s.id),
-				errs.BulidingFailed,
-				err)
+			built[i] = node
+			asm.byID[s.id] = node
 		}
+	}
 
+	// Added in DOCUMENT order regardless of which sweep built them: the
+	// order a process replays its nodes in is the file's, not the
+	// converter's scheduling.
+	for _, node := range built {
 		if err := asm.proc.Add(node); err != nil {
 			return errs.New(
 				errs.M("bpmn: couldn't add node %q to process %q",
@@ -592,11 +603,51 @@ func buildNodes(p *parser, asm *assembly) error {
 				errs.C(errorClass, errs.BulidingFailed),
 				errs.E(err))
 		}
-
-		asm.byID[s.id] = node
 	}
 
 	return nil
+}
+
+// namesANode reports whether building this node needs another node to
+// exist first.
+func (s nodeSpec) namesANode() bool {
+	for _, d := range s.body.defs {
+		if d.local == tagCompensateEventDef && d.ref != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// buildNode constructs one flow node from its spec.
+//
+// The owner is set around the construction so a report raised while
+// building — a dialect attribute the model cannot hold, say — names the
+// element that carried it rather than whatever was parsed last.
+func buildNode(p *parser, asm *assembly, s *nodeSpec) (flow.Node, error) {
+	// Presence was checked in pass 1, when refusing still had the
+	// element's position in the file to point at.
+	build := nodeBuilders[s.se.Name.Local]
+
+	outer := p.owner
+	p.owner = s.id
+
+	node, err := build(p, asm, s.se, s.id, s.name, s.body)
+
+	p.owner = outer
+
+	if err != nil {
+		// Do not re-wrap already-classified converter errors (unknown
+		// operationRef, invalid gatewayDirection, …) — preserve class for
+		// errors.As / HasClass (k8s/docker-style root-cause visibility).
+		return nil, wrapErr(
+			fmt.Sprintf("bpmn: couldn't create %s %q", s.se.Name.Local, s.id),
+			errs.BulidingFailed,
+			err)
+	}
+
+	return node, nil
 }
 
 // parseInterface parses a definitions-level <bpmn:interface> and records its
@@ -1037,6 +1088,23 @@ func fallbackName(id, name string) string {
 // reference is resolved against the finished index, and the graph is
 // validated.
 func build(p *parser, asm *assembly) (*process.Process, error) {
+	// A message-typed event builds an ItemAwareElement over the message's
+	// payload, and that needs the model's default data states to exist
+	// (data/item.go:193-201). They are host setup — every example calls
+	// CreateDefaultStates before building a process — but an importer
+	// that refuses an ordinary message start event until the host has run
+	// an unrelated initializer is not a usable contract.
+	//
+	// The call is idempotent and guarded: it fills the three globals only
+	// when they are unset (data/state.go:86-91), so a host that
+	// configured its own states before importing keeps them.
+	if err := data.CreateDefaultStates(); err != nil {
+		return nil, errs.New(
+			errs.M("bpmn: couldn't create the model's default data states"),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
+	}
+
 	if err := buildNodes(p, asm); err != nil {
 		return nil, err
 	}

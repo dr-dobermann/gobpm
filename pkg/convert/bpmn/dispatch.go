@@ -3,6 +3,7 @@ package bpmn
 import (
 	"encoding/xml"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -11,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // parseCtx names the position in the document where an element was met.
@@ -28,6 +30,7 @@ const (
 	ctxInterface
 	ctxOperation
 	ctxCatalog
+	ctxEventDef
 )
 
 // elementKey identifies one element in one parse context.
@@ -176,7 +179,7 @@ var sections = map[string]string{
 	"timerEventDefinition":             "§13.5",
 	"signalEventDefinition":            "§13.5",
 	"errorEventDefinition":             "§13.5",
-	"escalateEventDefinition":          "§13.5",
+	"escalationEventDefinition":        "§13.5",
 	"compensateEventDefinition":        "§13.5",
 	"conditionalEventDefinition":       "§13.5",
 	"linkEventDefinition":              "§13.5",
@@ -332,9 +335,25 @@ type nodeChildParser func(p *parser, body *nodeBody, se xml.StartElement) error
 // either. The later element stages need the same order for a stronger
 // reason: an event definition or a loop characteristic decides WHAT is
 // built, not how it is decorated.
-var nodeChildParsers = map[string]nodeChildParser{
-	tagDocumentation: parseNodeDocElem,
-	tagScript:        parseScriptElem,
+var nodeChildParsers = func() map[string]nodeChildParser {
+	ncp := map[string]nodeChildParser{
+		tagDocumentation: parseNodeDocElem,
+		tagScript:        parseScriptElem,
+	}
+
+	// Every event definition is a node child, derived from defBuilders
+	// rather than listed again so the two tables cannot disagree about
+	// which children are definitions.
+	for local := range defBuilders {
+		ncp[local] = parseEventDefElem
+	}
+
+	return ncp
+}()
+
+// parseEventDefElem records one <*EventDefinition> child of an event.
+func parseEventDefElem(p *parser, body *nodeBody, se xml.StartElement) error {
+	return p.parseEventDef(body, se)
 }
 
 // parseScriptElem records a script task's body. It is read as text, not
@@ -374,17 +393,8 @@ type nodeBuilder func(
 // heart of the import mapping, kept as a table so a new element is a row
 // rather than a case.
 var nodeBuilders = map[string]nodeBuilder{
-	tagStartEvent: func(
-		_ *parser, _ *assembly, _ xml.StartElement, id, name string, body nodeBody,
-	) (flow.Node, error) {
-		return events.NewStartEvent(name, body.opts(id)...)
-	},
-
-	tagEndEvent: func(
-		_ *parser, _ *assembly, _ xml.StartElement, id, name string, body nodeBody,
-	) (flow.Node, error) {
-		return events.NewEndEvent(name, body.opts(id)...)
-	},
+	tagStartEvent: buildStartEvent,
+	tagEndEvent:   buildEndEvent,
 
 	tagTask:       buildManualTask,
 	tagManualTask: buildManualTask,
@@ -417,6 +427,76 @@ var nodeBuilders = map[string]nodeBuilder{
 	tagEventBasedGtw:    buildGateway,
 	tagScriptTask:       buildScriptTask,
 	tagBusinessRuleTask: buildBusinessRuleTask,
+}
+
+// buildStartEvent builds a start event, typed by whichever definitions
+// its body carried.
+//
+// A start and an end event take no positional definition, only options —
+// so the definitions arrive through the trigger each builder produced,
+// and one the model has no trigger for is refused there rather than here.
+func buildStartEvent(
+	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+) (flow.Node, error) {
+	opts, err := eventOptions(asm, se, id, body)
+	if err != nil {
+		return nil, err
+	}
+
+	return events.NewStartEvent(name, append(opts, startAttrOptions(se)...)...)
+}
+
+// buildEndEvent builds an end event, typed by its definitions.
+func buildEndEvent(
+	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+) (flow.Node, error) {
+	opts, err := eventOptions(asm, se, id, body)
+	if err != nil {
+		return nil, err
+	}
+
+	return events.NewEndEvent(name, opts...)
+}
+
+// eventOptions renders a node body as the options an event constructor
+// takes: its id, its documentation, and its definitions as triggers.
+func eventOptions(
+	asm *assembly, se xml.StartElement, id string, body nodeBody,
+) ([]options.Option, error) {
+	owner := se.Name.Local + " " + strconv.Quote(id)
+
+	defs, err := buildDefs(asm, owner, body)
+	if err != nil {
+		return nil, err
+	}
+
+	triggers, err := triggerOptions(owner, defs)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(body.opts(id), triggers...), nil
+}
+
+// startAttrOptions carries the two start-event attributes the model
+// models.
+//
+// Only a NON-default value produces an option: BPMN defaults
+// isInterrupting to true and parallelMultiple to false, and so does the
+// model, so passing the defaults back would assert as a decision what the
+// file never said.
+func startAttrOptions(se xml.StartElement) []options.Option {
+	var opts []options.Option
+
+	if attrBool(se, "parallelMultiple", false) {
+		opts = append(opts, events.WithParallel())
+	}
+
+	if !attrBool(se, "isInterrupting", true) {
+		opts = append(opts, events.WithNonInterrupting())
+	}
+
+	return opts
 }
 
 // buildBusinessRuleTask builds a rule task around the decision reference

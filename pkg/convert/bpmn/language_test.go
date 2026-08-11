@@ -89,7 +89,7 @@ func TestExpressionLanguageResolution(t *testing.T) {
 			}
 
 			// It must also say what IS supported — a refusal that does not
-			// tell the modeller what to write is half an answer.
+			// tell the modeler what to write is half an answer.
 			if !strings.Contains(err.Error(), lite.Language) {
 				t.Errorf("refusal %q does not name the supported language", err)
 			}

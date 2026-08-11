@@ -80,7 +80,7 @@ func TestAssociationIsNotAnAnnotation(t *testing.T) {
 // TestChoreographyAndConversationAreRefused covers SRD-089.A §6 T-7
 // (FR-8): they belong to separate conformance sub-classes, and a
 // Choreography is not a Process — skipping one would import a different
-// diagram than the modeller drew.
+// diagram than the modeler drew.
 func TestChoreographyAndConversationAreRefused(t *testing.T) {
 	tags := map[string]string{
 		"choreography":           "",

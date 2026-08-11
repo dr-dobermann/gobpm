@@ -53,6 +53,27 @@ const (
 	tagScript           = "script"
 	tagBusinessRuleTask = "businessRuleTask"
 	tagMessage          = "message"
+
+	// The ten event definitions (elements/event-definitions.md), their
+	// expression children and the two references they carry as children
+	// rather than attributes.
+	tagMessageEventDef     = "messageEventDefinition"
+	tagTimerEventDef       = "timerEventDefinition"
+	tagSignalEventDef      = "signalEventDefinition"
+	tagErrorEventDef       = "errorEventDefinition"
+	tagEscalationEventDef  = "escalationEventDefinition"
+	tagConditionalEventDef = "conditionalEventDefinition"
+	tagTerminateEventDef   = "terminateEventDefinition"
+	tagCancelEventDef      = "cancelEventDefinition"
+	tagCompensateEventDef  = "compensateEventDefinition"
+	tagLinkEventDef        = "linkEventDefinition"
+	tagTimeDate            = "timeDate"
+	tagTimeCycle           = "timeCycle"
+	tagTimeDuration        = "timeDuration"
+	tagCondition           = "condition"
+	tagOperationRef        = "operationRef"
+	tagLinkSource          = "source"
+	tagLinkTarget          = "target"
 )
 
 // Three catalog element names collide by spelling with the observability
