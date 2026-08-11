@@ -84,6 +84,31 @@ var policy = map[elementKey]dispositionKind{
 	{local: tagDocumentation, ctx: ctxDefinitions}: skipped,
 	{local: tagDocumentation, ctx: ctxInterface}:   skipped,
 	{local: tagDocumentation, ctx: ctxOperation}:   skipped,
+
+	// Visual artifacts. The vendored extract calls these "pure visual",
+	// and they are near-universal in modeler output — a file was being
+	// refused for carrying a comment. Dropping them leaves the imported
+	// definition meaning the same thing, which is the test ADR-024 v.4
+	// §2.9 sets for skipping rather than refusing.
+	//
+	// <association> is NOT one of them and stays refused: the extract
+	// keeps it in scope because it carries compensation semantics, so it
+	// is mapped work for the composites stage, not a comment to skip.
+	{local: tagTextAnnotation, ctx: ctxProcess}: skipped,
+	{local: tagGroup, ctx: ctxProcess}:          skipped,
+	{local: tagCategory, ctx: ctxDefinitions}:   skipped,
+
+	// Not execution-related (extract, out-of-scope table).
+	{local: tagRelationship, ctx: ctxDefinitions}: skipped,
+
+	// <import> declares an external type/schema namespace. foundation.Import
+	// exists, but only as an ItemDefinition field — there is no
+	// definitions-level container to hold a document's imports, and this
+	// stage maps no itemDefinition, so nothing could consult one. Skipping
+	// it changes nothing TODAY; when itemDefinition lands with the data
+	// stage, its typeRef makes the declaration meaningful and this row has
+	// to be revisited with it.
+	{local: tagImport, ctx: ctxDefinitions}: skipped,
 }
 
 // sections pins the BPMN 2.0 § for elements the converter refuses, so the
@@ -131,6 +156,18 @@ var sections = map[string]string{
 	"dataOutputAssociation":            "§10.3",
 	"multiInstanceLoopCharacteristics": "§13.3.5",
 	"standardLoopCharacteristics":      "§13.3.5",
+
+	// The Conversation family is a separate conformance concern; the
+	// vendored extract pins its metamodel at §9.5.1
+	// (semantics/correlation.md:210). The Choreography family is refused
+	// too, but carries no § here — the extract does not pin one, and a
+	// section asserted from memory is worse feedback than none.
+	"conversation":            "§9.5.1",
+	"subConversation":         "§9.5.1",
+	"callConversation":        "§9.5.1",
+	"globalConversation":      "§9.5.1",
+	"conversationLink":        "§9.5.1",
+	"conversationAssociation": "§9.5.1",
 }
 
 // dispositionFor answers what to do with local in ctx when no parser

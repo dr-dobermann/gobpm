@@ -37,6 +37,12 @@ const (
 	tagIncoming         = "incoming"
 	tagOutgoing         = "outgoing"
 	tagErrorRef         = "errorRef"
+	tagTextAnnotation   = "textAnnotation"
+	tagGroup            = "group"
+	tagCategory         = "category"
+	tagRelationship     = "relationship"
+	tagImport           = "import"
+	tagAssociation      = "association"
 )
 
 func init() { //nolint:gochecknoinits // SRD-051 §FR-4: blank-import self-registration, the image.RegisterFormat idiom (ADR-024 §2.2)
