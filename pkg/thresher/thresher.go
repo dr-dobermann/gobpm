@@ -678,7 +678,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 			errs.E(err))
 	}
 
-	// Extension startup (ADR-002 v.2 §8.3, SRD-090 FR-2): every wired seam
+	// Extension startup (ADR-002 v.2 §8.3, SRD-088 FR-2): every wired seam
 	// implementing renv.Starter is started before the engine accepts work, in
 	// the order lifecycleSeams fixes. It precedes the migration hook below
 	// because an adapter that cannot start must not then be asked to prepare
@@ -819,7 +819,7 @@ func (t *Thresher) Shutdown(ctx context.Context) error {
 	// Drain the event machinery: stop waiters and wait for their goroutines.
 	hubErr := t.eventHub.Shutdown(ctx)
 
-	// Extension teardown (ADR-002 v.2 §8.3, SRD-090 FR-2), last and in reverse
+	// Extension teardown (ADR-002 v.2 §8.3, SRD-088 FR-2), last and in reverse
 	// start order. It follows the hub drain because waiters hold the broker's
 	// subscriptions, and it follows drainInstances because a draining instance
 	// still checkpoints through the Repository — stopping either first would

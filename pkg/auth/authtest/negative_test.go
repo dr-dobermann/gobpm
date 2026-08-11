@@ -117,7 +117,7 @@ var (
 // TestAssertionsRejectBrokenProviders drives each contract assertion against a
 // provider that violates precisely it, and requires the assertion to fail.
 //
-// This is the in-process half of SRD-090 T-9. The child-process control proves
+// This is the in-process half of SRD-088 T-9. The child-process control proves
 // Conformance as a whole rejects a broken provider; this proves each assertion
 // does its OWN job, which a suite-level check cannot show — one assertion
 // carrying all the weight while the others were inverted would look identical
