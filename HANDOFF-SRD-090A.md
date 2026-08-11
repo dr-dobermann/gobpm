@@ -1,11 +1,12 @@
-# SRD-090.A — handoff after M3a
+# SRD-090.A — handoff after M3b (first half)
 
 **Branch** `feat/node-execution-model`, worktree
 `/home/dober/wrk/development/go/src/gobpm/iter-events` (sibling worktree; the
 directory name `iter-events` predates the branch rename — cosmetic only).
 
-**Base** `origin/master` = `8532091d`. Six commits ahead: `M2b`, `M2c`,
-`M2d`, a changelog/plan commit, `M3a`, a plan-reorder commit. Nothing pushed.
+**Base** `origin/master` = `8532091d`. Eight commits ahead, tip `0e1a378d`.
+Nothing pushed. Last gate: `make ci` **PASS**, 14/14, head `0e1a378d`,
+diff-coverage **97.8%** of 506 changed lines.
 
 **Task** issue **#313** — the iteration decorator should own the decorated
 node's event registration. This branch is `Part of #313`, not `Closes`: the
@@ -22,7 +23,7 @@ flip to Accepted when **SRD-090.C** lands. The implementation is sliced:
 
 | Slice | Subject | State |
 |---|---|---|
-| **SRD-090.A** | executor/decorator model + the checkpoint record | M1, M2a landed on master (PR #321); **M2b, M2c, M2d, M3a landed here**; M3b, M3c, M3d, M4 remain |
+| **SRD-090.A** | executor/decorator model + the checkpoint record | M1, M2a landed on master (PR #321); **M2b, M2c, M2d, M3a and M3b's first half landed here**; M3b's fan-out + retirement, M3c, M3d, M4 remain |
 | SRD-090.B | registration ownership; the refusal retired — #313's literal subject | not authored |
 | SRD-090.C | token / incident surfaces | not authored |
 | SRD-090.D | declared result strategies, runtime iteration values | not authored |
@@ -130,35 +131,57 @@ tests called the two deleted drivers.
 
 ## Remaining milestones
 
-**M3b — the parallel composite, and the loop-owned group retired.** The
-analysis is done; this is the design to implement:
+**M3b — the parallel composite, and the loop-owned group retired.** Half
+landed (`0e1a378d`); the rest is the fan-out and the retirement.
 
-The group exists for ONE reason: a drain is delivered by resuming the host
-track, and a track has ONE `evtCh`. N concurrent drains cannot land on a cap-1
-park, so `miGroup` + the `scopeFanOut`/`scopeReArm`/`scopeComplete`/
-`scopeReAttach` handshake serializes them (`grp.pending` counts the ones that
-arrived while the runner was busy). N executors do not share that park, so the
-whole apparatus goes — but only once **drain delivery becomes per-instance**.
+**Landed — the drain reaches the instance that opened the scope.** The
+measured reason the group exists: a drain was delivered by RESUMING THE HOST
+TRACK, and a track has one `evtCh`. `miGroup` plus the
+fan-out/re-arm/complete handshake is, at bottom, a queue feeding one drain at
+a time into a channel only one waiter can read (`grp.pending` counts the ones
+that arrived while the runner was busy). Restructuring the barrier could never
+remove that — the delivery target had to change first. So `scopeEntry` now
+carries the channel of the instance that opened it and `completeScope` closes
+that; `scopeExec.awaitDrain` waits on its own channel, honoring ctx and
+`loopDone`. Both sequential composite kinds are on it, so every composite pass
+in the engine drains this way. A restored pass re-attaches to a loop-rebuilt
+entry, which has no channel of its own and adopts the re-attaching executor's.
 
-That is the substance of M3b, and it must land as one change:
-`scopeEntry` carries the signal its instance waits on (the executor's own
-channel, supplied at open) instead of the loop resuming `entry.host`;
-`completeScope` signals that; `awaitScopeDrained` stops reading `evtCh`.
-Doing it for the parallel kind alone would leave two drain protocols, so
-convert the sequential kind with it — `scopeExec` becomes uniform, and
-`dispatchToParked`'s scope-drain path disappears rather than forking.
+**Remaining — the fan-out.** `iterDecorator.runParallel` already exists and
+drives N leaf instances with an ordinary N-of-N barrier (`awaitParallel`); the
+composite case should reach it through `buildInstance`, which M3a put in
+place. What still has to be solved, in rough order of care needed:
+
+1. **Per-instance scope segment.** A parallel instance's scope is
+   `sp-<id>-<ordinal>` (`openParallelInstance`), a sequential one reuses
+   `sp-<id>` every pass. The segment must therefore come from the executor,
+   NOT be derived in `handleScopeOpen` — changing the sequential path would
+   move data paths, observability facts and restore compatibility.
+2. **Output capture.** Loop-side today (`captureParallelOutput`, keyed on
+   `entry.ordinal` into `grp.staging`). The entry needs the ordinal and a
+   staging target that is not the group — the leaf's `instanceOutputs` is the
+   model, but a composite's output lives in its child scope and can only be
+   read before that scope closes, so the capture stays loop-side.
+3. **Cancellation on a fired completionCondition.** Today one loop-side group
+   teardown (`scopeComplete cancel` → `cancelOpenInstances`). It becomes
+   per-instance scope cancellation, driven by the decorator the way the leaf
+   drives `cancelRest`.
+4. **Restore.** `miParallelSeed` + `handleReAttach` → the `IterationRecord`
+   the leaf already uses, with each instance re-attaching through
+   `handleScopeOpen`'s restored-entry branch (its `entry.host == req.host`
+   test needs to become per-path).
+5. **Boundary teardown.** `cancelParallelGroup` has a caller in
+   `boundary_watch.go` — an interrupting boundary on a fanned-out host
+   (SRD-056.A FR-13). It needs the executor equivalent.
 
 Then retire: `miGroup`, `miParallelSeed`, `handleFanOut`, `handleReArm`,
 `handleComplete`, `handleReAttach`, `openParallelInstance`,
 `captureParallelOutput`, `cancelOpenInstances`, `cancelParallelGroup`,
-`markIterDrain` (its `entry.group` guard and its only remaining callers go
-together), the `scopeFanOut`/`scopeReArm`/`scopeComplete`/`scopeReAttach` ops,
-`scopeEntry.group`/`ordinal`/`awaitAttach`/`drainPending`, `doc.MIGroups` on
-the WRITE side (the read side stays for schema-5), and `ls.miGroups` with
-`maybeDehydrate`'s `len(ls.miGroups) > 0` guard. Watch `boundary_watch.go`
-and `cancelParallelGroup`'s caller — an interrupting boundary on a fanned-out
-host tears the instances down (SRD-056.A FR-13) and needs the executor
-equivalent. T-8.
+`markIterDrain`, the `scopeFanOut`/`scopeReArm`/`scopeComplete`/`scopeReAttach`
+ops, `scopeEntry.group`/`ordinal`/`awaitAttach`/`drainPending`,
+`track.awaitScopeDrained` (only `runMIParallel` still calls it), `doc.MIGroups`
+on the WRITE side (the read side stays for schema-5), and `ls.miGroups` with
+`maybeDehydrate`'s `len(ls.miGroups) > 0` guard. T-8.
 
 **M3c — residency by what an instance awaits (FR-8).** Not a predicate
 change. Confirmed by reading the release path:
