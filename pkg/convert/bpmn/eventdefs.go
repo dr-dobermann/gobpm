@@ -3,10 +3,8 @@ package bpmn
 import (
 	"encoding/xml"
 	"strings"
-	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression/lite"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -491,52 +489,35 @@ func buildLinkDef(_ *assembly, owner string, s defSpec) (builtDef, error) {
 	return builtDef{def: def}, nil
 }
 
-// timerRoles are the three forms of a timer, and what this converter can
-// do with each (§4.6). A form the engine cannot express carries the
-// result type the expression language would have to declare.
-var timerRefusals = map[string]string{
-	tagTimeCycle:    "int",
-	tagTimeDuration: "Duration",
+// timerForms maps a timer's expression child onto the ISO 8601 grammar
+// the model reads it as. One row per child, so the three forms differ by
+// a table entry rather than by a branch.
+var timerForms = map[string]events.TimerForm{
+	tagTimeDate:     events.Time,
+	tagTimeDuration: events.Duration,
+	tagTimeCycle:    events.Cycle,
 }
 
-// buildTimerDef builds a timer definition from its <timeDate>, and
-// refuses the other two forms.
+// buildTimerDef builds a timer definition from whichever of the three
+// forms the file carried.
 //
-// NewTimerEventDefinition checks each expression's declared result type
-// against a fixed table — timeDate→"Time", timeCycle→"int",
-// timeDuration→"Duration" (timer.go:75-92) — and the lite engine emits
-// only bool, float64, string and Time (lite.go:108-118). There is no
-// "int" and no "Duration", so no expression an importer can write builds
-// a recurrence or an interval. This is the same wall stage .B recorded
-// against Camunda's failedJobRetryTimeCycle, and it gets the same
-// verdict: refused with the reason named, not silently dropped.
-func buildTimerDef(_ *assembly, owner string, s defSpec) (builtDef, error) {
-	for role, resultType := range timerRefusals {
-		if _, ok := s.exprs[role]; ok {
-			return builtDef{}, errs.New(
-				errs.M("bpmn: %s carries a <%s>, which this engine cannot express: "+
-					"the model requires an expression declaring the result type %q, "+
-					"and the expression language produces only bool, float64, "+
-					"string and Time. Build the timer in Go, or use <timeDate>",
-					owner, role, resultType),
-				errs.C(errorClass, errs.InvalidParameter))
-		}
-	}
-
-	e, ok := s.exprs[tagTimeDate]
-	if !ok {
-		return builtDef{}, errs.New(
-			errs.M("bpmn: %s carries a timerEventDefinition with no <timeDate>; "+
-				"there is no moment to fire at", owner),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	date, err := timeDateExpression(owner, e)
+// The work is the model's. NewISO8601Timer takes ONE ISO 8601 string and
+// disassembles it into the attributes the engine carries — including a
+// recurrence, which becomes (count, interval) filling timeCycle and
+// timeDuration together (timer_iso8601.go:30-45). NewISO8601TimerExpr
+// does the same for a value that is an expression rather than a literal,
+// adapting its result to the type the constructor demands.
+//
+// Neither is reimplemented here. The converter's job is to decide WHICH
+// form the file wrote and whether its body is a literal or an
+// expression, and to hand both to the model.
+func buildTimerDef(asm *assembly, owner string, s defSpec) (builtDef, error) {
+	form, e, err := soleTimerForm(owner, s)
 	if err != nil {
 		return builtDef{}, err
 	}
 
-	def, err := events.NewTimerEventDefinition(date, nil, nil, s.opts()...)
+	def, err := timerDefinition(asm, form, e, s)
 	if err != nil {
 		return builtDef{}, err
 	}
@@ -544,30 +525,73 @@ func buildTimerDef(_ *assembly, owner string, s defSpec) (builtDef, error) {
 	return builtDef{def: def, trigger: events.WithTimerTrigger(def)}, nil
 }
 
-// timeDateExpression turns a <timeDate> literal into the Time-typed
-// expression the model demands.
+// soleTimerForm returns the one timer child the file carried.
 //
-// The literal is validated HERE rather than at evaluation. BPMN types the
-// child as a bare Expression with no format constraint
-// (elements/event-definitions.md:56-58), while lite's time() accepts
-// RFC3339 alone (eval.go:411-426) — so a zone-less "2026-08-11T10:00:00"
-// is something a modeler may legitimately write and this engine cannot
-// read. Minting it anyway would move the failure to the first firing,
-// long after the file that caused it is out of sight.
-func timeDateExpression(owner string, e exprSpec) (data.FormalExpression, error) {
-	if _, err := time.Parse(time.RFC3339, e.body); err != nil {
-		return nil, errs.New(
-			errs.M("bpmn: %s carries the <timeDate> %q, which is not an RFC3339 "+
-				"instant; this engine reads a timer's date through lite's time(), "+
-				"which accepts nothing else", owner, e.body),
-			errs.C(errorClass, errs.InvalidParameter),
-			errs.E(err))
+// BPMN makes timeDate mutually exclusive with the other two, and this
+// engine reads a recurrence from a single string ("R3/PT10H" carries both
+// the count and the interval) — so two children have no combined reading,
+// and guessing one would change WHEN the timer fires.
+func soleTimerForm(owner string, s defSpec) (events.TimerForm, exprSpec, error) {
+	var (
+		found events.TimerForm
+		e     exprSpec
+		count int
+	)
+
+	// Iterated over the TABLE rather than over the spec's map, so the
+	// error names the forms in a stable order.
+	for _, child := range []string{tagTimeDate, tagTimeDuration, tagTimeCycle} {
+		if got, ok := s.exprs[child]; ok {
+			found, e, count = timerForms[child], got, count+1
+		}
 	}
 
-	return lite.Expr(
-		"time('"+e.body+"')",
-		data.WithResultType("Time"),
-		foundation.WithID(e.exprID()))
+	switch count {
+	case 1:
+		return found, e, nil
+
+	case 0:
+		return "", exprSpec{}, errs.New(
+			errs.M("bpmn: %s carries a timerEventDefinition with no "+
+				"<timeDate>, <timeDuration> or <timeCycle>; there is no moment "+
+				"to fire at", owner),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return "", exprSpec{}, errs.New(
+		errs.M("bpmn: %s carries %d timer values, and a timer fires on one: "+
+			"BPMN makes timeDate exclusive with the other two, and a "+
+			"recurrence is read from a single string (R3/PT10H is three "+
+			"repeats ten hours apart)", owner, count),
+		errs.C(errorClass, errs.InvalidParameter))
+}
+
+// timerDefinition builds the definition from a literal or an expression.
+//
+// A body that declares no language and shows no ${…} is a LITERAL — which
+// is what a timer normally carries, and what the ISO 8601 grammar is for.
+// One that does is an expression whose value is computed per instance,
+// and it reaches the model through the adapter that gives it the result
+// type the constructor requires.
+func timerDefinition(
+	asm *assembly, form events.TimerForm, e exprSpec, s defSpec,
+) (*events.TimerEventDefinition, error) {
+	kind, _ := resolveLanguage(e.lang, asm.exprLanguage, e.body)
+	if kind == langRefused {
+		return events.NewISO8601Timer(e.body, s.opts()...)
+	}
+
+	body, err := runnableBody(e, asm.exprLanguage)
+	if err != nil {
+		return nil, err
+	}
+
+	expr, err := lite.Expr(body, foundation.WithID(e.exprID()))
+	if err != nil {
+		return nil, err
+	}
+
+	return events.NewISO8601TimerExpr(form, expr, s.opts()...)
 }
 
 // attrBool reads a BPMN boolean attribute, falling back to the standard's

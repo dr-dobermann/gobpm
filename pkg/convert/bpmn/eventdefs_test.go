@@ -8,7 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/convert"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
-	"github.com/dr-dobermann/gobpm/pkg/model/expression"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression/lite"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
@@ -221,55 +221,81 @@ func TestLinkOnAStartEventIsRefused(t *testing.T) {
 	}
 }
 
-// TestTimerFormsThisEngineCannotExpress covers §6 T-18 (FR-2, §4.6). The
-// model demands an expression declaring "int" or "Duration" and the
-// expression language produces neither, so both forms are refused with
-// the reason named — the same verdict .B recorded for Camunda's
-// failedJobRetryTimeCycle, which is blocked by the same gap.
-func TestTimerFormsThisEngineCannotExpress(t *testing.T) {
+// TestTimerFormsImport covers §6 T-18 (FR-2, §4.6): all three ISO 8601
+// forms import, each through the model's own NewISO8601Timer.
+//
+// A recurrence is one string carrying two values — "R3/PT10H" is three
+// repeats ten hours apart — and the model disassembles it into the
+// (count, interval) pair the engine carries, filling timeCycle and
+// timeDuration together.
+func TestTimerFormsImport(t *testing.T) {
 	for name, tc := range map[string]struct {
-		child, wantType string
+		child            string
+		date, cycle, dur bool
 	}{
-		"timeDuration": {
-			child:    `<bpmn:timeDuration>PT5M</bpmn:timeDuration>`,
-			wantType: "Duration",
+		"timeDate": {
+			child: `<bpmn:timeDate>2026-08-11T10:00:00Z</bpmn:timeDate>`,
+			date:  true,
 		},
-		"timeCycle": {
-			child:    `<bpmn:timeCycle>R3/PT5M</bpmn:timeCycle>`,
-			wantType: "int",
+		"timeDuration": {
+			child: `<bpmn:timeDuration>PT5M</bpmn:timeDuration>`,
+			dur:   true,
+		},
+		"timeCycle fills the interval too": {
+			child: `<bpmn:timeCycle>R3/PT10H</bpmn:timeCycle>`,
+			cycle: true,
+			dur:   true,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := importEventDoc(t, eventDoc(
+			r, err := importEventDoc(t, eventDoc(
 				`<bpmn:timerEventDefinition id="d1">`+tc.child+
 					`</bpmn:timerEventDefinition>`, ""))
-			if err == nil {
-				t.Fatalf("Import of a <%s> timer = nil, want it refused", name)
+			if err != nil {
+				t.Fatalf("Import of a <%s> timer: %v", name, err)
 			}
 
-			if !strings.Contains(err.Error(), tc.wantType) {
-				t.Errorf("error = %q, want it to name the result type %q the "+
-					"expression language cannot declare", err, tc.wantType)
+			n := nodeByID(t, r, "s1")
+
+			if got := triggersOf(t, n); len(got) != 1 || got[0] != flow.TriggerTimer {
+				t.Fatalf("triggers = %v, want [%v]", got, flow.TriggerTimer)
 			}
 
-			if !strings.Contains(err.Error(), "timeDate") {
-				t.Errorf("error = %q, want it to name the form that DOES "+
-					"import — a refusal with no way forward is a dead end", err)
+			d, ok := n.(interface {
+				Definitions() []flow.EventDefinition
+			})
+			if !ok {
+				t.Fatalf("%T exposes no Definitions()", n)
+			}
+
+			ted, ok := d.Definitions()[0].(*events.TimerEventDefinition)
+			if !ok {
+				t.Fatalf("definition is %T, want a TimerEventDefinition",
+					d.Definitions()[0])
+			}
+
+			for what, got := range map[string]struct{ have, want bool }{
+				"timeDate":     {ted.Time() != nil, tc.date},
+				"timeCycle":    {ted.Cycle() != nil, tc.cycle},
+				"timeDuration": {ted.Duration() != nil, tc.dur},
+			} {
+				if got.have != got.want {
+					t.Errorf("%s present = %v, want %v", what, got.have, got.want)
+				}
 			}
 		})
 	}
 }
 
-// TestTimeDateIsValidatedAtImport covers §6 T-19 (§4.6): BPMN constrains
-// the literal's format not at all, while lite's time() accepts RFC3339
-// alone. A value this engine cannot read is refused at import rather than
-// at the first firing, when the file that caused it is long out of sight.
-func TestTimeDateIsValidatedAtImport(t *testing.T) {
+// TestTimerValueMustBeReadable pins that an unreadable timer value is
+// refused at import, naming every grammar the model accepts — the error
+// the model's own isoErr writes, because guessing which one the author
+// meant is exactly what it refuses to do.
+func TestTimerValueMustBeReadable(t *testing.T) {
 	for name, literal := range map[string]string{
-		"zone-less ISO-8601": "2026-08-11T10:00:00",
-		"a date alone":       "2026-08-11",
-		"not a timestamp":    "tomorrow",
-		"empty":              "",
+		"not a timestamp":  "tomorrow",
+		"empty":            "",
+		"a malformed span": "P",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := importEventDoc(t, eventDoc(
@@ -278,56 +304,40 @@ func TestTimeDateIsValidatedAtImport(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Import of <timeDate>%s = nil, want it refused", literal)
 			}
-
-			if !strings.Contains(err.Error(), "RFC3339") {
-				t.Errorf("error = %q, want it to name the format required", err)
-			}
 		})
 	}
 }
 
-// TestTimeDateEvaluatesToItsInstant covers §6 T-20: the minted expression
-// yields the moment the file named. Construction alone would not show
-// that — the model checks the DECLARED result type, so an expression that
-// declares "Time" and cannot produce one would still build.
-func TestTimeDateEvaluatesToItsInstant(t *testing.T) {
-	const instant = "2026-08-11T10:00:00Z"
+// TestTimerTakesOneValue pins that two timer children are refused rather
+// than silently reduced. BPMN makes timeDate exclusive with the other
+// two, and this engine reads a recurrence from a single string — so two
+// children have no combined reading, and picking one would change WHEN
+// the timer fires.
+func TestTimerTakesOneValue(t *testing.T) {
+	_, err := importEventDoc(t, eventDoc(
+		`<bpmn:timerEventDefinition id="d1">`+
+			`<bpmn:timeDate>2026-08-11T10:00:00Z</bpmn:timeDate>`+
+			`<bpmn:timeDuration>PT5M</bpmn:timeDuration>`+
+			`</bpmn:timerEventDefinition>`, ""))
+	if err == nil || !strings.Contains(err.Error(), "fires on one") {
+		t.Fatalf("Import = %v, want the pair refused", err)
+	}
+}
 
+// TestTimerFromAnExpression pins the other half of §4.6: a value that is
+// an EXPRESSION rather than a literal reaches the model through
+// NewISO8601TimerExpr, which adapts its result to the type the
+// constructor demands. Without it a per-instance deadline would be
+// unimportable.
+func TestTimerFromAnExpression(t *testing.T) {
 	r, err := importEventDoc(t, eventDoc(
-		`<bpmn:timerEventDefinition id="d1"><bpmn:timeDate>`+instant+
-			`</bpmn:timeDate></bpmn:timerEventDefinition>`, ""))
+		`<bpmn:timerEventDefinition id="d1">`+
+			`<bpmn:timeDuration>${deadline}</bpmn:timeDuration>`+
+			`</bpmn:timerEventDefinition>`, ""))
 	if err != nil {
-		t.Fatalf("Import of a timeDate timer: %v", err)
+		t.Fatalf("Import of an expression timer: %v", err)
 	}
 
-	expr, err := timeDateExpression("startEvent \"s1\"", exprSpec{
-		ownerID: "d1", role: tagTimeDate, body: instant,
-	})
-	if err != nil {
-		t.Fatalf("timeDateExpression: %v", err)
-	}
-
-	if got := expr.ResultType(); got != "Time" {
-		t.Fatalf("ResultType = %q, want %q — the model checks it", got, "Time")
-	}
-
-	reg, err := expression.NewRegistry(lite.New())
-	if err != nil {
-		t.Fatalf("expression.NewRegistry: %v", err)
-	}
-
-	v, err := reg.Evaluate(context.Background(), expr, emptySource{})
-	if err != nil {
-		t.Fatalf("evaluating the minted timeDate: %v — a declared result type "+
-			"the expression cannot actually produce would pass construction "+
-			"and fail at the first firing", err)
-	}
-
-	if v == nil {
-		t.Fatal("the timeDate evaluated to nothing")
-	}
-
-	// The event itself imported as a timer.
 	if got := triggersOf(t, nodeByID(t, r, "s1")); len(got) != 1 ||
 		got[0] != flow.TriggerTimer {
 		t.Errorf("triggers = %v, want [%v]", got, flow.TriggerTimer)
