@@ -391,6 +391,65 @@ func TestRetryCycleBecomesARetryPolicy(t *testing.T) {
 	}
 }
 
+// TestEveryNodeReportsItsDialectAttributes pins the gap landing the retry
+// policy exposed (SRD-089.D §4.13).
+//
+// Reporting used to live inside camundaOptions, which only the user,
+// service and business-rule task builders call. A Camunda attribute on
+// any other node — a plain task, a manual task, a gateway, an event —
+// was therefore neither mapped nor reported: silently lost, which is the
+// one outcome the report contract exists to prevent. It survived in the
+// node kinds nobody thought to check, because the three that map
+// something were the three that were tested.
+//
+// The report now happens once per node in buildNode, so a node kind added
+// later inherits it instead of having to remember it.
+func TestEveryNodeReportsItsDialectAttributes(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn">
+  <bpmn:process id="P" name="P">
+    <bpmn:startEvent id="s1" camunda:asyncAfter="true"/>
+    <bpmn:task id="t1" name="plain" camunda:jobPriority="10"/>
+    <bpmn:manualTask id="m1" name="by hand" camunda:asyncBefore="true"/>
+    <bpmn:exclusiveGateway id="g1" camunda:versionTag="v9"/>
+    <bpmn:endEvent id="e1" camunda:historyTimeToLive="30"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="m1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="m1" targetRef="g1"/>
+    <bpmn:sequenceFlow id="f4" sourceRef="g1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	res, _ := reportOf(t, doc)
+
+	got := make(map[string]string, len(res.Dropped))
+	for _, d := range res.Dropped {
+		got[d.Element+" "+d.Construct] = d.Reason
+	}
+
+	// One per node kind whose builder never consults the dialect at all.
+	for _, want := range []string{
+		"s1 camunda:asyncAfter",
+		"t1 camunda:jobPriority",
+		"m1 camunda:asyncBefore",
+		"g1 camunda:versionTag",
+		"e1 camunda:historyTimeToLive",
+	} {
+		reason, ok := got[want]
+		if !ok {
+			t.Errorf("%q vanished — reported by no node kind but a task",
+				want)
+
+			continue
+		}
+
+		if reason == "" {
+			t.Errorf("%q reported with no reason", want)
+		}
+	}
+}
+
 // TestUnreadableRetryCycleIsReported pins the other half: a recurrence
 // the parser cannot read is reported, never guessed at. A retry policy
 // invented from an unreadable string would change how often a failing

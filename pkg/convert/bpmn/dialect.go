@@ -102,20 +102,22 @@ func nsAttrValue(se xml.StartElement, ns, local string) string {
 }
 
 // camundaOptions maps the dialect attributes of one element onto model
-// options, and reports every other Camunda attribute it finds.
+// options, recording in p.claimed what it mapped.
 //
-// The mapped set is small on purpose (ADR-024 v.4 §2.14 rule 1): the
+// It does NOT report the rest — buildNode does, for every node, including
+// the ones that never call this. Reporting from here reached only the
+// three builders that had something to map (§4.13).
+//
+// The mapped set is small on purpose (ADR-024 §2.14 rule 1): the
 // dialect never motivates a new model type, so what has no home is
 // reported rather than accommodated.
 func (p *parser) camundaOptions(se xml.StartElement, id string) []options.Option {
 	var opts []options.Option
 
-	mapped := map[string]bool{}
-
 	claim := func(name string) string {
 		v := strings.TrimSpace(nsAttrValue(se, nsCamunda, name))
 		if v != "" {
-			mapped[name] = true
+			p.claimed[name] = true
 		}
 
 		return v
@@ -151,8 +153,6 @@ func (p *parser) camundaOptions(se xml.StartElement, id string) []options.Option
 			opts = append(opts, o)
 		}
 	}
-
-	p.reportUnmappedAttrs(se, id, mapped)
 
 	return opts
 }

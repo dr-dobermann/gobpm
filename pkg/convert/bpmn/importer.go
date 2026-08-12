@@ -220,15 +220,20 @@ type parser struct {
 	// definition refers to (SRD-089.D §FR-1).
 	cat *catalog
 	// exprLanguage is <definitions expressionLanguage>, the default an
-	// expression that declares none inherits (ADR-024 v.4 §2.10).
+	// expression that declares none inherits (ADR-024 §2.10).
 	exprLanguage string
 	// owner is the id of the element currently being parsed, so a report
 	// about its <extensionElements> — which carries no id of its own —
 	// names the element a reader can find in the file.
 	owner string
+	// claimed collects the dialect attributes that the builder of the node
+	// currently under construction mapped onto model options. buildNode
+	// reports whatever nobody claimed, so a node kind whose builder never
+	// consults the dialect at all still reports what it cannot hold.
+	claimed map[string]bool
 	// dropped collects the recognized constructs the import did not map,
 	// so ImportDocument can hand them to the host instead of losing them
-	// (ADR-024 v.4 §2.14 rule 2).
+	// (ADR-024 §2.14 rule 2).
 	dropped []convert.Dropped
 }
 
@@ -341,7 +346,7 @@ func (p *parser) handleDefinitionsChild(
 ) (*assembly, error) {
 	if se.Name.Space != nsBPMN {
 		// Foreign namespace — diagram interchange, a vendor dialect — is
-		// out of execution scope and skipped whole (ADR-024 v.4 §2.7).
+		// out of execution scope and skipped whole (ADR-024 §2.7).
 		return nil, p.skipElement()
 	}
 
@@ -630,6 +635,13 @@ func (s nodeSpec) namesANode() bool {
 // The owner is set around the construction so a report raised while
 // building — a dialect attribute the model cannot hold, say — names the
 // element that carried it rather than whatever was parsed last.
+//
+// The dialect report is raised HERE rather than inside the builders,
+// because only three of them consult the dialect at all: a Camunda
+// attribute on a <task>, a <manualTask>, a <scriptTask>, a gateway or an
+// event was neither mapped nor reported, which is the silent loss the
+// report contract exists to prevent. Reporting at the one funnel every
+// node passes through means a node kind added later cannot forget it.
 func buildNode(p *parser, asm *assembly, s *nodeSpec) (flow.Node, error) {
 	// Presence was checked in pass 1, when refusing still had the
 	// element's position in the file to point at.
@@ -637,9 +649,17 @@ func buildNode(p *parser, asm *assembly, s *nodeSpec) (flow.Node, error) {
 
 	outer := p.owner
 	p.owner = s.id
+	p.claimed = map[string]bool{}
 
 	node, err := build(p, asm, s.se, s.id, s.name, s.body)
 
+	if err == nil {
+		// Only for a node that exists: a failed build aborts the import,
+		// and a report about an element the host never receives is noise.
+		p.reportUnmappedAttrs(s.se, s.id, p.claimed)
+	}
+
+	p.claimed = nil
 	p.owner = outer
 
 	if err != nil {
