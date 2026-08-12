@@ -7,7 +7,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The SQLite Repository adapter** (SRD-091, ADR-037, closes #316).
+  `adapters/sqlite` implements the durable Repository contract over
+  a pure-Go driver (`modernc.org/sqlite`, no CGo): CAS saves,
+  ownership leases, the group registry and the group-scoped recovery
+  listing. `Open(path)` owns its pool and is what most callers want,
+  `OpenMemory()` covers the ephemeral case, and `New(*sql.DB)` serves
+  a host that manages its own — refusing a pool that cannot enforce
+  the schema's constraints rather than running without them.
+
+  It is the first Repository adapter whose conformance suite actually
+  RUNS in CI. `adapters/postgres` carries the same one-line
+  `repositorytest.Conformance` call, but every postgres test is gated
+  on a DSN environment variable and skips when unset, which CI never
+  sets — so the published contract had only ever executed against
+  `memrepo`, the implementation it was written beside.
+
+  Declares itself NOT cluster-safe (`renv.ClusterAware`), naming the
+  single-writer limit and pointing at `adapters/postgres`.
+
+- **ADR-037 — SQL Repository adapters.** The contract two SQL
+  adapters arrived at independently: the module shape, connection
+  ownership ("set what you own, verify what you are handed"), the
+  refuse-vs-warn split for required settings, portable value
+  encodings, the cluster declaration, and per-dialect migration
+  serialization.
+
 ### Fixed
+
+- **A message addressed to a parallel-MI iteration could be lost
+  outright** (SRD-091 branch). A message waiter's broker subscription
+  is built once, when the waiter starts, from the correlation keys of
+  the processors known at that moment. A processor that JOINED an
+  already-serving waiter — which is what every iteration after the
+  first does at a shared catch node — contributed its key to nothing,
+  so an envelope addressed to it matched no subscription and was
+  buffered forever. Not misrouted: silently never delivered.
+
+  Whether it appeared depended purely on whether the second
+  registration landed before or after the waiter started, which is why
+  it read as an intermittent test flake for weeks. Measured on the
+  narrowed reproduction: 3 failures in 6 runs before, 0 in 6 after.
+
+- **Every event waiter could panic on a processor that is not
+  comparable.** `slices.Index` over the processor list compares
+  interface values with `==`, which panics when the dynamic type holds
+  a slice or a map — as a processor carrying correlation keys
+  naturally does. Six sites across the message, signal and timer
+  waiters; identity is now compared by ID.
+
+- **A waiter's running state is published atomically.** `Service` set
+  the state, the stop channel and the done channel outside the lock it
+  took for the subscription, and it re-read the processor list only
+  once — before the blocking `Subscribe`. A processor joining in
+  between deferred to a `Service` that had already read the list, so
+  its key reached nobody. The hub's ordering makes that unreachable
+  today (a waiter is serviced before it is published, so nothing else
+  holds a reference), but that is an invariant of a different package;
+  `Service` now catches up any processor that appeared while it was
+  subscribing.
+
+- **A migration whose context died could wedge the whole database.**
+  The rollback was issued on the same context that had just failed —
+  and `ExecContext` on a canceled context returns without sending the
+  statement, so the connection went back to the pool still inside a
+  write transaction. Every later `BEGIN` on that pool then failed with
+  "cannot start a transaction within a transaction", while the pooled
+  connection held SQLite's single writer lock. The rollback now runs
+  under `context.WithoutCancel`, and a connection that cannot be
+  rolled back is discarded rather than pooled. `sql.Tx.Rollback`
+  handles this; driving the transaction by hand to get `BEGIN
+  IMMEDIATE` moved the obligation into the adapter.
+
+- **`OpenMemory` no longer warns about WAL on every call.** An
+  in-memory database cannot journal to WAL — there is no file to
+  journal beside — so the concurrency check fired on every single
+  construction, which trains a reader to ignore the adapter's
+  warnings. A file-backed pool outside WAL still warns.
+
+- **The correlation-key fix above no longer talks to the broker with the
+  engine's lock held** (FIX-041). Applying a joining processor's keys
+  was done inside `AddEventProcessor`, and both `EventHub` callers hold
+  the engine-wide registry lock across it — so while a host broker was
+  slow, no waiter anywhere in the engine could be registered,
+  unregistered or looked up. It is the common path, not an edge: a
+  Multi-Instance iteration parking on a catch its sibling already parked
+  on takes it every time.
+
+  A join is therefore two steps. Adding the processor is registry work
+  and stays under the lock; applying its keys is a call into the
+  **host** and runs with the lock released. What decides is whether a
+  call can reach the host, not whether it can re-enter the lock. The two
+  halves are named optional capabilities, `eventproc.KeyedProcessor` and
+  `eventproc.KeyedWaiter`, replacing anonymous type assertions that left
+  both undiscoverable; `EventWaiter` is unchanged, so signal and timer
+  waiters are untouched.
+
+  Register-then-apply is the safe order and falls out of the split: its
+  window (processor listed, key not yet routed) drops nothing, because
+  an unmatched envelope waits in the broker's inbox, while the inverse
+  window consumes and discards.
+
+  Three host-visible consequences. A key **refused part-way through a
+  set** now costs the whole subscription: `Subscription` can grow a
+  key-set but not shrink one, so a half-applied set cannot be repaired,
+  and an orphan key left on a live subscription silently eats every
+  message addressed to it. A refusal on the **first** key applies
+  nothing, so the subscription survives and only that registration
+  fails. And each key reaches the broker **once**, however the engine
+  learned it — creation keys, a lazy `AddKey`, a joining processor's
+  set, or the same processor registered twice. `membroker` never refuses
+  a key and collapses repeats, so no in-repo behaviour changes.
+
+  A key learned while `Subscribe` was still running is now buffered and
+  applied when the subscription appears, instead of being dropped.
+
+- **Two more host calls under a lock, in code no review of this change
+  could have reached.** The message waiter's `Stop` held the waiter lock
+  across `Unsubscribe`, and the Go rules registry's `Register` held the
+  registry lock across a `Report` to the host's reporter — the same
+  shape, in files this work never touched. Both now mutate under the
+  lock and call the host after releasing it. They were found by
+  `make lock-sweep`, a new scanner for the shape, which is deliberately
+  **not** part of `make ci`: it is syntactic, so a clean run is evidence
+  rather than proof, and its docstring leads with what it cannot catch.
 
 - **A `%v` over an engine object no longer reflects across it**
   (FIX-040, closes #314). `Instance` and its tracks now implement
@@ -61,7 +186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Adapter lifecycle and observation hooks** (SRD-090, closes #269).
+- **Adapter lifecycle and observation hooks** (SRD-088, closes #269).
   `renv.Starter`, `renv.Stopper`, `renv.HealthChecker` and
   `renv.RuntimeAware` join `Migrator` and `ClusterAware` in
   `pkg/renv/capabilities.go`. All are optional and satisfied
@@ -72,7 +197,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   observes. `Stop` is idempotent by contract, so an adapter the host
   started before the engine existed can be stopped by either.
   `Thresher.HealthCheck` asks every seam and joins what they report.
-- **Four conformance helpers for adapter authors** (SRD-090):
+- **Four conformance helpers for adapter authors** (SRD-088):
   `messagingtest`, `expressiontest`, `taskstest` and `authtest`, the
   names ADR-003 §4.2 had listed but nothing provided. Each publishes
   its port's contract as `Conformance(t, factory)` — one line in an
@@ -80,7 +205,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suite can fail. `messagingtest` and `taskstest` also publish
   `Waits()`/`SetWaits()`, so an adapter over a remote backend can widen
   bounds tuned for an in-process one.
-- **A dependency-free Script Task engine** (SRD-090):
+- **A dependency-free Script Task engine** (SRD-088):
   `pkg/script/gofunc` runs a Go function the host registered under a
   name, the same move `gooper` makes for Service Tasks. It is opt-in —
   an auto-wired empty registry would be `##None` with a longer name —
@@ -89,7 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **A process whose Script Task no configured engine can run is refused
-  at registration** (SRD-090). `RegisterProcess` walks the model, nested
+  at registration** (SRD-088). `RegisterProcess` walks the model, nested
   Sub-Processes included, and rejects any Script Task whose
   `scriptFormat` no wired engine claims — naming the task, the format,
   the formats that ARE registered, and the option to wire one. This
@@ -97,31 +222,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   asynchronously, inside an already-running instance, as an incident.
   **Migration:** a model with a Script Task now needs its engine wired
   before `RegisterProcess`, not before the token arrives.
-- **`pkg/**` may not import `internal/`** (SRD-090), enforced by
+- **`pkg/**` may not import `internal/`** (SRD-088), enforced by
   depguard, excepting the `pkg/thresher` facade. This is what makes a
   bundled battery a reference implementation an outside author can
   copy.
-- **The examples are linted** (SRD-090). An `exclusions.paths` entry had
+- **The examples are linted** (SRD-088). An `exclusions.paths` entry had
   been suppressing every finding across all 49 example modules, so the
   `examples-no-internal` rule had never fired. 198 real issues surfaced
   and are fixed.
 
 ### Fixed
 
-- **`goexpr.Engine.Evaluate` panicked on a nil expression** (SRD-090)
+- **`goexpr.Engine.Evaluate` panicked on a nil expression** (SRD-088)
   where `lite` returns a named error — a public extension point turning
   a caller's bug into a library crash. A nil *source* is still passed
   through, deliberately: a `GExpression` may carry one bound at
   construction.
-- **A failed start left already-started adapters running** (SRD-090).
+- **A failed start left already-started adapters running** (SRD-088).
   `startSeams` now unwinds the started prefix in reverse before
   returning, joining any rollback failure onto the cause rather than
   replacing it.
-- **A replaced Data Store stayed in the lifecycle** (SRD-090).
+- **A replaced Data Store stayed in the lifecycle** (SRD-088).
   `WithDataStore` documented replace-by-ref and the registry honoured
   it, but the lifecycle list appended — so a superseded store was still
   started, health-checked and stopped while serving no reference.
-- **`gofunc` could register an unreachable script** (SRD-090): the name
+- **`gofunc` could register an unreachable script** (SRD-088): the name
   was stored untrimmed and looked up trimmed, so a padded registration
   failed as "no script registered" on a name plainly in the registry.
 

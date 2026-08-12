@@ -131,7 +131,7 @@ func subject(e *stubEngine) Subject {
 }
 
 // TestAssertionsRejectBrokenEngines drives each contract assertion against an
-// engine that violates precisely it (SRD-090 T-9, in-process half).
+// engine that violates precisely it (SRD-088 T-9, in-process half).
 func TestAssertionsRejectBrokenEngines(t *testing.T) {
 	nameless := good()
 	nameless.kind = "  "

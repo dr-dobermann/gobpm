@@ -6,7 +6,7 @@
 | Version | v.4 |
 | Date | 2026-08-10 |
 | Owner | Ruslan Gabitov |
-| Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §4 N7 / §5 / §9 / §14, [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md), [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning.md), [ADR-003 v.1 Module Layout](ADR-003-module-layout.md) |
+| Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §4 N7 / §5 / §9 / §14, [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md), [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning.md), [ADR-003 Module Layout](ADR-003-module-layout.md) |
 
 > **v.4 (Draft)** — the fence moves. v.1–v.3 fixed the seam and a deliberately
 > small MVP element subset; v.4 decides that **import** covers the whole
@@ -801,7 +801,7 @@ Added in v.4:
 - [SAD-001 v.1](SAD-001-vision-and-architecture.md) §4 N5/N7, §5, §9/§9.1/§9.2, §14 — parser-as-separate-module, modeler feedback, module layout, conformance scope.
 - [ADR-002 v.2](ADR-002-extension-architecture.md) — interfaces + compile-time wiring; the extension idiom the seam follows.
 - [ADR-019 v.1](ADR-019-definition-versioning.md) — version key = process id; the identity-preservation constraint (§2.5).
-- [ADR-003 v.1](ADR-003-module-layout.md) — module boundaries and import-direction rules; the converter stays inside the root module (§4-A).
+- [ADR-003](ADR-003-module-layout.md) — module boundaries and import-direction rules; the converter stays inside the root module (§4-A).
 
 Added in v.4 (sideways — the seams whose vocabulary §2.10–§2.14 map onto):
 - [ADR-032 v.1](ADR-032-language-routed-expression-engines.md) — expressions are routed by language claim; the text kind carries a language URI and a body. §2.10's translation target and its refusals are stated in that vocabulary.
@@ -810,7 +810,7 @@ Added in v.4 (sideways — the seams whose vocabulary §2.10–§2.14 map onto):
 - [ADR-020 v.3](ADR-020-human-interaction-execution-model.md) — the human-interaction model whose assignee / candidate-user / candidate-group vocabulary §2.14 maps the dialect onto.
 - [ADR-023 v.3](ADR-023-sub-process-and-call-activity.md) — sub-process and call-activity semantics; §2.13's `calledElement` refusal is a statement about what a call may resolve to.
 
-> **Note — Draft parents.** SAD-001 v.1 and ADR-003 v.1 are themselves **Draft**;
+> **Note — Draft parents.** SAD-001 v.1 and ADR-003 are themselves **Draft**;
 > their prescriptions may shift before Accepted, so these pins track a moving
 > baseline until both are ratified.
 

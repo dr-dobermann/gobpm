@@ -256,6 +256,17 @@ default per group enforced by the database. Any adapter proves itself
 against the published conformance suite
 (`pkg/repository/repositorytest`) — the same one `memrepo` passes.
 
+For a single-process deployment there is
+[**`adapters/sqlite`**](adapters/sqlite/): durability in a file, with no
+server to run and no CGo to build (`sqlite.Open("gobpm.db")`, or
+`sqlite.New(db)` over a pool you own). It declares itself **not**
+cluster-safe through `renv.ClusterAware` and names PostgreSQL as the
+alternative, because one embedded writer cannot give several engines the
+lease semantics recovery depends on — so the engine learns that limit by
+asking the adapter rather than from a paragraph like this one. Being
+embedded, it is also the first adapter whose conformance run needs no
+server, and therefore the first to execute that suite on every push.
+
 A technical failure no longer kills the instance — see
 [`examples/incident-retry/`](examples/incident-retry/): an unhandled failure
 opens an **incident** instead, a durable record carrying the cause chain, the

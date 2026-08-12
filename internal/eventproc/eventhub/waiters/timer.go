@@ -219,7 +219,7 @@ func (tw *timeWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	tw.m.Lock()
 	defer tw.m.Unlock()
 
-	if idx := slices.Index(tw.processors, ep); idx == -1 {
+	if idx := slices.IndexFunc(tw.processors, sameProcessor(ep)); idx == -1 {
 		tw.processors = append(tw.processors, ep)
 	}
 
@@ -241,7 +241,7 @@ func (tw *timeWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error {
 	tw.m.Lock()
 	defer tw.m.Unlock()
 
-	idx := slices.Index(tw.processors, ep)
+	idx := slices.IndexFunc(tw.processors, sameProcessor(ep))
 	if idx == -1 {
 		return errs.New(
 			errs.M("event processor isn't registered with the waiter"),

@@ -238,7 +238,7 @@ facade. The rule generalizes across every storage-backed module:
   never wraps or owns one. One handle, created by the embedder, feeds
   the engine's checkpoint store and any plugin's store alike — the
   existing composition rule promoted from adapters to all storage
-  users ([ADR-003 v.1](ADR-003-module-layout.md) §4.4: no cross-module
+  users ([ADR-003](ADR-003-module-layout.md) §4.4: no cross-module
   imports; the user composes shared resources at construction time).
 - **Namespaced schemas, per-module migrations.** Every storage-backed
   module owns a namespaced slice of the shared database (a schema or
@@ -443,7 +443,7 @@ a refusal because nothing signals it. Hence the rule set:
 | The completion ledger must survive (compensability of completed work) | ADR-026 v.1 §2.7 |
 | The BPMN standard is silent on storage mechanics | no clause governs persistence in §13–§14; the extract covers only the state machines |
 | Instance-level distribution rides sticky ownership + persistence rehydration | SAD-001 v.1 §13 (preliminary; the future Distribution & Scale ADR's home) |
-| Composition at construction; no cross-module imports | ADR-003 v.1 §4.4 (the depguard-enforced rule §2.7 promotes) |
+| Composition at construction; no cross-module imports | ADR-003 §4.4 (the depguard-enforced rule §2.7 promotes) |
 
 ## 4. Alternatives considered
 
