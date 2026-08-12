@@ -55,7 +55,7 @@ func wrapErr(message, class string, err error) error {
 }
 
 // notSupportedYet refuses an element waiting on a subsystem rather than
-// on this converter (ADR-024 v.4 §2.13).
+// on this converter (ADR-024 §2.13).
 //
 // It is deliberately NOT an UnsupportedElementError. The two mean
 // different things to whoever reads them: an unsupported element is a

@@ -16,5 +16,5 @@
 //	p, err := convert.Import(ctx, convert.BPMN, r)
 //	err = convert.Export(ctx, convert.BPMN, w, p)
 //
-// Implements SRD-051 §FR-1..§FR-3 (ADR-024 v.1 §2.1–§2.3).
+// Implements SRD-051 §FR-1..§FR-3 (ADR-024 §2.1–§2.3).
 package convert

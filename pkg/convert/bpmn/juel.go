@@ -53,7 +53,7 @@ var juelRefusedWords = map[string]string{
 const juelVariableAccessor = "execution.getVariable"
 
 // isJUEL reports whether body is a JUEL expression by its delimiters —
-// the syntactic tell ADR-024 v.4 §2.10 resolves by when a document
+// the syntactic tell ADR-024 §2.10 resolves by when a document
 // declares no language, which is what nearly every modeler emits.
 func isJUEL(body string) bool {
 	b := strings.TrimSpace(body)

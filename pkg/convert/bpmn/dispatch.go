@@ -48,7 +48,7 @@ const (
 	// refused is the default, and it is deliberately the zero value: an
 	// element that no parser table claims and no policy row names is
 	// reported as unsupported. Absence from the tables can therefore
-	// never mean silent acceptance (ADR-024 v.4 §2.9).
+	// never mean silent acceptance (ADR-024 §2.9).
 	refused dispositionKind = iota
 
 	// skipped swallows the element's subtree without a word. It is only
@@ -59,7 +59,7 @@ const (
 	// notYet refuses an element that is waiting on a subsystem rather
 	// than on this converter. The same file imports unchanged once that
 	// subsystem lands, and saying so is the difference between "come
-	// back later" and "rewrite your diagram" (ADR-024 v.4 §2.13).
+	// back later" and "rewrite your diagram" (ADR-024 §2.13).
 	notYet
 
 	// notExpressible refuses an element whose XML form and model form do
@@ -85,7 +85,7 @@ var refusalReasons = map[string]string{
 // annotations are the BPMN-namespace children carrying no execution
 // semantics, skipped in every context that can hold one. They are
 // near-universal in modeler output, so refusing them would reject files
-// whose flow graph is entirely supported (ADR-024 v.4 §2.6).
+// whose flow graph is entirely supported (ADR-024 §2.6).
 //
 // <documentation> left this list when the model gained a place to put it:
 // it is now parsed wherever a gobpm element can carry it (a process, a
@@ -136,7 +136,7 @@ var policy = map[elementKey]dispositionKind{
 	// Visual artifacts. The vendored extract calls these "pure visual",
 	// and they are near-universal in modeler output — a file was being
 	// refused for carrying a comment. Dropping them leaves the imported
-	// definition meaning the same thing, which is the test ADR-024 v.4
+	// definition meaning the same thing, which is the test ADR-024
 	// §2.9 sets for skipping rather than refusing.
 	//
 	// <association> is NOT one of them and stays refused: the extract
@@ -743,7 +743,7 @@ func startAttrOptions(se xml.StartElement) []options.Option {
 // buildBusinessRuleTask builds a rule task around the decision reference
 // the document carries.
 //
-// The reference is OPAQUE here by design (ADR-024 v.4 §2.12): the
+// The reference is OPAQUE here by design (ADR-024 §2.12): the
 // converter parses no DMN and resolves nothing — the host's configured
 // rule engine does that. What the converter must not do is import a rule
 // task with no decision at all, which would fail at its first execution

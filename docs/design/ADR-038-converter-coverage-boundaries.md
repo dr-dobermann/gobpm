@@ -6,12 +6,12 @@
 | Version | v.1 |
 | Date | 2026-08-12 |
 | Owner | Ruslan Gabitov |
-| Refines | [ADR-024 v.4 Process Interchange Converters](ADR-024-process-interchange-converters.md) |
+| Refines | [ADR-024 Process Interchange Converters](ADR-024-process-interchange-converters.md) |
 
 > **Scope.** This decides what the converters do at the edge of their coverage:
 > which refusals are a schedule, which are a **standing** property of the
 > engine, and which name a missing **model capability** that a later change
-> would supply. It refines [ADR-024 v.4](ADR-024-process-interchange-converters.md),
+> would supply. It refines [ADR-024](ADR-024-process-interchange-converters.md),
 > which fixed the disposition vocabulary and the report contract, and adds the
 > rule that decides which disposition an element gets and what a refusal owes
 > its reader. It touches neither the element mapping itself nor the model's
@@ -21,7 +21,7 @@
 
 ### 1.1 What ADR-024 already fixed
 
-[ADR-024 v.4](ADR-024-process-interchange-converters.md) §2.9 makes refusal the
+[ADR-024](ADR-024-process-interchange-converters.md) §2.9 makes refusal the
 **default** disposition — an element no table claims is reported unsupported,
 so absence from a mapping can never mean silent acceptance. §2.13 separates *not
 supported yet* (blocked elsewhere; the same file imports unchanged once that
@@ -118,7 +118,7 @@ class assigned to the tag would have to be wrong about one of them.
 - **Standing** — the constructor's argument is a Go value no document can
   carry. A complex gateway's activation is per-incoming-flow token counts
   where the document holds a Boolean expression; an ad-hoc sub-process is
-  entered by a host-supplied `Router` (see [ADR-035 v.1](ADR-035-adhoc-sub-process.md))
+  entered by a host-supplied `Router` (see [ADR-035](ADR-035-adhoc-sub-process.md))
   which a file cannot contain. These never become extension points, and their
   refusal says what to do instead — build the element programmatically.
 
@@ -223,11 +223,11 @@ left open.
 
 ## 6. References
 
-- [ADR-024 v.4 Process Interchange Converters](ADR-024-process-interchange-converters.md)
+- [ADR-024 Process Interchange Converters](ADR-024-process-interchange-converters.md)
   — the disposition vocabulary and the report contract this refines.
-- [ADR-035 v.1 Ad-Hoc Sub-Process](ADR-035-adhoc-sub-process.md) — the Router
+- [ADR-035 Ad-Hoc Sub-Process](ADR-035-adhoc-sub-process.md) — the Router
   that makes the ad-hoc container a standing boundary.
-- [ADR-023 v.3 Sub-Process and Call Activity](ADR-023-sub-process-and-call-activity.md)
+- [ADR-023 Sub-Process and Call Activity](ADR-023-sub-process-and-call-activity.md)
   — call-time resolution, which the callable-resolution seam completes.
 - [#284](https://github.com/dr-dobermann/gobpm/issues/284) — the coverage epic
   these boundaries were found under.

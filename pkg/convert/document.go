@@ -15,7 +15,7 @@ import (
 // the host. A converter that understands a vendor dialect but has no model
 // element for one of its constructs would otherwise return a definition
 // that looks complete and quietly is not — the file's assignee, its retry
-// policy or its listener simply gone (ADR-024 v.4 §2.14).
+// policy or its listener simply gone (ADR-024 §2.14).
 //
 // Only a RECOGNIZED construct is reported. An unknown namespace stays
 // silent: a converter cannot report on a vocabulary it does not know, and

@@ -6,7 +6,7 @@
 | Версия | v.1 |
 | Дата | 2026-08-12 |
 | Владелец | Руслан Габитов |
-| Уточняет | [ADR-024 v.4 Process Interchange Converters](../ADR-024-process-interchange-converters.md) |
+| Уточняет | [ADR-024 Process Interchange Converters](../ADR-024-process-interchange-converters.md) |
 
 > EN-оригинал — канонический: [ADR-038-converter-coverage-boundaries.md](../ADR-038-converter-coverage-boundaries.md). Этот файл — его перевод (twin).
 
@@ -14,7 +14,7 @@
 > покрытия: какие отказы — это расписание работ, какие — **постоянное**
 > свойство движка, а какие называют отсутствующую **возможность модели**,
 > которую добавит будущее изменение. Решение уточняет
-> [ADR-024 v.4](../ADR-024-process-interchange-converters.md), зафиксировавший
+> [ADR-024](../ADR-024-process-interchange-converters.md), зафиксировавший
 > словарь диспозиций и контракт отчёта, и добавляет правило, по которому
 > элемент получает ту или иную диспозицию, а также то, что отказ обязан
 > сообщить читателю. Оно не затрагивает ни само отображение элементов, ни
@@ -24,7 +24,7 @@
 
 ### 1.1 Что уже зафиксировал ADR-024
 
-[ADR-024 v.4](../ADR-024-process-interchange-converters.md) §2.9 делает отказ
+[ADR-024](../ADR-024-process-interchange-converters.md) §2.9 делает отказ
 **диспозицией по умолчанию**: элемент, который не заявила ни одна таблица,
 сообщается как неподдерживаемый — поэтому отсутствие в отображении никогда не
 означает молчаливого принятия. §2.13 отделяет *ещё не поддерживается*
@@ -127,7 +127,7 @@
 - **Постоянное** — аргумент конструктора есть Go-значение, которого документ не
   несёт. Активация complex gateway — это счётчики токенов по входящим потокам,
   тогда как документ несёт булево выражение; в ad-hoc sub-process входят через
-  предоставленный хостом `Router` (см. [ADR-035 v.1](ADR-035-adhoc-sub-process.ru.md)),
+  предоставленный хостом `Router` (см. [ADR-035](ADR-035-adhoc-sub-process.ru.md)),
   которого файл содержать не может. Такие границы никогда не становятся
   точками расширения, и их отказ говорит, что делать вместо этого — собрать
   элемент программно.
@@ -238,11 +238,11 @@
 
 ## 6. Ссылки
 
-- [ADR-024 v.4 Process Interchange Converters](../ADR-024-process-interchange-converters.md)
+- [ADR-024 Process Interchange Converters](../ADR-024-process-interchange-converters.md)
   — словарь диспозиций и контракт отчёта, которые здесь уточняются.
-- [ADR-035 v.1 Ad-Hoc Sub-Process](ADR-035-adhoc-sub-process.ru.md) — Router,
+- [ADR-035 Ad-Hoc Sub-Process](ADR-035-adhoc-sub-process.ru.md) — Router,
   делающий ad-hoc-контейнер постоянной границей.
-- [ADR-023 v.3 Sub-Process and Call Activity](../ADR-023-sub-process-and-call-activity.md)
+- [ADR-023 Sub-Process and Call Activity](../ADR-023-sub-process-and-call-activity.md)
   — разрешение на момент вызова, которое достраивает шов разрешения вызываемого.
 - [#284](https://github.com/dr-dobermann/gobpm/issues/284) — эпик покрытия, под
   которым найдены эти границы.

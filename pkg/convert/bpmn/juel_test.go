@@ -13,7 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
 
-// TestTranslateJUEL covers ADR-024 v.4 §2.10's table verbatim, plus the
+// TestTranslateJUEL covers ADR-024 §2.10's table verbatim, plus the
 // cases a rewriter gets wrong when it is written as a search-and-replace.
 func TestTranslateJUEL(t *testing.T) {
 	tests := map[string]struct{ in, want string }{
