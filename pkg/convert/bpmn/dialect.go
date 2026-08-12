@@ -5,9 +5,11 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/convert"
+	"github.com/dr-dobermann/gobpm/pkg/iso8601"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 // nsCamunda is the one vendor dialect this converter recognizes (ADR-024
@@ -34,6 +36,7 @@ const (
 	// same thing — Camunda fixes this attribute name, a log key can be
 	// renamed — so TestCamundaTopicMatchesTheDialect pins the equality.
 	camundaTopic       = observability.AttrTopic
+	camundaRetryCycle  = "failedJobRetryTimeCycle"
 	camundaDecisionRef = "decisionRef"
 )
 
@@ -56,9 +59,8 @@ var dialectReasons = map[string]string{
 	"asyncAfter":         "is a job-executor boundary; this engine schedules differently and has no equivalent",
 	"exclusive":          "is a job-executor scheduling hint with no equivalent here",
 	"jobPriority":        "orders another engine's job executor; this engine has none",
-	"failedJobRetryTimeCycle": "is expressible as a retry policy (R3/PT5M is 3 attempts 5 minutes apart), " +
-		"but reading it needs an ISO-8601 recurrence parser that today exists only unexported in the model layer; " +
-		"set the policy on the task in Go until that parser is shared",
+	camundaRetryCycle: "carries a recurrence this converter could not read; " +
+		"a value it cannot parse is reported rather than guessed at",
 	"formKey":                "names a form the engine does not render; supply a Renderer on the UserTask",
 	"formData":               "declares form fields the engine does not render; supply a Renderer on the UserTask",
 	"properties":             "carries vendor key/value pairs the model has nowhere to put",
@@ -144,6 +146,12 @@ func (p *parser) camundaOptions(se xml.StartElement, id string) []options.Option
 		}
 	}
 
+	if v := claim(camundaRetryCycle); v != "" {
+		if o, ok := retryPolicyOption(p, id, v); ok {
+			opts = append(opts, o)
+		}
+	}
+
 	p.reportUnmappedAttrs(se, id, mapped)
 
 	return opts
@@ -187,4 +195,31 @@ func splitList(v string) []string {
 	}
 
 	return out
+}
+
+// retryPolicyOption turns Camunda's failedJobRetryTimeCycle into the
+// model's incident retry policy.
+//
+// The attribute IS a retry policy — "R3/PT5M" is three attempts five
+// minutes apart — and both halves it needs are exported: iso8601.ParseRepeat
+// reads the recurrence into (count, interval), and tasks.FixedDelay is
+// exactly that pair. An earlier reading of this table refused the
+// attribute on the ground that the parser existed only unexported, which
+// was wrong; the same wrong reason then justified refusing two timer
+// forms (SRD-089.D §4.6).
+//
+// A value that does not parse is reported rather than guessed at: a retry
+// policy invented from an unreadable string would change how often a
+// failing task is retried, silently.
+func retryPolicyOption(p *parser, id, v string) (options.Option, bool) {
+	r, err := iso8601.ParseRepeat(v)
+	if err != nil {
+		p.report(id, "camunda:"+camundaRetryCycle,
+			dialectReason(camundaRetryCycle))
+
+		return nil, false
+	}
+
+	return activities.WithIncidentRetryPolicy(
+		tasks.FixedDelay(r.Count, r.Interval)), true
 }

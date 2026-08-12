@@ -4,8 +4,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/convert"
+	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 // camundaFile is the stock Camunda 7 export from the coverage audit —
@@ -104,7 +106,6 @@ func TestCamundaDialectIsMappedAndReported(t *testing.T) {
 			"camunda:jobPriority",
 			"camunda:versionTag",
 			"camunda:historyTimeToLive",
-			"camunda:failedJobRetryTimeCycle",
 			"camunda:formData",
 			"camunda:taskListener",
 			"camunda:inputOutput",
@@ -325,4 +326,98 @@ func TestCamundaTopicMatchesTheDialect(t *testing.T) {
 			"agree — give the dialect its own constant if the vocabulary moves",
 			camundaTopic, dialectAttr)
 	}
+}
+
+// TestRetryCycleBecomesARetryPolicy pins that Camunda's
+// failedJobRetryTimeCycle lands as the model's incident retry policy.
+//
+// It was refused for a stage and a half on the ground that reading a
+// recurrence needed a parser existing only unexported in the model layer.
+// That was wrong twice over: iso8601.ParseRepeat is a public package, and
+// tasks.FixedDelay takes exactly the (count, interval) pair it yields —
+// "R3/PT5M" is three attempts five minutes apart.
+func TestRetryCycleBecomesARetryPolicy(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn">
+  <bpmn:process id="P" name="P">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:userTask id="t1" name="work" camunda:failedJobRetryTimeCycle="R3/PT5M"/>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	r, err := importEventDoc(t, doc)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	for _, d := range r.Dropped {
+		if strings.Contains(d.Construct, "failedJobRetryTimeCycle") {
+			t.Fatalf("the attribute was reported as dropped (%q) — it is "+
+				"mapped now, and a construct is either mapped or reported, "+
+				"never both", d.Reason)
+		}
+	}
+
+	n := nodeByID(t, r, "t1")
+
+	a, ok := n.(interface{ IncidentRetryPolicy() tasks.RetryPolicy })
+	if !ok {
+		t.Fatalf("%T exposes no IncidentRetryPolicy()", n)
+	}
+
+	p := a.IncidentRetryPolicy()
+	if p == nil {
+		t.Fatal("IncidentRetryPolicy() = nil, want the policy the file described")
+	}
+
+	// Three attempts five minutes apart: the third retry is the last.
+	for attempt, want := range map[int]struct {
+		delay time.Duration
+		again bool
+	}{
+		1: {5 * time.Minute, true},
+		2: {5 * time.Minute, true},
+		3: {0, false},
+	} {
+		delay, again := p.Retry(attempt, nil)
+		if again != want.again || (again && delay != want.delay) {
+			t.Errorf("Retry(%d) = %v, %v; want %v, %v",
+				attempt, delay, again, want.delay, want.again)
+		}
+	}
+}
+
+// TestUnreadableRetryCycleIsReported pins the other half: a recurrence
+// the parser cannot read is reported, never guessed at. A retry policy
+// invented from an unreadable string would change how often a failing
+// task is retried, silently.
+func TestUnreadableRetryCycleIsReported(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn">
+  <bpmn:process id="P" name="P">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:userTask id="t1" name="work" camunda:failedJobRetryTimeCycle="every so often"/>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	r, err := importEventDoc(t, doc)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	for _, d := range r.Dropped {
+		if strings.Contains(d.Construct, "failedJobRetryTimeCycle") {
+			return
+		}
+	}
+
+	t.Errorf("dropped = %v, want the unreadable recurrence reported", r.Dropped)
 }
