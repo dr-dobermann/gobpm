@@ -281,13 +281,6 @@ func (eh *EventHub) registerWaiter(
 	}
 
 	if joined {
-		// The joiner's declared correlation keys are not in the subscription the
-		// waiter built for the processors it had — feed them in. Outside the
-		// lock: growing a subscription is a broker call.
-		if syncErr := eh.syncWaiterKeys(w, eDef); syncErr != nil {
-			return syncErr
-		}
-
 		eh.reportEventFlow(observability.PhaseRegistered, map[string]string{
 			observability.AttrEventDefinitionID: eDef.ID(),
 			observability.AttrWaiterID:          w.ID(),
@@ -419,49 +412,10 @@ func (eh *EventHub) publishWaiter(
 		served = winner
 	}
 
-	// The waiter is only NOW reachable through the registry, and it subscribed
-	// the broker before it was. Re-read the declared keys so one learned in
-	// between — which AddEventKey could not deliver, finding no waiter — is not
-	// lost. From here on that path finds it (SRD-090.A M2c).
-	if err := eh.syncWaiterKeys(served, eDef); err != nil {
-		return err
-	}
-
 	eh.reportEventFlow(observability.PhaseRegistered, map[string]string{
 		observability.AttrEventDefinitionID: eDef.ID(),
 		observability.AttrWaiterID:          served.ID(),
 	})
-
-	return nil
-}
-
-// syncWaiterKeys asks a waiter to re-read its processors' declared correlation
-// keys into its broker subscription, at each point where the set of processors
-// reachable through the registry changes: a processor joining an installed
-// waiter, and a freshly installed waiter becoming reachable at all. Between
-// subscribing and being installed a waiter is invisible to AddEventKey, so a
-// key declared in that window would otherwise be lost and every message
-// carrying it silently unrouted (SRD-090.A M2c).
-//
-// The capability is reached structurally — only a message waiter keys a
-// subscription; a timer has none and is a no-op. It runs OUTSIDE eh.m: growing
-// a subscription is a call into the host's broker (FIX-038 §1.1).
-func (eh *EventHub) syncWaiterKeys(
-	w eventproc.EventWaiter, eDef flow.EventDefinition,
-) error {
-	sk, ok := w.(interface{ SyncKeys() error })
-	if !ok {
-		return nil
-	}
-
-	if err := sk.SyncKeys(); err != nil {
-		return errs.New(
-			errs.M("couldn't sync the waiter's correlation keys"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.D(observability.AttrWaiterID, w.ID()),
-			errs.D(observability.AttrEventDefinitionID, eDef.ID()),
-			errs.E(err))
-	}
 
 	return nil
 }
