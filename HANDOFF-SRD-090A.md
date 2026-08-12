@@ -4,9 +4,30 @@
 `/home/dober/wrk/development/go/src/gobpm/iter-events` (sibling worktree; the
 directory name `iter-events` predates the branch rename — cosmetic only).
 
-**Base** `origin/master` = `8532091d`. Eight commits ahead, tip `0e1a378d`.
-Nothing pushed. Last gate: `make ci` **PASS**, 14/14, head `0e1a378d`,
-diff-coverage **97.8%** of 506 changed lines.
+**Base** `origin/master` = `4ba96cdc` (PR #322, merged in 2026-08-12).
+Sixteen commits ahead, 0 behind, tip `e87d243d`. Nothing pushed. Last gate:
+`make ci` **PASS**, 14/14, head `e87d243d`, diff-coverage **97.6%** of 453
+changed lines.
+
+**M2c is gone — master fixed the same defect first.** `94b88765` on master
+("a joining processor's correlation key never reached the broker") is the
+same bug this branch's M2c fixed independently, with a fuller design and 651
+lines of tests, so M2c was dropped at the merge: `syncWaiterKeys`, the
+waiter's `SyncKeys` and both M2c test files are gone, and
+`waiters/message.go` is master's. **M2d survives** — master has no
+`reflect`/`Comparable` guard, so registering an uncomparable
+`EventProcessor` still panics there; its test is now
+`eventhub_comparable_test.go`.
+
+**Merge master often from here.** The reconciliation cost real work only
+because the divergence ran long enough for one bug to be fixed twice. With
+M3b–M4 and SRD-090.B still ahead, merging on every master move is cheaper
+than one reconciliation at PR time.
+
+**Unsettled — the ADR pinning convention.** Master's `c4ac29d8` is titled
+"stop pinning ADR versions", but `ADR-033` still pins versions throughout
+its own header and is still v.5, so SRD-090.A's pins are NOT stale. Confirm
+which practice holds before `/check-srd`, which audits exactly this.
 
 **Task** issue **#313** — the iteration decorator should own the decorated
 node's event registration. **This branch is meant to CLOSE #313.**
