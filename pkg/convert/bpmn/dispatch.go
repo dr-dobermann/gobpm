@@ -10,6 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -398,6 +399,8 @@ var nodeBuilders = map[string]nodeBuilder{
 	tagIntermediateCatch: buildIntermediateCatch,
 	tagIntermediateThrow: buildIntermediateThrow,
 	tagBoundaryEvent:     buildBoundaryEvent,
+	tagSendTask:          buildSendTask,
+	tagReceiveTask:       buildReceiveTask,
 
 	tagTask:       buildManualTask,
 	tagManualTask: buildManualTask,
@@ -507,6 +510,85 @@ func buildIntermediateThrow(
 
 	return events.NewIntermediateThrowEvent(
 		fallbackName(id, name), def, body.opts(id)...)
+}
+
+// buildSendTask builds a send task around the message it sends.
+func buildSendTask(
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+) (flow.Node, error) {
+	msg, err := taskMessage(p, asm, se, id)
+	if err != nil {
+		return nil, err
+	}
+
+	return activities.NewSendTask(fallbackName(id, name), msg,
+		append(body.opts(id), p.camundaOptions(se, id)...)...)
+}
+
+// buildReceiveTask builds a receive task around the message it waits for.
+func buildReceiveTask(
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+) (flow.Node, error) {
+	msg, err := taskMessage(p, asm, se, id)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := append(body.opts(id), p.camundaOptions(se, id)...)
+
+	// instantiate marks a receive task that STARTS a process instance
+	// rather than waiting inside one; its default is false.
+	if attrBool(se, "instantiate", false) {
+		opts = append(opts, activities.WithInstantiate())
+	}
+
+	return activities.NewReceiveTask(fallbackName(id, name), msg, opts...)
+}
+
+// messagingTaskLosses are the attributes BPMN gives a send and a receive
+// task that this model has nowhere to put, and why.
+//
+// Both are reported rather than dropped. `implementation` names the
+// mechanism the message travels by, and a SendTask's field for it has no
+// setter — reading it back would report a mechanism the engine never
+// used. `operationRef` binds the task to a service operation, which these
+// two constructors do not take at all.
+var messagingTaskLosses = map[string]string{
+	observability.AttrImplementation: "names the mechanism the message travels " +
+		"by, while this engine always exchanges it through the MessageBroker; " +
+		"the task imports and sends the same message either way",
+	"operationRef": "binds the task to a service operation, which the send and " +
+		"receive constructors do not take — use a serviceTask when the exchange " +
+		"IS the operation",
+}
+
+// taskMessage resolves the message a send or receive task exchanges, and
+// reports the attributes around it that the model cannot hold.
+//
+// messageRef is required here even though BPMN makes it optional: both
+// constructors reject a nil message (send_task.go:42, receive_task.go:71),
+// and a messaging task with no message has nothing to send or wait for.
+func taskMessage(
+	p *parser, asm *assembly, se xml.StartElement, id string,
+) (*bpmncommon.Message, error) {
+	owner := se.Name.Local + " " + strconv.Quote(id)
+
+	for attr, reason := range messagingTaskLosses {
+		if strings.TrimSpace(attrValue(se, attr)) != "" {
+			p.report(id, attr, reason)
+		}
+	}
+
+	ref := strings.TrimSpace(attrValue(se, attrMessageRef))
+	if ref == "" {
+		return nil, errs.New(
+			errs.M("bpmn: %s names no messageRef; a messaging task has nothing "+
+				"to send or wait for without one", owner),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return resolveCatalogRef(asm, asm.cat.messages,
+		refSite{from: owner, attr: attrMessageRef, target: ref}, tagMessage)
 }
 
 // buildBoundaryEvent builds a boundary event attached to the activity its

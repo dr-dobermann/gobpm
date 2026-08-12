@@ -56,9 +56,14 @@ const (
 	tagIntermediateCatch = "intermediateCatchEvent"
 	tagIntermediateThrow = "intermediateThrowEvent"
 	tagBoundaryEvent     = "boundaryEvent"
+	tagSendTask          = "sendTask"
+	tagReceiveTask       = "receiveTask"
 
 	// attrAttachedTo is the boundary event's host reference.
 	attrAttachedTo = "attachedToRef"
+
+	// attrMessageRef is the message a send or receive task exchanges.
+	attrMessageRef = "messageRef"
 
 	// The ten event definitions (elements/event-definitions.md), their
 	// expression children and the two references they carry as children
