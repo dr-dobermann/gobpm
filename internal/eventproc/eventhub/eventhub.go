@@ -228,26 +228,45 @@ type waiterBuilder func(
 // registerWaiter is the shared lookup→build→start→insert path for both
 // RegisterEvent and RegisterPersistentEvent.
 //
-// The lookup, create, start and insert run under ONE critical section so
-// two concurrent registrations of the same eDef.ID() can't both miss the
-// existence check and both create a waiter — the second insert would
-// orphan the first waiter and its serving goroutine (audit 1.5 /
-// FIX-003 C). The build func and AddEventProcessor never re-enter eh.m, and
-// Service() only spawns a detached goroutine that touches eh.m no sooner
-// than its first fire, so holding eh.m across them is safe.
+// The lookup and the insert run under ONE critical section so two concurrent
+// registrations of the same eDef.ID() can't both miss the existence check and
+// both create a waiter — the second insert would orphan the first waiter and
+// its serving goroutine (audit 1.5 / FIX-003 C).
+//
+// What may run under eh.m is decided by ONE property: whether the call is
+// FOREIGN — whether it can reach the host (a broker, a processor, a logger the
+// host supplied). Foreign work does not run under the engine's one lock, no
+// matter how briefly it usually takes, because "usually" is a property of the
+// host's network and not of this engine (FIX-038 §1.1).
+//
+// Re-entrancy is a WEAKER test and answering it is not enough. AddEventProcessor
+// still never re-enters eh.m — that is why the comment this replaces read as
+// true for as long as it did — but it was for a while allowed to call the host's
+// broker, and holding eh.m across that stalled every registration, lookup and
+// unregistration in the engine behind one host call (FIX-041 §1.1). So: before
+// adding a call inside this lock, ask what it can reach, not what it can
+// re-enter.
+//
+// Under the lock: the registry map, the signal index, AddEventProcessor.
+// Outside it: build, Service, Stop, ApplyProcessorKeys.
 func (eh *EventHub) registerWaiter(
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 	build waiterBuilder,
 ) error {
-	// FAST PATH — an existing waiter just gains a processor. That is registry
-	// work and stays under the lock.
+	// FAST PATH — an existing waiter just gains a processor. The registry half
+	// runs under the lock; the joining processor's correlation keys reach the
+	// broker after it is released.
 	joined, w, err := eh.joinExistingWaiter(ep, eDef)
 	if err != nil {
 		return err
 	}
 
 	if joined {
+		if aerr := eh.applyProcessorKeys(w, ep); aerr != nil {
+			return aerr
+		}
+
 		eh.reportEventFlow(observability.PhaseRegistered, map[string]string{
 			observability.AttrEventDefinitionID: eDef.ID(),
 			observability.AttrWaiterID:          w.ID(),
@@ -282,6 +301,97 @@ func (eh *EventHub) registerWaiter(
 	}
 
 	return eh.publishWaiter(ep, eDef, w)
+}
+
+// applyProcessorKeys is the foreign half of a join: it hands the joining
+// processor's correlation keys to the waiter's broker subscription, with eh.m
+// RELEASED. A waiter with no keyed subscription (signal, timer) does not
+// implement KeyedWaiter and is a no-op.
+//
+// It runs AFTER the registration, and that order is deliberate. The window it
+// leaves — processor listed, key not yet subscribed — drops nothing: the broker
+// routes no envelope for a key it has not been given, and an unmatched envelope
+// waits in its inbox until a subscription wants it (ADR-006 §2.4). It also
+// means a concurrent UnregisterEvent SEES the processor, so it cannot tear the
+// waiter down while this registration is still attaching to it — the stranding
+// FIX-038 §1.3 fixed, which applying keys before registering would reopen.
+//
+// A failure undoes the registration: the caller reports a failed registration,
+// and a processor listed against a waiter nobody registered it with would
+// receive events the caller believes it is not subscribed to.
+func (eh *EventHub) applyProcessorKeys(
+	w eventproc.EventWaiter, ep eventproc.EventProcessor,
+) error {
+	kw, ok := w.(eventproc.KeyedWaiter)
+	if !ok {
+		return nil
+	}
+
+	err := kw.ApplyProcessorKeys(ep)
+	if err == nil {
+		return nil
+	}
+
+	eh.undoFailedJoin(w, ep)
+
+	return errs.New(
+		errs.M("couldn't apply the correlation keys of a joining processor"),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.D(observability.AttrWaiterID, w.ID()),
+		errs.D(observability.AttrEventProcessorID, ep.ID()),
+		errs.E(err))
+}
+
+// undoFailedJoin unregisters ep, and buries the waiter only if the failed key
+// actually killed it.
+//
+// Both outcomes are real. A key refused after an earlier one landed leaves a
+// key-set the port cannot repair — there is no RemoveKey — so the waiter sheds
+// the whole subscription and is DEAD (FIX-041 §3.1 D2). Left mapped it would be
+// joined by every later registration for the same definition and deliver to none
+// of them, which is FIX-038 §1.3's stranding arrived at from the other
+// direction; the processors already parked on it lose their registration, which
+// is the cost §3.2 B3 accepts and the reason this logs at Error.
+//
+// But a key refused as the FIRST of the join's set changes nothing: the
+// subscription is exactly as it was, the waiter keeps serving everyone parked
+// on it, and only this join is turned away. Unmapping it there would tear down
+// a healthy waiter — and every other processor's subscription with it — to
+// punish a registration that failed harmlessly.
+//
+// So the waiter's own state decides, not the fact that an error came back.
+func (eh *EventHub) undoFailedJoin(
+	w eventproc.EventWaiter, ep eventproc.EventProcessor,
+) {
+	if rerr := w.RemoveEventProcessor(ep); rerr != nil {
+		eh.rt.Logger().Debug("couldn't unregister a processor whose keys failed",
+			observability.AttrWaiterID, w.ID(),
+			observability.AttrEventProcessorID, ep.ID(),
+			observability.AttrError, rerr.Error())
+	}
+
+	if w.State() != eventproc.WSFailed {
+		return // the join failed; the waiter did not
+	}
+
+	eDefID := w.EventDefinition().ID()
+
+	eh.m.Lock()
+
+	// Only if it is still THIS waiter under that id: a concurrent
+	// registration may already have replaced it, and unmapping the
+	// replacement would strand a live one to bury a dead one.
+	if mapped, ok := eh.waiters[eDefID]; ok && mapped == w {
+		eh.dropWaiterLocked(eDefID, w)
+	}
+
+	eh.m.Unlock()
+
+	eh.rt.Logger().Error("a refused correlation key failed a message waiter",
+		observability.AttrWaiterID, w.ID(),
+		observability.AttrEventDefinitionID, eDefID,
+		observability.AttrEventProcessorID, ep.ID(),
+		"orphaned_processors", len(w.EventProcessors()))
 }
 
 // joinExistingWaiter adds ep to the waiter already serving eDef, if there is
@@ -371,6 +481,14 @@ func (eh *EventHub) publishWaiter(
 			errs.E(addErr))
 	}
 
+	// The losing path joined the winner above, under the lock. Its foreign half
+	// belongs here, for the same reason as the fast path's.
+	if lost {
+		if err := eh.applyProcessorKeys(winner, ep); err != nil {
+			return err
+		}
+	}
+
 	// Name the waiter the processor actually landed on. On the losing path
 	// that is the WINNER: w was stopped and discarded a few lines up, so
 	// reporting it points an operator at a waiter that no longer exists.
@@ -399,7 +517,7 @@ func (eh *EventHub) stopUnusedWaiter(w eventproc.EventWaiter) {
 }
 
 // Shutdown stops every registered waiter and waits — bounded by ctx — for their
-// service goroutines to exit, so none outlives the hub (ADR-006 v.1 §2.5,
+// service goroutines to exit, so none outlives the hub (ADR-006 §2.5,
 // SRD-019). It marks the hub stopped (further registration is rejected) and
 // removes every waiter from the registry even if its Stop returns an error, so a
 // failed Stop never leaks the registry entry. Idempotent.
@@ -589,7 +707,7 @@ func (eh *EventHub) PropagateEvent(
 	}
 
 	// A signal is a broadcast publication matched by NAME, not by the throw's
-	// eDef.ID() (throw and catch are distinct nodes — ADR-006 v.1 §2.1, SRD-020):
+	// eDef.ID() (throw and catch are distinct nodes — ADR-006 §2.1, SRD-020):
 	// fan out to every catcher of the same signal name.
 	if eDef.Type() == flow.TriggerSignal {
 		return eh.broadcastSignal(eDef)
@@ -634,7 +752,7 @@ func (eh *EventHub) PropagateEvent(
 }
 
 // broadcastSignal delivers a thrown signal to every registered catcher of the
-// same signal name — the BPMN broadcast publication strategy (ADR-006 v.1 §2.1,
+// same signal name — the BPMN broadcast publication strategy (ADR-006 §2.1,
 // §10.5.1). It matches by name (not eDef.ID(): throw and catch are distinct
 // nodes) via the O(1) signal-name index (SRD-027 FR-6) instead of scanning the
 // waiter registry. No catcher in reach is a logged no-op, not an error (§2.4).
@@ -670,7 +788,7 @@ func (eh *EventHub) broadcastSignal(eDef flow.EventDefinition) error {
 	// is best-effort and logs per catcher, so it returns nil today; the
 	// defensive branch keeps a would-be future error visible instead of
 	// silent, without stopping the broadcast (it must reach every catcher —
-	// FIX-007). ADR-022 v.1 §2.3(2).
+	// FIX-007). ADR-022 §2.3(2).
 	for _, w := range targets {
 		if err := w.Process(eDef); err != nil {
 			eh.rt.Logger().Debug("signal waiter delivery returned an error",
@@ -808,7 +926,7 @@ func (eh *EventHub) SignalCatchers(name string) int {
 }
 
 // WaiterFired reports that the waiter for eDefID has fired. The EventHub is the
-// sole owner of waiter removal (ADR-006 v.1 §2.5): it removes the waiter iff it
+// sole owner of waiter removal (ADR-006 §2.5): it removes the waiter iff it
 // has reached a terminal state (Ended/Failed) and keeps a still-running one (a
 // persistent message waiter, or a timer mid-cycle). A waiter never removes
 // itself — it sets its own state and reports here.
@@ -866,14 +984,13 @@ func (eh *EventHub) AddEventKey(eDefID, key string) error {
 		return nil
 	}
 
-	ka, ok := w.(interface {
-		AddKey(string) error
-	})
+	kw, ok := w.(eventproc.KeyedWaiter)
 	if !ok {
 		return nil
 	}
 
-	return ka.AddKey(key)
+	// Outside the lock, released above: AddKey reaches the host's broker.
+	return kw.AddKey(key)
 }
 
 // ----------------------------------------------------------------------------

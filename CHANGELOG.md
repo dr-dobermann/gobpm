@@ -87,6 +87,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   construction, which trains a reader to ignore the adapter's
   warnings. A file-backed pool outside WAL still warns.
 
+- **The correlation-key fix above no longer talks to the broker with the
+  engine's lock held** (FIX-041). Applying a joining processor's keys
+  was done inside `AddEventProcessor`, and both `EventHub` callers hold
+  the engine-wide registry lock across it — so while a host broker was
+  slow, no waiter anywhere in the engine could be registered,
+  unregistered or looked up. It is the common path, not an edge: a
+  Multi-Instance iteration parking on a catch its sibling already parked
+  on takes it every time.
+
+  A join is therefore two steps. Adding the processor is registry work
+  and stays under the lock; applying its keys is a call into the
+  **host** and runs with the lock released. What decides is whether a
+  call can reach the host, not whether it can re-enter the lock. The two
+  halves are named optional capabilities, `eventproc.KeyedProcessor` and
+  `eventproc.KeyedWaiter`, replacing anonymous type assertions that left
+  both undiscoverable; `EventWaiter` is unchanged, so signal and timer
+  waiters are untouched.
+
+  Register-then-apply is the safe order and falls out of the split: its
+  window (processor listed, key not yet routed) drops nothing, because
+  an unmatched envelope waits in the broker's inbox, while the inverse
+  window consumes and discards.
+
+  Three host-visible consequences. A key **refused part-way through a
+  set** now costs the whole subscription: `Subscription` can grow a
+  key-set but not shrink one, so a half-applied set cannot be repaired,
+  and an orphan key left on a live subscription silently eats every
+  message addressed to it. A refusal on the **first** key applies
+  nothing, so the subscription survives and only that registration
+  fails. And each key reaches the broker **once**, however the engine
+  learned it — creation keys, a lazy `AddKey`, a joining processor's
+  set, or the same processor registered twice. `membroker` never refuses
+  a key and collapses repeats, so no in-repo behaviour changes.
+
+  A key learned while `Subscribe` was still running is now buffered and
+  applied when the subscription appears, instead of being dropped.
+
+- **Two more host calls under a lock, in code no review of this change
+  could have reached.** The message waiter's `Stop` held the waiter lock
+  across `Unsubscribe`, and the Go rules registry's `Register` held the
+  registry lock across a `Report` to the host's reporter — the same
+  shape, in files this work never touched. Both now mutate under the
+  lock and call the host after releasing it. They were found by
+  `make lock-sweep`, a new scanner for the shape, which is deliberately
+  **not** part of `make ci`: it is syntactic, so a clean run is evidence
+  rather than proof, and its docstring leads with what it cannot catch.
+
 - **A `%v` over an engine object no longer reflects across it**
   (FIX-040, closes #314). `Instance` and its tracks now implement
   `fmt.Stringer`, rendering as their element id. Without it, anything

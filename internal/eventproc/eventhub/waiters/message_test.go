@@ -522,7 +522,7 @@ func TestJoiningProcessorExtendsTheSubscription(t *testing.T) {
 		}).Maybe()
 
 	joiner := keyedProc{MockEventProcessor: joinerMock, keys: []string{"iter-b"}}
-	require.NoError(t, w.AddEventProcessor(joiner))
+	require.NoError(t, join(t, w, joiner))
 
 	// An envelope addressed to the JOINER's key only. Before the fix this
 	// matched no subscription and sat in the broker's inbox.
@@ -625,7 +625,7 @@ func TestJoinBeforeServiceIsSubscribedByService(t *testing.T) {
 	joiner := keyedProc{MockEventProcessor: joinerMock, keys: []string{"k-b"}}
 
 	// no Service yet — the join must succeed and simply record the processor
-	require.NoError(t, w.AddEventProcessor(joiner))
+	require.NoError(t, join(t, w, joiner))
 	require.Len(t, w.EventProcessors(), 2)
 
 	require.NoError(t, w.Service(ctx))
@@ -754,7 +754,7 @@ func TestJoinDuringSubscribeIsCaughtUp(t *testing.T) {
 		}).Maybe()
 
 	joiner := keyedProc{MockEventProcessor: joinerMock, keys: []string{"k-b"}}
-	require.NoError(t, w.AddEventProcessor(joiner))
+	require.NoError(t, join(t, w, joiner))
 
 	close(broker.release)
 	require.NoError(t, <-served)
@@ -872,11 +872,15 @@ func TestRetryAfterAKeyFailureReSubscribes(t *testing.T) {
 
 	// first attempt: the broker refuses the key, so the join must FAIL rather
 	// than report a processor that cannot be reached.
-	require.Error(t, w.AddEventProcessor(joiner),
+	require.Error(t, join(t, w, joiner),
 		"a key the broker refused must surface, not be swallowed")
 
 	// the retry must actually retry
-	require.NoError(t, w.AddEventProcessor(joiner))
+	// The retry must actually retry. The waiter records a key when it decides
+	// to send it, so no key is sent twice — and un-records one that failed to
+	// arrive, or this attempt would skip it and report success for a key the
+	// broker never received.
+	require.NoError(t, join(t, w, joiner))
 	require.Equal(t, 2, broker.addKeyCalls(),
 		"the retry re-issued AddKey; returning early on 'already present' "+
 			"would have reported success without subscribing the key")
@@ -926,7 +930,7 @@ func TestServiceFailsWhenALateJoinerCannotBeSubscribed(t *testing.T) {
 	joinerMock := mockeventproc.NewMockEventProcessor(t)
 	joinerMock.EXPECT().ID().Return("b").Maybe()
 	joiner := keyedProc{MockEventProcessor: joinerMock, keys: []string{"k-b"}}
-	require.NoError(t, w.AddEventProcessor(joiner))
+	require.NoError(t, join(t, w, joiner))
 
 	close(broker.release)
 
@@ -984,7 +988,7 @@ func TestServiceReportsTheJoinerFailureEvenIfTeardownAlsoFails(t *testing.T) {
 	joinerMock := mockeventproc.NewMockEventProcessor(t)
 	joinerMock.EXPECT().ID().Return("b").Maybe()
 	joiner := keyedProc{MockEventProcessor: joinerMock, keys: []string{"k-b"}}
-	require.NoError(t, w.AddEventProcessor(joiner))
+	require.NoError(t, join(t, w, joiner))
 
 	close(broker.release)
 
@@ -1066,7 +1070,7 @@ func TestAddKeyRecordsTheKeyItSubscribed(t *testing.T) {
 	joiner := keyedProc{
 		MockEventProcessor: joinerMock, keys: []string{"learned"},
 	}
-	require.NoError(t, w.AddEventProcessor(joiner))
+	require.NoError(t, join(t, w, joiner))
 }
 
 // TestAddKeyReportsABrokerRefusal: the lazy-association seam is best-effort at

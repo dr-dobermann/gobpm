@@ -1,5 +1,5 @@
 // Package gorules provides the batteries-included Business Rule Engine
-// (ADR-027 v.1 §2.4): a bounded registry of named in-process Go decisions.
+// (ADR-027 §2.4): a bounded registry of named in-process Go decisions.
 // It grows only by explicit registration, evaluates by registered name, and
 // fails loud on an unknown reference — never a silent default. Any external
 // rules service (DMN or otherwise) replaces it wholesale through the
@@ -63,9 +63,10 @@ func (reg *Registry) Register(name string, d rules.DecisionFunc) error {
 	}
 
 	reg.mu.Lock()
-	defer reg.mu.Unlock()
 
 	if _, ok := reg.decisions[name]; ok {
+		reg.mu.Unlock()
+
 		return errs.New(
 			errs.M("Register: decision is already registered"),
 			errs.C(errorClass, errs.DuplicateObject),
@@ -73,11 +74,21 @@ func (reg *Registry) Register(name string, d rules.DecisionFunc) error {
 	}
 
 	reg.decisions[name] = d
+	sink := reg.sink
+
+	reg.mu.Unlock()
 
 	// The registrar audit (SRD-069 FR-4): names only, successes only,
 	// silent while unbound.
-	if reg.sink != nil {
-		reg.sink.Report(observability.Fact{
+	//
+	// Reported OUTSIDE the lock, because the sink is the HOST's (BindReporter
+	// takes whatever the embedding application supplies) and a host call under
+	// the registry lock queues every other registration and every Evaluate
+	// lookup behind a latency this engine does not control — FIX-038 §1.1's
+	// shape, which Evaluate below already avoids by reading under the lock and
+	// calling outside it.
+	if sink != nil {
+		sink.Report(observability.Fact{
 			Kind:  observability.KindRules,
 			Phase: observability.PhaseRegistered,
 			Details: map[string]string{
