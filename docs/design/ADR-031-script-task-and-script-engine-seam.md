@@ -6,7 +6,7 @@
 | Version | v.1 |
 | Date | 2026-07-25 |
 | Owner | Ruslan Gabitov |
-| Refines | [ADR-027 v.1](ADR-027-business-rule-task-and-rule-engine-seam.md) §2.5 (the standing decision this ADR fulfils: *the Script Engine is a pluggable seam of the same interface-plus-default shape as the rule engine — script interpreters are swappable engine services, never baked in*; everything else was deferred to this conception), [ADR-002 v.2](ADR-002-extension-architecture.md) §4.1/§4.2 (the five-point extension pattern), [ADR-003 v.1](ADR-003-module-layout.md) §4.4 (interpreters live in adapter modules — the core stays stdlib+uuid), [ADR-029 v.1](ADR-029-decision-table-engine-adapter.md) (the adapter-tier engine precedent this mirrors), [SAD-001 v.1](SAD-001-vision-and-architecture.md) §11 |
+| Refines | [ADR-027 v.1](ADR-027-business-rule-task-and-rule-engine-seam.md) §2.5 (the standing decision this ADR fulfils: *the Script Engine is a pluggable seam of the same interface-plus-default shape as the rule engine — script interpreters are swappable engine services, never baked in*; everything else was deferred to this conception), [ADR-002 v.2](ADR-002-extension-architecture.md) §4.1/§4.2 (the five-point extension pattern), [ADR-003](ADR-003-module-layout.md) §4.4 (interpreters live in adapter modules — the core stays stdlib+uuid), [ADR-029 v.1](ADR-029-decision-table-engine-adapter.md) (the adapter-tier engine precedent this mirrors), [SAD-001 v.1](SAD-001-vision-and-architecture.md) §11 |
 
 The Script Task is the last conformance-scope task type with no execution.
 This ADR decides how it executes: a **pluggable Script Engine seam** —
@@ -171,7 +171,7 @@ Adapter conception (landed by its own SRD):
 | ScriptTask semantics: invoke on activation, complete on the script's completion | the vendored extract, `semantics/tasks.md` §ScriptTask (file source: BPMN 2.0 §13.3.3, p430) |
 | `script` + `scriptFormat` (MIME) carry language and source; no mandated language; both 0..1 in the metamodel | the extract's ScriptTask engine note (`semantics/tasks.md:65`) + the element model (`elements/activities.md` §ScriptTask: `scriptFormat` attr 0..1, `script` child 0..1) |
 | The Script Engine is pluggable, same shape as the rule engine | ADR-027 v.1 §2.5 (the standing decision) |
-| Core stays stdlib+uuid; interpreters can't live there | SAD-001 v.1 (the library posture); ADR-003 v.1 §4.4 |
+| Core stays stdlib+uuid; interpreters can't live there | SAD-001 v.1 (the library posture); ADR-003 §4.4 |
 | The adapter-tier engine shape (module, seam proof, deploy split) | ADR-029 v.1 (landed: `adapters/dtable`) |
 | The expression seam is separate (`FormalExpression` evaluation) | ADR-011 lineage; `pkg/model/expression` (landed) |
 | The observability mirror (per-engine facts, masking rule) | SRD-060 v.1 FR-6 (`KindRules` precedent) |

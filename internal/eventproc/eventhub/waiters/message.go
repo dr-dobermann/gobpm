@@ -80,7 +80,13 @@ func (mw *messageWaiter) AddKey(key string) error {
 
 	// outside the lock: the subscription belongs to the host's broker, and
 	// the engine does not hold its own lock across a host call.
-	return sub.AddKey(key)
+	if err := sub.AddKey(key); err != nil {
+		mw.unrecordKeys(fresh) // it never arrived; let a retry re-issue it
+
+		return err
+	}
+
+	return nil
 }
 
 // terminalStates are the waiter states from which no key can reach a broker
@@ -222,7 +228,12 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	mw.m.Lock()
 	defer mw.m.Unlock()
 
-	if idx := slices.Index(mw.processors, ep); idx == -1 {
+	// IndexFunc, not Index: an EventProcessor is an interface, and comparing
+	// one whose dynamic type is uncomparable — a struct holding a slice or a
+	// map, which a processor carrying correlation keys naturally is — PANICS.
+	// slices.Index does exactly that comparison (master's sameProcessor, merged
+	// from the parallel #320 fix).
+	if idx := slices.IndexFunc(mw.processors, sameProcessor(ep)); idx == -1 {
 		mw.processors = append(mw.processors, ep)
 	}
 
@@ -283,6 +294,9 @@ func (mw *messageWaiter) ApplyProcessorKeys(ep eventproc.EventProcessor) error {
 
 	for i, k := range fresh {
 		if err := sub.AddKey(k); err != nil {
+			// the failed key and everything after it never reached the broker
+			mw.unrecordKeys(fresh[i:])
+
 			// Discard ONLY once something has actually landed. A key-set the
 			// broker took part of cannot be repaired — the port has no
 			// RemoveKey — so it can only be thrown away whole. But a failure on
@@ -320,6 +334,28 @@ func (mw *messageWaiter) unsentKeys(keys []string) []string {
 	defer mw.m.Unlock()
 
 	return mw.freshLocked(keys)
+}
+
+// unrecordKeys puts keys back in the unsent set after they failed to reach the
+// broker, so a retry re-issues them.
+//
+// Without this a retry is WORSE than a no-op: unsentKeys records a key when it
+// decides to send it, so a second attempt would find it already recorded, skip
+// it, and return success for a key the broker never received. That is #320's
+// silence — a key accepted, never routed, nothing reported — reached through
+// the very set that exists to prevent duplicates.
+//
+// Un-recording can let two concurrent joins both send one key if one of them
+// fails; that costs a duplicate, and a duplicate is the failure this set exists
+// to avoid, while the alternative is a lost key. Cheaper is not the same as
+// safer, so the loss loses.
+func (mw *messageWaiter) unrecordKeys(keys []string) {
+	mw.m.Lock()
+	defer mw.m.Unlock()
+
+	for _, k := range keys {
+		delete(mw.sent, k)
+	}
 }
 
 // freshLocked is unsentKeys' body for a caller that already holds mw.m.
@@ -411,7 +447,7 @@ func (mw *messageWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error
 	mw.m.Lock()
 	defer mw.m.Unlock()
 
-	idx := slices.Index(mw.processors, ep)
+	idx := slices.IndexFunc(mw.processors, sameProcessor(ep))
 	if idx == -1 {
 		return errs.New(
 			errs.M("event processor isn't registered with the waiter"),
@@ -513,7 +549,7 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 	for _, k := range mw.unsentKeys(late) {
 		if aerr := sub.AddKey(k); aerr != nil {
 			return mw.discardSubscription(sub, aerr,
-				"couldn't apply a key learned during subscribe")
+				"couldn't apply a correlation key learned during subscribe")
 		}
 	}
 

@@ -73,9 +73,52 @@ it unset the adapter's tests skip and the diff-coverage gate goes red
 on adapter changes, which is the loud version of "you forgot the
 database". CI provides the same database as a service container.
 
+## Running on SQLite
+
+For a single-process deployment there is
+[`adapters/sqlite`](../../../adapters/sqlite/) — durability in a file,
+with no server to run and no CGo to build (the driver is
+`modernc.org/sqlite`, a pure-Go translation):
+
+```go
+import "github.com/dr-dobermann/gobpm/adapters/sqlite"
+
+repo, _ := sqlite.Open("gobpm.db")      // owns the pool; Close closes it
+defer repo.Close()
+
+th, _ := thresher.New("engine-A",
+    thresher.WithRepository(repo))
+```
+
+`OpenMemory()` gives the same store without a file, for tests. `New(db)`
+takes a pool you already own — and **refuses** one that cannot enforce
+the schema's constraints, which is a real hazard here rather than a
+formality: SQLite's `foreign_keys` is OFF by default and applies **per
+connection**, so a pool opened the obvious way silently enforces none of
+the group and tenant references. `Open` sets it in the DSN, where every
+connection the pool creates later inherits it; `New` verifies it on
+several connections and refuses if any lacks it. Set what you own,
+verify what you are handed (ADR-037 §2.2).
+
+**It is not cluster-safe, and says so.** `ClusterCompatibility()`
+returns false, naming the single-writer limit and pointing at
+`adapters/postgres` — so an engine that needs several peers over one
+store learns that by asking the adapter rather than from this
+paragraph. One embedded writer cannot give several engines the lease
+semantics recovery depends on.
+
+Migration is the same contract as postgres — embedded versioned SQL,
+one file per transaction, a `schema_version` ledger, re-running a no-op
+— serialized differently: SQLite permits one writer, and each migration
+transaction opens with an explicit `BEGIN IMMEDIATE`, so concurrently
+booting engines queue instead of deadlocking.
+
+Its conformance tests need no server, so unlike the postgres ones they
+are **not** environment-gated and run on every push.
+
 ## Engine groups
 
-Recovery is scoped to an **engine group** (ADR-033 v.5 §2.8): an
+Recovery is scoped to an **engine group** (ADR-033 §2.8): an
 engine lists, claims and recovers only its own group's instances.
 
 - **Ungrouped = solo.** Without options, an engine forms a
@@ -282,7 +325,7 @@ slice.
 ## Composite constructs restore at their position
 
 Every composite construct records its position in the checkpoint and
-restores **at that position** (ADR-033 v.5 §2.10) — nothing completed
+restores **at that position** (ADR-033 §2.10) — nothing completed
 ever re-executes, and no construct defers the capture:
 
 - A **composite scope** mid-body: the drained scope resumes its host
