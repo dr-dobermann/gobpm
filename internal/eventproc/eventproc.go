@@ -20,7 +20,7 @@ import (
 var ErrRejected = errors.New("event rejected: not for this processor")
 
 // EventProcessor and EventProducer are the public node-facing event contracts
-// (ADR-012 v.1). They live in pkg/eventproc; the aliases here let the internal
+// (ADR-012). They live in pkg/eventproc; the aliases here let the internal
 // EventHub/EventWaiter and the internal consumers keep referring to them
 // unqualified while the implementations stay in this package.
 type (
@@ -72,7 +72,7 @@ type EventHub interface {
 	RemoveWaiter(eDefID string) error
 
 	// WaiterFired is called by a waiter (from its own goroutine) to report it
-	// has fired. The EventHub — the SOLE owner of waiter removal (ADR-006 v.1
+	// has fired. The EventHub — the SOLE owner of waiter removal (ADR-006
 	// §2.5) — removes the waiter iff it has reached a terminal state, and keeps
 	// a still-running one (a persistent message waiter, or a timer mid-cycle).
 	// No waiter ever removes itself: it sets its own state and reports here.
@@ -91,7 +91,7 @@ type EventHub interface {
 	// Shutdown stops every registered waiter and waits — bounded by ctx — for
 	// their service goroutines to exit, removing each from the registry even if
 	// its Stop returns an error, so no waiter goroutine outlives the hub
-	// (ADR-006 v.1 §2.5). After Shutdown the hub rejects further registration.
+	// (ADR-006 §2.5). After Shutdown the hub rejects further registration.
 	Shutdown(ctx context.Context) error
 }
 
@@ -152,7 +152,7 @@ type EventWaiter interface {
 
 	// Done returns a channel that is closed when the waiter's service goroutine
 	// has exited (by Stop, ctx cancel, or a terminal fire). EventHub.Shutdown
-	// waits on it to drain waiter goroutines without a leak (ADR-006 v.1 §2.5).
+	// waits on it to drain waiter goroutines without a leak (ADR-006 §2.5).
 	Done() <-chan struct{}
 }
 

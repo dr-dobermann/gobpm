@@ -149,7 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **BPMN converter: the import parser is rebuilt, and six of its own
-  defects are fixed** (ADR-024 v.4, SRD-089.A). Element dispatch is now
+  defects are fixed** (ADR-024, SRD-089.A). Element dispatch is now
   a table keyed by parse context and local name rather than six
   disagreeing `switch` statements, and forward references (a gateway's
   `default` today; `attachedToRef`, `calledElement` and link pairing
@@ -279,7 +279,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 - **In-instance event delivery: per-delivery payload binding and
-  iteration-correlated routing** (ADR-006 v.5 §2.9, SRD-085, closes
+  iteration-correlated routing** (ADR-006 §2.9, SRD-085, closes
   #305). A fired definition's payload now travels with the DELIVERY —
   captured by the receiving execution and bound from its own frame —
   and `events.WithIterationCorrelation(keyName, expr)` routes a
@@ -312,7 +312,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   capture-deferral guards are fully retired: `CheckpointDeferred` now
   means a real failure only. Discovery separates the registry:
   `Instances(InstancesRoots/InstancesChildren)` and
-  `InstanceHandle.ParentID()/CallNodeID()`. Design: ADR-033 v.4
+  `InstanceHandle.ParentID()/CallNodeID()`. Design: ADR-033
   §2.10, ADR-023's restart contract.
 
 - **Incidents: a technical failure becomes durable, operable state**
@@ -374,7 +374,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ungrouped engine is a solo group under its own id, and
   `thresher.WithEngineGroup` / `WithExistingEngineGroup` (join-only,
   the typo-guard) form explicit recovery clusters over one store. The
-  storage is tenant-ready (ADR-033 v.3): each record carries its
+  storage is tenant-ready (ADR-033): each record carries its
   tenant, `""` resolves to the group's flag-designated default row,
   and a partial unique index enforces one default per group. New
   `pkg/renv` capabilities `Migrator` and `ClusterAware`; a published
@@ -854,7 +854,7 @@ has not started. gobpm remains an embedded library.
 
 ### Added
 
-- **Human-task ownership — claim, unclaim, reassign (ADR-020 v.2, SRD-073).**
+- **Human-task ownership — claim, unclaim, reassign (ADR-020, SRD-073).**
   A UserTask could be offered to twenty candidates and worked by all twenty:
   whoever submitted first won and the other nineteen discarded their effort,
   with nothing to signal "I am doing this". BPMN already names the missing
@@ -1115,7 +1115,7 @@ has not started. gobpm remains an embedded library.
   computed by a lite string expression**.
 
 - **Language-routed expression engines and the text expression kind
-  (SRD-066, ADR-032 v.1 — the routing half; part of #74).** The expression
+  (SRD-066, ADR-032 — the routing half; part of #74).** The expression
   seam becomes **multi-engine**: `expression.Engine` widens with the
   `##`-kind and **enumerable `Languages()` claims**, and the new
   `expression.Registry` folds registered engines into a language→engine
@@ -1152,7 +1152,7 @@ has not started. gobpm remains an embedded library.
   classifying three order profiles.
 
 - **The Script Engine seam (multi-engine) and the Script Task (SRD-064,
-  ADR-031 v.1 — the seam half; #87).** The last silent conformance task
+  ADR-031 — the seam half; #87).** The last silent conformance task
   type gains execution on a **pluggable, multi-engine Script Engine seam**:
   `pkg/script` defines the engine contract (`##`-kind, **enumerable
   `Formats()` claims**, `Execute(format, script, DataReader)` → named
@@ -1283,7 +1283,7 @@ has not started. gobpm remains an embedded library.
   the `KindCompensation` sweep facts (no new phase). Deep (recursive) scope
   compensation, `store`/`image`, and Ad-Hoc stay out of scope per ADR-028.
 
-- **Compensation events (SRD-059, ADR-026 v.1 — #90, closing the epic).**
+- **Compensation events (SRD-059, ADR-026 — #90, closing the epic).**
   Undoing work that already **completed successfully** — the saga pattern in
   BPMN form. Each open scope keeps a **completion ledger**: compensable
   completions (activities guarded by a **Compensation boundary** linked to an
@@ -1308,7 +1308,7 @@ has not started. gobpm remains an embedded library.
   scope per ADR-026. **Closes the #90 events epic** — Signal, Link, Escalation
   and Compensation all landed.
 
-- **Escalation events (SRD-058, ADR-006 v.4 §2.2/§2.6 · ADR-018 · ADR-023 v.2 §2.6 — #90).**
+- **Escalation events (SRD-058, ADR-006 §2.2/§2.6 · ADR-018 · ADR-023 §2.6 — #90).**
   Error's **non-critical** twin: a throw (Escalation **Intermediate Throw** or
   **End Event**) raises a non-fault escalation that climbs the throwing
   execution's **scope chain** to the innermost matching catcher — an **Escalation
@@ -1327,7 +1327,7 @@ has not started. gobpm remains an embedded library.
   (**breaking**, on a pre-1.0 constructor) and adds a `MustEscalationEventDefinition`
   twin. Only **Compensation** now remains of epic #90's four events.
 
-- **Link events (SRD-057, ADR-006 v.4 §2.8 — #90).** An intra-process GOTO: a
+- **Link events (SRD-057, ADR-006 §2.8 — #90).** An intra-process GOTO: a
   source Intermediate **Throw** hands the token to the same-name target
   Intermediate **Catch** within one Process level. It is **not** a wait node —
   the throw **redirects** (no broadcast, no correlation, no subscription). Pairing
@@ -1386,7 +1386,7 @@ has not started. gobpm remains an embedded library.
 
 ### Changed
 
-- **Composite loop execution → off-loop iteration decorator (ADR-025 v.2 §2.12,
+- **Composite loop execution → off-loop iteration decorator (ADR-025 §2.12,
   SRD-054 / SRD-055 / SRD-056.A).** Internal rework, behavior-preserving: a looped
   **composite** activity (Sub-Process / Call Activity) now drives its own
   iteration from the host's runner goroutine — requesting scope open/close from
@@ -1478,7 +1478,7 @@ has not started. gobpm remains an embedded library.
 
 ### Added
 
-- **Event Sub-Process — non-interrupting (SRD-053, ADR-023 v.2 §2.10 — #91,
+- **Event Sub-Process — non-interrupting (SRD-053, ADR-023 §2.10 — #91,
   completing the type).** A non-interrupting triggered start
   (`events.WithNonInterrupting()`, any trigger except Error — Error is
   interrupting-only, rejected at validation) **forks** instead of cancelling:
@@ -1491,13 +1491,13 @@ has not started. gobpm remains an embedded library.
   non-interrupting fire never spends it), and the interrupting path (SRD-052) is
   unchanged. See [`docs/guides/subprocesses/index.md`](docs/guides/subprocesses/index.md).
 
-- **Event Sub-Process — interrupting (SRD-052, ADR-023 v.2 §2.10 — #91).** A
+- **Event Sub-Process — interrupting (SRD-052, ADR-023 §2.10 — #91).** A
   `SubProcess` marked `triggeredByEvent` (`activities.WithTriggeredByEvent()`)
   is a **scope-armed handler**, not a token target: it is armed while its
   enclosing scope is open and fires when its single triggered start catches an
   event — the boundary-event pattern lifted from an activity's window to a
   scope's window. Triggers: **Message / Timer / Signal / Conditional** (armed
-  as the scope's subscription; the Conditional start is ADR-006 v.3's deferred
+  as the scope's subscription; the Conditional start is ADR-006's deferred
   piece, now landed) and **Error** (caught on the §2.6 scope chain at the
   throw site, innermost catcher first). The interrupting variant (the default,
   BPMN §13.5.4; `events.WithNonInterrupting()` flips a start) fires a
@@ -1514,7 +1514,7 @@ has not started. gobpm remains an embedded library.
   [`examples/event-subprocess/`](examples/event-subprocess/) and
   [`docs/guides/subprocesses/index.md`](docs/guides/subprocesses/index.md).
 
-- **Call Activity (SRD-050, ADR-023 v.1 — the second slice of the
+- **Call Activity (SRD-050, ADR-023 — the second slice of the
   composition keystone #85, which it closes).** A Call Activity invokes a
   **separately registered process as its own child instance** — the reuse
   boundary, in contrast to the embedded Sub-Process's nested scope
@@ -1537,7 +1537,7 @@ has not started. gobpm remains an embedded library.
   `call_activity_node_id`. New example `examples/call-activity/`, the
   Call Activity section of `docs/guides/subprocesses/index.md`. Closes epic #85.
 
-- **Embedded Sub-Process (SRD-049, ADR-023 v.1 — the first slice of the
+- **Embedded Sub-Process (SRD-049, ADR-023 — the first slice of the
   composition keystone #85).** A Sub-Process is an activity in its
   parent's graph AND a container of its own inner graph
   (`activities.NewSubProcess` + `Add`/`flow.Link` inside; the exported
@@ -1572,13 +1572,13 @@ has not started. gobpm remains an embedded library.
   boundary-flavor-scoped; the subscription's fact attribution also names
   the wait node instead of the stale previous position.
 
-- **Conditional events (SRD-048, ADR-006 v.3 §2.7 — closes #89).**
+- **Conditional events (SRD-048, ADR-006 §2.7 — closes #89).**
   Data-driven waiting without polling: a conditional event's boolean
   condition over process data is evaluated at arm and re-evaluated on every
   **committed** data change (the SRD-044 commit-diff is the trigger signal),
   firing on the normative **false→true edge** (BPMN Table 10.84). Supported
   positions: **intermediate catch** (including **event-based-gateway arms**
-  — the arms deferral of ADR-005 v.4 §2.12 closes), and **boundary events**
+  — the arms deferral of ADR-005 §2.12 closes), and **boundary events**
   — interrupting (cancels the guarded activity onto its exception flow) and
   non-interrupting (fires in parallel; re-fires only on a fresh edge). An
   expression may declare its read paths (`goexpr.WithDependencies`,
@@ -1626,7 +1626,7 @@ values, up to the host's own Go structs participating live.
 
 ### Added
 
-- **Structural process data — navigable values end to end (ADR-011 v.6,
+- **Structural process data — navigable values end to end (ADR-011,
   SRD-042…045).** Process data is no longer opaque: a value can be a **record**
   (`data.Record` — ordered named fields, beside the existing `Collection`
   list capability), nested to any depth, and **addressed by path** —
@@ -1658,7 +1658,7 @@ values, up to the host's own Go structs participating live.
   `data-change`, `native-structs`) and the process-data guide
   ([docs/guides/data/index.md](docs/guides/data/index.md)).
 
-- **Engine-wide observability — the observable-event seam (ADR-013 v.2 / SRD-041).**
+- **Engine-wide observability — the observable-event seam (ADR-013 / SRD-041).**
   Every failure and major-object lifecycle transition now emits one
   `observability.Fact` through a single `Reporter` that both echoes to the
   operator log (levels per ADR-022) and fans out to observers. 12 of the 13

@@ -4,20 +4,26 @@
 **Status:** Accepted.
 **Date:** 2026-08-11.
 **Author:** Руслан Габитов.
-**Branch:** `fix/lost-iteration-correlation-key` (the same branch as the #320
-fix these defects were introduced by — they are that fix's own error paths, not
-a separate landing).
+**Branch:** `fix/lost-iteration-correlation-key`. These defects are the #320
+fix's own error paths, not a separate landing.
 **Tracking:** #320.
-**Upstream:** [ADR-006 v.5](../design/ADR-006-events-and-subscriptions.md) §2.5
+
+**Landed against a parallel fix.** While this branch was in review, master
+landed its own #320 fix in [#322](https://github.com/dr-dobermann/gobpm/pull/322)
+(`94b88765`), reached independently and taking the same shape §1.1 describes:
+the keys are applied inside `AddEventProcessor`, which both `EventHub` callers
+hold `eh.m` across. So every defect below is now a defect in **master**, not
+only in this branch's earlier attempt — which is why the file citations under
+*Grounded in* are pre-merge line numbers and the merge commit records what each
+side kept. Master's `sameProcessor` came the other way: `slices.Index` over the
+processor list compares interface values with `==`, and a processor carrying
+correlation keys is exactly the uncomparable dynamic type that panics on.
+**Upstream:** [ADR-006](../design/ADR-006-events-and-subscriptions.md) §2.5
 (*"Waiter lifecycle: the EventHub is the sole owner"*) and §2.4 (*"Delivery
 contract: in-memory, subscribe-before-publish, non-durable"*);
-[ADR-017 v.1](../design/ADR-017-channel-based-event-processing.md) §2 Rule 1
+[ADR-017](../design/ADR-017-channel-based-event-processing.md) §2 Rule 1
 (inbound events are channel-parked and loop-dispatched — the receiving loop
 runs the correlation gate, so the waiter is a pure forwarder).
-
-ADR-006 is at v.6, which is `Draft` until its changes land; §2.4 and §2.5 are
-v.5 text and v.5 is the contract in force, so that is what this fix is pinned
-against.
 
 **Grounded in (verified at `fb6179a2`):**
 
@@ -127,7 +133,7 @@ if idx := slices.Index(mw.processors, ep); idx == -1 {
 The moment `AddKey` returns, the broker routes envelopes for that key to this
 waiter. If one arrives before the append, `deliver` snapshots a processor list
 that does not contain `ep` (`:460-462`), forwards the event to the processors
-that *are* listed, and each drops it on its own correlation gate (ADR-017 v.1
+that *are* listed, and each drops it on its own correlation gate (ADR-017
 §2). The envelope is **consumed from the broker and lost** — the iteration it
 was addressed to stays parked forever.
 
@@ -315,7 +321,7 @@ The ordering this produces — *register `ep`, then apply its keys* — is the
 inverse of today's and is the correct one. Its window (processor listed, key not
 yet subscribed) drops nothing: the broker routes no envelope for a key it has
 not been given, and an unmatched envelope waits in the broker's inbox — which is
-not merely `membroker`'s behaviour but the stated contract, ADR-006 v.5 §2.4:
+not merely `membroker`'s behaviour but the stated contract, ADR-006 §2.4:
 *"An external message arriving before its `ReceiveTask` / catch subscribes is
 held in the `MessageBroker`'s inbox and delivered on subscribe."* Today's window
 (key subscribed, processor not listed) consumes and discards. On failure the hub removes the processor it
@@ -333,13 +339,13 @@ The port has no `RemoveKey`, so a partially-applied key-set cannot be repaired
 in place (§1.3). It can be discarded: `Unsubscribe` drops the whole
 subscription, orphan keys and all, and the messages those keys would have eaten
 go back to waiting in the broker's inbox for a subscription that wants them
-(ADR-006 v.5 §2.4, quoted above — this is why discarding is safe rather than
+(ADR-006 §2.4, quoted above — this is why discarding is safe rather than
 lossy).
 
 So every key-application failure — the join path (§1.3) and `Service`'s late-key
 path (§1.4) — ends the same way: `Unsubscribe`, `WSFailed`, error returned.
 
-**This is not a waiter removing itself.** ADR-006 v.5 §2.5 is explicit — *"A
+**This is not a waiter removing itself.** ADR-006 §2.5 is explicit — *"A
 waiter **never removes itself**; on trigger/completion it signals the hub … and
 the hub does the removal"* — and it stays true here: the waiter drops its own
 broker subscription (which it already does in `Stop` and in the serving
@@ -502,7 +508,7 @@ untouched and their mocks keep their current shape.
   }
   ```
 
-  This keeps ADR-006 v.5 §2.5's *"Register / unregister / propagate are atomic
+  This keeps ADR-006 §2.5's *"Register / unregister / propagate are atomic
   with respect to the registry"* intact: what moves out of the critical section
   is the broker call, not the registry mutation. And because `ep` is registered
   before the lock is released, a concurrent `UnregisterEvent` sees it — the
@@ -811,6 +817,26 @@ down does not return next release:
   recorded observation the test itself reads; a test mutating it corrupts only
   its own assertion input, and the defensive copy at creation already protects
   the double from the engine, which is the boundary that matters.
+
+**8.2.9 — merging master's parallel #320 fix cost one defect and gained two.**
+Master reached its own fix (`94b88765`, PR #322) while this was in review, so
+the merge had to choose. This branch's split join won — master's version makes
+the broker call inside `AddEventProcessor`, under the hub lock, which is §1.1 —
+and master's `sameProcessor` won, because `slices.Index` over the processor list
+compares interface values with `==` and panics on an uncomparable dynamic type,
+which a processor carrying correlation keys is. This branch had `slices.Index`
+in two places and would have shipped that.
+
+And master's `TestRetryAfterAKeyFailureReSubscribes` found a real bug in the
+send-once set from §8.2.8. `unsentKeys` records a key when it **decides** to
+send it — deliberately, so two concurrent joins carrying one key cannot both
+send it. But a key whose `AddKey` then failed stayed recorded, so a retry found
+it, skipped it, and returned **success for a key the broker never received**.
+That is #320's silence a third time, reached through the machinery added to
+prevent duplicates, and neither the branch's own tests nor the three review
+lenses had a retry among them. Failed keys are now un-recorded; a concurrent
+join may then send one twice, which is the outcome this set exists to avoid, and
+is still the right trade — a duplicate is visible, a lost key is not.
 
 ### 8.3 What this fix deliberately leaves alone
 

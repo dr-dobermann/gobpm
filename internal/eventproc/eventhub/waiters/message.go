@@ -22,17 +22,17 @@ import (
 // MessageWaiterError classifies messageWaiter failures.
 const MessageWaiterError = "MESSAGE_WAITER_ERROR"
 
-// messageWaiter bridges the MessageBroker to the EventHub (ADR-014 v.1): it
+// messageWaiter bridges the MessageBroker to the EventHub (ADR-014): it
 // subscribes the broker for its message name and, on a matching envelope, fires
 // the event (carrying the payload) to the registered processors and reports the
 // fire to the hub. It never removes itself — the EventHub is the sole remover
-// (ADR-006 v.1 §2.5). The waiter is a pure forwarder: it hands every
+// (ADR-006 §2.5). The waiter is a pure forwarder: it hands every
 // coarse-matched (broker keyed-routed) envelope to its processors and never
 // self-terminates on a fire. An in-instance receiver's waiter is removed when
 // its track consumes the event and unregisters (the hub drops the emptied
 // waiter); the instance-starter's processor (SRD-015) never unregisters, so its
 // waiter keeps firing for every matching message until Stop. Fine correlation is
-// the receiving instance loop's job, not the waiter's (ADR-017 v.1 §2): the loop
+// the receiving instance loop's job, not the waiter's (ADR-017 §2): the loop
 // runs the correlation gate and drops a mismatch, keeping its track parked.
 type messageWaiter struct {
 	hub    eventproc.EventHub
@@ -254,7 +254,7 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 // The order the hub uses — register ep, THEN apply its keys — is the safe one.
 // Its window (processor listed, key not yet subscribed) drops nothing: the
 // broker routes no envelope for a key it has not been given, and an unmatched
-// envelope waits in its inbox until a subscription wants it (ADR-006 v.5 §2.4).
+// envelope waits in its inbox until a subscription wants it (ADR-006 §2.4).
 // The inverse window (key subscribed, processor not listed) consumes and
 // discards.
 //
@@ -382,11 +382,11 @@ func (mw *messageWaiter) freshLocked(keys []string) []string {
 // key-set but not shrink one, so a partly-applied set cannot be undone in place
 // (FIX-041 §3.1 D2). It is also a safe one — the messages the discarded keys
 // would have matched go back to waiting in the broker's inbox for a
-// subscription that wants them (ADR-006 v.5 §2.4), whereas an orphan key left
+// subscription that wants them (ADR-006 §2.4), whereas an orphan key left
 // on a live subscription eats them permanently, which is the #320 failure mode
 // made durable.
 //
-// This is not a waiter removing itself (ADR-006 v.5 §2.5): it drops its own
+// This is not a waiter removing itself (ADR-006 §2.5): it drops its own
 // subscription and marks its own state, exactly as Stop does. Removal from the
 // registry stays the hub's, on the failed registration it is already returning.
 func (mw *messageWaiter) discardSubscription(
@@ -482,7 +482,7 @@ func (mw *messageWaiter) Process(eDef flow.EventDefinition) error {
 // Service subscribes the broker for the waiter's message name and starts the
 // delivery goroutine. The subscription is registered synchronously, so a
 // message published after Service returns is delivered (subscribe-before-
-// publish, ADR-006 v.1 §2.4).
+// publish, ADR-006 §2.4).
 //
 // Every state / stopCh / done access below takes mw.m, like State, setState and
 // Stop do. None of the writes is a demonstrated race — they all complete before
@@ -569,7 +569,7 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 
 // runMessageService waits for matching envelopes (or a stop/cancel) and
 // forwards each one to the waiting node. The waiter never self-terminates on a
-// fire (ADR-017 v.1 §2): it loops, forwarding every coarse-matched message,
+// fire (ADR-017 §2): it loops, forwarding every coarse-matched message,
 // until the context is canceled, it is stopped, or the broker closes the
 // subscription channel. An in-instance receiver's waiter is torn down by the
 // hub when its track consumes the event and unregisters.
@@ -615,7 +615,7 @@ func (mw *messageWaiter) runMessageService(
 				// a fire-definition / processor failure is terminal for this
 				// waiter (it already set WSFailed and reported the fire); log it
 				// at the goroutine top — nothing above can act on it — and stop
-				// (ADR-022 v.1 §2.3/§2.4).
+				// (ADR-022 §2.3/§2.4).
 				mw.rt.Logger().Error("message waiter terminally failed",
 					observability.AttrWaiterID, mw.id, observability.AttrMessageName, mw.name,
 					observability.AttrError, err.Error())
@@ -628,8 +628,8 @@ func (mw *messageWaiter) runMessageService(
 
 // processMessageEvent forwards the payload-carrying event to every registered
 // processor, then reports the fire to the hub. It never removes itself — the
-// EventHub is the sole remover (ADR-006 v.1 §2.5). A processor's ProcessEvent is
-// fire-and-forget (ADR-017 v.1 §2): the receiver's loop runs the correlation
+// EventHub is the sole remover (ADR-006 §2.5). A processor's ProcessEvent is
+// fire-and-forget (ADR-017 §2): the receiver's loop runs the correlation
 // gate and drops a mismatch on its side, so the waiter forwards unconditionally
 // and a non-nil return is a real delivery failure, not a correlation mismatch.
 func (mw *messageWaiter) processMessageEvent(
@@ -646,14 +646,14 @@ func (mw *messageWaiter) processMessageEvent(
 		// A build (fireDefinition) or delivery failure is terminal for the
 		// waiter; report the fire so the hub removes it, and join that report so
 		// a hub-side failure surfaces too rather than being swallowed
-		// (ADR-022 v.1 §2.2). runMessageService logs the joined error and stops.
+		// (ADR-022 §2.2). runMessageService logs the joined error and stops.
 		return errors.Join(err, mw.hub.WaiterFired(mw.eDef.ID()))
 	}
 
 	// Success: report the fire so the hub removes the waiter iff terminal.
 	// WaiterFired errors only on an invariant violation — this waiter absent
 	// from the registry it registered into — i.e. hub-state divergence;
-	// propagate it (fail-fast, ADR-022 v.1 §2.3) so runMessageService stops the
+	// propagate it (fail-fast, ADR-022 §2.3) so runMessageService stops the
 	// now-orphaned waiter. The normal nil lets the serve-loop continue.
 	err = mw.hub.WaiterFired(mw.eDef.ID())
 
@@ -674,7 +674,7 @@ func (mw *messageWaiter) processMessageEvent(
 }
 
 // deliver forwards eDef to every registered processor, returning the first
-// delivery error. A processor's ProcessEvent is fire-and-forget (ADR-017 v.1
+// delivery error. A processor's ProcessEvent is fire-and-forget (ADR-017
 // §2): the receiver's loop runs the correlation gate and drops a mismatch on
 // its side, so a non-nil return is a real delivery failure, not a mismatch.
 func (mw *messageWaiter) deliver(
@@ -700,7 +700,7 @@ func (mw *messageWaiter) deliver(
 
 // fireDefinition builds the event definition delivered to the processors: the
 // broker payload is reconstructed as a typed, Ready datum for the message's
-// item (ADR-014 v.1 §2.6) and woven into a cloned definition.
+// item (ADR-014 §2.6) and woven into a cloned definition.
 func (mw *messageWaiter) fireDefinition(
 	env messaging.Envelope,
 ) (flow.EventDefinition, error) {
@@ -805,7 +805,7 @@ func (mw *messageWaiter) setStateUnlessFailed(s eventproc.EventWaiterState) {
 
 // Done returns a channel closed when the service goroutine has exited; nil until
 // Service starts it (a registered waiter is always serviced first). EventHub.
-// Shutdown waits on it to drain goroutines (ADR-006 v.1 §2.5).
+// Shutdown waits on it to drain goroutines (ADR-006 §2.5).
 //
 // Under mw.m for the same reason Service now writes it under mw.m: the field is
 // guarded everywhere else, and a lone bare read is what the next change trips

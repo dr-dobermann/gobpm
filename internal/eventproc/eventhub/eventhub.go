@@ -311,7 +311,7 @@ func (eh *EventHub) registerWaiter(
 // It runs AFTER the registration, and that order is deliberate. The window it
 // leaves — processor listed, key not yet subscribed — drops nothing: the broker
 // routes no envelope for a key it has not been given, and an unmatched envelope
-// waits in its inbox until a subscription wants it (ADR-006 v.5 §2.4). It also
+// waits in its inbox until a subscription wants it (ADR-006 §2.4). It also
 // means a concurrent UnregisterEvent SEES the processor, so it cannot tear the
 // waiter down while this registration is still attaching to it — the stranding
 // FIX-038 §1.3 fixed, which applying keys before registering would reopen.
@@ -517,7 +517,7 @@ func (eh *EventHub) stopUnusedWaiter(w eventproc.EventWaiter) {
 }
 
 // Shutdown stops every registered waiter and waits — bounded by ctx — for their
-// service goroutines to exit, so none outlives the hub (ADR-006 v.1 §2.5,
+// service goroutines to exit, so none outlives the hub (ADR-006 §2.5,
 // SRD-019). It marks the hub stopped (further registration is rejected) and
 // removes every waiter from the registry even if its Stop returns an error, so a
 // failed Stop never leaks the registry entry. Idempotent.
@@ -707,7 +707,7 @@ func (eh *EventHub) PropagateEvent(
 	}
 
 	// A signal is a broadcast publication matched by NAME, not by the throw's
-	// eDef.ID() (throw and catch are distinct nodes — ADR-006 v.1 §2.1, SRD-020):
+	// eDef.ID() (throw and catch are distinct nodes — ADR-006 §2.1, SRD-020):
 	// fan out to every catcher of the same signal name.
 	if eDef.Type() == flow.TriggerSignal {
 		return eh.broadcastSignal(eDef)
@@ -752,7 +752,7 @@ func (eh *EventHub) PropagateEvent(
 }
 
 // broadcastSignal delivers a thrown signal to every registered catcher of the
-// same signal name — the BPMN broadcast publication strategy (ADR-006 v.1 §2.1,
+// same signal name — the BPMN broadcast publication strategy (ADR-006 §2.1,
 // §10.5.1). It matches by name (not eDef.ID(): throw and catch are distinct
 // nodes) via the O(1) signal-name index (SRD-027 FR-6) instead of scanning the
 // waiter registry. No catcher in reach is a logged no-op, not an error (§2.4).
@@ -788,7 +788,7 @@ func (eh *EventHub) broadcastSignal(eDef flow.EventDefinition) error {
 	// is best-effort and logs per catcher, so it returns nil today; the
 	// defensive branch keeps a would-be future error visible instead of
 	// silent, without stopping the broadcast (it must reach every catcher —
-	// FIX-007). ADR-022 v.1 §2.3(2).
+	// FIX-007). ADR-022 §2.3(2).
 	for _, w := range targets {
 		if err := w.Process(eDef); err != nil {
 			eh.rt.Logger().Debug("signal waiter delivery returned an error",
@@ -926,7 +926,7 @@ func (eh *EventHub) SignalCatchers(name string) int {
 }
 
 // WaiterFired reports that the waiter for eDefID has fired. The EventHub is the
-// sole owner of waiter removal (ADR-006 v.1 §2.5): it removes the waiter iff it
+// sole owner of waiter removal (ADR-006 §2.5): it removes the waiter iff it
 // has reached a terminal state (Ended/Failed) and keeps a still-running one (a
 // persistent message waiter, or a timer mid-cycle). A waiter never removes
 // itself — it sets its own state and reports here.

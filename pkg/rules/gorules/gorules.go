@@ -1,5 +1,5 @@
 // Package gorules provides the batteries-included Business Rule Engine
-// (ADR-027 v.1 §2.4): a bounded registry of named in-process Go decisions.
+// (ADR-027 §2.4): a bounded registry of named in-process Go decisions.
 // It grows only by explicit registration, evaluates by registered name, and
 // fails loud on an unknown reference — never a silent default. Any external
 // rules service (DMN or otherwise) replaces it wholesale through the

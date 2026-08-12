@@ -152,7 +152,7 @@ func TestJoinDoesNotHoldTheHubLock(t *testing.T) {
 // Register-then-apply leaves a window in which the processor is listed and its
 // key is not yet subscribed, and that window drops nothing: the broker routes
 // no envelope for a key it has not been given, and an unmatched envelope waits
-// in its inbox until a subscription wants it (ADR-006 v.5 §2.4). The inverse
+// in its inbox until a subscription wants it (ADR-006 §2.4). The inverse
 // order leaves the opposite window — the key IS routed while the processor is
 // not listed — so a matching envelope is consumed and thrown away. It also
 // hands a concurrent UnregisterEvent a waiter with no sign of the registration
