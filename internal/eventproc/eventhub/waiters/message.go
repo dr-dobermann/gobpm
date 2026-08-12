@@ -35,28 +35,32 @@ const MessageWaiterError = "MESSAGE_WAITER_ERROR"
 // the receiving instance loop's job, not the waiter's (ADR-017 v.1 §2): the loop
 // runs the correlation gate and drops a mismatch, keeping its track parked.
 type messageWaiter struct {
-	hub        eventproc.EventHub
-	rt         renv.EngineRuntime
-	eDef       *events.MessageEventDefinition
-	stopCh     chan struct{}
-	done       chan struct{}
-	sub        messaging.Subscription
-	name       string
-	id         string
-	processors []eventproc.EventProcessor
-	state      eventproc.EventWaiterState
-	// keyed records whether the subscription was created with a key-set, i.e.
-	// whether it filters at all. SyncKeys reads it to leave a wildcard
-	// subscription alone; the broker offers no way back from keyed to wildcard,
-	// so the distinction has to be kept here.
-	keyed bool
-	m     sync.Mutex
+	// subscribedKeys is what mw.sub was created carrying — see pendingKeys.
+	subscribedKeys []string
+	hub            eventproc.EventHub
+	rt             renv.EngineRuntime
+	eDef           *events.MessageEventDefinition
+	stopCh         chan struct{}
+	done           chan struct{}
+	sub            messaging.Subscription
+	name           string
+	id             string
+	processors     []eventproc.EventProcessor
+	state          eventproc.EventWaiterState
+	m              sync.Mutex
 }
 
 // AddKey extends the waiter's broker subscription with key (SRD-017 §4.5 lazy
 // association). It is safe before Service has subscribed (a nil subscription is
 // a no-op) — the receiver then picks the key up from its instance's grown
 // key-set when it does subscribe.
+//
+// The key is recorded in subscribedKeys on success, because that field is what
+// a joining processor consults to decide whether its own key still needs
+// subscribing. This path extends the SAME subscription (correlation.go's
+// extendReceivers reaches it for every parked message catch, MI iterations
+// included), so leaving it unrecorded would make the field understate what the
+// subscription carries.
 func (mw *messageWaiter) AddKey(key string) error {
 	mw.m.Lock()
 	sub := mw.sub
@@ -66,54 +70,25 @@ func (mw *messageWaiter) AddKey(key string) error {
 		return nil
 	}
 
-	return sub.AddKey(key)
+	if err := sub.AddKey(key); err != nil {
+		return err
+	}
+
+	mw.recordKey(key)
+
+	return nil
 }
 
-// SyncKeys re-reads the processors' declared correlation keys and grows the
-// broker subscription with each of them (SRD-017 §4.5). Adding a key the
-// subscription already holds is a no-op, so the call is idempotent.
-//
-// It exists because neither of the two paths that key a subscription covers the
-// moment BETWEEN them. Service reads the declared keys before the hub installs
-// the waiter in its registry, and EventHub.AddEventKey — the lazy-association
-// path — no-ops while the waiter is not yet installed, since it cannot find it.
-// A key a concurrent sibling declares inside that window therefore reaches
-// neither, and every message carrying it is buffered by the broker unrouted,
-// forever. Two parallel Multi-Instance iterations parking at one shared message
-// catch (SRD-085 FR-3) hit it whenever the second declares its iteration key
-// while the first is still subscribing.
-//
-// The hub calls this once the waiter is reachable, which closes the window from
-// the other side: a key declared before the re-read is picked up here, and one
-// declared after it finds the waiter installed and takes the AddEventKey path.
-//
-// A WILDCARD subscription is left alone. It already receives every message for
-// its name, so it can gain nothing — while keying it would NARROW it, silently
-// cutting off the keyless processor (an instance-starter, or a held
-// subscription for an instance that has established no conversation key) that
-// asked for everything.
-func (mw *messageWaiter) SyncKeys() error {
+// recordKey notes that the waiter's subscription now carries key, ignoring one
+// it already lists — a retry re-issues AddKey deliberately (see
+// AddEventProcessor), and without this the record would grow on every retry.
+func (mw *messageWaiter) recordKey(key string) {
 	mw.m.Lock()
-	sub, keyed := mw.sub, mw.keyed
-	mw.m.Unlock()
+	defer mw.m.Unlock()
 
-	if sub == nil || !keyed {
-		return nil
+	if !slices.Contains(mw.subscribedKeys, key) {
+		mw.subscribedKeys = append(mw.subscribedKeys, key)
 	}
-
-	var errList []error
-
-	for _, k := range mw.subscriptionKeys() {
-		if k == "" {
-			continue
-		}
-
-		if err := sub.AddKey(k); err != nil {
-			errList = append(errList, err)
-		}
-	}
-
-	return errors.Join(errList...)
 }
 
 // NewMessageWaiter builds a messageWaiter for a MessageEventDefinition. It
@@ -182,7 +157,22 @@ func (mw *messageWaiter) EventDefinition() flow.EventDefinition {
 	return mw.eDef
 }
 
-// AddEventProcessor adds ep to the waiter's processor list (idempotent).
+// AddEventProcessor adds ep to the waiter's processor list (idempotent) and
+// extends the live broker subscription with ep's correlation keys.
+//
+// The key half is not an optimization. subscriptionKeys() is read once, by
+// Service, when the subscription is created — so a processor that JOINS an
+// already-serving waiter contributes its keys to nothing. Its instance then
+// sits parked on a subscription that does not carry its key, and an envelope
+// addressed to it matches no subscription and is buffered forever: the
+// message is not misrouted, it is silently never delivered.
+//
+// Parallel multi-instance is where this bites. Iterations of one shared catch
+// register concurrently; whichever arrives first builds and services the
+// waiter with only ITS key, and every later iteration joins here. Whether the
+// bug appears depends purely on whether the second registration lands before
+// or after Service, which is why it surfaced as an intermittent lost
+// delivery rather than a reproducible failure.
 func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	if ep == nil {
 		return errs.New(
@@ -190,11 +180,106 @@ func (mw *messageWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 			errs.C(MessageWaiterError, errs.EmptyNotAllowed))
 	}
 
+	sub := mw.addProcessor(ep)
+
+	if sub == nil {
+		// Not serving yet. Service reads the processor list when it
+		// subscribes, and re-reads it once the subscription is published
+		// (subscribeLateJoiners) — so a join landing on either side of that
+		// read is picked up, and this return strands nothing.
+		return nil
+	}
+
+	// What is MISSING is subscribed, even when ep was ALREADY on the list.
+	//
+	// Returning early on "already present" would make a retry a no-op, and a
+	// retry is exactly what a caller does after this method fails: the
+	// processor is appended before the subscription is extended, so a failed
+	// AddKey leaves ep registered with its key missing. Reporting success on
+	// the second call would then strand it — registered, parked, and
+	// unreachable — which is the very failure this method was changed to
+	// prevent. Deciding on the keys rather than on the membership makes the
+	// retry mean something, and makes the no-op case genuinely a no-op.
+	return mw.subscribeKeys(ep, mw.pendingKeys(ep), sub)
+}
+
+// addProcessor records ep (idempotently) and returns the live subscription,
+// if the waiter is serving.
+//
+// It exists so the lock is released by DEFER rather than by hand. The first
+// version of this unlocked explicitly before the foreign AddKey call below,
+// and a panic in between then left the waiter's mutex held — turning a
+// recoverable fault into a deadlocked Stop, which is how it presented.
+func (mw *messageWaiter) addProcessor(
+	ep eventproc.EventProcessor,
+) messaging.Subscription {
 	mw.m.Lock()
 	defer mw.m.Unlock()
 
-	if idx := slices.Index(mw.processors, ep); idx == -1 {
+	if slices.IndexFunc(mw.processors, sameProcessor(ep)) == -1 {
 		mw.processors = append(mw.processors, ep)
+	}
+
+	return mw.sub
+}
+
+// pendingKeys returns the keys ep declares that this waiter's subscription
+// does not already carry.
+//
+// The decision is made against what the subscription ACTUALLY carries —
+// recorded when it was created and kept current by every path that extends it
+// — rather than against whether ep is on the processor list. A processor may
+// be listed and its key unsubscribed (it joined while Service was blocked in
+// Subscribe), and it may be listed twice over with its key already carried (a
+// caller retrying a failed AddEventProcessor).
+func (mw *messageWaiter) pendingKeys(ep eventproc.EventProcessor) []string {
+	kp, ok := ep.(interface{ CorrelationKeys() []string })
+	if !ok {
+		return nil
+	}
+
+	mw.m.Lock()
+	defer mw.m.Unlock()
+
+	var missing []string
+
+	for _, k := range kp.CorrelationKeys() {
+		if k != "" && !slices.Contains(mw.subscribedKeys, k) {
+			missing = append(missing, k)
+		}
+	}
+
+	return missing
+}
+
+// subscribeKeys extends sub with keys, which the caller obtained from
+// pendingKeys — so an empty slice means "the subscription already carries
+// everything ep declares", including the case of a processor that declares
+// nothing at all (an instance-starter, which wants the wildcard).
+//
+// Taking the keys rather than re-deriving them from ep is what keeps the
+// filtering in ONE place. Deriving them here as well left this function with
+// a no-keys branch and an empty-key branch that no caller could reach, since
+// pendingKeys had already excluded both.
+//
+// It runs OUTSIDE the waiter's lock: AddKey reaches the host's broker, which
+// may be remote and may block, and holding a lock across a foreign call is
+// what FIX-038 §1.1 removed from the hub's registration path.
+func (mw *messageWaiter) subscribeKeys(
+	ep eventproc.EventProcessor, keys []string, sub messaging.Subscription,
+) error {
+	for _, k := range keys {
+		if err := sub.AddKey(k); err != nil {
+			return errs.New(
+				errs.M("couldn't extend the subscription with a joining "+
+					"processor's correlation key"),
+				errs.C(MessageWaiterError, errs.OperationFailed),
+				errs.D(observability.AttrMessageName, mw.name),
+				errs.D(observability.AttrEventProcessorID, ep.ID()),
+				errs.E(err))
+		}
+
+		mw.recordKey(k)
 	}
 
 	return nil
@@ -211,7 +296,7 @@ func (mw *messageWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error
 	mw.m.Lock()
 	defer mw.m.Unlock()
 
-	idx := slices.Index(mw.processors, ep)
+	idx := slices.IndexFunc(mw.processors, sameProcessor(ep))
 	if idx == -1 {
 		return errs.New(
 			errs.M("event processor isn't registered with the waiter"),
@@ -243,28 +328,19 @@ func (mw *messageWaiter) Process(eDef flow.EventDefinition) error {
 		errs.D(observability.AttrEventDefinitionType, string(eDef.Type())))
 }
 
-// Service subscribes the broker for the waiter's message name and starts the
-// delivery goroutine. The subscription is registered synchronously, so a
-// message published after Service returns is delivered (subscribe-before-
-// publish, ADR-006 v.1 §2.4).
 // subscriptionKeys gathers the correlation keys the waiter's processors declare
 // for their subscription (SRD-017 §4.3 declared-filter): a processor that
 // implements CorrelationKeys (the in-instance receiver track) contributes its
 // instance's conversation key values, so the message routes to that instance; a
 // processor that declares none (the instance-starter) contributes nothing,
 // leaving a wildcard subscription.
-// The processor list is copied under the lock and read outside it: a
-// processor's CorrelationKeys reaches into its instance's own lock, and
-// SyncKeys calls this on a live waiter whose processors a concurrent
-// registration may be appending to.
 func (mw *messageWaiter) subscriptionKeys() []string {
 	mw.m.Lock()
-	processors := append([]eventproc.EventProcessor(nil), mw.processors...)
-	mw.m.Unlock()
+	defer mw.m.Unlock()
 
 	var keys []string
 
-	for _, p := range processors {
+	for _, p := range mw.processors {
 		if kp, ok := p.(interface {
 			CorrelationKeys() []string
 		}); ok {
@@ -275,19 +351,35 @@ func (mw *messageWaiter) subscriptionKeys() []string {
 	return keys
 }
 
+// Service subscribes the broker for the waiter's message name and starts the
+// delivery goroutine. The subscription is registered synchronously, so a
+// message published after Service returns is delivered (subscribe-before-
+// publish, ADR-006 §2.4).
+//
+// The key list is read BEFORE the blocking Subscribe and mw.sub is published
+// only after it, so a processor joining in between defers to a Service that
+// has already read the list — the lost-delivery bug AddEventProcessor exists
+// to prevent, one window narrower. Service therefore RE-READS the processors
+// once the subscription is published and subscribes anything that appeared.
+//
+// The hub makes that window unreachable today: registerWaiter builds and
+// services a waiter before publishing it, so no other goroutine holds a
+// reference while this runs. That is an ordering in another package, and a
+// waiter whose correctness rests on it would break silently the day the
+// ordering changes.
 func (mw *messageWaiter) Service(ctx context.Context) error {
-	if mw.state != eventproc.WSReady {
+	if mw.State() != eventproc.WSReady {
 		return errs.New(
 			errs.M("waiter isn't ready to start"),
 			errs.C(MessageWaiterError, errs.InvalidState),
-			errs.D("current_state", mw.state.String()))
+			errs.D("current_state", mw.State().String()))
 	}
 
 	keys := mw.subscriptionKeys()
 
 	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, keys...)
 	if err != nil {
-		mw.state = eventproc.WSFailed
+		mw.setState(eventproc.WSFailed)
 
 		return errs.New(
 			errs.M("couldn't subscribe to the message broker"),
@@ -296,21 +388,61 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.E(err))
 	}
 
+	// Published first, so a joiner arriving from here on takes the ordinary
+	// AddEventProcessor path and subscribes its own key.
 	mw.m.Lock()
 	mw.sub = sub
-	// the broker drops empty keys, so an all-empty key-set is a wildcard there
-	// and must read as one here (SyncKeys never keys a wildcard).
-	mw.keyed = slices.ContainsFunc(keys, func(k string) bool { return k != "" })
+	mw.subscribedKeys = keys
 	mw.m.Unlock()
 
+	if err := mw.subscribeLateJoiners(sub); err != nil {
+		if uErr := sub.Unsubscribe(); uErr != nil {
+			mw.rt.Logger().Warn("message waiter unsubscribe failed after a "+
+				"failed start", observability.AttrWaiterID, mw.id,
+				observability.AttrError, uErr.Error())
+		}
+
+		mw.m.Lock()
+		mw.sub = nil
+		mw.subscribedKeys = nil
+		mw.state = eventproc.WSFailed
+		mw.m.Unlock()
+
+		return err
+	}
+
+	// Running state is published last and together: until the goroutine
+	// exists there is nothing for Stop to stop, and stopCh/done must be in
+	// place before it can be reached.
+	mw.m.Lock()
 	mw.state = eventproc.WSRunned
 	mw.stopCh = make(chan struct{})
 	mw.done = make(chan struct{})
+	mw.m.Unlock()
 
 	mw.rt.Logger().Debug("message waiter serviced",
 		observability.AttrWaiterID, mw.id, observability.AttrMessageName, mw.name)
 
 	go mw.runMessageService(ctx, sub)
+
+	return nil
+}
+
+// subscribeLateJoiners extends sub with the keys of every processor whose keys
+// the subscription does not already carry — those that joined while Subscribe
+// was blocking, and whose AddEventProcessor deferred to this method.
+func (mw *messageWaiter) subscribeLateJoiners(
+	sub messaging.Subscription,
+) error {
+	mw.m.Lock()
+	processors := append([]eventproc.EventProcessor(nil), mw.processors...)
+	mw.m.Unlock()
+
+	for _, ep := range processors {
+		if err := mw.subscribeKeys(ep, mw.pendingKeys(ep), sub); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }

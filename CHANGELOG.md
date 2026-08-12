@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The SQLite Repository adapter** (SRD-091, ADR-037, closes #316).
+  `adapters/sqlite` implements the durable Repository contract over
+  a pure-Go driver (`modernc.org/sqlite`, no CGo): CAS saves,
+  ownership leases, the group registry and the group-scoped recovery
+  listing. `Open(path)` owns its pool and is what most callers want,
+  `OpenMemory()` covers the ephemeral case, and `New(*sql.DB)` serves
+  a host that manages its own — refusing a pool that cannot enforce
+  the schema's constraints rather than running without them.
+
+  It is the first Repository adapter whose conformance suite actually
+  RUNS in CI. `adapters/postgres` carries the same one-line
+  `repositorytest.Conformance` call, but every postgres test is gated
+  on a DSN environment variable and skips when unset, which CI never
+  sets — so the published contract had only ever executed against
+  `memrepo`, the implementation it was written beside.
+
+  Declares itself NOT cluster-safe (`renv.ClusterAware`), naming the
+  single-writer limit and pointing at `adapters/postgres`.
+
+- **ADR-037 — SQL Repository adapters.** The contract two SQL
+  adapters arrived at independently: the module shape, connection
+  ownership ("set what you own, verify what you are handed"), the
+  refuse-vs-warn split for required settings, portable value
+  encodings, the cluster declaration, and per-dialect migration
+  serialization.
+
+### Fixed
+
+- **Registering an event processor the engine cannot compare is now
+  refused, not a panic** (SRD-090.A M2d). A waiter identifies its
+  processors by value, and Go panics rather than reporting false when
+  two interface values of one uncomparable dynamic type meet — so a host
+  implementing the public `eventproc.EventProcessor` on a struct with a
+  slice or map field crashed the hub on its **second** registration for
+  one event definition, inside the waiter, with the first having
+  succeeded. Registration now rejects such a processor at the boundary,
+  naming the type and saying to register a pointer to it instead.
+
+- **A message addressed to a parallel-MI iteration could be lost
+  outright** (SRD-091 branch). A message waiter's broker subscription
+  is built once, when the waiter starts, from the correlation keys of
+  the processors known at that moment. A processor that JOINED an
+  already-serving waiter — which is what every iteration after the
+  first does at a shared catch node — contributed its key to nothing,
+  so an envelope addressed to it matched no subscription and was
+  buffered forever. Not misrouted: silently never delivered.
+
+  Whether it appeared depended purely on whether the second
+  registration landed before or after the waiter started, which is why
+  it read as an intermittent test flake for weeks. Measured on the
+  narrowed reproduction: 3 failures in 6 runs before, 0 in 6 after.
+
+- **Every event waiter could panic on a processor that is not
+  comparable.** `slices.Index` over the processor list compares
+  interface values with `==`, which panics when the dynamic type holds
+  a slice or a map — as a processor carrying correlation keys
+  naturally does. Six sites across the message, signal and timer
+  waiters; identity is now compared by ID.
+
+- **A waiter's running state is published atomically.** `Service` set
+  the state, the stop channel and the done channel outside the lock it
+  took for the subscription, and it re-read the processor list only
+  once — before the blocking `Subscribe`. A processor joining in
+  between deferred to a `Service` that had already read the list, so
+  its key reached nobody. The hub's ordering makes that unreachable
+  today (a waiter is serviced before it is published, so nothing else
+  holds a reference), but that is an invariant of a different package;
+  `Service` now catches up any processor that appeared while it was
+  subscribing.
+
+- **A migration whose context died could wedge the whole database.**
+  The rollback was issued on the same context that had just failed —
+  and `ExecContext` on a canceled context returns without sending the
+  statement, so the connection went back to the pool still inside a
+  write transaction. Every later `BEGIN` on that pool then failed with
+  "cannot start a transaction within a transaction", while the pooled
+  connection held SQLite's single writer lock. The rollback now runs
+  under `context.WithoutCancel`, and a connection that cannot be
+  rolled back is discarded rather than pooled. `sql.Tx.Rollback`
+  handles this; driving the transaction by hand to get `BEGIN
+  IMMEDIATE` moved the obligation into the adapter.
+
+- **`OpenMemory` no longer warns about WAL on every call.** An
+  in-memory database cannot journal to WAL — there is no file to
+  journal beside — so the concurrency check fired on every single
+  construction, which trains a reader to ignore the adapter's
+  warnings. A file-backed pool outside WAL still warns.
+
+- **A `%v` over an engine object no longer reflects across it**
+  (FIX-040, closes #314). `Instance` and its tracks now implement
+  `fmt.Stringer`, rendering as their element id. Without it, anything
+  formatting one with `%v` — a log line, an error, a test double's
+  argument matcher — walked the struct through reflection, reading the
+  correlator's maps and the mutexes guarding them from whatever
+  goroutine happened to be formatting. That read takes no lock and
+  cannot: `fmt` reaches the fields behind the type's back. The visible
+  symptom was a `-race` report whose every frame was engine code
+  holding its locks correctly. Diagnostics improve as a side effect —
+  an instance prints as its identity rather than a page of internals.
+
 ### Changed
 
 - **A parallel Multi-Instance leaf activity's instances are no longer
@@ -33,81 +135,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records and the group record it used to be scattered across.
   Documents written by the previous release still restore.
 
-### Fixed
-
-- **A correlation key learned while a message waiter was being
-  registered no longer disappears** (SRD-090.A M2c, part of #313). The
-  waiter subscribes the broker — reading the correlation keys its
-  processors declare — before the hub installs it in its registry, and
-  the lazy-association path that grows a live subscription looks the
-  waiter up in that same registry. A key declared between those two
-  moments reached neither, and every message carrying it was buffered by
-  the broker unrouted, forever: the receiver simply waited. Two parallel
-  Multi-Instance iterations parking at one shared message catch declare
-  their keys concurrently, so they landed in that window about once in
-  three runs. The waiter now re-reads its processors' keys once the hub
-  has made it reachable.
-
-  The same re-read fixes a second case that was never a race: a
-  processor **joining** an existing waiter never contributed its keys at
-  all. With the engine's held subscriptions — one holder per instance,
-  all joining one waiter for the shared catch definition — a second
-  conversation was unreachable and its instance never woke. A wildcard
-  subscription is deliberately left as one: it already receives every
-  message for its name, and keying it would cut off the keyless
-  processor that asked for exactly that.
-
-- **Registering an event processor the engine cannot compare is now
-  refused, not a panic** (SRD-090.A M2d). A waiter identifies its
-  processors by value, and Go panics rather than reporting false when
-  two interface values of one uncomparable dynamic type meet — so a host
-  implementing the public `eventproc.EventProcessor` on a struct with a
-  slice or map field crashed the hub on its **second** registration for
-  one event definition, inside the waiter, with the first having
-  succeeded. Registration now rejects such a processor at the boundary,
-  naming the type and saying to register a pointer to it instead.
-
-- **A `%v` over an engine object no longer reflects across it**
-  (FIX-040, closes #314). `Instance` and its tracks now implement
-  `fmt.Stringer`, rendering as their element id. Without it, anything
-  formatting one with `%v` — a log line, an error, a test double's
-  argument matcher — walked the struct through reflection, reading the
-  correlator's maps and the mutexes guarding them from whatever
-  goroutine happened to be formatting. That read takes no lock and
-  cannot: `fmt` reaches the fields behind the type's back. The visible
-  symptom was a `-race` report whose every frame was engine code
-  holding its locks correctly. Diagnostics improve as a side effect —
-  an instance prints as its identity rather than a page of internals.
-
-### Changed
-
-- **BPMN converter: the import parser is rebuilt, and six of its own
-  defects are fixed** (ADR-024 v.4, SRD-089.A). Element dispatch is now
-  a table keyed by parse context and local name rather than six
-  disagreeing `switch` statements, and forward references (a gateway's
-  `default` today; `attachedToRef`, `calledElement` and link pairing
-  next) resolve through one mechanism that names the referring element,
-  the attribute and the missing id — and distinguishes a target of the
-  **wrong kind** from one that does not exist, since a `default` naming
-  a start event is a modeling mistake, not a typo.
-
-  Six behaviours change. **Export is deterministic**: it walked Go's
-  randomized map iteration, so two exports of one process differed and
-  an exported file could not be diffed; nodes are now emitted from the
-  start events along outgoing flows in flow-id order, unreachable ones
-  by id. A **`<task>`/`<manualTask>`/`<userTask>` with no `name`**
-  imports instead of being refused (BPMN makes `name` optional; the id
-  is the fallback, as `<process>` and `<serviceTask>` already did).
-  **`<bpmn:documentation>`** is imported onto `Docs()` and written back
-  with `textFormat`, instead of being dropped in both directions.
-  **`serviceTask@implementation`** round-trips. A **`parallelGateway`**
-  is no longer exported with a `default` attribute BPMN §13.4.1 does
-  not define. And the **purely visual artifacts** (`<textAnnotation>`,
-  `<group>`, `<category>`, plus `<relationship>`/`<import>`) are
-  skipped rather than refused — a runnable file was being rejected for
-  carrying a comment. `<association>` is deliberately still refused:
-  it carries compensation semantics.
-
 ### Added
 
 - **`activities.WithImplementation`** (SRD-089.A). BPMN carries
@@ -119,7 +146,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Adapter lifecycle and observation hooks** (SRD-090, closes #269).
+- **Adapter lifecycle and observation hooks** (SRD-088, closes #269).
   `renv.Starter`, `renv.Stopper`, `renv.HealthChecker` and
   `renv.RuntimeAware` join `Migrator` and `ClusterAware` in
   `pkg/renv/capabilities.go`. All are optional and satisfied
@@ -130,7 +157,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   observes. `Stop` is idempotent by contract, so an adapter the host
   started before the engine existed can be stopped by either.
   `Thresher.HealthCheck` asks every seam and joins what they report.
-- **Four conformance helpers for adapter authors** (SRD-090):
+- **Four conformance helpers for adapter authors** (SRD-088):
   `messagingtest`, `expressiontest`, `taskstest` and `authtest`, the
   names ADR-003 §4.2 had listed but nothing provided. Each publishes
   its port's contract as `Conformance(t, factory)` — one line in an
@@ -138,7 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suite can fail. `messagingtest` and `taskstest` also publish
   `Waits()`/`SetWaits()`, so an adapter over a remote backend can widen
   bounds tuned for an in-process one.
-- **A dependency-free Script Task engine** (SRD-090):
+- **A dependency-free Script Task engine** (SRD-088):
   `pkg/script/gofunc` runs a Go function the host registered under a
   name, the same move `gooper` makes for Service Tasks. It is opt-in —
   an auto-wired empty registry would be `##None` with a longer name —
@@ -147,7 +174,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **A process whose Script Task no configured engine can run is refused
-  at registration** (SRD-090). `RegisterProcess` walks the model, nested
+  at registration** (SRD-088). `RegisterProcess` walks the model, nested
   Sub-Processes included, and rejects any Script Task whose
   `scriptFormat` no wired engine claims — naming the task, the format,
   the formats that ARE registered, and the option to wire one. This
@@ -155,31 +182,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   asynchronously, inside an already-running instance, as an incident.
   **Migration:** a model with a Script Task now needs its engine wired
   before `RegisterProcess`, not before the token arrives.
-- **`pkg/**` may not import `internal/`** (SRD-090), enforced by
+- **`pkg/**` may not import `internal/`** (SRD-088), enforced by
   depguard, excepting the `pkg/thresher` facade. This is what makes a
   bundled battery a reference implementation an outside author can
   copy.
-- **The examples are linted** (SRD-090). An `exclusions.paths` entry had
+- **The examples are linted** (SRD-088). An `exclusions.paths` entry had
   been suppressing every finding across all 49 example modules, so the
   `examples-no-internal` rule had never fired. 198 real issues surfaced
   and are fixed.
 
 ### Fixed
 
-- **`goexpr.Engine.Evaluate` panicked on a nil expression** (SRD-090)
+- **`goexpr.Engine.Evaluate` panicked on a nil expression** (SRD-088)
   where `lite` returns a named error — a public extension point turning
   a caller's bug into a library crash. A nil *source* is still passed
   through, deliberately: a `GExpression` may carry one bound at
   construction.
-- **A failed start left already-started adapters running** (SRD-090).
+- **A failed start left already-started adapters running** (SRD-088).
   `startSeams` now unwinds the started prefix in reverse before
   returning, joining any rollback failure onto the cause rather than
   replacing it.
-- **A replaced Data Store stayed in the lifecycle** (SRD-090).
+- **A replaced Data Store stayed in the lifecycle** (SRD-088).
   `WithDataStore` documented replace-by-ref and the registry honoured
   it, but the lifecycle list appended — so a superseded store was still
   started, health-checked and stopped while serving no reference.
-- **`gofunc` could register an unreachable script** (SRD-090): the name
+- **`gofunc` could register an unreachable script** (SRD-088): the name
   was stored untrimmed and looked up trimmed, so a padded registration
   failed as "no script registered" on a name plainly in the registry.
 
