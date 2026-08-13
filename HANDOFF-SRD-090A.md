@@ -1,13 +1,13 @@
-# SRD-090.A — handoff after M3b (first half)
+# SRD-090.A — handoff after M3b's five problems, before the flip
 
 **Branch** `feat/node-execution-model`, worktree
 `/home/dober/wrk/development/go/src/gobpm/iter-events` (sibling worktree; the
 directory name `iter-events` predates the branch rename — cosmetic only).
 
-**Base** `origin/master` = `4ba96cdc` (PR #322, merged in 2026-08-12).
-Sixteen commits ahead, 0 behind, tip `e87d243d`. Nothing pushed. Last gate:
-`make ci` **PASS**, 14/14, head `e87d243d`, diff-coverage **97.6%** of 453
-changed lines.
+**Base** `origin/master` = `252cbcab` (merged in at `d3e62bf0`, 21 commits
+including FIX-041 and #326). Twenty-seven commits ahead, 0 behind, tip
+`86a24d4d`. Nothing pushed. Last full gate: `make ci` **PASS**, 14/14, head
+`6a5ac97f`; `86a24d4d`'s run is the one in flight.
 
 **M2c is gone — master fixed the same defect first.** `94b88765` on master
 ("a joining processor's correlation key never reached the broker") is the
@@ -24,10 +24,10 @@ because the divergence ran long enough for one bug to be fixed twice. With
 M3b–M4 and SRD-090.B still ahead, merging on every master move is cheaper
 than one reconciliation at PR time.
 
-**Unsettled — the ADR pinning convention.** Master's `c4ac29d8` is titled
-"stop pinning ADR versions", but `ADR-033` still pins versions throughout
-its own header and is still v.5, so SRD-090.A's pins are NOT stale. Confirm
-which practice holds before `/check-srd`, which audits exactly this.
+**Settled — the ADR pinning convention.** Master's `1109f750` + `8ffdc288`
+say the CITING document decides: SAD/ADR and code comments cite unpinned,
+SRD/FIX keep their pins as the one-shot snapshot of what the author read.
+SRD-090.A is an SRD, so its pins stand and no branch work is owed.
 
 **Task** issue **#313** — the iteration decorator should own the decorated
 node's event registration. **This branch is meant to CLOSE #313.**
@@ -264,86 +264,91 @@ one shape where restore and boundary teardown are both live, and flipping
 first turns every restore test red at once with no way to tell which of the
 three causes is responsible.
 
-### The gate is RED at `2cb7fd3a` — diff-coverage 90.5% of 529 (min 95)
+### The gate went RED at `2cb7fd3a`, and what cleared it
 
-Landing the executor half unrouted was a sequencing mistake. Lint and the
-whole suite are clean, but `compositeInstanceFor`, `captureInstanceOutput`,
+Landing the executor half unrouted was a sequencing mistake: diff-coverage
+90.5% of 529 changed lines against a floor of 95. Lint and the whole suite
+were clean — `compositeInstanceFor`, `captureInstanceOutput`,
 `parallelRun.collectOutput` and `handleScopeOpen`'s segment/binds/ordinal
-branches have no caller, so they are uncovered by construction. Worst
-files: `scope_runtime.go` 72.7%, `scope_exec.go` 85.7%, `activity_exec.go`
-88.0%, `scope_decorator.go` 89.7%.
+branches simply had no caller, so they were uncovered by construction.
 
-Two ways out, and the FIRST is the honest one:
+Cleared at `dc375cee` with eleven white-box tests (96.3% of 508), NOT by
+relaxing `COVER_MIN` or excluding the paths. All four were reachable
+without the routing flip — `scope_exec_test.go`'s `openedScopeExec` is the
+model: a stand-in loop accepts the request and releases via
+`close(e.drain)`. **The lesson worth keeping: inert code cannot be
+covered, so do not land a slice ahead of the thing that routes it unless
+you are prepared to test it white-box in the same commit.**
 
-1. **White-box tests now.** All four are reachable without the routing
-   flip. `scope_exec_test.go`'s `openedScopeExec` helper is the model — a
-   stand-in loop accepting the request and releasing via `close(e.drain)`.
-   A test can assert the segment the request carried, that the binds were
-   applied at the child scope, and that a capture cell filled by the
-   loop reaches `instanceOutputs` through `collectOutput`.
-2. Route it (the flip), which makes the code live — but that needs
-   problems 3–5 first, so it is not available yet.
+### Problems 3 and 5 — landed at `6a5ac97f`, as one lookup
 
-Do not "fix" this by relaxing `COVER_MIN` or by excluding the paths.
+They asked the same question — which scopes does this host still have open
+— so `instanceScopesOf(host)` answers both, in ordinal order because a
+teardown feeds the ledger the reverse-order compensation sweep reads.
+`handleCancelInstances` tears them down and reports the count; the
+decorator's `stopRemaining` calls it after `cancelRest()`.
 
-### What is left in M3b — problems 3, 4, 5
+**The trap, avoided:** an instance cannot close its own scope on the way
+out. What woke it IS the canceled context, and `scopeRoundtrip` honors
+ctx, so the request fails and leaks the very scope it meant to close. The
+teardown belongs to whoever cancelled.
 
-3. **completionCondition cancellation.** The leaf path already has the
-   mechanism: `awaitParallel` calls `run.cancelRest()`, and each instance
-   faults out of its own `runCtx`. A `scopeExec` blocked in `awaitDrain`
-   already selects on `ctx.Done()`, so it unblocks — but its SCOPE stays
-   open, and the loop still holds an entry for it. The instance needs to
-   ask the loop to cancel its own scope on the way out (`cancelScope` with
-   `PhaseCanceled`, which `cancelOpenInstances` does group-wise today), and
-   `awaitParallel` must keep counting those as `terminated`, which it
-   already does via the `stopping` test.
+### Problem 4 — landed at `86a24d4d`
 
-   **The trap, found while looking at it — do not build it the obvious
-   way.** The instance cannot clean up by sending a scope request on its
-   way out, because the thing that woke it IS a canceled context, and
-   `scopeRoundtrip` honors ctx: the roundtrip would fail immediately and
-   the scope would leak anyway. Cleanup driven by the cancelled party is
-   self-defeating here.
+Restore needs no record of its own. The ordinal is in the scope's segment
+(`sp-<id>-<ord>`), so `restoredScopeHost` derives it; N and the staging
+already ride the `IterationRecord`. `MIGroupRecord.Open` is therefore dead
+weight, not a fact — one less table that can disagree with the scope table.
 
-   So the teardown belongs to whoever did the cancelling. Either the
-   decorator asks the loop ONCE, after `cancelRest()`, to cancel the
-   scopes of the instances it just stopped (it knows their ordinals, and
-   therefore their segments), or the loop derives them itself. That is the
-   same question problem 5 asks — how the loop finds one host's open
-   instance scopes with no group to consult — so **problems 3 and 5 should
-   be solved together, by one lookup**, and not separately. Iterating
-   `ls.scopes` for `entry.host == host` answers both.
-4. **Restore.** `miParallelSeed` + `handleReAttach` → the `IterationRecord`
-   the leaf uses. `handleScopeOpen`'s restored branch tests
-   `entry.host == req.host`, which is true for ALL N instances of one host
-   — it has to become per-path, since each instance now re-attaches to its
-   own `sp-<id>-<ord>`. `restoredStates` already skips completed ordinals,
-   so the decorator half is done.
-5. **Boundary teardown.** `boundary_watch.go:569` looks up `ls.miGroups[host]`
-   and calls `cancelParallelGroup`. With no group, the loop needs another
-   way to find a host's open instance scopes — iterating `ls.scopes` for
-   `entry.host == host` is the direct answer, and is what problem 4's
-   per-path test makes cheap to write.
-3. **Cancellation on a fired completionCondition.** Today one loop-side group
-   teardown (`scopeComplete cancel` → `cancelOpenInstances`). It becomes
-   per-instance scope cancellation, driven by the decorator the way the leaf
-   drives `cancelRest`.
-4. **Restore.** `miParallelSeed` + `handleReAttach` → the `IterationRecord`
-   the leaf already uses, with each instance re-attaching through
-   `handleScopeOpen`'s restored-entry branch (its `entry.host == req.host`
-   test needs to become per-path).
-5. **Boundary teardown.** `cancelParallelGroup` has a caller in
-   `boundary_watch.go` — an interrupting boundary on a fanned-out host
-   (SRD-056.A FR-13). It needs the executor equivalent.
+Four things that reading needs, each of which was a way to get it wrong:
+
+- **Precedence.** `sp-a-1` is both instance 1 of node `a` and the own
+  scope of a node named `a-1`; only one can be open, but a single pass
+  answered whichever the track table listed first. Own scopes are matched
+  across ALL candidates first, and only a `fansOut` node can own an
+  instance.
+- **The re-attach adopts the output cell**, not just the drain channel —
+  a restored entry has neither, and without the cell a resumed instance's
+  output is read from nowhere and its slot stays nil.
+- **The set is posted BEFORE the instances start** (`runParallel` →
+  `postPosition`). The window between activation and the first completion
+  recorded an empty set, which restores as "all N still to run". The leaf
+  fan-out had the same hole.
+- **An instance's drain no longer advances the mirror** (`markIterDrain`
+  skips `entry.instance`): the host's loopCounter stands still for the
+  whole fan-out.
+
+A document whose scope table and executor set disagree — an instance
+recorded completed whose scope is still open — is refused at adoption
+rather than half-restored. The reverse window does not exist, because the
+drain closes the scope before the decorator reports it.
+
+Also swept, being the same shape as the open-side ordinal fix: the
+Completed and Canceled facts reported the host's shared loopCounter for a
+fanned-out instance. Both now ask `scopeFactOrdinal`.
+
+### What is left in M3b — the flip, then the retirement
+
+The two flip edits above, plus `boundary_watch.go:569` (`cancelHostScope`)
+onto `instanceScopesOf` — an interrupting boundary on a fanned-out host
+(SRD-056.A FR-13) is the last caller of `cancelParallelGroup`.
 
 Then retire: `miGroup`, `miParallelSeed`, `handleFanOut`, `handleReArm`,
 `handleComplete`, `handleReAttach`, `openParallelInstance`,
-`captureParallelOutput`, `cancelOpenInstances`, `cancelParallelGroup`,
-`markIterDrain`, the `scopeFanOut`/`scopeReArm`/`scopeComplete`/`scopeReAttach`
-ops, `scopeEntry.group`/`ordinal`/`awaitAttach`/`drainPending`,
-`track.awaitScopeDrained` (only `runMIParallel` still calls it), `doc.MIGroups`
-on the WRITE side (the read side stays for schema-5), and `ls.miGroups` with
-`maybeDehydrate`'s `len(ls.miGroups) > 0` guard. T-8.
+`captureParallelOutput`, `cancelOpenInstances`, `cancelParallelGroup`, the
+`scopeFanOut`/`scopeReArm`/`scopeComplete`/`scopeReAttach` ops,
+`scopeEntry.group`, `track.awaitScopeDrained` (only `runMIParallel` still
+calls it), `doc.MIGroups` on the WRITE side (the read side stays for
+schema-5) — with `adoptRestoredGroups` and `MIGroupRecord.Open`, whose job
+the segment derivation took over — and `ls.miGroups` with `maybeDehydrate`'s
+`len(ls.miGroups) > 0` guard. T-8.
+
+Three entries this list carried before M3b are NOT retired, and the earlier
+draft was wrong to name them: `markIterDrain` still advances the mirror for
+every SERIAL pass, and `scopeEntry.ordinal` / `awaitAttach` /
+`drainPending` are what the executor-driven restore itself runs on — the
+ordinal identifies a fanned-out instance, and the other two hold its drain
+until its new executor re-attaches.
 
 **M3c — residency by what an instance awaits (FR-8).** Not a predicate
 change. Confirmed by reading the release path:
