@@ -101,6 +101,15 @@ func (ls *loopState) captureSequentialOutput(
 		return nil
 	}
 
+	// a FANNED-OUT instance stages through its own cell (captureInstanceOutput
+	// → the decorator's positional slot), never through the host's pass
+	// counter: that counter stands still for the whole fan-out, so every
+	// instance would write slot 0 and the last one to drain would win
+	// (SRD-090.A M3b).
+	if entry.instance {
+		return nil
+	}
+
 	d, err := ls.inst.sc.plane.GetData(childPath, st.outputItem)
 	if err != nil {
 		return err
@@ -417,4 +426,28 @@ func drivesOwnIteration(node flow.Node) bool {
 	}
 
 	return multiInstanceOf(node) != nil
+}
+
+// bindMICounters publishes the §2.9 runtime attributes at the host scope off the
+// loop (SRD-056.A FR-12) — the frozen instance count, the still-running count
+// (n − completed − terminated), and the completed / terminated counts. Called by
+// the decorator after each delivered drain, before it evaluates the
+// completionCondition. A mutex-safe plane write, like the sequential slice's
+// off-loop binds.
+func (t *track) bindMICounters(n, completed, terminated int) error {
+	binds := []miBinding{
+		{name: "numberOfInstances", value: n},
+		{name: "numberOfActiveInstances", value: n - completed - terminated},
+		{name: "numberOfCompletedInstances", value: completed},
+		{name: "numberOfTerminatedInstances", value: terminated},
+	}
+
+	for _, b := range binds {
+		if err := t.instance.sc.bindDataItemAt(
+			t.scopePath, b.name, b.value); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

@@ -99,12 +99,6 @@ type loopState struct {
 	// drained by the terminal-event accounting, closed + host-resumed at
 	// zero.
 	scopes map[scope.DataPath]*scopeEntry
-	// miGroups is the loop-owned parallel Multi-Instance registry (SRD-056.A): a
-	// host track id → the miGroup coordinating its N concurrent instance scopes.
-	// A parallel MI host fans out N scopes at once (sharing this one host) and
-	// resumes only when the group's last instance drains — the N-of-N barrier the
-	// per-scope scopeEntry model cannot express alone.
-	miGroups map[string]*miGroup
 	// ledgers is the per-scope compensation completion ledger (ADR-026 §2.1,
 	// SRD-059 FR-3): completion-ordered compensable entries with their data
 	// snapshots, keyed by the scope path they completed in (the root path
@@ -159,7 +153,6 @@ func newLoopState(inst *Instance) *loopState {
 		scopeHandlers:    map[scope.DataPath][]*scopeHandlerWatch{},
 		scopeInterrupted: map[scope.DataPath]bool{},
 		scopes:           map[scope.DataPath]*scopeEntry{},
-		miGroups:         map[string]*miGroup{},
 		iter:             map[string]*iterMirror{},
 		ledgers:          map[scope.DataPath][]*ledgerEntry{},
 		sweeps:           map[string]*sweepRun{},
@@ -1317,7 +1310,7 @@ func (ls *loopState) maybeDehydrate(ctx context.Context) {
 	}
 
 	// the SRD-070 capture guards: a cut can't be taken mid-construct.
-	if len(ls.calls) > 0 || len(ls.miGroups) > 0 || len(ls.sweeps) > 0 {
+	if len(ls.calls) > 0 || len(ls.sweeps) > 0 {
 		return
 	}
 

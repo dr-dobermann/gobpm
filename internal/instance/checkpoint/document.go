@@ -98,6 +98,12 @@ type Document struct {
 	// MIGroups are the parallel multi-instance open sets (Schema 4,
 	// SRD-082 FR-1): which per-instance scopes are still open, at which
 	// ordinals, with the outputs collected so far.
+	//
+	// READ ONLY from Schema 6 (SRD-090.A FR-6/FR-7). Nothing writes it:
+	// a fan-out's position is its host's Iteration record, and the open
+	// instances are their own scopes — whose ordinals are in their paths,
+	// so the set is derived rather than stored. It stays so a document
+	// written before that still restores; the restore translates it.
 	MIGroups []MIGroupRecord `json:"mi_groups,omitempty"`
 	// Sweeps are the resolving compensation throws (Schema 4, SRD-082
 	// FR-1): the remaining queue and the entry being undone — the
@@ -274,6 +280,8 @@ type OpenScope struct {
 // the collected outputs. Completed instances stay completed — their
 // outputs are in Staging; terminated counts are computed at cancel
 // time and never stored.
+//
+// Written by Schema 4 and 5 only — see Document.MIGroups.
 type MIGroupRecord struct {
 	HostTrack string          `json:"host_track"`
 	Staging   json.RawMessage `json:"staging,omitempty"`

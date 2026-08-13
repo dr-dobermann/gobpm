@@ -6,33 +6,23 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
-// scopeOp is the operation a scopeRequest asks the single-writer loop to perform
-// for an off-loop iteration decorator (ADR-025 v.2 §2.12). scopeOpen is the
-// serial open (Standard Loop / sequential MI, one child scope per pass); the
-// remaining ops drive a PARALLEL Multi-Instance's fan-out-then-await-all barrier
-// (SRD-056.A), whose N concurrent drains the cap-1 runner park cannot take at
-// once — so the loop delivers them one at a time through the re-arm handshake.
+// scopeOp is the operation a scopeRequest asks the single-writer loop to
+// perform for an off-loop iteration decorator (ADR-025 v.3 §2.13). scopeOpen
+// serves EVERY instance that is a child scope — a serial pass and one of N
+// fanned out alike, which is what let the group barrier's four ops (fan out,
+// re-arm, complete, re-attach) retire: a decorator that holds its instances
+// as executors counts its own completions, and each instance waits on its own
+// drain instead of queueing onto the host's single park (SRD-090.A M3b).
 type scopeOp int
 
 const (
 	// scopeOpen opens one child scope for a serial pass and parks the host for
 	// its drain (Standard Loop, sequential MI).
 	scopeOpen scopeOp = iota
-	// scopeFanOut opens all N instance scopes of a parallel Multi-Instance,
-	// builds the loop-owned group barrier, and marks the host waiting.
-	scopeFanOut
-	// scopeReArm re-marks the host waiting and delivers the next queued drain —
-	// the handshake step that serializes N concurrent drains onto the cap-1 park.
-	scopeReArm
-	// scopeComplete finalizes the group: optionally cancels the still-open
-	// instances (a completionCondition fired), publishes the assembled output,
-	// and drops the group.
-	scopeComplete
 	// scopeNote informs the loop's iteration mirror that the runner's
 	// completionCondition fired (SRD-082 FR-2) — the one decorator
 	// decision the loop cannot observe from the open/drain protocol.
@@ -51,11 +41,6 @@ const (
 	// finished activity, and it is exactly where a restore would lose
 	// the set. One authority for both is the simpler contract.
 	scopeIterPost
-	// scopeReAttach is a RESTORED parallel runner re-joining its adopted
-	// group (SRD-082 FR-4): the loop lifts the entries' awaitAttach
-	// holds — the roundtrip is the fence — and completes any drains
-	// that arrived early.
-	scopeReAttach
 	// scopeCancelInstances tears down the still-open instance scopes of one
 	// host and reports how many (SRD-090.A M3b). It replaces the group-wide
 	// teardown for executor-driven instances, and it is asked by whoever
@@ -68,16 +53,13 @@ const (
 
 // scopeRequest is a looped composite's off-loop iteration decorator asking the
 // single-writer loop to perform a scope operation (op) for one iteration step
-// (SRD-054 §2.12 / FR-8a; SRD-056.A for the parallel ops): host is the composite
-// host track, node is the composite node, and reply carries the loop's verdict
-// back to the decorator's runner goroutine. For a serial open the pass ordinal is
-// bound as loopCounter by the decorator itself, off the loop (§4.6) — a plane
+// (SRD-054 §2.12 / FR-8a): host is the composite host track, node is the
+// composite node, and reply carries the loop's verdict back to the
+// decorator's runner goroutine. For a serial open the pass ordinal is bound
+// as loopCounter by the decorator itself, off the loop (§4.6) — a plane
 // write, mutex-safe like the leaf loop's bind — so it is set before the
-// continuation test reads it and before the scope opens. n / col carry a parallel
-// fan-out's instance count and input collection; cancel asks scopeComplete to tear
-// down the still-open instances first.
+// continuation test reads it and before the scope opens.
 type scopeRequest struct {
-	col   data.Collection
 	host  *track
 	node  flow.Node
 	reply chan scopeReply
@@ -106,12 +88,12 @@ type scopeRequest struct {
 	// instance writes only its own scope.
 	binds []miBinding
 	op    scopeOp
-	n     int
+	// n is the completed-instance count a scopeIterPost carries.
+	n int
 	// ordinal is the instance's own 0-based index, reported as its Opened
 	// fact (FR-14) rather than the host's shared loopCounter. Read only
 	// when segment is set, since that is what marks a per-instance open.
 	ordinal int
-	cancel  bool
 }
 
 // instanceCapture is one fanned-out composite instance's output slot.
@@ -130,8 +112,8 @@ type instanceCapture struct {
 	filled bool
 }
 
-// scopeReply is the loop's answer to a scopeRequest: the opened child path (open),
-// the count of instances torn down (scopeComplete with cancel), or an error the
+// scopeReply is the loop's answer to a scopeRequest: the opened child path,
+// the count of instances torn down (scopeCancelInstances), or an error the
 // decorator faults on.
 type scopeReply struct {
 	err        error
@@ -155,7 +137,7 @@ func (inst *Instance) scopeRoundtrip(
 
 // scopeExchange is scopeRoundtrip's full-reply form: it hands req to the loop and
 // returns the whole scopeReply, so a caller that needs a field other than the
-// opened path (a parallel scopeComplete reads the terminated count) can read it.
+// opened path (a teardown reads the terminated count) can read it.
 // scopeRoundtrip is the thin path-only wrapper.
 func (inst *Instance) scopeExchange(
 	ctx context.Context,
@@ -192,12 +174,6 @@ func (inst *Instance) scopeExchange(
 // serve a parallel Multi-Instance's off-loop barrier (SRD-056.A).
 func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 	switch req.op {
-	case scopeFanOut:
-		ls.handleFanOut(ctx, req)
-	case scopeReArm:
-		ls.handleReArm(ctx, req)
-	case scopeComplete:
-		ls.handleComplete(req)
 	case scopeNote:
 		if m, ok := ls.iter[req.host.ID()]; ok {
 			m.conditionMet = true
@@ -218,8 +194,6 @@ func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 		// which instances to run has changed the instance's durable
 		// position, whether or not any of them has finished.
 		ls.checkpointNow(ctx)
-	case scopeReAttach:
-		ls.handleReAttach(ctx, req)
 	case scopeCancelInstances:
 		ls.handleCancelInstances(req)
 	default:
@@ -351,22 +325,4 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 	ls.armScopeHandlers(ctx, sh.Nodes(), child)
 
 	req.reply <- scopeReply{scopePath: child}
-}
-
-// awaitScopeDrained parks the decorator's runner on evtCh for the pass's scope
-// drain — the loop delivers a scopeDone the same way it resumes any parked
-// composite host (dispatchToParked). It honors ctx cancellation and the loop
-// closing evtCh on stop, so a mid-pass interrupt/terminate unblocks the decorator
-// (SRD-054 NFR-4).
-func (t *track) awaitScopeDrained(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case _, ok := <-t.evtCh:
-		if !ok {
-			return context.Canceled
-		}
-
-		return nil
-	}
 }

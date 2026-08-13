@@ -102,8 +102,7 @@ func (ls *loopState) ensureIterMirror(
 // (postPosition). Deriving it here would overwrite the truth with a zero
 // (SRD-090.A M3b).
 func (ls *loopState) markIterDrain(entry *scopeEntry) {
-	if entry.group != nil || entry.instance ||
-		!drivesOwnIteration(entry.node) {
+	if entry.instance || !drivesOwnIteration(entry.node) {
 		return
 	}
 

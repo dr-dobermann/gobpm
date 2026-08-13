@@ -852,9 +852,6 @@ func TestLeafMIParallelKillAndResume(t *testing.T) {
 			liveOrdinals(rec) == 2
 	})
 
-	require.Empty(t, doc.MIGroups,
-		"a leaf opens no instance scope, so it forms no group (FR-4)")
-
 	require.Eventually(t, func() bool { return count.Load() == 3 },
 		3*time.Second, 5*time.Millisecond,
 		"all three started; a completed, b and c blocked in flight")

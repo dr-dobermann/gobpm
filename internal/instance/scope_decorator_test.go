@@ -144,26 +144,6 @@ func TestRunCompositeLoopRequestError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestAwaitScopeDrainedUnblocks: the decorator's per-pass drain wait unblocks on a
-// cancelled context and on the loop closing evtCh (a mid-pass interrupt / terminate),
-// so runCompositeLoop returns instead of hanging (NFR-4).
-func TestAwaitScopeDrainedUnblocks(t *testing.T) {
-	t.Run("context cancelled", func(t *testing.T) {
-		_, _, _, host := decoratorFixture(t)
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		require.ErrorIs(t, host.awaitScopeDrained(ctx), context.Canceled)
-	})
-
-	t.Run("evtCh closed on stop", func(t *testing.T) {
-		_, _, _, host := decoratorFixture(t)
-		close(host.evtCh) // the loop closes evtCh on stop
-
-		require.Error(t, host.awaitScopeDrained(context.Background()))
-	})
-}
-
 // TestHandleScopeRequestNonComposite: a scope-open for a node that is not a
 // composite is a corrupt-graph error surfaced to the decorator.
 func TestHandleScopeRequestNonComposite(t *testing.T) {

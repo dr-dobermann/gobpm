@@ -122,8 +122,9 @@ func (e *scopeExec) awaits() awaitKind {
 	return awaitNothing
 }
 
-// instanceScopesOf returns the still-open scopes this host opened, in
-// ordinal order.
+// instanceScopesOf returns the still-open INSTANCE scopes this host fanned
+// out, in ordinal order — never its own serial pass's scope, which is one
+// scope reused and answers to the host's own counter.
 //
 // It is the one lookup that answers both of the questions a retired miGroup
 // used to answer: which scopes a fired completionCondition must tear down,
@@ -139,7 +140,7 @@ func (ls *loopState) instanceScopesOf(host *track) []scope.DataPath {
 	paths := make([]scope.DataPath, 0, len(ls.scopes))
 
 	for p, entry := range ls.scopes {
-		if entry.host == host {
+		if entry.instance && entry.host == host {
 			paths = append(paths, p)
 		}
 	}
@@ -169,10 +170,15 @@ func (ls *loopState) handleCancelInstances(req scopeRequest) {
 // from its draining child scope into the cell that instance is waiting on.
 //
 // It runs on the loop goroutine from completeScope, before the scope closes
-// — the last point the data is readable. An instance that produced no output
-// leaves its cell unfilled, which keeps its staging slot nil exactly as a
-// canceled instance's does (SRD-056.A §2.7), so a missing item is not an
-// error here.
+// — the last point the data is readable.
+//
+// A declared outputDataItem the body did not produce FAULTS, exactly as it
+// does for a sequential composite (captureSequentialOutput): the declaration
+// is a contract with the body, and a silently nil slot would publish a
+// collection that lies about what the instances returned. That is the one
+// place a composite instance differs from a leaf's frame capture, which
+// tolerates the same absence — the leaf reads a frame that may legitimately
+// hold nothing, this reads a scope the body was required to write.
 func (ls *loopState) captureInstanceOutput(
 	ctx context.Context, entry *scopeEntry, path scope.DataPath,
 ) error {
@@ -183,7 +189,7 @@ func (ls *loopState) captureInstanceOutput(
 
 	d, err := ls.inst.sc.plane.GetData(path, c.item)
 	if err != nil {
-		return nil //nolint:nilerr // an optional output, not a failure
+		return err
 	}
 
 	c.value = d.Value().Get(ctx)

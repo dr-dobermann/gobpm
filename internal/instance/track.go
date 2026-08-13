@@ -245,10 +245,6 @@ type track struct {
 	// instance is exactly what FR-7 forbids. Consumed once, by the
 	// activity the track was restored on (takeIterSeed).
 	iterSeed *checkpoint.IterationRecord
-	// miParallelSeed is the parallel counterpart (SRD-082 FR-4): the
-	// runner re-attaches to its restored group instead of fanning out.
-	// Set by the loop's adoption BEFORE the spawns, consumed once.
-	miParallelSeed *miParallelSeed
 	// compScopeSeed, on a compensation event-sub handler host, is the snapshot
 	// committed into the handler's fresh child scope at open (shadowing
 	// reads). Set by the loop before spawn.

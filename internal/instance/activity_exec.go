@@ -107,10 +107,8 @@ type nodeExec struct {
 // a track drives one executor and cannot tell how many instances are behind
 // it (ADR-025 v.3 §2.13).
 //
-// The two kinds still routed by executeStep — a LEAF Standard Loop, which
-// re-runs its node in place, and a PARALLEL COMPOSITE Multi-Instance, which
-// still drives the loop-owned group — move here as they convert (SRD-090.A
-// M3b, SRD-090.B).
+// The one kind still routed by executeStep — a LEAF Standard Loop, which
+// re-runs its node in place — moves here when it converts (SRD-090.B).
 func execFor(t *track, step *stepInfo) activityExec {
 	_, composite := step.node.(scopeHost)
 
@@ -119,9 +117,7 @@ func execFor(t *track, step *stepInfo) activityExec {
 	}
 
 	if mi := multiInstanceOf(step.node); mi != nil {
-		if !composite || mi.IsSequential() {
-			return newIterDecorator(t, step, mi, composite)
-		}
+		return newIterDecorator(t, step, mi, composite)
 	}
 
 	// A plain activity is instance zero of one — the common case kept

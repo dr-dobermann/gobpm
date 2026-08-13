@@ -46,12 +46,10 @@ func standardLoopOf(node flow.Node) standardLoop {
 // executor otherwise. It returns the outgoing flows to follow exactly once,
 // on exit.
 //
-// Two kinds are still driven from here rather than by an executor, and each
-// leaves for a stated reason. A LEAF Standard Loop re-runs its node in place
-// and has no per-instance object yet — it converts with SRD-090.B, which is
-// what makes an iterated waiting activity buildable at all. A PARALLEL
-// COMPOSITE Multi-Instance still drives the loop-owned group barrier, which
-// M3b retires together with the mechanism.
+// ONE kind is still driven from here rather than by an executor: a LEAF
+// Standard Loop re-runs its node in place and has no per-instance object
+// yet. It converts with SRD-090.B, which is what makes an iterated waiting
+// activity buildable at all.
 func (t *track) executeStep(
 	ctx context.Context, step *stepInfo,
 ) ([]*flow.SequenceFlow, error) {
@@ -59,11 +57,6 @@ func (t *track) executeStep(
 
 	if sl := standardLoopOf(step.node); sl != nil && !composite {
 		return t.runStandardLoop(ctx, step, sl)
-	}
-
-	if mi := multiInstanceOf(step.node); mi != nil &&
-		composite && !mi.IsSequential() {
-		return t.runMIParallel(ctx, step, mi)
 	}
 
 	return execFor(t, step).run(ctx)

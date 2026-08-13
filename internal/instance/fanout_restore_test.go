@@ -320,10 +320,6 @@ func TestScopeFactOrdinal(t *testing.T) {
 		&scopeEntry{host: host, node: node, instance: true, ordinal: 2}),
 		"a fanned-out instance reports its OWN ordinal")
 
-	require.Equal(t, 1, scopeFactOrdinal(
-		&scopeEntry{host: host, node: node, group: &miGroup{}, ordinal: 1}),
-		"and so does one still driven by the group")
-
 	require.Equal(t, 4, scopeFactOrdinal(&scopeEntry{host: host, node: node}),
 		"a serial pass reports the host's pass counter")
 }

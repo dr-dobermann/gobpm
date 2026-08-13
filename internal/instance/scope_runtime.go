@@ -2,11 +2,11 @@ package instance
 
 import (
 	"context"
-	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -83,11 +83,6 @@ type scopeEntry struct {
 	// (SRD-090.A M3b). nil for a scope no executor opened, which still
 	// resumes its parked host the original way.
 	drain chan struct{}
-	// group is the parallel Multi-Instance group this scope is an instance of
-	// (SRD-056.A), nil for every serial scope; ordinal is the instance's 0-based
-	// index. When set, the scope's drain decrements the group barrier instead of
-	// resuming the host through the serial re-entry.
-	group *miGroup
 	// capture is the opening instance's output cell, filled from this scope
 	// just before it closes and read by that instance after its drain
 	// (SRD-090.A M3b). nil when the activity assembles no output.
@@ -451,11 +446,19 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 	return nil
 }
 
-// adoptRestoredGroups rebuilds the parallel Multi-Instance barriers
-// from the recorded open sets (SRD-082 FR-4): the loop-owned miGroup,
-// one awaitAttach scope entry per still-open instance (their drains
-// hold for the runner's re-attach), the decoded staging, and the
-// host's seed — the runner then re-attaches instead of fanning out.
+// adoptRestoredGroups translates a SCHEMA-5 parallel Multi-Instance group
+// record into the executor-model state its own restore derives from the
+// scope table (SRD-082 FR-4 → SRD-090.A FR-7).
+//
+// It is a migration, not a mechanism. Nothing writes an MIGroupRecord any
+// more: a schema-6 capture records the executor set on the host's track and
+// the instance ordinals in the scope paths themselves, which is why the
+// generic derivation below needs no record at all. A document captured
+// before that still has to restore, so its open set is read here and
+// re-expressed as what the decorator now expects — one instance entry per
+// open scope, and the executor set seeded on the host.
+//
+// It can go once schema-5 documents are out of support.
 func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 	for i := range ls.inst.restoredGroups {
 		rec := &ls.inst.restoredGroups[i]
@@ -470,36 +473,15 @@ func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 
 		node := host.steps[len(host.steps)-1].node
 
-		mi := multiInstanceOf(node)
-		if mi == nil {
+		if multiInstanceOf(node) == nil {
 			return errs.New(
 				errs.M("restored MI group host %q is not a Multi-Instance "+
 					"node", node.ID()),
 				errs.C(errorClass, errs.InvalidState))
 		}
 
-		grp := &miGroup{
-			host:       host,
-			node:       node,
-			open:       make(map[scope.DataPath]int, len(rec.Open)),
-			inputItem:  mi.InputDataItem(),
-			outputRef:  mi.LoopDataOutputRef(),
-			outputItem: mi.OutputDataItem(),
-			n:          rec.N,
-		}
-
-		if grp.outputRef != "" {
-			grp.staging = values.NewArray[any](make([]any, rec.N)...)
-
-			if rec.Staging != nil {
-				if err := seedStaging(context.Background(), grp.staging,
-					rec.Staging); err != nil {
-					return err
-				}
-			}
-		}
-
 		open := ls.inst.sc.plane.OpenPaths()
+		live := make([]checkpoint.IterationInstance, 0, len(rec.Open))
 
 		for _, o := range rec.Open {
 			path := scope.DataPath(o.Path)
@@ -513,28 +495,64 @@ func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 
 			ls.scopes[path] = &scopeEntry{
 				host:        host,
-				group:       grp,
 				node:        node,
 				parent:      host.scopePath,
 				ordinal:     o.Ordinal,
+				instance:    true,
 				awaitAttach: true,
 			}
-			grp.open[path] = o.Ordinal
+
+			live = append(live, checkpoint.IterationInstance{
+				Ordinal: o.Ordinal, State: instanceRunning,
+			})
 		}
 
-		ls.miGroups[host.ID()] = grp
 		ls.waiting[host.ID()] = struct{}{}
 
-		// the drains already absorbed by the capture (closed scopes,
-		// staged outputs) seed the runner's delivered count; recorded
-		// pending folds in — those drains completed before the crash.
-		host.miParallelSeed = &miParallelSeed{
-			n:         rec.N,
-			completed: rec.N - len(rec.Open),
+		// an ordinal the record does not list as open had already drained
+		// before the capture, and its output is in the staging — so the
+		// set names the open ones running and everything else completed,
+		// which is exactly what restoredStates reads.
+		host.iterSeed = &checkpoint.IterationRecord{
+			Kind:      iterKindMIParallel,
+			N:         rec.N,
+			Completed: rec.N - len(rec.Open),
+			Staging:   rec.Staging,
+			Instances: completedOutside(live, rec.N),
+		}
+		host.miSeed = &checkpoint.MIRecord{
+			N: rec.N, Completed: rec.N - len(rec.Open), Staging: rec.Staging,
 		}
 	}
 
 	return nil
+}
+
+// completedOutside fills the ordinals live does not name, up to n, as
+// completed instances — the half of a restored fan-out's executor set that
+// a group record recorded only by omission.
+func completedOutside(
+	live []checkpoint.IterationInstance, n int,
+) []checkpoint.IterationInstance {
+	open := make(map[int]struct{}, len(live))
+	for _, inst := range live {
+		open[inst.Ordinal] = struct{}{}
+	}
+
+	set := make([]checkpoint.IterationInstance, 0, n)
+
+	for ord := range n {
+		state := instanceCompleted
+		if _, ok := open[ord]; ok {
+			state = instanceRunning
+		}
+
+		set = append(set, checkpoint.IterationInstance{
+			Ordinal: ord, State: state,
+		})
+	}
+
+	return set
 }
 
 // trackByID finds a restored track by its recorded id.
@@ -763,17 +781,6 @@ func (ls *loopState) completeScope(
 		return
 	}
 
-	// SRD-056.A: a PARALLEL Multi-Instance instance captures its output the same
-	// way, keyed by its group's ordinal rather than the sequential host's.
-	if entry.group != nil {
-		if err := ls.captureParallelOutput(ctx, entry, path); err != nil {
-			ls.inst.fail(err)
-			ls.stopAll()
-
-			return
-		}
-	}
-
 	// SRD-090.A M3b: the OPENING INSTANCE's own capture, the executor-driven
 	// successor to both of the above — read here for the same reason, and
 	// handed over by the drain close below rather than by a lock.
@@ -821,28 +828,6 @@ func (ls *loopState) completeScope(
 	// between its open and its wait cannot miss it.
 	if entry.drain != nil {
 		close(entry.drain)
-
-		return
-	}
-
-	// a parallel Multi-Instance instance drains into its group's N-of-N barrier
-	// (SRD-056.A): the off-loop decorator (runMIParallel) owns the counting and the
-	// completion policy, so the loop only removes the instance from the open set and
-	// delivers the drain to the parked runner — one at a time, queueing any that
-	// arrive while the runner is busy (the cap-1 handshake, §4.2).
-	if entry.group != nil {
-		grp := entry.group
-		delete(grp.open, path)
-
-		if _, waiting := ls.waiting[grp.host.ID()]; waiting {
-			ls.dispatchToParked(ctx, trackEvent{
-				kind:  evDeliver,
-				track: grp.host,
-				eDef:  newScopeDone(),
-			})
-		} else {
-			grp.pending++
-		}
 
 		return
 	}
@@ -1040,7 +1025,7 @@ func scopeLoopCounter(node flow.Node, host *track) int {
 // learned the instance ordinal in this milestone while both close sides
 // still reported the host's.
 func scopeFactOrdinal(entry *scopeEntry) int {
-	if entry.group != nil || entry.instance {
+	if entry.instance {
 		return entry.ordinal
 	}
 

@@ -140,20 +140,20 @@ func TestCaptureInstanceOutputReadsTheDrainingScope(t *testing.T) {
 	require.Equal(t, 42, c.value)
 }
 
-// TestCaptureInstanceOutputToleratesNothingToCapture: neither an instance
-// with no cell nor one whose declared output was never produced is an error.
-// An optional output is ordinary, and the unfilled slot keeps its nil exactly
-// as a canceled instance's does (SRD-056.A §2.7).
-func TestCaptureInstanceOutputToleratesNothingToCapture(t *testing.T) {
+// TestCaptureInstanceOutputWithNothingToCapture: an instance with no cell,
+// or a cell naming no item, has nothing to read and says so quietly — that
+// is an activity assembling no output at all.
+//
+// A DECLARED item the body never produced is the opposite case and faults,
+// as it does for a sequential composite: publishing a nil slot would make
+// the assembled collection lie about what the instances returned.
+func TestCaptureInstanceOutputWithNothingToCapture(t *testing.T) {
 	_, ls, node, host := decoratorFixture(t)
 
 	for name, entry := range map[string]*scopeEntry{
 		"no cell at all": {host: host, node: node},
 		"cell names no item": {
 			host: host, node: node, capture: &instanceCapture{}},
-		"item was never produced": {
-			host: host, node: node,
-			capture: &instanceCapture{item: "absent"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.NoError(t,
@@ -164,6 +164,13 @@ func TestCaptureInstanceOutputToleratesNothingToCapture(t *testing.T) {
 			}
 		})
 	}
+
+	require.Error(t, ls.captureInstanceOutput(t.Context(),
+		&scopeEntry{
+			host: host, node: node,
+			capture: &instanceCapture{item: "absent"},
+		}, host.scopePath),
+		"a declared output item the body did not produce is a fault")
 }
 
 // TestInstanceScopesOfFindsOneHostsScopes pins the lookup that replaces the
@@ -193,7 +200,8 @@ func TestInstanceScopesOfFindsOneHostsScopes(t *testing.T) {
 		p, err := host.scopePath.Append(c.seg)
 		require.NoError(t, err)
 
-		ls.scopes[p] = &scopeEntry{host: c.host, node: node, ordinal: c.ord}
+		ls.scopes[p] = &scopeEntry{
+			host: c.host, node: node, ordinal: c.ord, instance: true}
 	}
 
 	got := ls.instanceScopesOf(host)
@@ -225,7 +233,8 @@ func TestHandleCancelInstancesTearsDownAndCounts(t *testing.T) {
 
 		require.NoError(t, ls.inst.sc.plane.OpenScope(p))
 
-		ls.scopes[p] = &scopeEntry{host: host, node: node, ordinal: i}
+		ls.scopes[p] = &scopeEntry{
+			host: host, node: node, ordinal: i, instance: true}
 	}
 
 	reply := make(chan scopeReply, 1)
