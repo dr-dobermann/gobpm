@@ -66,6 +66,14 @@ const (
 	// attrMessageRef is the message a send or receive task exchanges.
 	attrMessageRef = "messageRef"
 
+	// tagTransaction is the Transaction Sub-Process, and the three
+	// attributes the two sub-process variants are read from
+	// (elements/activities.md:417-426).
+	tagTransaction        = "transaction"
+	attrTriggeredByEvent  = "triggeredByEvent"
+	attrTransactionMethod = "method"
+	attrTransactionProto  = "protocol"
+
 	// The ten event definitions (elements/event-definitions.md), their
 	// expression children and the two references they carry as children
 	// rather than attributes.

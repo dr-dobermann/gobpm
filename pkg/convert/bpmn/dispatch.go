@@ -319,6 +319,7 @@ var processParsers = func() map[string]procParser {
 // initialization cycle, even though the call happens long afterwards.
 func init() { //nolint:gochecknoinits // breaks the processParsers cycle
 	processParsers[tagSubProcess] = parseContainerElem
+	processParsers[tagTransaction] = parseContainerElem
 }
 
 // parseContainerElem reads one container element and everything it holds.
@@ -326,13 +327,107 @@ func parseContainerElem(p *parser, asm *assembly, se xml.StartElement) error {
 	return p.parseContainer(asm, se)
 }
 
-// buildSubProcess builds an embedded Sub-Process. Its inner elements are
-// added afterwards by buildNodes, from the specs that named it as their
-// container — the shape rules are the model's, checked at Validate.
+// buildSubProcess builds a Sub-Process in whichever of its variants the
+// file wrote. Its inner elements are added afterwards by buildNodes, from
+// the specs that named it as their container — the shape rules are the
+// model's, checked at Validate.
+//
+// The variants differ by one option each, and both are passed exactly as
+// the file wrote them. A <transaction triggeredByEvent="true"> therefore
+// reaches NewSubProcess carrying both, and is refused by the model, whose
+// message names the ADR clause (ADR-028 §2.6). Deciding here which of the
+// two the author "meant" would be the converter holding a second copy of
+// a model rule (SRD-089.E §4.4).
 func buildSubProcess(
-	_ *parser, _ *assembly, _ xml.StartElement, id, name string, body nodeBody,
+	p *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
-	return activities.NewSubProcess(fallbackName(id, name), body.opts(id)...)
+	opts := body.opts(id)
+
+	if isXMLTrue(attrValue(se, attrTriggeredByEvent)) {
+		opts = append(opts, activities.WithTriggeredByEvent())
+	}
+
+	if se.Name.Local == tagTransaction {
+		txOpts, err := transactionOptions(p, se, id)
+		if err != nil {
+			return nil, err
+		}
+
+		opts = append(opts, txOpts...)
+	}
+
+	return activities.NewSubProcess(fallbackName(id, name), opts...)
+}
+
+// transactionMethods says, per BPMN Transaction `method` value, whether
+// this engine realizes that abort protocol (ADR-028 §2.7). The empty key
+// is the absent attribute: BPMN's default is compensate.
+//
+// A table rather than a switch because it is a fixed classification, and
+// because the one thing a reader needs from it — which values are in and
+// which are out — should be readable in one glance.
+var transactionMethods = map[string]bool{
+	"":           true,
+	"compensate": true,
+	"store":      false,
+	"image":      false,
+}
+
+// transactionOptions reads a <transaction>'s own attributes.
+//
+// `method` is not a lost datum, it is the abort semantics: importing
+// store or image as compensate would hand back a process that undoes by
+// running handlers where the document said the resource managers roll
+// back, and a report calling that a dropped attribute would understate it
+// (SRD-089.E §4.5). So the two the engine does not realize are refused,
+// and the one it does is silent — reporting the value the engine
+// implements would train a host to ignore the report.
+//
+// `protocol` names the coordinator those two would have needed, so with
+// the only supported method nothing executable depends on it: reported,
+// and the transaction imports without it.
+func transactionOptions(
+	p *parser, se xml.StartElement, id string,
+) ([]options.Option, error) {
+	method := strings.TrimSpace(attrValue(se, attrTransactionMethod))
+
+	realized, known := transactionMethods[method]
+	if !known {
+		return nil, errs.New(
+			errs.M("bpmn: transaction %q: method %q is not one of BPMN's "+
+				"compensate, store or image (§10.7)", id, method),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if !realized {
+		return nil, errs.New(
+			errs.M("bpmn: transaction %q: method %q selects resource-manager "+
+				"coordination this engine does not implement and has decided "+
+				"not to (ADR-028 §2.7) — only compensate, undo by compensation "+
+				"handlers, is a process-level mechanism it can realize. Model "+
+				"the undo as compensation handlers", id, method),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if proto := strings.TrimSpace(attrValue(se, attrTransactionProto)); proto != "" {
+		p.report(id, attrTransactionProto,
+			"names a coordination protocol, which only means something for "+
+				"the store and image methods this engine does not implement "+
+				"(ADR-028 §2.7); the transaction imports without it")
+	}
+
+	return []options.Option{activities.WithTransaction()}, nil
+}
+
+// isXMLTrue reads an xsd:boolean attribute. XML writes it "true" or "1",
+// and a modeler's export writes either.
+func isXMLTrue(v string) bool {
+	switch strings.TrimSpace(v) {
+	case "true", "1":
+		return true
+	}
+
+	return false
 }
 
 // parseNodeElem builds one flow node and records it in the assembly.
@@ -432,7 +527,8 @@ var nodeBuilders = map[string]nodeBuilder{
 	tagTask:       buildManualTask,
 	tagManualTask: buildManualTask,
 
-	tagSubProcess: buildSubProcess,
+	tagSubProcess:  buildSubProcess,
+	tagTransaction: buildSubProcess,
 
 	tagUserTask: func(
 		p *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,
