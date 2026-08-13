@@ -193,11 +193,53 @@ place. What still has to be solved, in rough order of care needed:
    `sp-<id>` every pass. The segment must therefore come from the executor,
    NOT be derived in `handleScopeOpen` — changing the sequential path would
    move data paths, observability facts and restore compatibility.
+
+   **Resolved.** `scopeExec` carries its ordinal already. It passes a
+   `segment` on the `scopeOpen` request: `sp-<id>` when it is the only
+   instance (sequential pass, plain composite), `sp-<id>-<ord>` when the
+   decorator fanned it out. The loop appends what it is given rather than
+   deciding, so the sequential path keeps its exact present paths and only
+   the parallel caller is new. The per-instance binds `openParallelInstance`
+   does (`loopCounter` = ord, and the split `inputItem`) ride the same
+   request and are applied at the child scope before the body is seeded —
+   unchanged behaviour, new caller.
+
 2. **Output capture.** Loop-side today (`captureParallelOutput`, keyed on
    `entry.ordinal` into `grp.staging`). The entry needs the ordinal and a
    staging target that is not the group — the leaf's `instanceOutputs` is the
    model, but a composite's output lives in its child scope and can only be
    read before that scope closes, so the capture stays loop-side.
+
+   **Resolved — the drain close is the handoff edge.** The executor allocates
+   its own capture cell and passes a pointer on the open request:
+
+   ```go
+   type instanceCapture struct {
+       item   string // output item to read from the child scope
+       value  any
+       filled bool
+   }
+   ```
+
+   `completeScope` fills it from the child scope **before** closing that
+   scope, then closes `entry.drain`. The instance goroutine reads it only
+   after its drain returns, so the close is the happens-before edge and no
+   lock is involved — the same discipline `scopeEntry.drain` already
+   established. `scopeExec.run` then stages into the decorator's existing
+   `instanceOutputs` by ordinal, which is where the leaf path already puts
+   it, so `awaitParallel` needs no composite special case and
+   `it.publishOutput` publishes both kinds identically.
+
+   This is what lets `grp.staging` go: the staging array becomes the
+   decorator's `miState.staging` (pre-sized by `presizedStaging`, already
+   written for the leaf), written by one goroutine per ordinal and read
+   after the barrier.
+
+**Type change `runParallel` needs.** `insts := make(map[int]*nodeExec, n)`
+and `instanceFor`'s return become `activityExec`, so `buildInstance` can
+answer with a `*scopeExec`. That is the whole seam — `awaitParallel`,
+`parallelStep`, `postPosition` and `restoredStates` are already
+kind-agnostic and stay as they are.
 3. **Cancellation on a fired completionCondition.** Today one loop-side group
    teardown (`scopeComplete cancel` → `cancelOpenInstances`). It becomes
    per-instance scope cancellation, driven by the decorator the way the leaf
