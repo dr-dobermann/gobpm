@@ -29,21 +29,21 @@ type scopeExec struct {
 	// what lets N of them wait at once (SRD-090.A M3b).
 	drain chan struct{}
 
+	// segment, binds and capture are set only when this instance is one of
+	// N fanned out in parallel: its own scope path, the per-instance data
+	// published there, and the cell its output is read into. A sequential
+	// pass and a plain composite leave all three zero and open the node's
+	// own `sp-<id>` with nothing extra (SRD-090.A M3b).
+	capture *instanceCapture
+	segment string
+	binds   []miBinding
+
 	// parked is written by this instance's own goroutine and read by the
 	// LOOP goroutine, so it is atomic. A reader wants the CURRENT answer
 	// and never a consistent pair with anything else, which is what makes
 	// a single word enough — and a composite instance awaits exactly one
 	// thing, so a flag says all there is to say.
 	parked atomic.Bool
-
-	// segment, binds and capture are set only when this instance is one of
-	// N fanned out in parallel: its own scope path, the per-instance data
-	// published there, and the cell its output is read into. A sequential
-	// pass and a plain composite leave all three zero and open the node's
-	// own `sp-<id>` with nothing extra (SRD-090.A M3b).
-	segment string
-	binds   []miBinding
-	capture *instanceCapture
 
 	ord int
 }

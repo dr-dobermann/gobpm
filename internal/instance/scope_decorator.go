@@ -69,11 +69,9 @@ type scopeRequest struct {
 	// completion (SRD-090.A M3b). Recorded on the entry, closed when the
 	// scope drains.
 	drain chan struct{}
-	// insts carries a LEAF decorator's executor set to the loop's
-	// iteration mirror on a scopeLeafPass (SRD-090.A FR-6): a leaf opens
-	// no scope and spawns no track, so this post is the ONLY thing that
-	// can tell the capture which instances are live.
-	insts []checkpoint.IterationInstance
+	// capture is the cell this instance's output is read into, before its
+	// scope closes. nil when the activity assembles no output.
+	capture *instanceCapture
 	// segment overrides the child scope's path segment. Empty means the
 	// node's own `sp-<id>`, which is what a sequential pass and a plain
 	// composite use; a FANNED-OUT instance passes `sp-<id>-<ordinal>` so
@@ -81,17 +79,19 @@ type scopeRequest struct {
 	// decides, because deriving it here would move the sequential path's
 	// data paths and observability facts.
 	segment string
+	// insts carries a LEAF decorator's executor set to the loop's
+	// iteration mirror on a scopeLeafPass (SRD-090.A FR-6): a leaf opens
+	// no scope and spawns no track, so this post is the ONLY thing that
+	// can tell the capture which instances are live.
+	insts []checkpoint.IterationInstance
 	// binds are the per-instance data items published at the CHILD scope
 	// before its body is seeded — the 0-based loopCounter, and the split
 	// input item when the iteration is collection-driven. Concurrency-safe
 	// where the sequential slice's host-scope bind is not, because each
 	// instance writes only its own scope.
 	binds []miBinding
-	// capture is the cell this instance's output is read into, before its
-	// scope closes. nil when the activity assembles no output.
-	capture *instanceCapture
-	op      scopeOp
-	n       int
+	op    scopeOp
+	n     int
 	// ordinal is the instance's own 0-based index, reported as its Opened
 	// fact (FR-14) rather than the host's shared loopCounter. Read only
 	// when segment is set, since that is what marks a per-instance open.
@@ -107,9 +107,9 @@ type scopeRequest struct {
 // drain, and the instance reads it only after that drain returns, so the
 // close is the happens-before edge (SRD-090.A M3b).
 type instanceCapture struct {
-	// item is the output data item's name in the child scope.
-	item  string
 	value any
+	// item is the output data item's name in the child scope.
+	item string
 	// filled stays false when the instance produced no output — that slot
 	// keeps its nil, exactly as a canceled one does (SRD-056.A §2.7).
 	filled bool

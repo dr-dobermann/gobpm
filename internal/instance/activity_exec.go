@@ -437,6 +437,17 @@ type parallelRun struct {
 	launched int
 }
 
+// collectOutput moves a COMPOSITE instance's output into its positional
+// slot. The value was read loop-side from a child scope that has since
+// closed; the instance's drain returning is what makes the cell safe to
+// read here (SRD-090.A M3b). A no-op for a leaf fan-out, whose instances
+// capture through their own frames, and for one that produced nothing.
+func (run *parallelRun) collectOutput(ord int) {
+	if c := run.caps[ord]; c != nil && c.filled {
+		run.outs.set(ord, c.value)
+	}
+}
+
 // restoredStates rebuilds the per-ordinal state of a parallel iteration
 // from its recorded set, defaulting to a fresh run of every instance when
 // there is nothing recorded (SRD-090.A FR-7).
@@ -543,12 +554,7 @@ func (d *iterDecorator) awaitParallel(
 		completed++
 		run.states[res.ord] = instanceCompleted
 
-		// a composite instance's output was read from its child scope
-		// before that scope closed; its drain returning is what makes the
-		// cell safe to read here (SRD-090.A M3b).
-		if c := run.caps[res.ord]; c != nil && c.filled {
-			run.outs.set(res.ord, c.value)
-		}
+		run.collectOutput(res.ord)
 
 		if err := run.outs.stage(ctx, t.miState, res.ord); err != nil {
 			return nil, err
