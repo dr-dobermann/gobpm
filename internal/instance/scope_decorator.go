@@ -48,6 +48,14 @@ const (
 	// holds — the roundtrip is the fence — and completes any drains
 	// that arrived early.
 	scopeReAttach
+	// scopeCancelInstances tears down the still-open instance scopes of one
+	// host and reports how many (SRD-090.A M3b). It replaces the group-wide
+	// teardown for executor-driven instances, and it is asked by whoever
+	// CANCELED rather than by the instances themselves: an instance wakes
+	// from awaitDrain on a canceled context, and scopeRoundtrip honors ctx,
+	// so a request sent on the way out would fail and leak the scope it
+	// meant to close.
+	scopeCancelInstances
 )
 
 // scopeRequest is a looped composite's off-loop iteration decorator asking the
@@ -203,6 +211,8 @@ func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 		ls.checkpointNow(ctx)
 	case scopeReAttach:
 		ls.handleReAttach(ctx, req)
+	case scopeCancelInstances:
+		ls.handleCancelInstances(req)
 	default:
 		ls.handleScopeOpen(ctx, req)
 	}

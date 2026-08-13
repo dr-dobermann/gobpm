@@ -166,6 +166,87 @@ func TestCaptureInstanceOutputToleratesNothingToCapture(t *testing.T) {
 	}
 }
 
+// TestInstanceScopesOfFindsOneHostsScopes pins the lookup that replaces the
+// miGroup's open set (SRD-090.A M3b): a host's still-open instance scopes, in
+// ordinal order, and nobody else's.
+//
+// Ordinal order is not cosmetic. Live completions of concurrent instances
+// carry no defined order, but a teardown appends to the ledger the
+// reverse-order compensation sweep reads, so it has to be reproducible —
+// the same reason handleReAttach sorted its pending set.
+func TestInstanceScopesOfFindsOneHostsScopes(t *testing.T) {
+	_, ls, node, host := decoratorFixture(t)
+
+	other, err := newTrack(node, ls.inst, nil)
+	require.NoError(t, err)
+
+	for _, c := range []struct {
+		host *track
+		seg  string
+		ord  int
+	}{
+		{host, "sp-b-2", 2},
+		{host, "sp-b-0", 0},
+		{host, "sp-b-1", 1},
+		{other, "sp-b-9", 9}, // another host's instance
+	} {
+		p, err := host.scopePath.Append(c.seg)
+		require.NoError(t, err)
+
+		ls.scopes[p] = &scopeEntry{host: c.host, node: node, ordinal: c.ord}
+	}
+
+	got := ls.instanceScopesOf(host)
+	require.Len(t, got, 3, "the other host's scope is not this host's")
+
+	for i, p := range got {
+		require.Equal(t, i, ls.scopes[p].ordinal,
+			"ordinal order, so a teardown is reproducible")
+	}
+}
+
+// TestInstanceScopesOfIsEmptyForAHostWithNone: a host that opened nothing
+// gets an empty set rather than a surprise — the leaf fan-out case.
+func TestInstanceScopesOfIsEmptyForAHostWithNone(t *testing.T) {
+	_, ls, _, host := decoratorFixture(t)
+
+	require.Empty(t, ls.instanceScopesOf(host))
+}
+
+// TestHandleCancelInstancesTearsDownAndCounts: the loop cancels every open
+// instance scope of the requesting host and reports how many, which is the
+// terminated tally the barrier publishes as numberOfTerminatedInstances.
+func TestHandleCancelInstancesTearsDownAndCounts(t *testing.T) {
+	_, ls, node, host := decoratorFixture(t)
+
+	for i, seg := range []string{"sp-b-0", "sp-b-1"} {
+		p, err := host.scopePath.Append(seg)
+		require.NoError(t, err)
+
+		require.NoError(t, ls.inst.sc.plane.OpenScope(p))
+
+		ls.scopes[p] = &scopeEntry{host: host, node: node, ordinal: i}
+	}
+
+	reply := make(chan scopeReply, 1)
+	ls.handleCancelInstances(scopeRequest{host: host, reply: reply})
+
+	require.Equal(t, 2, (<-reply).terminated)
+	require.Empty(t, ls.instanceScopesOf(host),
+		"a canceled instance's scope is gone, not merely marked")
+}
+
+// TestCancelInstanceScopesSkipsALeaf: a leaf fan-out opens no scopes, so the
+// barrier can call the teardown unconditionally. It must not send a request
+// no loop is there to answer — this fixture runs without one, so a request
+// would block until the test's context expires.
+func TestCancelInstanceScopesSkipsALeaf(t *testing.T) {
+	_, _, node, host := decoratorFixture(t)
+
+	d := newIterDecorator(host, &stepInfo{node: node}, nil, false)
+	require.NoError(t, d.cancelInstanceScopes(t.Context()))
+}
+
 // TestCollectOutputStagesAFilledCell pins the handoff the drain close makes
 // safe: the loop fills a composite instance's cell before closing its scope,
 // and the barrier moves it into the positional slot once that instance

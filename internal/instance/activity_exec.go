@@ -437,6 +437,39 @@ type parallelRun struct {
 	launched int
 }
 
+// stopRemaining ends the instances still running when the
+// completionCondition fires (SRD-056.A §2.7): it cancels their shared
+// context, then tears down the scopes that context cannot close for them.
+func (d *iterDecorator) stopRemaining(
+	ctx context.Context, run parallelRun,
+) error {
+	run.cancelRest()
+
+	return d.cancelInstanceScopes(ctx)
+}
+
+// cancelInstanceScopes asks the loop to tear down the instance scopes of
+// the instances this decorator has just stopped.
+//
+// The instances cannot do it themselves: each wakes from awaitDrain on the
+// context stopRemaining just canceled, and a scope request honors ctx, so
+// the request would fail and leak the very scope it meant to close. The
+// teardown belongs to whoever canceled (SRD-090.A M3b).
+//
+// A no-op for a leaf, which opens no scopes, so the barrier can call it
+// unconditionally.
+func (d *iterDecorator) cancelInstanceScopes(ctx context.Context) error {
+	if !d.composite {
+		return nil
+	}
+
+	_, err := d.t.instance.scopeExchange(ctx, scopeRequest{
+		op: scopeCancelInstances, host: d.t, node: d.step.node,
+	})
+
+	return err
+}
+
 // collectOutput moves a COMPOSITE instance's output into its positional
 // slot. The value was read loop-side from a child scope that has since
 // closed; the instance's drain returning is what makes the cell safe to
@@ -580,7 +613,11 @@ func (d *iterDecorator) awaitParallel(
 		if stop {
 			stopping = true
 
-			run.cancelRest()
+			// a teardown failure becomes the RUN's error rather than an
+			// early return: this loop must take all launched reports
+			// whatever happens, or an instance goroutine is left writing
+			// into a run nobody reads.
+			runErr = d.stopRemaining(ctx, run)
 		}
 	}
 

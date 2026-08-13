@@ -2,10 +2,12 @@ package instance
 
 import (
 	"context"
+	"sort"
 	"sync/atomic"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // scopeExec is the sub-process realization of activityExec: it runs ONE
@@ -118,6 +120,49 @@ func (e *scopeExec) awaits() awaitKind {
 	}
 
 	return awaitNothing
+}
+
+// instanceScopesOf returns the still-open scopes this host opened, in
+// ordinal order.
+//
+// It is the one lookup that answers both of the questions a retired miGroup
+// used to answer: which scopes a fired completionCondition must tear down,
+// and which an interrupting boundary must (SRD-090.A M3b). Keeping them one
+// lookup is the point — two would drift, and the group existed partly
+// because there was no way to ask this at all.
+//
+// The order matters for the same reason handleReAttach sorted its pending
+// set: live completions of concurrent instances carry no defined order, but
+// a teardown feeds the ledger the reverse-order compensation sweep reads,
+// so it must be reproducible.
+func (ls *loopState) instanceScopesOf(host *track) []scope.DataPath {
+	paths := make([]scope.DataPath, 0, len(ls.scopes))
+
+	for p, entry := range ls.scopes {
+		if entry.host == host {
+			paths = append(paths, p)
+		}
+	}
+
+	sort.Slice(paths, func(i, j int) bool {
+		return ls.scopes[paths[i]].ordinal < ls.scopes[paths[j]].ordinal
+	})
+
+	return paths
+}
+
+// handleCancelInstances tears down every still-open instance scope of the
+// requesting host and reports the count, which the decorator's barrier
+// carries as its terminated tally (SRD-056.A §2.9). Runs on the loop
+// goroutine.
+func (ls *loopState) handleCancelInstances(req scopeRequest) {
+	paths := ls.instanceScopesOf(req.host)
+
+	for _, p := range paths {
+		ls.cancelScope(p, observability.PhaseCanceled)
+	}
+
+	req.reply <- scopeReply{terminated: len(paths)}
 }
 
 // captureInstanceOutput reads the opening instance's declared output item
