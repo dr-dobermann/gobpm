@@ -264,6 +264,28 @@ one shape where restore and boundary teardown are both live, and flipping
 first turns every restore test red at once with no way to tell which of the
 three causes is responsible.
 
+### The gate is RED at `2cb7fd3a` — diff-coverage 90.5% of 529 (min 95)
+
+Landing the executor half unrouted was a sequencing mistake. Lint and the
+whole suite are clean, but `compositeInstanceFor`, `captureInstanceOutput`,
+`parallelRun.collectOutput` and `handleScopeOpen`'s segment/binds/ordinal
+branches have no caller, so they are uncovered by construction. Worst
+files: `scope_runtime.go` 72.7%, `scope_exec.go` 85.7%, `activity_exec.go`
+88.0%, `scope_decorator.go` 89.7%.
+
+Two ways out, and the FIRST is the honest one:
+
+1. **White-box tests now.** All four are reachable without the routing
+   flip. `scope_exec_test.go`'s `openedScopeExec` helper is the model — a
+   stand-in loop accepting the request and releasing via `close(e.drain)`.
+   A test can assert the segment the request carried, that the binds were
+   applied at the child scope, and that a capture cell filled by the
+   loop reaches `instanceOutputs` through `collectOutput`.
+2. Route it (the flip), which makes the code live — but that needs
+   problems 3–5 first, so it is not available yet.
+
+Do not "fix" this by relaxing `COVER_MIN` or by excluding the paths.
+
 ### What is left in M3b — problems 3, 4, 5
 
 3. **completionCondition cancellation.** The leaf path already has the
