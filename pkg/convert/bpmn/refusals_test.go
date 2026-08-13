@@ -126,7 +126,7 @@ func TestTheThreeRefusalsAreDistinguishable(t *testing.T) {
 		phrase string
 	}{
 		"not in the subset": {
-			doc(`<bpmn:subProcess id="sub"/>`, ""), true, "unsupported element",
+			doc(`<bpmn:adHocSubProcess id="sub"/>`, ""), true, "unsupported element",
 		},
 		"waiting on a subsystem": {
 			doc("", `<bpmn:globalTask id="g" name="R"/>`), false, "not supported yet",

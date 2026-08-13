@@ -163,7 +163,11 @@ type flowSpec struct {
 type nodeSpec struct {
 	se       xml.StartElement
 	id, name string
-	body     nodeBody
+	// container is the id of the container that holds this node, "" for
+	// the process. Read from the parser at parse time, because by pass 2
+	// the element's position in the file is gone (SRD-089.E §4.1).
+	container string
+	body      nodeBody
 }
 
 // opSpec is a definitions-level <bpmn:operation> collected before process
@@ -226,6 +230,15 @@ type parser struct {
 	// about its <extensionElements> — which carries no id of its own —
 	// names the element a reader can find in the file.
 	owner string
+	// container is the id of the FlowElementsContainer whose children are
+	// being parsed — "" for the process itself. A flow node records it, so
+	// pass 2 knows which container to add the node to (SRD-089.E §4.1).
+	//
+	// Sequence flows need no equivalent: flow.Link puts a new flow in its
+	// SOURCE node's container (`sequenceflow.go:139`), so an inner flow
+	// follows the node it leaves, and a flow drawn across a container edge
+	// is the model's rule to refuse rather than the converter's.
+	container string
 	// claimed collects the dialect attributes that the builder of the node
 	// currently under construction mapped onto model options. buildNode
 	// reports whatever nobody claimed, so a node kind whose builder never
@@ -552,14 +565,113 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 	}
 
 	asm.specs = append(asm.specs, nodeSpec{
-		se:   se,
-		id:   id,
-		name: attrValue(se, "name"),
-		body: body,
+		se:        se,
+		id:        id,
+		name:      attrValue(se, "name"),
+		container: p.container,
+		body:      body,
 	})
 	asm.declared[id] = se.Name.Local
 
 	return nil
+}
+
+// parseContainer reads a FlowElementsContainer element — a <subProcess>
+// and, from the next milestone, its variants — whose children are flow
+// elements of its own rather than a flow node's body.
+//
+// Its own spec is recorded in the container that holds IT (nesting is
+// just this function calling itself through the process table), and the
+// slot is reserved BEFORE the children are read, so the id is claimed
+// against duplicates and document order survives a container whose
+// children are parsed first.
+func (p *parser) parseContainer(asm *assembly, se xml.StartElement) error {
+	id, err := requiredID(se)
+	if err != nil {
+		return err
+	}
+
+	if kind, dup := asm.declared[id]; dup {
+		return errs.New(
+			errs.M("bpmn: duplicate flow-element id %q on <%s>; <%s> already "+
+				"declared it", id, se.Name.Local, kind),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	idx := len(asm.specs)
+
+	asm.specs = append(asm.specs, nodeSpec{
+		se:        se,
+		id:        id,
+		name:      attrValue(se, "name"),
+		container: p.container,
+	})
+	asm.declared[id] = se.Name.Local
+
+	outerOwner, outerContainer := p.owner, p.container
+	p.owner, p.container = id, id
+
+	body, err := p.parseContainerBody(asm, se)
+
+	p.owner, p.container = outerOwner, outerContainer
+
+	if err != nil {
+		return err
+	}
+
+	// Re-indexed rather than held as a pointer: parsing the children
+	// appends to the same slice, which may move it.
+	asm.specs[idx].body = body
+
+	return nil
+}
+
+// parseContainerBody reads the children of a container: its flow
+// elements through the SAME table <process> uses, and everything else as
+// an ordinary node body.
+//
+// One table for both containers is the point. A sub-process holds what a
+// process holds — BPMN says so through FlowElementsContainer — and a
+// second table would be a second answer to "which elements are flow
+// elements", diverging on the first element added to one of them.
+func (p *parser) parseContainerBody(
+	asm *assembly, se xml.StartElement,
+) (nodeBody, error) {
+	var body nodeBody
+
+	for {
+		tok, err := p.token()
+		if err != nil {
+			return nodeBody{}, err
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if err := p.parseContainerChild(asm, &body, t); err != nil {
+				return nodeBody{}, err
+			}
+
+		case xml.EndElement:
+			if t.Name == se.Name {
+				return body, nil
+			}
+		}
+	}
+}
+
+// parseContainerChild routes one child of a container.
+func (p *parser) parseContainerChild(
+	asm *assembly, body *nodeBody, se xml.StartElement,
+) error {
+	if se.Name.Space != nsBPMN {
+		return p.skipElement()
+	}
+
+	if parse, ok := processParsers[se.Name.Local]; ok {
+		return parse(p, asm, se)
+	}
+
+	return p.parseNodeChild(body, se)
 }
 
 // buildNodes is the first half of pass 2: every flow node the document
@@ -600,17 +712,61 @@ func buildNodes(p *parser, asm *assembly) error {
 	// Added in DOCUMENT order regardless of which sweep built them: the
 	// order a process replays its nodes in is the file's, not the
 	// converter's scheduling.
-	for _, node := range built {
-		if err := asm.proc.Add(node); err != nil {
+	//
+	// Every node exists by now, so a container is always available to the
+	// nodes it holds — which is why adding is a second pass over `built`
+	// rather than part of building.
+	for i, node := range built {
+		owner, err := containerFor(asm, asm.specs[i].container)
+		if err != nil {
+			return err
+		}
+
+		if err := owner.Add(node); err != nil {
 			return errs.New(
-				errs.M("bpmn: couldn't add node %q to process %q",
-					node.ID(), asm.proc.ID()),
+				errs.M("bpmn: couldn't add node %q to %q",
+					node.ID(), owner.ID()),
 				errs.C(errorClass, errs.BulidingFailed),
 				errs.E(err))
 		}
 	}
 
 	return nil
+}
+
+// elementContainer is the half of a BPMN FlowElementsContainer this
+// converter needs: something a flow element can be added to, that can
+// name itself in an error. Both *process.Process and
+// *activities.SubProcess satisfy it.
+type elementContainer interface {
+	ID() string
+	Add(flow.Element) error
+}
+
+// containerFor resolves a nodeSpec's container id to the thing that holds
+// it, the process for "".
+func containerFor(asm *assembly, id string) (elementContainer, error) {
+	if id == "" {
+		return asm.proc, nil
+	}
+
+	n, ok := asm.byID[id]
+	if !ok {
+		// Unreachable: the id was recorded from a container element the
+		// same pass built. A guard, not a path.
+		return nil, errs.New(
+			errs.M("bpmn: container %q holds nodes but was never built", id),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	c, ok := n.(elementContainer)
+	if !ok {
+		return nil, errs.New(
+			errs.M("bpmn: %q holds flow elements but is not a container", id),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	return c, nil
 }
 
 // namesANode reports whether building this node needs another node to

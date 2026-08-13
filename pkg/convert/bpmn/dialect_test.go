@@ -278,7 +278,7 @@ func TestImportDocumentPropagatesParseErrors(t *testing.T) {
 	res, err := importer{}.ImportDocument(context.Background(),
 		strings.NewReader(`<?xml version="1.0"?><bpmn:definitions `+
 			`xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">`+
-			`<bpmn:process id="P" name="P"><bpmn:subProcess id="sub"/>`+
+			`<bpmn:process id="P" name="P"><bpmn:adHocSubProcess id="sub"/>`+
 			`</bpmn:process></bpmn:definitions>`))
 
 	if err == nil {

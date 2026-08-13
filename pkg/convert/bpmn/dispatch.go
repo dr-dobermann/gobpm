@@ -169,7 +169,6 @@ var sections = map[string]string{
 	"scriptTask":                       "§13.3.3",
 	"businessRuleTask":                 "§13.3.3",
 	"callActivity":                     "§13.3.3",
-	"subProcess":                       "§13.3.4",
 	"adHocSubProcess":                  "§13.3.4",
 	"transaction":                      "§13.3.4",
 	"complexGateway":                   "§13.4",
@@ -308,6 +307,34 @@ var processParsers = func() map[string]procParser {
 	return pp
 }()
 
+// A container's children are flow elements, not a node body, so it takes
+// a different PARSER while keeping its builder in nodeBuilders. It is a
+// container that is one element where the two legitimately differ —
+// everywhere else the table is derived, which is what keeps parser and
+// builder in step.
+//
+// Wired here rather than in the initializer above because
+// parseContainerChild dispatches through processParsers: naming the
+// parser inside the expression that builds the table is an
+// initialization cycle, even though the call happens long afterwards.
+func init() { //nolint:gochecknoinits // breaks the processParsers cycle
+	processParsers[tagSubProcess] = parseContainerElem
+}
+
+// parseContainerElem reads one container element and everything it holds.
+func parseContainerElem(p *parser, asm *assembly, se xml.StartElement) error {
+	return p.parseContainer(asm, se)
+}
+
+// buildSubProcess builds an embedded Sub-Process. Its inner elements are
+// added afterwards by buildNodes, from the specs that named it as their
+// container — the shape rules are the model's, checked at Validate.
+func buildSubProcess(
+	_ *parser, _ *assembly, _ xml.StartElement, id, name string, body nodeBody,
+) (flow.Node, error) {
+	return activities.NewSubProcess(fallbackName(id, name), body.opts(id)...)
+}
+
 // parseNodeElem builds one flow node and records it in the assembly.
 func parseNodeElem(p *parser, asm *assembly, se xml.StartElement) error {
 	return p.parseNode(asm, se)
@@ -404,6 +431,8 @@ var nodeBuilders = map[string]nodeBuilder{
 
 	tagTask:       buildManualTask,
 	tagManualTask: buildManualTask,
+
+	tagSubProcess: buildSubProcess,
 
 	tagUserTask: func(
 		p *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,

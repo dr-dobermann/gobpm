@@ -1,6 +1,6 @@
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
   <bpmn:process id="unsupported-element">
     <bpmn:startEvent id="start"/>
-    <bpmn:subProcess id="sub"/>
+    <bpmn:adHocSubProcess id="sub"/>
   </bpmn:process>
 </bpmn:definitions>

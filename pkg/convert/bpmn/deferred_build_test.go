@@ -19,13 +19,13 @@ import (
 // which is exactly what must not happen.
 func TestNodesAreBuiltAfterTheWholeDocument(t *testing.T) {
 	// The serviceTask names an operation no <interface> declares, which
-	// its constructor refuses; the subProcess is an element the parser
-	// refuses. The subProcess comes later in the file.
+	// its constructor refuses; the adHocSubProcess is an element the parser
+	// refuses. The adHocSubProcess comes later in the file.
 	doc := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
   <bpmn:process id="P" name="P">
     <bpmn:serviceTask id="svc" name="call" operationRef="ghost"/>
-    <bpmn:subProcess id="sub"/>
+    <bpmn:adHocSubProcess id="sub"/>
   </bpmn:process>
 </bpmn:definitions>`
 
@@ -34,7 +34,7 @@ func TestNodesAreBuiltAfterTheWholeDocument(t *testing.T) {
 		t.Fatal("Import = nil, want an error")
 	}
 
-	if !strings.Contains(err.Error(), "subProcess") {
+	if !strings.Contains(err.Error(), "adHocSubProcess") {
 		t.Errorf("error = %q, want the parse failure that comes later in the "+
 			"file — a node constructed before the document was read to the "+
 			"end could not see a root element declared after the process", err)

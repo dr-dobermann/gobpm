@@ -46,6 +46,7 @@ const (
 	tagRelationship      = "relationship"
 	tagImport            = "import"
 	tagAssociation       = "association"
+	tagSubProcess        = "subProcess"
 	tagInclusiveGateway  = "inclusiveGateway"
 	tagEventBasedGtw     = "eventBasedGateway"
 	tagComplexGateway    = "complexGateway"

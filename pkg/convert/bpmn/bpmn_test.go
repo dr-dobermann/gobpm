@@ -167,9 +167,9 @@ func TestImportErrors(t *testing.T) {
 		{
 			name: "unsupported in-namespace element",
 			doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
-  <bpmn:process id="p"><bpmn:subProcess id="sub"/></bpmn:process>
+  <bpmn:process id="p"><bpmn:adHocSubProcess id="sub"/></bpmn:process>
 </bpmn:definitions>`,
-			want:    `unsupported element "subProcess"`,
+			want:    `unsupported element "adHocSubProcess"`,
 			wantUee: true,
 			wantSec: "§13.3.4",
 		},
@@ -1016,7 +1016,7 @@ func TestImportInvalidFixtures(t *testing.T) {
 		{file: "duplicate-element-id.bpmn", want: "duplicate flow-element id"},
 		{file: "dangling-target.bpmn", want: "unknown targetRef"},
 		{file: "unknown-operation.bpmn", want: "unknown operationRef"},
-		{file: "unsupported-element.bpmn", want: `unsupported element "subProcess"`, wantUEE: true},
+		{file: "unsupported-element.bpmn", want: `unsupported element "adHocSubProcess"`, wantUEE: true},
 	}
 
 	for _, tc := range tests {
@@ -1049,7 +1049,7 @@ func TestImportInvalidFixtures(t *testing.T) {
 func TestSectionFor(t *testing.T) {
 	tests := map[string]string{
 		"sendTask":                         "§13.3.3",
-		"subProcess":                       "§13.3.4",
+		"adHocSubProcess":                  "§13.3.4",
 		"intermediateCatchEvent":           "§13.5",
 		"boundaryEvent":                    "§13.5.5",
 		"messageEventDefinition":           "§13.5",
