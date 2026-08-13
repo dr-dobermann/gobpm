@@ -13,6 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/lanes"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -348,9 +349,18 @@ func parseContainerElem(p *parser, asm *assembly, se xml.StartElement) error {
 // two the author "meant" would be the converter holding a second copy of
 // a model rule (SRD-089.E §4.4).
 func buildSubProcess(
-	p *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
 	opts := body.opts(id)
+
+	sets, err := buildLaneSets(&asm.places, body.laneSets)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(sets) != 0 {
+		opts = append(opts, lanes.WithLaneSets(sets...))
+	}
 
 	if isXMLTrue(attrValue(se, attrTriggeredByEvent)) {
 		opts = append(opts, activities.WithTriggeredByEvent())

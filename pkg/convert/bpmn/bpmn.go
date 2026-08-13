@@ -78,6 +78,13 @@ const (
 	tagCallActivity   = "callActivity"
 	attrCalledElement = "calledElement"
 
+	// The lane partition, model-only in every container that carries it
+	// (conformance.md line 173).
+	tagLaneSet      = "laneSet"
+	tagLane         = "lane"
+	tagFlowNodeRef  = "flowNodeRef"
+	tagChildLaneSet = "childLaneSet"
+
 	// The ten event definitions (elements/event-definitions.md), their
 	// expression children and the two references they carry as children
 	// rather than attributes.

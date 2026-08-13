@@ -15,6 +15,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
+	"github.com/dr-dobermann/gobpm/pkg/model/lanes"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
@@ -108,6 +109,10 @@ type nodeBody struct {
 	// event is built. They are specs rather than definitions because what
 	// they refer to may be declared later in the document (§4.7).
 	defs []defSpec
+	// laneSets are a container's <laneSet> children. They reach the model
+	// as a CONSTRUCTION option, which is why they are collected with the
+	// rest of the body and not added afterwards.
+	laneSets []laneSetSpec
 }
 
 // opts renders the body as construction options, with the element's id
@@ -209,6 +214,10 @@ type assembly struct {
 	// refs are the forward references pass 1 could not resolve because
 	// their target had not been parsed yet (SRD-089.A §FR-2).
 	refs []pendingRef
+	// places are the lane placements waiting on the id table: a lane is
+	// built with its container, and the nodes it names are built after
+	// (SRD-089.E §4.3).
+	places []placement
 }
 
 // parser wraps the xml.Decoder token stream with import state.
@@ -427,6 +436,10 @@ type procBuild struct {
 	asm      *assembly
 	id, name string
 	docs     []docSpec
+	// laneSets are buffered for the same reason docs are: they reach the
+	// process as a construction option, and BPMN serializes a container's
+	// laneSets ahead of its flowElements.
+	laneSets []laneSetSpec
 }
 
 // child handles one child element of <bpmn:process>, constructing the
@@ -438,6 +451,10 @@ func (pb *procBuild) child(se xml.StartElement) error {
 
 	if se.Name.Local == tagDocumentation {
 		return pb.doc(se)
+	}
+
+	if se.Name.Local == tagLaneSet {
+		return pb.laneSet(se)
 	}
 
 	if pb.asm == nil {
@@ -470,9 +487,32 @@ func (pb *procBuild) doc(se xml.StartElement) error {
 	return nil
 }
 
+// laneSet records a <laneSet>, or refuses one that arrives after the
+// process has been built. Both halves match doc(): the option cannot be
+// applied to a process that already exists, and dropping it silently is
+// what the feedback contract exists to prevent.
+func (pb *procBuild) laneSet(se xml.StartElement) error {
+	if pb.asm != nil {
+		return errs.New(
+			errs.M("bpmn: <process> %q carries <laneSet> after its flow "+
+				"elements; a container's laneSets precede its flowElements",
+				pb.id),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	ls, err := pb.p.parseLaneSet(se)
+	if err != nil {
+		return err
+	}
+
+	pb.laneSets = append(pb.laneSets, ls)
+
+	return nil
+}
+
 // build constructs the process and the pass-1 state around it.
 func (pb *procBuild) build() error {
-	asm, err := pb.p.newAssembly(pb.id, pb.name, pb.docs)
+	asm, err := pb.p.newAssembly(pb.id, pb.name, pb.docs, pb.laneSets)
 	if err != nil {
 		return err
 	}
@@ -495,9 +535,22 @@ func (pb *procBuild) finish() (*assembly, error) {
 }
 
 // newAssembly builds the process and the pass-1 state around it.
-func (p *parser) newAssembly(id, name string, docs []docSpec) (*assembly, error) {
-	proc, err := p.newProcess(name,
-		append([]options.Option{foundation.WithID(id)}, docOptions(docs)...)...)
+func (p *parser) newAssembly(
+	id, name string, docs []docSpec, laneSets []laneSetSpec,
+) (*assembly, error) {
+	var places []placement
+
+	sets, err := buildLaneSets(&places, laneSets)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := append([]options.Option{foundation.WithID(id)}, docOptions(docs)...)
+	if len(sets) != 0 {
+		opts = append(opts, lanes.WithLaneSets(sets...))
+	}
+
+	proc, err := p.newProcess(name, opts...)
 	if err != nil {
 		return nil, errs.New(
 			errs.M("bpmn: couldn't create process %q", id),
@@ -506,6 +559,7 @@ func (p *parser) newAssembly(id, name string, docs []docSpec) (*assembly, error)
 	}
 
 	return &assembly{
+		places:       places,
 		proc:         proc,
 		byID:         make(map[string]flow.Node),
 		declared:     make(map[string]string),
@@ -665,6 +719,17 @@ func (p *parser) parseContainerChild(
 ) error {
 	if se.Name.Space != nsBPMN {
 		return p.skipElement()
+	}
+
+	if se.Name.Local == tagLaneSet {
+		ls, err := p.parseLaneSet(se)
+		if err != nil {
+			return err
+		}
+
+		body.laneSets = append(body.laneSets, ls)
+
+		return nil
 	}
 
 	if parse, ok := processParsers[se.Name.Local]; ok {
@@ -1287,6 +1352,13 @@ func build(p *parser, asm *assembly) (*process.Process, error) {
 	}
 
 	if err := buildNodes(p, asm); err != nil {
+		return nil, err
+	}
+
+	// After the nodes exist and before Validate: a lane names nodes, and
+	// the container's own validation checks that what a lane holds is what
+	// the container holds (§4.3).
+	if err := placeLaneNodes(asm); err != nil {
 		return nil, err
 	}
 
