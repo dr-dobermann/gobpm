@@ -73,10 +73,46 @@ type scopeRequest struct {
 	// iteration mirror on a scopeLeafPass (SRD-090.A FR-6): a leaf opens
 	// no scope and spawns no track, so this post is the ONLY thing that
 	// can tell the capture which instances are live.
-	insts  []checkpoint.IterationInstance
-	op     scopeOp
-	n      int
-	cancel bool
+	insts []checkpoint.IterationInstance
+	// segment overrides the child scope's path segment. Empty means the
+	// node's own `sp-<id>`, which is what a sequential pass and a plain
+	// composite use; a FANNED-OUT instance passes `sp-<id>-<ordinal>` so
+	// its N siblings get distinct scopes (SRD-090.A M3b). The executor
+	// decides, because deriving it here would move the sequential path's
+	// data paths and observability facts.
+	segment string
+	// binds are the per-instance data items published at the CHILD scope
+	// before its body is seeded — the 0-based loopCounter, and the split
+	// input item when the iteration is collection-driven. Concurrency-safe
+	// where the sequential slice's host-scope bind is not, because each
+	// instance writes only its own scope.
+	binds []miBinding
+	// capture is the cell this instance's output is read into, before its
+	// scope closes. nil when the activity assembles no output.
+	capture *instanceCapture
+	op      scopeOp
+	n       int
+	// ordinal is the instance's own 0-based index, reported as its Opened
+	// fact (FR-14) rather than the host's shared loopCounter. Read only
+	// when segment is set, since that is what marks a per-instance open.
+	ordinal int
+	cancel  bool
+}
+
+// instanceCapture is one fanned-out composite instance's output slot.
+//
+// A composite's output lives in a child scope that is about to close, so
+// unlike a leaf's frame capture it cannot be read off the loop. It does not
+// need a lock either: the loop fills this cell before closing the entry's
+// drain, and the instance reads it only after that drain returns, so the
+// close is the happens-before edge (SRD-090.A M3b).
+type instanceCapture struct {
+	// item is the output data item's name in the child scope.
+	item  string
+	value any
+	// filled stays false when the instance produced no output — that slot
+	// keeps its nil, exactly as a canceled one does (SRD-056.A §2.7).
+	filled bool
 }
 
 // scopeReply is the loop's answer to a scopeRequest: the opened child path (open),
@@ -193,7 +229,14 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 		return
 	}
 
-	child, err := req.host.scopePath.Append(scopeSegment(req.node))
+	// the executor names the segment when it is one of N fanned-out
+	// instances; otherwise the node's own is the segment, unchanged.
+	seg := req.segment
+	if seg == "" {
+		seg = scopeSegment(req.node)
+	}
+
+	child, err := req.host.scopePath.Append(seg)
 	if err != nil {
 		req.reply <- scopeReply{err: err}
 
@@ -247,10 +290,11 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 	// instance that opened the scope, over the channel on the entry.
 	ls.waiting[req.host.ID()] = struct{}{}
 	ls.scopes[child] = &scopeEntry{
-		host:   req.host,
-		node:   req.node,
-		parent: req.host.scopePath,
-		drain:  req.drain,
+		host:    req.host,
+		node:    req.node,
+		parent:  req.host.scopePath,
+		drain:   req.drain,
+		capture: req.capture,
 	}
 
 	// mirror the decorator's position for the capture (SRD-082 FR-2);
@@ -259,8 +303,25 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 		ls.ensureIterMirror(req.host, req.node)
 	}
 
-	ls.reportScope(observability.PhaseOpened, req.node, child,
-		scopeLoopCounter(req.node, req.host))
+	// instance i's per-pass data, published at its OWN scope before the
+	// body is seeded, so the body reads it by name.
+	for _, b := range req.binds {
+		if err := ls.inst.sc.bindDataItemAt(child, b.name, b.value); err != nil {
+			req.reply <- scopeReply{err: err}
+
+			return
+		}
+	}
+
+	// a fanned-out instance reports its OWN ordinal, not the host's shared
+	// loopCounter (SRD-056.A FR-14); a sequential pass has no ordinal of
+	// its own and the host's counter is the position.
+	ord := scopeLoopCounter(req.node, req.host)
+	if req.segment != "" {
+		ord = req.ordinal
+	}
+
+	ls.reportScope(observability.PhaseOpened, req.node, child, ord)
 	ls.seedScope(ctx, sh, child)
 	ls.armScopeHandlers(ctx, sh.Nodes(), child)
 

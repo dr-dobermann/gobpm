@@ -87,6 +87,10 @@ type scopeEntry struct {
 	// index. When set, the scope's drain decrements the group barrier instead of
 	// resuming the host through the serial re-entry.
 	group *miGroup
+	// capture is the opening instance's output cell, filled from this scope
+	// just before it closes and read by that instance after its drain
+	// (SRD-090.A M3b). nil when the activity assembles no output.
+	capture *instanceCapture
 	// adHoc is the routing state of an Ad-Hoc scope (SRD-074 §3.4), nil for
 	// every other scope: the per-activity completed/running counts the Router
 	// decides on, and whether routing has already stopped.
@@ -658,6 +662,16 @@ func (ls *loopState) completeScope(
 
 			return
 		}
+	}
+
+	// SRD-090.A M3b: the OPENING INSTANCE's own capture, the executor-driven
+	// successor to both of the above — read here for the same reason, and
+	// handed over by the drain close below rather than by a lock.
+	if err := ls.captureInstanceOutput(ctx, entry, path); err != nil {
+		ls.inst.fail(err)
+		ls.stopAll()
+
+		return
 	}
 
 	// SRD-082 FR-2: one serial pass completed — advance the loop-owned

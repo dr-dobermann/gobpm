@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/scope"
@@ -364,7 +365,11 @@ func (d *iterDecorator) runParallel(
 	// its outputs are already in the restored staging.
 	states := restoredStates(d.seed, n)
 
-	insts := make(map[int]*nodeExec, n)
+	insts := make(map[int]activityExec, n)
+
+	// a COMPOSITE instance's output is read loop-side, into the cell the
+	// executor carries; the barrier collects it once the instance reports.
+	caps := make(map[int]*instanceCapture, n)
 
 	for ord, st := range states {
 		if st == instanceCompleted {
@@ -377,6 +382,10 @@ func (d *iterDecorator) runParallel(
 		}
 
 		insts[ord] = e
+
+		if se, ok := e.(*scopeExec); ok {
+			caps[ord] = se.capture
+		}
 	}
 
 	runCtx, cancelRest := context.WithCancel(ctx)
@@ -385,7 +394,7 @@ func (d *iterDecorator) runParallel(
 	done := make(chan instanceDone, n)
 
 	for ord, e := range insts {
-		go func(ord int, e *nodeExec) {
+		go func(ord int, e activityExec) {
 			_, err := e.run(runCtx)
 			done <- instanceDone{ord: ord, err: err}
 		}(ord, e)
@@ -395,6 +404,7 @@ func (d *iterDecorator) runParallel(
 		n:          n,
 		done:       done,
 		outs:       outs,
+		caps:       caps,
 		cancelRest: cancelRest,
 		states:     states,
 		launched:   len(insts),
@@ -411,8 +421,12 @@ type instanceDone struct {
 // instance count, the completion channel, the per-ordinal captured outputs
 // and the handle that stops the instances still running.
 type parallelRun struct {
-	done       chan instanceDone
-	outs       *instanceOutputs
+	done chan instanceDone
+	outs *instanceOutputs
+	// caps holds a COMPOSITE instance's output cell, filled loop-side
+	// before its scope closed and read here once it reports. Empty for a
+	// leaf fan-out, whose instances capture through their own frames.
+	caps       map[int]*instanceCapture
 	cancelRest context.CancelFunc
 	states     []string
 	n          int
@@ -529,6 +543,13 @@ func (d *iterDecorator) awaitParallel(
 		completed++
 		run.states[res.ord] = instanceCompleted
 
+		// a composite instance's output was read from its child scope
+		// before that scope closed; its drain returning is what makes the
+		// cell safe to read here (SRD-090.A M3b).
+		if c := run.caps[res.ord]; c != nil && c.filled {
+			run.outs.set(res.ord, c.value)
+		}
+
 		if err := run.outs.stage(ctx, t.miState, res.ord); err != nil {
 			return nil, err
 		}
@@ -610,8 +631,12 @@ func (d *iterDecorator) parallelStep(
 // commit makes the output's name a shared one.
 func (d *iterDecorator) instanceFor(
 	ctx context.Context, ord int, outs *instanceOutputs,
-) (*nodeExec, error) {
+) (activityExec, error) {
 	st := d.t.miState
+
+	if d.composite {
+		return d.compositeInstanceFor(ctx, ord)
+	}
 
 	local, err := iterationLocals(ctx, st, ord)
 	if err != nil {
@@ -632,6 +657,48 @@ func (d *iterDecorator) instanceFor(
 
 			return nil
 		}
+	}
+
+	return e, nil
+}
+
+// compositeInstanceFor builds instance ord of a PARALLEL composite: its own
+// child scope, the per-instance data published there, and the cell its
+// output is read into before that scope closes.
+//
+// The three fields are what separate a fanned-out instance from a sequential
+// pass, which opens the node's own scope with none of them (SRD-090.A M3b).
+// The loop applies them; the executor only carries them, because deriving
+// the segment loop-side would move the sequential path's data paths.
+func (d *iterDecorator) compositeInstanceFor(
+	ctx context.Context, ord int,
+) (activityExec, error) {
+	st := d.t.miState
+
+	e := newScopeExec(d.t, &stepInfo{
+		node: d.step.node, inFlow: d.step.inFlow,
+	}, ord)
+
+	e.segment = scopeSegment(d.step.node) + "-" + strconv.Itoa(ord)
+
+	// the 0-based loopCounter, and the split input item when the iteration
+	// is collection-driven — bound at the instance's own scope, which is
+	// what makes them concurrency-safe where the sequential slice's
+	// host-scope binds are not.
+	e.binds = []miBinding{{name: "loopCounter", value: ord}}
+
+	if st != nil && st.collection != nil {
+		elem, err := st.collection.GetAt(ctx, ord)
+		if err != nil {
+			return nil, err
+		}
+
+		e.binds = append(e.binds,
+			miBinding{name: st.inputItem, value: elem})
+	}
+
+	if st != nil && st.staging != nil {
+		e.capture = &instanceCapture{item: st.outputItem}
 	}
 
 	return e, nil
@@ -701,7 +768,14 @@ func (o *instanceOutputs) take(
 		return
 	}
 
-	o.values[ord] = d.Value().Get(ctx)
+	o.set(ord, d.Value().Get(ctx))
+}
+
+// set records instance ord's output directly. It is how a COMPOSITE
+// instance reports: its value was read loop-side from a child scope that
+// has since closed, so there is no frame left to resolve it through.
+func (o *instanceOutputs) set(ord int, v any) {
+	o.values[ord] = v
 	o.filled[ord] = true
 }
 

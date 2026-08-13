@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
@@ -35,6 +36,15 @@ type scopeExec struct {
 	// thing, so a flag says all there is to say.
 	parked atomic.Bool
 
+	// segment, binds and capture are set only when this instance is one of
+	// N fanned out in parallel: its own scope path, the per-instance data
+	// published there, and the cell its output is read into. A sequential
+	// pass and a plain composite leave all three zero and open the node's
+	// own `sp-<id>` with nothing extra (SRD-090.A M3b).
+	segment string
+	binds   []miBinding
+	capture *instanceCapture
+
 	ord int
 }
 
@@ -57,6 +67,8 @@ func newScopeExec(t *track, step *stepInfo, ordinal int) *scopeExec {
 func (e *scopeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	if _, err := e.t.instance.scopeRoundtrip(ctx, scopeRequest{
 		op: scopeOpen, host: e.t, node: e.step.node, drain: e.drain,
+		segment: e.segment, binds: e.binds, capture: e.capture,
+		ordinal: e.ord,
 	}); err != nil {
 		return nil, err
 	}
@@ -106,6 +118,33 @@ func (e *scopeExec) awaits() awaitKind {
 	}
 
 	return awaitNothing
+}
+
+// captureInstanceOutput reads the opening instance's declared output item
+// from its draining child scope into the cell that instance is waiting on.
+//
+// It runs on the loop goroutine from completeScope, before the scope closes
+// — the last point the data is readable. An instance that produced no output
+// leaves its cell unfilled, which keeps its staging slot nil exactly as a
+// canceled instance's does (SRD-056.A §2.7), so a missing item is not an
+// error here.
+func (ls *loopState) captureInstanceOutput(
+	ctx context.Context, entry *scopeEntry, path scope.DataPath,
+) error {
+	c := entry.capture
+	if c == nil || c.item == "" {
+		return nil
+	}
+
+	d, err := ls.inst.sc.plane.GetData(path, c.item)
+	if err != nil {
+		return nil //nolint:nilerr // an optional output, not a failure
+	}
+
+	c.value = d.Value().Get(ctx)
+	c.filled = true
+
+	return nil
 }
 
 // state reports this instance in the iteration vocabulary.
