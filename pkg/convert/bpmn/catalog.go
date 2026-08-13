@@ -75,9 +75,9 @@ func (s catalogSpec) opts() []options.Option {
 // on the other three (elements/event-definitions.md:230-318).
 var structureAttrs = map[string]string{
 	tagMessage:    "itemRef",
-	tagSignal:     "structureRef",
-	tagError:      "structureRef",
-	tagEscalation: "structureRef",
+	tagSignal:     attrStructureRef,
+	tagError:      attrStructureRef,
+	tagEscalation: attrStructureRef,
 }
 
 // codeAttrs names the code attribute of the two catalog elements that

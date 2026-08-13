@@ -212,6 +212,10 @@ type assembly struct {
 	// (elements/foundation.md:23) — so entries keep arriving while the
 	// assembly exists.
 	cat *catalog
+	// items are the document's item definitions, built by id at the start
+	// of pass 2 — after every <import> has been read, since one may
+	// follow the <itemDefinition> naming its namespace (§4.8).
+	items map[string]*data.ItemDefinition
 	// declared is the pass-1 id table: which element claimed each id.
 	// byID cannot serve, because the nodes it maps to do not exist until
 	// pass 2 (see nodeSpec).
@@ -243,6 +247,10 @@ type parser struct {
 	// cat holds the message/signal/error/escalation objects an event
 	// definition refers to (SRD-089.D §FR-1).
 	cat *catalog
+	// items holds the document's <itemDefinition> declarations, the
+	// <import>s they name and the xmlns prefixes that connect the two
+	// (SRD-089.F §4.1, §4.8).
+	items *items
 	// exprLanguage is <definitions expressionLanguage>, the default an
 	// expression that declares none inherits (ADR-024 §2.10).
 	exprLanguage string
@@ -284,6 +292,7 @@ func newParser(ctx context.Context, r io.Reader) *parser {
 		interfaces: make(map[string]string),
 		ops:        make(map[string]opSpec),
 		cat:        newCatalog(),
+		items:      newItems(),
 	}
 }
 
@@ -324,6 +333,12 @@ func (p *parser) rootElement() (xml.StartElement, error) {
 		}
 
 		p.exprLanguage = strings.TrimSpace(attrValue(se, "expressionLanguage"))
+
+		// The root is where a document declares its namespaces, and an
+		// <itemDefinition>'s structureRef prefix is resolved against them
+		// (§4.8). The decoder resolves element and attribute NAMES; a
+		// prefix inside an attribute VALUE is ours to resolve.
+		p.items.declareNamespaces(se)
 
 		// <definitions> carries dialect attributes too (a modeler's own
 		// bookkeeping); they are reported against the document.
@@ -1370,6 +1385,16 @@ func build(p *parser, asm *assembly) (*process.Process, error) {
 			errs.C(errorClass, errs.BulidingFailed),
 			errs.E(err))
 	}
+
+	// Before anything that could refer to a type: the whole document has
+	// been read, so every <import> a structureRef resolves against is in
+	// hand (§4.8).
+	items, err := buildItems(p)
+	if err != nil {
+		return nil, err
+	}
+
+	asm.items = items
 
 	if err := buildNodes(p, asm); err != nil {
 		return nil, err

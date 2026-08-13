@@ -86,6 +86,18 @@ const (
 	// compensation is thrown (elements/activities.md:19, default False).
 	attrForCompensation = "isForCompensation"
 
+	// The document's type vocabulary: an <itemDefinition> names the
+	// structure an item-aware element carries, and an <import> says which
+	// external schema that structure came from (elements/data.md:9-27,
+	// semantics/data.md:29-41).
+	tagItemDefinition = "itemDefinition"
+	attrStructureRef  = "structureRef"
+	attrItemKind      = "itemKind"
+	attrIsCollection  = "isCollection"
+	attrImportType    = "importType"
+	attrLocation      = "location"
+	attrNamespace     = "namespace"
+
 	// The lane partition, model-only in every container that carries it
 	// (conformance.md line 173).
 	tagLaneSet      = "laneSet"

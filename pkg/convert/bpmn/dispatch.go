@@ -158,15 +158,6 @@ var policy = map[elementKey]dispositionKind{
 
 	// Not execution-related (extract, out-of-scope table).
 	{local: tagRelationship, ctx: ctxDefinitions}: skipped,
-
-	// <import> declares an external type/schema namespace. foundation.Import
-	// exists, but only as an ItemDefinition field — there is no
-	// definitions-level container to hold a document's imports, and this
-	// stage maps no itemDefinition, so nothing could consult one. Skipping
-	// it changes nothing TODAY; when itemDefinition lands with the data
-	// stage, its typeRef makes the declaration meaningful and this row has
-	// to be revisited with it.
-	{local: tagImport, ctx: ctxDefinitions}: skipped,
 }
 
 // sections pins the BPMN 2.0 § for elements the converter refuses, so the
@@ -288,12 +279,14 @@ type defsParser func(p *parser, asm *assembly, se xml.StartElement) (*assembly, 
 
 // definitionsParsers claims the children of <bpmn:definitions>.
 var definitionsParsers = map[string]defsParser{
-	tagInterface:  parseInterfaceElem,
-	tagProcess:    parseProcessElem,
-	tagMessage:    parseCatalogElem,
-	tagSignal:     parseCatalogElem,
-	tagError:      parseCatalogElem,
-	tagEscalation: parseCatalogElem,
+	tagInterface:      parseInterfaceElem,
+	tagProcess:        parseProcessElem,
+	tagMessage:        parseCatalogElem,
+	tagSignal:         parseCatalogElem,
+	tagError:          parseCatalogElem,
+	tagEscalation:     parseCatalogElem,
+	tagItemDefinition: parseItemDefElem,
+	tagImport:         parseImportElem,
 }
 
 // parseCatalogElem parses one definitions-level catalog object — the
