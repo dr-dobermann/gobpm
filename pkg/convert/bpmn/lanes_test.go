@@ -238,3 +238,76 @@ func TestLaneSetAfterFlowElements(t *testing.T) {
 		t.Errorf("error = %v, want the ordering refusal", err)
 	}
 }
+
+// TestLaneSetTolerBeratesForeignAndUnknownChildren covers the skip
+// branches of the lane parsers.
+//
+// A modeler's export puts diagram-interchange elements everywhere, and a
+// lane set is no exception. Refusing a file for carrying its own layout
+// next to a lane would reject documents whose flow graph is entirely
+// supported — the same argument that made the visual artifacts skipped.
+func TestLaneSetToleratesForeignAndUnknownChildren(t *testing.T) {
+	res, err := importEventDoc(t, laneDoc(
+		`    <bpmn:laneSet id="ls1" name="Roles">
+      <bpmndi:BPMNShape xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" id="sh1"/>
+      <bpmn:lane id="l1" name="Finance">
+        <bpmn:documentation>who pays</bpmn:documentation>
+        <bpmndi:BPMNLabel xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" id="lb1"/>
+        <bpmn:flowNodeRef>t1</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>`))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	sets := res.Processes[0].LaneSets()
+
+	if got := idsOf(laneNamed(sets, "Finance").FlowNodes()); len(got) != 1 {
+		t.Errorf("Finance holds %v, want t1 — the foreign children are noise "+
+			"around the one child that matters", got)
+	}
+}
+
+// TestEmptyFlowNodeRefIsNotAPlacement covers the blank-text branch: an
+// empty ref names no node, and treating "" as an id would fail the import
+// with a message about an element the file never mentioned.
+func TestEmptyFlowNodeRefIsNotAPlacement(t *testing.T) {
+	res, err := importEventDoc(t, laneDoc(
+		`    <bpmn:laneSet id="ls1" name="Roles">
+      <bpmn:lane id="l1" name="Finance">
+        <bpmn:flowNodeRef>  </bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>`))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	if got := laneNamed(res.Processes[0].LaneSets(), "Finance").FlowNodes(); len(got) != 0 {
+		t.Errorf("Finance holds %v, want nothing", idsOf(got))
+	}
+}
+
+// TestTruncatedLaneSubtrees covers the token-error paths: a document that
+// ends inside a lane set, a lane, or a flowNodeRef must fail rather than
+// return a half-read partition.
+func TestTruncatedLaneSubtrees(t *testing.T) {
+	const head = `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="P" name="P">
+    <bpmn:laneSet id="ls1" name="Roles">`
+
+	for name, doc := range map[string]string{
+		"inside the lane set": head,
+		"inside a lane":       head + `<bpmn:lane id="l1" name="Finance">`,
+		"inside a flowNodeRef": head +
+			`<bpmn:lane id="l1"><bpmn:flowNodeRef>t1`,
+		"inside a child lane set": head +
+			`<bpmn:lane id="l1"><bpmn:childLaneSet id="ls2">`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := importEventDoc(t, doc); err == nil {
+				t.Fatal("a truncated lane subtree must fail the import")
+			}
+		})
+	}
+}

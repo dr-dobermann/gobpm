@@ -242,3 +242,39 @@ func TestDialectAttributeOnAContainer(t *testing.T) {
 	t.Errorf("dropped = %v, want the container's dialect attribute reported",
 		res.Dropped)
 }
+
+// TestContainerToleratesForeignChildren covers the container parser's
+// skip branch, for the same reason the lane parser has one: a modeler's
+// export carries its layout inside the element it draws.
+func TestContainerToleratesForeignChildren(t *testing.T) {
+	res, err := importEventDoc(t, subProcessDoc(
+		`      <bpmndi:BPMNShape xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" id="sh1"/>
+      <bpmn:documentation>what it does</bpmn:documentation>
+`+innerGraph))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	sub := containerOf(t, nodeByID(t, res, "sub"))
+
+	if got := len(sub.Nodes()); got != 3 {
+		t.Errorf("the container holds %d nodes, want its inner graph", got)
+	}
+
+	if got := len(sub.Docs()); got != 1 {
+		t.Errorf("Docs() = %d, want the one the file wrote — a container's "+
+			"body children still reach it", got)
+	}
+}
+
+// TestTruncatedContainer covers the container parser's token-error path.
+func TestTruncatedContainer(t *testing.T) {
+	_, err := importEventDoc(t, `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="P" name="P">
+    <bpmn:subProcess id="sub" name="Inner">
+      <bpmn:startEvent id="is"/>`)
+	if err == nil {
+		t.Fatal("a document ending inside a container must fail the import")
+	}
+}
