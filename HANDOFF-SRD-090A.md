@@ -297,6 +297,22 @@ Do not "fix" this by relaxing `COVER_MIN` or by excluding the paths.
    `PhaseCanceled`, which `cancelOpenInstances` does group-wise today), and
    `awaitParallel` must keep counting those as `terminated`, which it
    already does via the `stopping` test.
+
+   **The trap, found while looking at it — do not build it the obvious
+   way.** The instance cannot clean up by sending a scope request on its
+   way out, because the thing that woke it IS a canceled context, and
+   `scopeRoundtrip` honors ctx: the roundtrip would fail immediately and
+   the scope would leak anyway. Cleanup driven by the cancelled party is
+   self-defeating here.
+
+   So the teardown belongs to whoever did the cancelling. Either the
+   decorator asks the loop ONCE, after `cancelRest()`, to cancel the
+   scopes of the instances it just stopped (it knows their ordinals, and
+   therefore their segments), or the loop derives them itself. That is the
+   same question problem 5 asks — how the loop finds one host's open
+   instance scopes with no group to consult — so **problems 3 and 5 should
+   be solved together, by one lookup**, and not separately. Iterating
+   `ls.scopes` for `entry.host == host` answers both.
 4. **Restore.** `miParallelSeed` + `handleReAttach` → the `IterationRecord`
    the leaf uses. `handleScopeOpen`'s restored branch tests
    `entry.host == req.host`, which is true for ALL N instances of one host
