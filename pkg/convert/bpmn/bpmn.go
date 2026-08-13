@@ -78,6 +78,10 @@ const (
 	tagCallActivity   = "callActivity"
 	attrCalledElement = "calledElement"
 
+	// attrForCompensation marks an activity that runs only when
+	// compensation is thrown (elements/activities.md:19, default False).
+	attrForCompensation = "isForCompensation"
+
 	// The lane partition, model-only in every container that carries it
 	// (conformance.md line 173).
 	tagLaneSet      = "laneSet"

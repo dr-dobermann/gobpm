@@ -602,5 +602,9 @@ func attrBool(se xml.StartElement, local string, def bool) bool {
 		return def
 	}
 
-	return strings.EqualFold(v, "true")
+	// xsd:boolean has two lexical forms for each value, and modeler
+	// exports write both — reading only "true" would silently take a
+	// file's "1" as false, which for cancelActivity is the difference
+	// between an interrupting boundary and a non-interrupting one.
+	return strings.EqualFold(v, "true") || v == "1"
 }

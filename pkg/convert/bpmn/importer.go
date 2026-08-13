@@ -113,12 +113,19 @@ type nodeBody struct {
 	// as a CONSTRUCTION option, which is why they are collected with the
 	// rest of the body and not added afterwards.
 	laneSets []laneSetSpec
+	// extra are options read from the element's own attributes by the one
+	// funnel every node passes through, rather than by each builder that
+	// remembers to. A builder that forgets is how a documented attribute
+	// goes missing (SRD-089.D §4.13).
+	extra []options.Option
 }
 
 // opts renders the body as construction options, with the element's id
 // always first.
 func (b nodeBody) opts(id string) []options.Option {
-	return append([]options.Option{foundation.WithID(id)}, docOptions(b.docs)...)
+	opts := append([]options.Option{foundation.WithID(id)}, docOptions(b.docs)...)
+
+	return append(opts, b.extra...)
 }
 
 // ImportDocument parses r and returns the process together with every
@@ -214,6 +221,10 @@ type assembly struct {
 	// refs are the forward references pass 1 could not resolve because
 	// their target had not been parsed yet (SRD-089.A §FR-2).
 	refs []pendingRef
+	// assocs are the <association> elements read in pass 1, consumed in
+	// pass 2 by the compensation boundaries that name their handlers
+	// through them (SRD-089.E §4.7).
+	assocs []assocSpec
 	// places are the lane placements waiting on the id table: a lane is
 	// built with its container, and the nodes it names are built after
 	// (SRD-089.E §4.3).
@@ -868,6 +879,15 @@ func buildNode(p *parser, asm *assembly, s *nodeSpec) (flow.Node, error) {
 	// element's position in the file to point at.
 	build := nodeBuilders[s.se.Name.Local]
 
+	// isForCompensation is an Activity attribute, so it belongs to no
+	// single builder — reading it in each one is the shape that lost the
+	// dialect report until §4.13. An element that cannot take the option
+	// is refused by the model, which is the correct answer for a document
+	// carrying it on a gateway.
+	if attrBool(s.se, attrForCompensation, false) {
+		s.body.extra = append(s.body.extra, activities.WithCompensation())
+	}
+
 	outer := p.owner
 	p.owner = s.id
 	p.claimed = map[string]bool{}
@@ -1359,6 +1379,12 @@ func build(p *parser, asm *assembly) (*process.Process, error) {
 	// the container's own validation checks that what a lane holds is what
 	// the container holds (§4.3).
 	if err := placeLaneNodes(asm); err != nil {
+		return nil, err
+	}
+
+	// Every association a compensation boundary did not consume is a
+	// plain one, and plain associations have no model home (§4.9).
+	if err := refusePlainAssociations(asm); err != nil {
 		return nil, err
 	}
 

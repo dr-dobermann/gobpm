@@ -330,6 +330,7 @@ var processParsers = func() map[string]procParser {
 func init() { //nolint:gochecknoinits // breaks the processParsers cycle
 	processParsers[tagSubProcess] = parseContainerElem
 	processParsers[tagTransaction] = parseContainerElem
+	processParsers[tagAssociation] = parseAssociationElem
 }
 
 // parseContainerElem reads one container element and everything it holds.
@@ -362,7 +363,7 @@ func buildSubProcess(
 		opts = append(opts, lanes.WithLaneSets(sets...))
 	}
 
-	if isXMLTrue(attrValue(se, attrTriggeredByEvent)) {
+	if attrBool(se, attrTriggeredByEvent, false) {
 		opts = append(opts, activities.WithTriggeredByEvent())
 	}
 
@@ -467,17 +468,6 @@ func transactionOptions(
 	}
 
 	return []options.Option{activities.WithTransaction()}, nil
-}
-
-// isXMLTrue reads an xsd:boolean attribute. XML writes it "true" or "1",
-// and a modeler's export writes either.
-func isXMLTrue(v string) bool {
-	switch strings.TrimSpace(v) {
-	case "true", "1":
-		return true
-	}
-
-	return false
 }
 
 // parseNodeElem builds one flow node and records it in the assembly.
@@ -790,19 +780,27 @@ func buildBoundaryEvent(
 		return nil, err
 	}
 
-	// A compensation boundary routes to a handler activity, which BPMN
-	// expresses as an <association> from the boundary event to that
-	// activity — an element this stage does not import, so the model's
-	// dedicated constructor cannot be fed. Refused by naming what is
-	// missing from the import rather than by letting the model's error
-	// name a Go constructor the modeler cannot call.
+	// A compensation boundary takes its handler rather than a
+	// cancelActivity flag, and BPMN names that handler through the
+	// <association> leaving the event. The model has its own constructor
+	// for the pair, including the isForCompensation check on the handler,
+	// whose message names the option a modeler's file is missing.
 	if def.Type() == flow.TriggerCompensation {
-		return nil, errs.New(
-			errs.M("bpmn: %s carries a compensation trigger, whose handler "+
-				"BPMN names through an <association> this stage does not "+
-				"import yet; the same file imports unchanged once associations "+
-				"land", owner),
-			errs.C(errorClass, errs.InvalidObject))
+		handler, err := compensationHandler(asm, owner, id)
+		if err != nil {
+			return nil, err
+		}
+
+		ced, ok := def.(*events.CompensationEventDefinition)
+		if !ok {
+			return nil, errs.New(
+				errs.M("bpmn: %s carries a compensation trigger on a %T",
+					owner, def),
+				errs.C(errorClass, errs.InvalidObject))
+		}
+
+		return events.NewCompensationBoundaryEvent(
+			fallbackName(id, name), host, ced, handler, body.opts(id)...)
 	}
 
 	return events.NewBoundaryEvent(
