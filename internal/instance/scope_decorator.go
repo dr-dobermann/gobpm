@@ -37,12 +37,20 @@ const (
 	// completionCondition fired (SRD-082 FR-2) — the one decorator
 	// decision the loop cannot observe from the open/drain protocol.
 	scopeNote
-	// scopeLeafPass advances the loop's iteration mirror for a
-	// SEQUENTIAL LEAF Multi-Instance (SRD-086 FR-5): a leaf opens no
-	// scope, so the mirror can't ride the open/drain protocol — the
-	// runner posts each completed pass instead (n carries the count);
-	// the roundtrip is the fence that makes the miState reads safe.
-	scopeLeafPass
+	// scopeIterPost advances the loop's iteration mirror with the
+	// decorator's own executor set (SRD-086 FR-5, SRD-090.A FR-6): n
+	// carries the completed count, insts the per-ordinal states. The
+	// roundtrip is the fence that makes the miState reads safe.
+	//
+	// It serves every shape the decorator drives, not just the leaf it
+	// was introduced for. A leaf has no choice — it opens no scope, so
+	// the mirror cannot ride the open/drain protocol at all. A parallel
+	// COMPOSITE could in principle be derived from its open scopes, but
+	// only between its first open and its last drain: the window before
+	// the fan-out has opened anything is indistinguishable from a
+	// finished activity, and it is exactly where a restore would lose
+	// the set. One authority for both is the simpler contract.
+	scopeIterPost
 	// scopeReAttach is a RESTORED parallel runner re-joining its adopted
 	// group (SRD-082 FR-4): the loop lifts the entries' awaitAttach
 	// holds — the roundtrip is the fence — and completes any drains
@@ -87,10 +95,9 @@ type scopeRequest struct {
 	// decides, because deriving it here would move the sequential path's
 	// data paths and observability facts.
 	segment string
-	// insts carries a LEAF decorator's executor set to the loop's
-	// iteration mirror on a scopeLeafPass (SRD-090.A FR-6): a leaf opens
-	// no scope and spawns no track, so this post is the ONLY thing that
-	// can tell the capture which instances are live.
+	// insts carries the decorator's executor set to the loop's iteration
+	// mirror on a scopeIterPost (SRD-090.A FR-6) — the per-ordinal states
+	// the record persists, from the one component that knows them all.
 	insts []checkpoint.IterationInstance
 	// binds are the per-instance data items published at the CHILD scope
 	// before its body is seeded — the 0-based loopCounter, and the split
@@ -197,17 +204,19 @@ func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 		}
 
 		req.reply <- scopeReply{}
-	case scopeLeafPass:
+	case scopeIterPost:
 		m := ls.ensureIterMirror(req.host, req.node)
 		m.completed = req.n
 		m.instances = req.insts
 
 		req.reply <- scopeReply{}
 
-		// a completed leaf pass IS the observable transition (ADR-033
-		// §2.2): the whole N-pass run is one step execution emitting no
-		// track events, so without this the position never persists
-		// (SRD-086 FR-5).
+		// the post IS the observable transition (ADR-033 §2.2): a whole
+		// iteration is ONE step execution emitting no track events, so
+		// without this the position never persists (SRD-086 FR-5). That
+		// covers the activation post too — a fan-out that has decided
+		// which instances to run has changed the instance's durable
+		// position, whether or not any of them has finished.
 		ls.checkpointNow(ctx)
 	case scopeReAttach:
 		ls.handleReAttach(ctx, req)
@@ -267,9 +276,13 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 		entry.awaitAttach = false
 
 		// the re-attaching instance is a NEW executor over an old scope, so
-		// the entry adopts its channel: the restored scope was rebuilt by
-		// the loop and has none of its own (SRD-090.A M3b).
+		// the entry adopts its channel AND its output cell: the restored
+		// scope was rebuilt by the loop and has neither of its own
+		// (SRD-090.A M3b). Without the cell a resumed instance's output
+		// would be read from nowhere and its slot would stay nil, which
+		// reads downstream as an instance that produced nothing.
 		entry.drain = req.drain
+		entry.capture = req.capture
 
 		req.reply <- scopeReply{scopePath: child}
 
@@ -300,11 +313,13 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 	// instance that opened the scope, over the channel on the entry.
 	ls.waiting[req.host.ID()] = struct{}{}
 	ls.scopes[child] = &scopeEntry{
-		host:    req.host,
-		node:    req.node,
-		parent:  req.host.scopePath,
-		drain:   req.drain,
-		capture: req.capture,
+		host:     req.host,
+		node:     req.node,
+		parent:   req.host.scopePath,
+		drain:    req.drain,
+		capture:  req.capture,
+		instance: req.segment != "",
+		ordinal:  req.ordinal,
 	}
 
 	// mirror the decorator's position for the capture (SRD-082 FR-2);

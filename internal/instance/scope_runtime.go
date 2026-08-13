@@ -5,6 +5,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -112,6 +113,13 @@ type scopeEntry struct {
 	// arrived early; the re-attach completes it.
 	awaitAttach  bool
 	drainPending bool
+	// instance marks this scope as ONE of N fanned out from its host's
+	// activity rather than the host's own pass (SRD-090.A M3b). It is what
+	// ordinal means something on, and it is why the drain must not advance
+	// the iteration mirror: a fanned-out position is the decorator's to
+	// report (postPosition), never the host's loopCounter, which stands
+	// still for the whole fan-out.
+	instance bool
 }
 
 // scopeDoneTrigger is the internal trigger of the scope-completion
@@ -391,11 +399,25 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 				"restored scope %q has no parent path: %v", string(path), err)
 		}
 
-		host, node := restoredScopeHost(initial, parent, path)
+		host, node, ord := restoredScopeHost(initial, parent, path)
 		if host == nil {
 			return errs.New(
 				errs.M("restored scope %q has no host track — the "+
 					"checkpoint's scope and track tables disagree",
+					string(path)),
+				errs.C(errorClass, errs.InvalidState))
+		}
+
+		// an instance whose scope is still open cannot also be recorded
+		// finished: the drain closes the scope BEFORE the decorator reports
+		// it, so the reverse window does not exist. If a document says both,
+		// its scope table and its executor set describe different moments —
+		// and nothing would ever re-attach to that scope, leaving it open for
+		// the life of the instance.
+		if ord >= 0 && instanceRecordedDone(host, ord) {
+			return errs.New(
+				errs.M("restored instance scope %q is recorded completed — "+
+					"the checkpoint's scope table and executor set disagree",
 					string(path)),
 				errs.C(errorClass, errs.InvalidState))
 		}
@@ -408,12 +430,20 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 			}
 		}
 
+		// a FANNED-OUT instance's scope carries its ordinal in its own
+		// segment, so the entry is rebuilt from the path alone — no open-set
+		// record, and no group to belong to (SRD-090.A M3b). Its drain waits
+		// for the re-attach exactly as a serial pass's does: the instance
+		// that resumes it is a NEW executor, and until it arrives there is
+		// nothing to signal.
 		ls.scopes[path] = &scopeEntry{
 			host:        host,
 			node:        node,
 			parent:      parent,
 			active:      pins,
 			awaitAttach: drivesOwnIteration(node),
+			instance:    ord >= 0,
+			ordinal:     max(ord, 0),
 		}
 		ls.waiting[host.ID()] = struct{}{}
 	}
@@ -521,33 +551,113 @@ func trackByID(initial []*track, id string) *track {
 // restoredScopeHost finds the restored track hosting the open scope at
 // path: a track in the parent scope whose current node is a composite
 // and whose child segment derives that path.
+//
+// It reports the instance ordinal the segment carries, or -1 for a host's
+// own scope. A FANNED-OUT instance's segment is `sp-<id>-<ord>`, so the
+// ordinal — the one thing about an open instance that the track table
+// cannot show — is derivable from the path itself, and the open set needs
+// no record of its own (SRD-090.A M3b, retiring MIGroupRecord.Open).
+// A host's OWN scope is looked for across ALL candidates before any
+// instance reading is tried, and only a node that actually fans out can own
+// an instance. Both rules exist for the same collision: `sp-a-1` is node
+// `a-1`'s own scope AND instance 1 of node `a`, and a single pass would
+// answer whichever the track table happened to list first. Only one of the
+// two can be open at a time — they are the same DataPath — so the
+// precedence decides an interpretation, not a conflict.
 func restoredScopeHost(
 	initial []*track, parent, path scope.DataPath,
-) (*track, flow.Node) {
+) (*track, flow.Node, int) {
 	for _, t := range initial {
-		if t.scopePath != parent {
+		n, seg, ok := restoredHostSegment(t, parent)
+		if !ok {
 			continue
 		}
 
-		n := t.steps[len(t.steps)-1].node
-		if _, ok := n.(scopeHost); !ok {
-			continue
+		if child, err := t.scopePath.Append(seg); err == nil && child == path {
+			return t, n, -1
 		}
-
-		seg := scopeSegment(n)
-		if t.scopeSeg != "" {
-			seg = t.scopeSeg
-		}
-
-		child, err := t.scopePath.Append(seg)
-		if err != nil || child != path {
-			continue
-		}
-
-		return t, n
 	}
 
-	return nil, nil
+	for _, t := range initial {
+		n, seg, ok := restoredHostSegment(t, parent)
+		if !ok || !fansOut(n) {
+			continue
+		}
+
+		if ord, ok := instanceOrdinalOf(t, seg, path); ok {
+			return t, n, ord
+		}
+	}
+
+	return nil, nil, -1
+}
+
+// restoredHostSegment reports the composite node a restored track is
+// executing and the scope segment that track opens under parent, or false
+// when the track hosts no scope there.
+func restoredHostSegment(
+	t *track, parent scope.DataPath,
+) (flow.Node, string, bool) {
+	if t.scopePath != parent {
+		return nil, "", false
+	}
+
+	n := t.steps[len(t.steps)-1].node
+	if _, ok := n.(scopeHost); !ok {
+		return nil, "", false
+	}
+
+	if t.scopeSeg != "" {
+		return n, t.scopeSeg, true
+	}
+
+	return n, scopeSegment(n), true
+}
+
+// instanceRecordedDone reports whether the host's restored executor set
+// calls instance ord finished. False when the host carries no set at all —
+// a document written before Schema 6, whose fanned-out position rides the
+// group record instead (SRD-090.A FR-7).
+func instanceRecordedDone(host *track, ord int) bool {
+	if host.iterSeed == nil {
+		return false
+	}
+
+	for _, inst := range host.iterSeed.Instances {
+		if inst.Ordinal == ord {
+			return inst.State == instanceCompleted
+		}
+	}
+
+	return false
+}
+
+// instanceOrdinalOf reports the ordinal path carries as an instance scope
+// of the host track's segment — `<seg>-<ord>` under the host's own scope.
+//
+// The prefix is built with Append rather than compared as a string, so the
+// path grammar stays in one place; and what follows it must read back as
+// exactly the number it names — which is also what keeps a DESCENDANT of an
+// instance scope out, since any deeper path still carries a separator.
+func instanceOrdinalOf(
+	t *track, seg string, path scope.DataPath,
+) (int, bool) {
+	prefix, err := t.scopePath.Append(seg + "-")
+	if err != nil {
+		return 0, false
+	}
+
+	rest, found := strings.CutPrefix(string(path), string(prefix))
+	if !found {
+		return 0, false
+	}
+
+	ord, err := strconv.Atoi(rest)
+	if err != nil || ord < 0 || strconv.Itoa(ord) != rest {
+		return 0, false
+	}
+
+	return ord, true
 }
 
 // incidentHoldsScope reports whether the incident still holds its
@@ -701,15 +811,8 @@ func (ls *loopState) completeScope(
 	// guard anything (SRD-052 FR-5).
 	ls.disarmScopeHandlers(path)
 
-	// a parallel Multi-Instance instance carries its ordinal on the entry, not on
-	// the shared host.loopCounter (SRD-056.A FR-11); a serial scope reads it via
-	// scopeLoopCounter as before.
-	ordinal := scopeLoopCounter(entry.node, entry.host)
-	if entry.group != nil {
-		ordinal = entry.ordinal
-	}
-
-	ls.reportScope(observability.PhaseCompleted, entry.node, path, ordinal)
+	ls.reportScope(
+		observability.PhaseCompleted, entry.node, path, scopeFactOrdinal(entry))
 	ls.reportAdHocSettled(entry, observability.PhaseCompleted)
 
 	// an executor's own scope drains to the executor (SRD-090.A M3b). The
@@ -859,15 +962,7 @@ func (ls *loopState) cancelScope(path scope.DataPath, phase observability.Phase)
 				observability.AttrScopePath, string(p), observability.AttrError, err.Error())
 		}
 
-		// a parallel Multi-Instance instance reports its OWN ordinal (SRD-056.A
-		// FR-14), not the shared host.loopCounter that scopeLoopCounter surfaces
-		// now that a parallel MI self-drives.
-		ord := scopeLoopCounter(entry.node, entry.host)
-		if entry.group != nil {
-			ord = entry.ordinal
-		}
-
-		ls.reportScope(phase, entry.node, p, ord)
+		ls.reportScope(phase, entry.node, p, scopeFactOrdinal(entry))
 
 		// An ad-hoc container's routing ended here however the scope was cut
 		// short — a Terminate still leaves the routing canceled, so the terminal
@@ -931,4 +1026,23 @@ func scopeLoopCounter(node flow.Node, host *track) int {
 	}
 
 	return -1
+}
+
+// scopeFactOrdinal is the ordinal a scope's lifecycle fact carries.
+//
+// A FANNED-OUT instance reports its OWN (SRD-056.A FR-14), which is the one
+// on its entry: the host's loopCounter is shared by all N and stands still
+// for the whole fan-out, so it cannot name any of them. Every serial scope
+// reads the host's pass counter as before.
+//
+// The two facts a scope emits — Completed and Canceled — ask this one
+// question, and asked separately they drifted once already: the open side
+// learned the instance ordinal in this milestone while both close sides
+// still reported the host's.
+func scopeFactOrdinal(entry *scopeEntry) int {
+	if entry.group != nil || entry.instance {
+		return entry.ordinal
+	}
+
+	return scopeLoopCounter(entry.node, entry.host)
 }

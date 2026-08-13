@@ -388,6 +388,16 @@ func (d *iterDecorator) runParallel(
 		}
 	}
 
+	// the set is posted BEFORE the first instance starts, and the roundtrip
+	// is what fences it. Until then nothing has told the capture which
+	// ordinals are live: a checkpoint landing in that window would record an
+	// EMPTY set, which restores as "all N still to run" — so an activity
+	// interrupted mid-fan-out would re-run the instances a restore had
+	// already found complete (SRD-090.A FR-6/FR-7).
+	if err := d.postPosition(ctx, n-len(insts), states); err != nil {
+		return nil, err
+	}
+
 	runCtx, cancelRest := context.WithCancel(ctx)
 	defer cancelRest()
 
@@ -529,7 +539,7 @@ func (d *iterDecorator) postPosition(
 	}
 
 	_, err := d.t.instance.scopeExchange(ctx, scopeRequest{
-		op:    scopeLeafPass,
+		op:    scopeIterPost,
 		host:  d.t,
 		node:  d.step.node,
 		n:     completed,

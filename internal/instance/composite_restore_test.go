@@ -730,15 +730,16 @@ func TestRestoredScopeHostSegOverride(t *testing.T) {
 	child, err := host.scopePath.Append("fire-7")
 	require.NoError(t, err)
 
-	got, node := restoredScopeHost([]*track{host}, host.scopePath, child)
+	got, node, ord := restoredScopeHost([]*track{host}, host.scopePath, child)
 	require.Same(t, host, got)
 	require.Equal(t, "cr-seg-body", node.ID())
+	require.Equal(t, -1, ord, "the host's OWN scope, not an instance of it")
 
 	// the node-derived segment no longer matches under the override.
 	plain, err := host.scopePath.Append("sp-cr-seg-body")
 	require.NoError(t, err)
 
-	miss, _ := restoredScopeHost([]*track{host}, host.scopePath, plain)
+	miss, _, _ := restoredScopeHost([]*track{host}, host.scopePath, plain)
 	require.Nil(t, miss)
 }
 

@@ -396,6 +396,15 @@ func seedStaging(
 	return nil
 }
 
+// fansOut reports whether a node runs its instances CONCURRENTLY — a
+// parallel Multi-Instance, the one shape whose instances get scopes of
+// their own (`sp-<id>-<ord>`) rather than one scope reused pass by pass.
+func fansOut(node flow.Node) bool {
+	mi := multiInstanceOf(node)
+
+	return mi != nil && !mi.IsSequential()
+}
+
 // drivesOwnIteration reports whether a looped composite drives its OWN iteration
 // off the loop (the iteration decorator, ADR-025 v.2 §2.12): a Standard-Loop
 // composite (runCompositeLoop) or ANY Multi-Instance composite — sequential

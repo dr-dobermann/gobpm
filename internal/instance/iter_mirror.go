@@ -28,11 +28,13 @@ type iterMirror struct {
 	// characteristics — a decorator posting it would be telling the loop
 	// something the loop can already read.
 	kind string
-	// instances describe a LEAF activity's executor set (FR-6). A leaf
-	// opens no scope and spawns no track, so neither the drain protocol
-	// nor the track table can show the loop what is live — the decorator
-	// posts it (scopeLeafPass). Empty for a composite, whose instances
-	// ARE its child scopes and whose position rides the drain protocol.
+	// instances describe the activity's executor set (FR-6), posted by the
+	// decorator (scopeIterPost). It is the decorator's to report for every
+	// fanned-out shape: a leaf opens no scope and spawns no track, so
+	// nothing else can see its instances at all, and a composite fan-out is
+	// invisible the same way in the window before its first scope opens.
+	// Empty for a SERIAL composite, whose one live pass is its open scope
+	// and whose position rides the drain protocol.
 	instances    []checkpoint.IterationInstance
 	n            int
 	completed    int
@@ -93,8 +95,15 @@ func (ls *loopState) ensureIterMirror(
 
 // markIterDrain records one completed serial pass (SRD-082 FR-2). Runs
 // on the loop goroutine from completeScope, before the runner resumes.
+//
+// A FANNED-OUT instance is not a serial pass and is skipped: the host's
+// loopCounter stands still for the whole fan-out, so it cannot say how many
+// instances are done, and the decorator posts that set itself
+// (postPosition). Deriving it here would overwrite the truth with a zero
+// (SRD-090.A M3b).
 func (ls *loopState) markIterDrain(entry *scopeEntry) {
-	if entry.group != nil || !drivesOwnIteration(entry.node) {
+	if entry.group != nil || entry.instance ||
+		!drivesOwnIteration(entry.node) {
 		return
 	}
 
