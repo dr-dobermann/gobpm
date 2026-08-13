@@ -115,12 +115,16 @@ class assigned to the tag would have to be wrong about one of them.
   by an absent model capability. This is the class §2.3 registers. Its refusal
   **names the capability**, because that name is the specification of the work
   that removes it.
-- **Standing** — the constructor's argument is a Go value no document can
-  carry. A complex gateway's activation is per-incoming-flow token counts
-  where the document holds a Boolean expression; an ad-hoc sub-process is
-  entered by a host-supplied `Router` (see [ADR-035](ADR-035-adhoc-sub-process.md))
-  which a file cannot contain. These never become extension points, and their
-  refusal says what to do instead — build the element programmatically.
+- **Standing** — the engine will not accept this, and not for want of work.
+  Usually the constructor's argument is a Go value no document can carry: a
+  complex gateway's activation is per-incoming-flow token counts where the
+  document holds a Boolean expression; an ad-hoc sub-process is entered by a
+  host-supplied `Router` (see [ADR-035](ADR-035-adhoc-sub-process.md)) which a
+  file cannot contain. It can equally be a **decided non-goal**: a transaction's
+  `method="store"`/`"image"` selects resource-manager coordination that
+  [ADR-028 §2.7](ADR-028-transaction-sub-process.md) rules out by choice. These
+  never become extension points, and their refusal says what to do instead —
+  build the element programmatically, or use the mechanism that was chosen.
 
 A standing boundary is **not** a defect and must not be re-filed as one. A
 capability-blocked boundary is a work item and gets an issue.
@@ -133,8 +137,24 @@ is otherwise complete.
 | Missing capability | What it unblocks | Tracking |
 |---|---|---|
 | An artifact collection on `Process`, and a constructor for `artifacts.Association` | the plain `<association>`, and with it the annotated diagrams whose annotation is already skipped but whose link is refused | [#323](https://github.com/dr-dobermann/gobpm/issues/323) |
-| Transaction coordination attributes | `protocol` and `method` on a transaction sub-process | [#324](https://github.com/dr-dobermann/gobpm/issues/324) |
 | A callable-resolution seam | `calledElement` beyond a literal key, and the whole GlobalTask family | [#325](https://github.com/dr-dobermann/gobpm/issues/325) |
+
+A transaction's `protocol` and `method` were on this table, tracked by
+[#324](https://github.com/dr-dobermann/gobpm/issues/324), until
+[ADR-028 §2.7](ADR-028-transaction-sub-process.md) was read rather than assumed.
+It decides the question already: of `method`'s three values only `compensate` is
+a process-level mechanism the engine can realize, and `store`/`image` are
+resource-manager coordination declared an explicit **non-goal** (§2.8, §2.9).
+That is a standing boundary by §2.2, so it belongs in that class and not in this
+register — and `protocol` names the coordinator those two methods would need, so
+it goes with them rather than becoming a datum stored for nobody. The issue
+misstates the work and needs closing or re-scoping.
+
+This is the register's second false row, after the timer, and the two failed the
+same way: a capability was admitted on the strength of what the converter could
+not do, without reading the decision that governs it. §2.1's obligation to look
+for the model's own way in extends to the decision records — a capability the
+project has already declined is not missing, it is decided.
 
 A payload structure named by `itemRef` or `structureRef` is deliberately absent
 from this table. It resolves into an external XSD or WSDL the converter neither
@@ -207,13 +227,19 @@ refusal a modeller actually reads both call the tag scheduled work, while half
 of it is blocked on a model gap neither mentions.
 
 **Register a capability on the strength of the constructor in hand.** Rejected,
-having been done: the first draft of this record registered expression result
-types `Duration` and `int` as blocking duration and recurrence timers, because
-the constructor examined demanded types the expression language does not
-declare. A sibling constructor on the same type took the ISO 8601 string whole
-and needed neither. A register that admits a capability without a search for the
-model's existing way in produces work items for capabilities that already exist —
-worse than no register, because it is believed.
+having been done twice. The first draft of this record registered expression
+result types `Duration` and `int` as blocking duration and recurrence timers,
+because the constructor examined demanded types the expression language does not
+declare — a sibling constructor on the same type took the ISO 8601 string whole
+and needed neither. The second registered a transaction's coordination
+attributes, where ADR-028 §2.7 had already decided that two of `method`'s three
+values are a non-goal: not a capability anyone was waiting for, a choice the
+project had made.
+
+Both rows were admitted from what the converter could not do, without reading
+what the model offers or what has already been decided. A register that does
+that produces work items for capabilities that exist and for capabilities nobody
+wants — worse than no register, because it is believed.
 
 ## 5. Open questions
 
@@ -236,4 +262,4 @@ left open.
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
-| v.1 | 2026-08-12 | Ruslan Gabitov | Initial decision. Three situations had collapsed into one refusal — work not yet reached, a **missing model capability**, and a **standing** property of the engine — and the last two read identically while meaning opposite things. The unit classified is the **construct, not the tag**: `<association>` holds a scheduled compensation link and a capability-blocked plain one. The converter **never compensates locally** for a missing capability (a private parser or type is the import-versus-runtime split in another costume, and the model layer would have to supersede it); it reports and refuses, **naming the capability**, so the refusal doubles as the specification of the work that removes it — and naming it forces the search for the model's existing way in, which is what a capability wrongly registered on the strength of one constructor costs. Standing boundaries — a complex gateway's token-count activation, an ad-hoc container's host-supplied Router — take a Go value no document can carry and **never become extension points**. Capability-blocked ones are registered with what unblocks them: an artifact collection on `Process` plus a constructor for `artifacts.Association` ([#323](https://github.com/dr-dobermann/gobpm/issues/323)), transaction coordination attributes ([#324](https://github.com/dr-dobermann/gobpm/issues/324)), and a callable-resolution seam ([#325](https://github.com/dr-dobermann/gobpm/issues/325)). A capability **lands before** the converter row consuming it. An external payload schema is deliberately unregistered — it needs a schema the converter cannot fetch and a Go value to bind, so it stays reported rather than scheduled. |
+| v.1 | 2026-08-12 | Ruslan Gabitov | Initial decision. Three situations had collapsed into one refusal — work not yet reached, a **missing model capability**, and a **standing** property of the engine — and the last two read identically while meaning opposite things. The unit classified is the **construct, not the tag**: `<association>` holds a scheduled compensation link and a capability-blocked plain one. The converter **never compensates locally** for a missing capability (a private parser or type is the import-versus-runtime split in another costume, and the model layer would have to supersede it); it reports and refuses, **naming the capability**, so the refusal doubles as the specification of the work that removes it — and naming it forces the search for the model's existing way in, which is what a capability wrongly registered on the strength of one constructor costs. Standing boundaries — a complex gateway's token-count activation, an ad-hoc container's host-supplied Router, a transaction's `method="store"`/`"image"` — either take a Go value no document can carry or are a **decided non-goal**, and **never become extension points**. Capability-blocked ones are registered with what unblocks them: an artifact collection on `Process` plus a constructor for `artifacts.Association` ([#323](https://github.com/dr-dobermann/gobpm/issues/323)) and a callable-resolution seam ([#325](https://github.com/dr-dobermann/gobpm/issues/325)). Transaction coordination ([#324](https://github.com/dr-dobermann/gobpm/issues/324)) was registered and removed: ADR-028 §2.7 had already ruled it out, making it the register's second false row after the timer — both admitted from what the converter could not do, without reading what the model offers or what was already decided. A capability **lands before** the converter row consuming it. An external payload schema is deliberately unregistered — it needs a schema the converter cannot fetch and a Go value to bind, so it stays reported rather than scheduled. |
