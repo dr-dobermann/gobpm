@@ -33,6 +33,11 @@ const (
 	ctxOperation
 	ctxCatalog
 	ctxEventDef
+	// ctxData is inside an item-aware flow element — a <dataObject> or one
+	// of the two references. Its own children are a BaseElement's plus
+	// <dataState>, so an element met there is not the one the process
+	// context would have expected.
+	ctxData
 )
 
 // elementKey identifies one element in one parse context.
@@ -345,6 +350,14 @@ func init() { //nolint:gochecknoinits // breaks the processParsers cycle
 	processParsers[tagSubProcess] = parseContainerElem
 	processParsers[tagTransaction] = parseContainerElem
 	processParsers[tagAssociation] = parseAssociationElem
+
+	// The item-aware flow elements. Registered HERE rather than in a table
+	// of their own, because a container's children are dispatched through
+	// processParsers too — so a <dataObject> inside a <subProcess> works
+	// with no second registration and cannot drift from this one.
+	for local := range dataElements {
+		processParsers[local] = parseDataElem
+	}
 }
 
 // parseContainerElem reads one container element and everything it holds.

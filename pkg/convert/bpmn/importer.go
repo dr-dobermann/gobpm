@@ -233,6 +233,10 @@ type assembly struct {
 	// built with its container, and the nodes it names are built after
 	// (SRD-089.E §4.3).
 	places []placement
+	// datas are the item-aware flow elements read in pass 1 — a data
+	// object, or a reference to one — built after the nodes, since the
+	// container holding one IS a node (SRD-089.F §4.4).
+	datas []dataSpec
 }
 
 // parser wraps the xml.Decoder token stream with import state.
@@ -1404,6 +1408,13 @@ func build(p *parser, asm *assembly) (*process.Process, error) {
 	asm.items = items
 
 	if err := buildNodes(p, asm); err != nil {
+		return nil, err
+	}
+
+	// After the nodes, because a container IS a node: the sub-process
+	// holding a data object does not exist until the node pass built it
+	// (SRD-089.F §4.4).
+	if err := buildDataElements(p, asm); err != nil {
 		return nil, err
 	}
 

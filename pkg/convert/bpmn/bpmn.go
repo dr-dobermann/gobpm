@@ -98,6 +98,15 @@ const (
 	attrLocation      = "location"
 	attrNamespace     = "namespace"
 
+	// The item-aware flow elements and the two references they carry.
+	// <dataState> is a child rather than an attribute, and is reported
+	// wherever it appears (SRD-089.F §4.7).
+	tagDataObject      = "dataObject"
+	tagDataObjectRef   = "dataObjectReference"
+	tagDataState       = "dataState"
+	attrItemSubjectRef = "itemSubjectRef"
+	attrDataObjectRef  = "dataObjectRef"
+
 	// The lane partition, model-only in every container that carries it
 	// (conformance.md line 173).
 	tagLaneSet      = "laneSet"
