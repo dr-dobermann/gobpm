@@ -74,6 +74,10 @@ const (
 	attrTransactionMethod = "method"
 	attrTransactionProto  = "protocol"
 
+	// tagCallActivity invokes a callable by key (elements/activities.md:510).
+	tagCallActivity   = "callActivity"
+	attrCalledElement = "calledElement"
+
 	// The ten event definitions (elements/event-definitions.md), their
 	// expression children and the two references they carry as children
 	// rather than attributes.

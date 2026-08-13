@@ -163,12 +163,21 @@ var policy = map[elementKey]dispositionKind{
 // UnsupportedElementError carries actionable modeler feedback (ADR-024
 // §2.7 / SAD-001 §5). A tag absent from the table yields an error
 // with no §.
+//
+// An element being importable does NOT retire its row. The tables claim
+// an element in a CONTEXT — <subProcess> is claimed under <process> and
+// under another container, and refused anywhere else — so the § stays
+// reachable for every context that does not claim it. Removing a row
+// because the element now imports somewhere costs the § exactly where a
+// modeler put the element somewhere it does not belong, which is when
+// they need it most.
 var sections = map[string]string{
 	"sendTask":                         "§13.3.3",
 	"receiveTask":                      "§13.3.3",
 	"scriptTask":                       "§13.3.3",
 	"businessRuleTask":                 "§13.3.3",
 	"callActivity":                     "§13.3.3",
+	"subProcess":                       "§13.3.4",
 	"adHocSubProcess":                  "§13.3.4",
 	"transaction":                      "§13.3.4",
 	"complexGateway":                   "§13.4",
@@ -359,6 +368,37 @@ func buildSubProcess(
 	return activities.NewSubProcess(fallbackName(id, name), opts...)
 }
 
+// buildCallActivity builds a Call Activity keyed by calledElement.
+//
+// The registry is NOT consulted, here or anywhere in the import: the
+// model resolves a callable at CALL time (ADR-023 §2.7), so the callable
+// may be registered after the file is imported, or re-versioned later. An
+// import that failed because a callable was not yet registered would make
+// import order significant, which is the property call-time resolution
+// exists to avoid.
+//
+// An empty key is refused by NewCallActivity in its own words, so nothing
+// is checked for it here.
+func buildCallActivity(
+	_ *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,
+) (flow.Node, error) {
+	key := strings.TrimSpace(attrValue(se, attrCalledElement))
+
+	if prefix, _, found := strings.Cut(key, ":"); found {
+		return nil, errs.New(
+			errs.M("bpmn: callActivity %q: calledElement %q names a callable "+
+				"in another definitions document (prefix %q), which needs a "+
+				"callable-resolution seam this engine does not have (#325). "+
+				"Taking the text as a key would silently call whatever the "+
+				"host happens to have registered under it. Register the "+
+				"called process under a key and name that key",
+				id, key, prefix),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	return activities.NewCallActivity(fallbackName(id, name), key, body.opts(id)...)
+}
+
 // transactionMethods says, per BPMN Transaction `method` value, whether
 // this engine realizes that abort protocol (ADR-028 §2.7). The empty key
 // is the absent attribute: BPMN's default is compensate.
@@ -527,8 +567,9 @@ var nodeBuilders = map[string]nodeBuilder{
 	tagTask:       buildManualTask,
 	tagManualTask: buildManualTask,
 
-	tagSubProcess:  buildSubProcess,
-	tagTransaction: buildSubProcess,
+	tagSubProcess:   buildSubProcess,
+	tagTransaction:  buildSubProcess,
+	tagCallActivity: buildCallActivity,
 
 	tagUserTask: func(
 		p *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,

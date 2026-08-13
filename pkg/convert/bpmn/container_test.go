@@ -1,9 +1,11 @@
 package bpmn
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/pkg/convert"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
@@ -182,6 +184,39 @@ func TestContainerIDIsClaimedBeforeItsChildren(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "duplicate flow-element id") {
 		t.Errorf("error = %v, want the duplicate-id refusal", err)
+	}
+}
+
+// TestImportableElementKeepsItsSectionElsewhere pins why an element that
+// imports keeps its row in `sections`.
+//
+// The tables claim an element in a CONTEXT. <subProcess> is claimed
+// inside a container and refused anywhere else, so the § is still
+// reachable — and a modeler who put a sub-process somewhere it does not
+// belong is exactly who needs the spec reference.
+func TestImportableElementKeepsItsSectionElsewhere(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="P" name="P">
+    <bpmn:startEvent id="s1">
+      <bpmn:subProcess id="wrong"/>
+    </bpmn:startEvent>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	_, err := importEventDoc(t, doc)
+	if err == nil {
+		t.Fatal("a <subProcess> inside a start event must be refused")
+	}
+
+	var uee *convert.UnsupportedElementError
+	if !errors.As(err, &uee) {
+		t.Fatalf("error = %v, want an UnsupportedElementError", err)
+	}
+
+	if uee.Section != "§13.3.4" {
+		t.Errorf("Section = %q, want §13.3.4 — the row survives the element "+
+			"becoming importable elsewhere", uee.Section)
 	}
 }
 
