@@ -181,6 +181,13 @@ var policy = map[elementKey]dispositionKind{
 // because the element now imports somewhere costs the § exactly where a
 // modeler put the element somewhere it does not belong, which is when
 // they need it most.
+//
+// Every § here is one docs/bpmn-spec/ supports. Chapter 10 divides as
+// Activities §10.3, Data §10.4, Events §10.5, Gateways §10.6 — the
+// numbering the extract's detail files use throughout, and which
+// conformance.md line 174 confirms by citing §10.5.4 for a boundary
+// event. The one-line section index in that file used to say otherwise
+// and was the source of nine wrong data pins (SRD-089.F FR-8).
 var sections = map[string]string{
 	"sendTask":                         "§13.3.3",
 	"receiveTask":                      "§13.3.3",
@@ -204,20 +211,17 @@ var sections = map[string]string{
 	"linkEventDefinition":              "§13.5",
 	"terminateEventDefinition":         "§13.5",
 	"cancelEventDefinition":            "§13.5",
-	"laneSet":                          "§10.5",
-	"lane":                             "§10.5",
-	"dataObject":                       "§10.3",
-	"dataObjectReference":              "§10.3",
-	"dataStoreReference":               "§10.3",
-	"collaboration":                    "§10.1",
-	"participant":                      "§10.1",
-	"messageFlow":                      "§10.1",
-	"ioSpecification":                  "§10.3",
-	"property":                         "§10.3",
-	"dataInput":                        "§10.3",
-	"dataOutput":                       "§10.3",
-	"dataInputAssociation":             "§10.3",
-	"dataOutputAssociation":            "§10.3",
+	"itemDefinition":                   "§8.4.10",
+	"dataObject":                       "§10.4.1",
+	"dataObjectReference":              "§10.4.1",
+	"dataStore":                        "§10.4.1",
+	"dataStoreReference":               "§10.4.1",
+	"ioSpecification":                  "§10.4.1",
+	"property":                         "§10.4.1",
+	"dataInput":                        "§10.4.1",
+	"dataOutput":                       "§10.4.1",
+	"dataInputAssociation":             "§10.4.1",
+	"dataOutputAssociation":            "§10.4.1",
 	"multiInstanceLoopCharacteristics": "§13.3.5",
 	"standardLoopCharacteristics":      "§13.3.5",
 
@@ -226,6 +230,14 @@ var sections = map[string]string{
 	// (semantics/correlation.md:210). The Choreography family is refused
 	// too, but carries no § here — the extract does not pin one, and a
 	// section asserted from memory is worse feedback than none.
+	//
+	// Three more families are absent for that same reason, having once
+	// been present with invented numbers: <laneSet>/<lane>, and the
+	// Collaboration group <collaboration>/<participant>/<messageFlow>.
+	// conformance.md line 32 and lines 165-176 keep all of them in
+	// scope but pin no § for any, and a modeler sent to the wrong
+	// chapter stops trusting the rest of the message. They are pinned
+	// when the spec text supplies a number, not before.
 	"conversation":            "§9.5.1",
 	"subConversation":         "§9.5.1",
 	"callConversation":        "§9.5.1",

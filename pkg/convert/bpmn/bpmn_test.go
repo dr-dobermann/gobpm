@@ -171,7 +171,19 @@ func TestImportErrors(t *testing.T) {
 </bpmn:definitions>`,
 			want:    `unsupported element "participant"`,
 			wantUee: true,
-			wantSec: "§10.1",
+			// No §: the extract keeps <participant> in scope but pins
+			// no section for it, and an invented one is worse feedback
+			// than none (SRD-089.F FR-8).
+			wantSec: "",
+		},
+		{
+			name: "unsupported element that DOES carry a section",
+			doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="p"><bpmn:ioSpecification id="ios"/></bpmn:process>
+</bpmn:definitions>`,
+			want:    `unsupported element "ioSpecification"`,
+			wantUee: true,
+			wantSec: "§10.4.1",
 		},
 		{
 			name: "unknown operationRef",
@@ -242,9 +254,20 @@ func TestImportErrors(t *testing.T) {
 				t.Errorf("errors.As(*UnsupportedElementError) = %v, want %v", got, tc.wantUee)
 			}
 
-			if tc.wantUee && tc.wantSec != "" && !strings.Contains(uee.Section, tc.wantSec) {
-				t.Errorf("UnsupportedElementError.Section = %q, want substring %q",
-					uee.Section, tc.wantSec)
+			// An empty wantSec asserts the refusal carries NO section,
+			// rather than skipping the check: "" is the answer for an
+			// element the extract pins nowhere, and a guess appearing
+			// there has to fail something (SRD-089.F FR-8).
+			if tc.wantUee {
+				ok := strings.Contains(uee.Section, tc.wantSec)
+				if tc.wantSec == "" {
+					ok = uee.Section == ""
+				}
+
+				if !ok {
+					t.Errorf("UnsupportedElementError.Section = %q, want %q",
+						uee.Section, tc.wantSec)
+				}
 			}
 
 			if tc.wantClass != "" {
@@ -1053,12 +1076,22 @@ func TestSectionFor(t *testing.T) {
 		"intermediateCatchEvent":           "§13.5",
 		"boundaryEvent":                    "§13.5.5",
 		"messageEventDefinition":           "§13.5",
-		"lane":                             "§10.5",
-		"dataObject":                       "§10.3",
-		"collaboration":                    "§10.1",
-		"dataInputAssociation":             "§10.3",
+		"itemDefinition":                   "§8.4.10",
+		"dataObject":                       "§10.4.1",
+		"dataInputAssociation":             "§10.4.1",
 		"multiInstanceLoopCharacteristics": "§13.3.5",
 		"unknown":                          "",
+
+		// Pinned as ABSENT, not as a number. The extract keeps these
+		// in scope and pins no § for any of them; they carried
+		// invented ones until SRD-089.F FR-8. A future pin has to
+		// come with the spec text that supplies it, and changing
+		// these lines is where that gets noticed.
+		"laneSet":       "",
+		"lane":          "",
+		"collaboration": "",
+		"participant":   "",
+		"messageFlow":   "",
 	}
 
 	for tag, want := range tests {

@@ -177,15 +177,21 @@ The first distinction is the standard's own (§13 animates, §8/§10 supply). Th
 
 ## Spec section index (for cross-reference)
 
+The chapter-10 rows below once read Activities §10.5, Events §10.4, Data §10.3 —
+a transposition that contradicted every detail file in this extract, and the
+boundary-event note above ("explicitly allowed by §10.5.4"). It had propagated
+into nine wrong `§` pins in the converter's modeler-facing refusals before it
+was caught. The order is Activities, Data, Events, Gateways.
+
 | Topic | Spec section |
 |---|---|
 | Conformance subclasses | §2 |
 | Process Execution Conformance (§2.3.1 semantics, §2.3.2 import) | §2.3 |
 | Process **Modeling** Conformance sub-classes (Descriptive / Analytic / Common Executable) — **not** this engine's target | §2.2.1 |
 | Process model | §10 |
-| Activities | §10.5 |
-| Events | §10.4 |
+| Activities | §10.3 |
+| Data (Items and Data) | §10.4 |
+| Events | §10.5 |
 | Gateways | §10.6 |
-| Data | §10.3 |
 | Execution semantics (state machines, token flow) | §13 |
 | Correlation | §8.4.2 |
