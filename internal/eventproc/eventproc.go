@@ -20,7 +20,7 @@ import (
 var ErrRejected = errors.New("event rejected: not for this processor")
 
 // EventProcessor and EventProducer are the public node-facing event contracts
-// (ADR-012 v.1). They live in pkg/eventproc; the aliases here let the internal
+// (ADR-012). They live in pkg/eventproc; the aliases here let the internal
 // EventHub/EventWaiter and the internal consumers keep referring to them
 // unqualified while the implementations stay in this package.
 type (
@@ -72,7 +72,7 @@ type EventHub interface {
 	RemoveWaiter(eDefID string) error
 
 	// WaiterFired is called by a waiter (from its own goroutine) to report it
-	// has fired. The EventHub — the SOLE owner of waiter removal (ADR-006 v.1
+	// has fired. The EventHub — the SOLE owner of waiter removal (ADR-006
 	// §2.5) — removes the waiter iff it has reached a terminal state, and keeps
 	// a still-running one (a persistent message waiter, or a timer mid-cycle).
 	// No waiter ever removes itself: it sets its own state and reports here.
@@ -91,7 +91,7 @@ type EventHub interface {
 	// Shutdown stops every registered waiter and waits — bounded by ctx — for
 	// their service goroutines to exit, removing each from the registry even if
 	// its Stop returns an error, so no waiter goroutine outlives the hub
-	// (ADR-006 v.1 §2.5). After Shutdown the hub rejects further registration.
+	// (ADR-006 §2.5). After Shutdown the hub rejects further registration.
 	Shutdown(ctx context.Context) error
 }
 
@@ -115,6 +115,18 @@ type EventWaiter interface {
 	// AddEventProcessor adds single EventProcessor into waiter's list of
 	// EventProcessors, waiting for the EventDefinition.
 	// If the EventProcessor already exists in waiters queue, no errors returned.
+	//
+	// REGISTRY WORK ONLY, and only HALF of a join when the waiter is also a
+	// KeyedWaiter: the processor's correlation keys reach the broker through
+	// ApplyProcessorKeys, which the caller invokes with its own locks
+	// RELEASED. Calling this alone against a keyed waiter registers a
+	// processor whose keys the broker never learns — which is #320, the defect
+	// the split exists to fix.
+	//
+	// The two are separate rather than one method because the second half is a
+	// call into the host and the first is called under the EventHub's
+	// engine-wide lock; merging them puts a host call back inside that lock
+	// (FIX-038 §1.1). EventHub.registerWaiter is the reference caller.
 	AddEventProcessor(EventProcessor) error
 
 	// RemoveEventProcessor removes the ep EventProcessor from waiter's event
@@ -140,8 +152,57 @@ type EventWaiter interface {
 
 	// Done returns a channel that is closed when the waiter's service goroutine
 	// has exited (by Stop, ctx cancel, or a terminal fire). EventHub.Shutdown
-	// waits on it to drain waiter goroutines without a leak (ADR-006 v.1 §2.5).
+	// waits on it to drain waiter goroutines without a leak (ADR-006 §2.5).
 	Done() <-chan struct{}
+}
+
+// KeyedProcessor is an EventProcessor that answers to correlation keys.
+//
+// OPTIONAL, and deliberately not part of EventProcessor: a plain track answers
+// to no key at all, while an instance carrying conversation or Multi-Instance
+// iteration keys answers to several. Satisfied by *instance.Instance and by
+// thresher's subscription holder; a waiter reads it through a type assertion
+// and treats a processor that does not implement it as keyless.
+//
+// Declared rather than asserted anonymously so both implementors can be
+// compile-checked against one contract and a third is written from it rather
+// than by imitation (FIX-041 §1.8).
+type KeyedProcessor interface {
+	EventProcessor
+
+	// CorrelationKeys returns the keys this processor's messages are routed
+	// by. An empty result is normal and means "route by message name alone".
+	CorrelationKeys() []string
+}
+
+// KeyedWaiter is an EventWaiter whose broker delivery is filtered by
+// correlation key, and whose key-set therefore keeps growing after the
+// subscription exists.
+//
+// OPTIONAL, and deliberately not part of EventWaiter: only the message waiter
+// holds a keyed broker subscription — signal and timer waiters hold none, and a
+// mandatory method they would have to stub is worse than an optional one they
+// simply do not implement.
+//
+// Both methods are FOREIGN — they reach the host's MessageBroker — and MUST be
+// called with no EventHub lock held (FIX-038 §1.1, FIX-041 §1.1).
+type KeyedWaiter interface {
+	EventWaiter
+
+	// AddKey extends the waiter's subscription with a single correlation key
+	// learned after the waiter parked (SRD-017 §4.5 lazy association).
+	AddKey(key string) error
+
+	// ApplyProcessorKeys applies the correlation keys of a processor already
+	// registered with the waiter. It is the second half of a join:
+	// AddEventProcessor does the registry work under the hub lock, this does
+	// the broker work after the lock is released. A processor that is not a
+	// KeyedProcessor is a no-op.
+	//
+	// On failure the waiter has discarded its subscription and is WSFailed:
+	// the port cannot un-apply a key, so a partly-applied key-set can only be
+	// thrown away, never repaired (FIX-041 §3.1 D2).
+	ApplyProcessorKeys(ep EventProcessor) error
 }
 
 // EventWaiterState represents the state of an event waiter.

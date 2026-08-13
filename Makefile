@@ -231,6 +231,17 @@ lint_all:
 	golangci-lint run --timeout=10m ./...
 .PHONY: lint_all
 
+# Report engine calls that reach the HOST while a lock is held — a broker, a
+# processor, a reporter the embedding application supplied (FIX-038 §1.1,
+# FIX-041 §1.1). Deliberately NOT part of `make ci`: the sweep is syntactic,
+# and a new blocking check earns its place only after its false-positive rate
+# has been measured across the whole tree over more than one landing. Run it
+# when touching locking code.
+lock-sweep:
+	$(call require-command,python3,Install Python 3 to run the lock sweep.)
+	python3 scripts/lock-sweep.py
+.PHONY: lock-sweep
+
 # Mocks are committed under generated/ (FIX-023), so `go test` runs directly —
 # no mockery pre-step. Regenerate with `make gen_mock_files` when an interface
 # changes. COVER_PACKAGES keeps generated packages and every examples/ package
