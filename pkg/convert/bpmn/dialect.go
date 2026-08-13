@@ -13,7 +13,7 @@ import (
 )
 
 // nsCamunda is the one vendor dialect this converter recognizes (ADR-024
-// v.4 §2.14). Recognizing it is what lets the importer MAP the parts the
+// §2.14). Recognizing it is what lets the importer MAP the parts the
 // model can hold and REPORT the parts it cannot; an unrecognized
 // namespace stays silent, because a converter cannot report on a
 // vocabulary it does not know.

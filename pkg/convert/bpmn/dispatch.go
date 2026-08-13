@@ -161,7 +161,7 @@ var policy = map[elementKey]dispositionKind{
 
 // sections pins the BPMN 2.0 § for elements the converter refuses, so the
 // UnsupportedElementError carries actionable modeler feedback (ADR-024
-// v.4 §2.7 / SAD-001 §5). A tag absent from the table yields an error
+// §2.7 / SAD-001 §5). A tag absent from the table yields an error
 // with no §.
 var sections = map[string]string{
 	"sendTask":                         "§13.3.3",
