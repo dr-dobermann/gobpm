@@ -311,3 +311,71 @@ func TestTruncatedLaneSubtrees(t *testing.T) {
 		})
 	}
 }
+
+// TestLaneWithoutAnIDIsRefused covers the lane constructor's failure path.
+//
+// BPMN makes a BaseElement's id optional (0..1), and the model does not:
+// foundation.WithID rejects an empty one (options.go:36-51). So a lane the
+// document did not name is refused by the model, which is where the rule
+// belongs — the converter passes what the file wrote.
+func TestLaneWithoutAnIDIsRefused(t *testing.T) {
+	_, err := importEventDoc(t, laneDoc(
+		`    <bpmn:laneSet id="ls1">
+      <bpmn:lane name="Finance"/>
+    </bpmn:laneSet>`))
+	if err == nil {
+		t.Fatal("a <lane> with no id must be refused")
+	}
+
+	if !strings.Contains(err.Error(), "lane") {
+		t.Errorf("error = %v, want the lane-building refusal", err)
+	}
+}
+
+// TestLaneSetWithoutAnIDIsRefused is the same failure one level up, and it
+// is the process's own lane sets that reach it — they are built before the
+// process exists, so the refusal comes from newAssembly rather than pass 2.
+func TestLaneSetWithoutAnIDIsRefused(t *testing.T) {
+	_, err := importEventDoc(t, laneDoc(
+		`    <bpmn:laneSet>
+      <bpmn:lane id="l1" name="Finance"/>
+    </bpmn:laneSet>`))
+	if err == nil {
+		t.Fatal("a <laneSet> with no id must be refused")
+	}
+
+	if !strings.Contains(err.Error(), "lane set") {
+		t.Errorf("error = %v, want the lane-set refusal", err)
+	}
+}
+
+// TestNestedLaneSetWithoutAnIDIsRefused covers the recursion's error path:
+// a child lane set is built by the same function, so its failure has to
+// travel back out through the parent.
+func TestNestedLaneSetWithoutAnIDIsRefused(t *testing.T) {
+	_, err := importEventDoc(t, laneDoc(
+		`    <bpmn:laneSet id="ls1">
+      <bpmn:lane id="l1" name="Finance">
+        <bpmn:childLaneSet>
+          <bpmn:lane id="l2" name="AP"/>
+        </bpmn:childLaneSet>
+      </bpmn:lane>
+    </bpmn:laneSet>`))
+	if err == nil {
+		t.Fatal("a <childLaneSet> with no id must be refused")
+	}
+}
+
+// TestTruncatedForeignChildInALaneSet covers the skip branch's own error
+// path: the document ends inside the subtree being stepped over.
+func TestTruncatedForeignChildInALaneSet(t *testing.T) {
+	_, err := importEventDoc(t, `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI">
+  <bpmn:process id="P" name="P">
+    <bpmn:laneSet id="ls1">
+      <bpmndi:BPMNShape id="sh1"><bpmndi:Bounds`)
+	if err == nil {
+		t.Fatal("a document ending inside a skipped child must fail the import")
+	}
+}

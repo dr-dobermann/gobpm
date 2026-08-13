@@ -237,11 +237,14 @@ func placeLaneNodes(asm *assembly) error {
 			nodes = append(nodes, n)
 		}
 
+		// Unreachable from any document: Place refuses exactly one thing,
+		// a nil node (lane.go:109-114), and every node above came out of
+		// the id table with ok — which buildNodes fills with constructed
+		// nodes only. Said in the form the coverage gate reads.
 		if err := pl.lane.Place(nodes...); err != nil {
-			return errs.New(
-				errs.M("bpmn: couldn't place nodes on lane %q", pl.lane.Name()),
-				errs.C(errorClass, errs.BulidingFailed),
-				errs.E(err))
+			return errs.Invariant(
+				"lane %q rejected a node from the id table: %w",
+				pl.lane.Name(), err)
 		}
 	}
 

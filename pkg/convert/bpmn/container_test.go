@@ -278,3 +278,75 @@ func TestTruncatedContainer(t *testing.T) {
 		t.Fatal("a document ending inside a container must fail the import")
 	}
 }
+
+// TestContainerWithoutAnIDIsRefused covers the container parser's own
+// id guard, which runs before its body is read.
+func TestContainerWithoutAnIDIsRefused(t *testing.T) {
+	_, err := importEventDoc(t, `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="P" name="P">
+    <bpmn:subProcess name="Inner">
+` + innerGraph + `
+    </bpmn:subProcess>
+  </bpmn:process>
+</bpmn:definitions>`)
+	if err == nil {
+		t.Fatal("a <subProcess> with no id must be refused")
+	}
+
+	if !strings.Contains(err.Error(), "has no id") {
+		t.Errorf("error = %v, want the missing-id refusal", err)
+	}
+}
+
+// TestContainerReusingADeclaredIDIsRefused is the duplicate guard from the
+// CONTAINER's side. The existing cases reuse an id on a node inside a
+// container; this one reuses it on the container itself, which is a
+// different guard in a different parser.
+func TestContainerReusingADeclaredIDIsRefused(t *testing.T) {
+	_, err := importEventDoc(t, `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="P" name="P">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:subProcess id="s1" name="Inner">
+` + innerGraph + `
+    </bpmn:subProcess>
+  </bpmn:process>
+</bpmn:definitions>`)
+	if err == nil {
+		t.Fatal("a container reusing a declared id must be refused")
+	}
+
+	if !strings.Contains(err.Error(), "duplicate flow-element id") {
+		t.Errorf("error = %v, want the duplicate-id refusal", err)
+	}
+}
+
+// TestBadLaneSetInsideAContainer covers the container child parser's
+// laneSet branch failing: the same refusal a process-level lane set gets,
+// reached through the container's own reader.
+func TestBadLaneSetInsideAContainer(t *testing.T) {
+	_, err := importEventDoc(t, subProcessDoc(
+		`      <bpmn:laneSet id="ls1">
+        <bpmn:lane name="Unnamed"/>
+      </bpmn:laneSet>
+`+innerGraph))
+	if err == nil {
+		t.Fatal("a <lane> with no id inside a container must be refused")
+	}
+}
+
+// TestTruncatedLaneSetInsideAContainer covers the container child
+// parser's laneSet branch failing while PARSING, which is a different
+// path from the same lane set failing to build.
+func TestTruncatedLaneSetInsideAContainer(t *testing.T) {
+	_, err := importEventDoc(t, `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="P" name="P">
+    <bpmn:subProcess id="sub" name="Inner">
+      <bpmn:laneSet id="ls1">
+        <bpmn:lane id="l1" name="Finance">`)
+	if err == nil {
+		t.Fatal("a document ending inside a container's <laneSet> must fail")
+	}
+}

@@ -841,20 +841,23 @@ func containerFor(asm *assembly, id string) (elementContainer, error) {
 		return asm.proc, nil
 	}
 
+	// Both guards below are unreachable from any document, and say so in
+	// the form the coverage gate recognizes rather than in a comment it
+	// cannot read. A container id reaches here only from a nodeSpec whose
+	// container field parseContainer set, and parseContainer sets it only
+	// for <subProcess> and <transaction> — which the same pass builds,
+	// and builds into a *activities.SubProcess. Reaching either means the
+	// converter wired the container field to something else.
 	n, ok := asm.byID[id]
 	if !ok {
-		// Unreachable: the id was recorded from a container element the
-		// same pass built. A guard, not a path.
-		return nil, errs.New(
-			errs.M("bpmn: container %q holds nodes but was never built", id),
-			errs.C(errorClass, errs.ObjectNotFound))
+		return nil, errs.Invariant(
+			"container %q holds nodes but was never built", id)
 	}
 
 	c, ok := n.(elementContainer)
 	if !ok {
-		return nil, errs.New(
-			errs.M("bpmn: %q holds flow elements but is not a container", id),
-			errs.C(errorClass, errs.InvalidObject))
+		return nil, errs.Invariant(
+			"container %q is a %T, which holds no flow elements", id, n)
 	}
 
 	return c, nil
@@ -1168,14 +1171,16 @@ func parseGateway(
 func deferDefaultFlow(
 	asm *assembly, local, id, def string, gw flow.Node,
 ) error {
+	// Unreachable from any document: gatewayTakesDefault already limited
+	// the callers to the gateway kinds whose constructors return a type
+	// with this method. Reaching it means that table and the model
+	// disagree about which gateways carry a default.
 	defaulter, ok := gw.(interface {
 		UpdateDefaultFlow(*flow.SequenceFlow) error
 	})
 	if !ok {
-		return errs.New(
-			errs.M("bpmn: %s %q carries a default, which %T cannot hold",
-				local, id, gw),
-			errs.C(errorClass, errs.InvalidParameter))
+		return errs.Invariant(
+			"%s %q takes a default flow, but %T cannot hold one", local, id, gw)
 	}
 
 	asm.refs = append(asm.refs, flowRef{
@@ -1379,11 +1384,13 @@ func build(p *parser, asm *assembly) (*process.Process, error) {
 	// The call is idempotent and guarded: it fills the three globals only
 	// when they are unset (data/state.go:86-91), so a host that
 	// configured its own states before importing keeps them.
+	// Unreachable from any document: it builds three SrcStates from three
+	// non-empty package constants, and NewSrcState refuses only an empty
+	// name (data/state.go:45-52). Said in the form the coverage gate
+	// reads, since no file can produce it.
 	if err := data.CreateDefaultStates(); err != nil {
-		return nil, errs.New(
-			errs.M("bpmn: couldn't create the model's default data states"),
-			errs.C(errorClass, errs.BulidingFailed),
-			errs.E(err))
+		return nil, errs.Invariant(
+			"the model's default data states could not be created: %w", err)
 	}
 
 	// Before anything that could refer to a type: the whole document has
