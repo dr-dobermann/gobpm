@@ -86,3 +86,77 @@ func TestTypedEventsRunOnAThresher(t *testing.T) {
 
 	t.Logf("instance completed: %s", state)
 }
+
+// TestSubProcessRunsOnAThresher covers SRD-089.E §6 T-20 and §9 DoD.
+//
+// Every other test in this stage asserts the imported SHAPE: which
+// container holds which node, which lane names which id. None of that
+// proves the engine can execute what came out. A sub-process is the case
+// where it might not: its inner graph is entered by a token arriving at
+// the container, and an import that put the inner nodes in the right
+// container but left them unwired would pass every containment test here
+// and then hang at run time.
+//
+// The process also carries a lane over the container and a transaction
+// with a compensation-marked activity, so the stage's model-only and
+// variant additions are registered and validated by a real engine rather
+// than by the converter's own assertions.
+func TestSubProcessRunsOnAThresher(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="Containers" name="containers" isExecutable="true">
+    <bpmn:laneSet id="ls1" name="Roles">
+      <bpmn:lane id="l1" name="Back office">
+        <bpmn:flowNodeRef>sub</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="s1" name="go"/>
+    <bpmn:subProcess id="sub" name="inner work">
+      <bpmn:startEvent id="is" name="inner start"/>
+      <bpmn:task id="it" name="inner task"/>
+      <bpmn:endEvent id="ie" name="inner done"/>
+      <bpmn:sequenceFlow id="if1" sourceRef="is" targetRef="it"/>
+      <bpmn:sequenceFlow id="if2" sourceRef="it" targetRef="ie"/>
+    </bpmn:subProcess>
+    <bpmn:endEvent id="e1" name="done"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="sub"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="sub" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	p, err := importer{}.Import(ctx, strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	engine, err := thresher.New("containers-engine")
+	if err != nil {
+		t.Fatalf("thresher.New: %v", err)
+	}
+
+	if _, err = engine.RegisterProcess(p); err != nil {
+		t.Fatalf("RegisterProcess: %v — registration is what validates a "+
+			"container's inner shape and its lane membership", err)
+	}
+
+	if err = engine.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	h, err := engine.StartLatest(p.ID())
+	if err != nil {
+		t.Fatalf("StartLatest: %v", err)
+	}
+
+	state, err := h.WaitCompletion(ctx)
+	if err != nil {
+		t.Fatalf("WaitCompletion: %v — a run that does not finish means the "+
+			"inner graph was imported into the right container and never "+
+			"entered", err)
+	}
+
+	t.Logf("instance completed: %s", state)
+}
