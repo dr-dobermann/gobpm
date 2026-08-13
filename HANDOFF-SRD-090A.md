@@ -240,6 +240,52 @@ and `instanceFor`'s return become `activityExec`, so `buildInstance` can
 answer with a `*scopeExec`. That is the whole seam — `awaitParallel`,
 `parallelStep`, `postPosition` and `restoredStates` are already
 kind-agnostic and stay as they are.
+
+### Both landed (`94de2664`) — and deliberately unrouted
+
+Problems 1 and 2 are implemented, plus the seam. `scopeExec` carries
+`segment`, `binds` and `capture`; `handleScopeOpen` applies them (falling
+back to `scopeSegment` when no segment is named, so the sequential path is
+byte-identical); `completeScope` calls `captureInstanceOutput` before
+closing the scope; `awaitParallel` reads the cell after the instance
+reports and stages through the leaf's own `instanceOutputs`.
+
+**Nothing routes a parallel composite there yet.** Every new field is zero
+on the paths in use, and the suite is unchanged at 3814. The flip is two
+edits, and it is the LAST thing to do, not the next:
+
+- `executeStep` (`std_loop.go:66`): drop the
+  `mi != nil && composite && !mi.IsSequential()` → `runMIParallel` branch.
+- `execFor` (`activity_exec.go`): drop the `!composite || mi.IsSequential()`
+  guard so every MI reaches `newIterDecorator`.
+
+Do them only after problems 3–5 below, because a parallel composite is the
+one shape where restore and boundary teardown are both live, and flipping
+first turns every restore test red at once with no way to tell which of the
+three causes is responsible.
+
+### What is left in M3b — problems 3, 4, 5
+
+3. **completionCondition cancellation.** The leaf path already has the
+   mechanism: `awaitParallel` calls `run.cancelRest()`, and each instance
+   faults out of its own `runCtx`. A `scopeExec` blocked in `awaitDrain`
+   already selects on `ctx.Done()`, so it unblocks — but its SCOPE stays
+   open, and the loop still holds an entry for it. The instance needs to
+   ask the loop to cancel its own scope on the way out (`cancelScope` with
+   `PhaseCanceled`, which `cancelOpenInstances` does group-wise today), and
+   `awaitParallel` must keep counting those as `terminated`, which it
+   already does via the `stopping` test.
+4. **Restore.** `miParallelSeed` + `handleReAttach` → the `IterationRecord`
+   the leaf uses. `handleScopeOpen`'s restored branch tests
+   `entry.host == req.host`, which is true for ALL N instances of one host
+   — it has to become per-path, since each instance now re-attaches to its
+   own `sp-<id>-<ord>`. `restoredStates` already skips completed ordinals,
+   so the decorator half is done.
+5. **Boundary teardown.** `boundary_watch.go:569` looks up `ls.miGroups[host]`
+   and calls `cancelParallelGroup`. With no group, the loop needs another
+   way to find a host's open instance scopes — iterating `ls.scopes` for
+   `entry.host == host` is the direct answer, and is what problem 4's
+   per-path test makes cheap to write.
 3. **Cancellation on a fired completionCondition.** Today one loop-side group
    teardown (`scopeComplete cancel` → `cancelOpenInstances`). It becomes
    per-instance scope cancellation, driven by the decorator the way the leaf
