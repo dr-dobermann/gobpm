@@ -1,13 +1,34 @@
-# SRD-090.A — handoff after M3b's five problems, before the flip
+# SRD-090.A — handoff after M3b, before M3c
+
+## Opening prompt for the next session
+
+> Continue SRD-090.A on branch `feat/node-execution-model`, in the worktree
+> `/home/dober/wrk/development/go/src/gobpm/iter-events` (run everything
+> from there; do not `cd` to the main checkout). Read
+> `HANDOFF-SRD-090A.md` and `docs/srd/SRD-090.A-node-execution-model.md`
+> §7 first. M1–M3b are landed; **M3c is next** — residency by what an
+> instance awaits (FR-8), including folding the plain composite in as
+> instance zero-of-one and merging `onScopeOpen` into `handleScopeOpen`.
+> Then M3d (the call executor), M4 (the sweep + §10), and **SRD-090.B**,
+> which is what closes #313. Nothing is pushed and no PR exists; the
+> branch's job is not done until B lands, `/check-srd` passes and
+> `/pr-review` has been run with its findings addressed.
 
 **Branch** `feat/node-execution-model`, worktree
 `/home/dober/wrk/development/go/src/gobpm/iter-events` (sibling worktree; the
 directory name `iter-events` predates the branch rename — cosmetic only).
 
 **Base** `origin/master` = `252cbcab` (merged in at `d3e62bf0`, 21 commits
-including FIX-041 and #326). Twenty-seven commits ahead, 0 behind, tip
-`86a24d4d`. Nothing pushed. Last full gate: `make ci` **PASS**, 14/14, head
-`6a5ac97f`; `86a24d4d`'s run is the one in flight.
+including FIX-041 and #326). Twenty-nine commits ahead, 0 behind, tip
+`80d76166`. Nothing pushed, no PR opened.
+
+**Verification** — `make ci` is the gate, and it is judged by
+`.ci/last-run.json`, never by an exit code (an absent file means the run did
+not finish, which is not a pass). Last full run before this handoff: **PASS**
+14/14 at `86a24d4d`, diff-coverage 96.4% of 636 changed lines. For a quick
+loop, `rtk proxy go test ./internal/instance/ -count=1` plus `make lint_all`
+catch most of what breaks here; `-race` on `./internal/instance/` and
+`./pkg/thresher/` is worth running after anything that touches the fan-out.
 
 **M2c is gone — master fixed the same defect first.** `94b88765` on master
 ("a joining processor's correlation key never reached the broker") is the
@@ -59,7 +80,7 @@ flip to Accepted when **SRD-090.C** lands. The implementation is sliced:
 
 | Slice | Subject | State |
 |---|---|---|
-| **SRD-090.A** | executor/decorator model + the checkpoint record | M1, M2a landed on master (PR #321); **M2b, M2c, M2d, M3a and M3b's first half landed here**; M3b's fan-out + retirement, M3c, M3d, M4 remain |
+| **SRD-090.A** | executor/decorator model + the checkpoint record | M1, M2a landed on master (PR #321); **M2b, M2d, M3a and M3b landed here** (M2c dropped — master fixed it first); M3c, M3d, M4 remain |
 | SRD-090.B | registration ownership; the refusal retired — #313's literal subject | not authored |
 | SRD-090.C | token / incident surfaces | not authored |
 | SRD-090.D | declared result strategies, runtime iteration values | not authored |
@@ -122,11 +143,6 @@ at the boundary, naming the type. Identity by `ID()` was rejected: a snapshot
 clone preserves element ids, so two instances of one process present distinct
 processors carrying the same id.
 
-## Verification at M3a
-
-`make ci` **PASS**, 14/14 steps, head `ff6c1639`, diff coverage **97.7%** of
-479 changed lines (floor 95). `.ci/last-run.json` holds the verdict.
-
 ## What M3a did (`ff6c1639`)
 
 An instance of a composite activity is a child scope, and it now has an object
@@ -167,118 +183,41 @@ tests called the two deleted drivers.
 
 ## Remaining milestones
 
-**M3b — the parallel composite, and the loop-owned group retired.** Half
-landed (`0e1a378d`); the rest is the fan-out and the retirement.
+**M3b — LANDED.** The parallel composite is decorator-driven and the
+loop-owned group is gone. Kept below because the reasoning is load-bearing
+for M3c and M3d, which face the same questions.
 
-**Landed — the drain reaches the instance that opened the scope.** The
-measured reason the group exists: a drain was delivered by RESUMING THE HOST
-TRACK, and a track has one `evtCh`. `miGroup` plus the
-fan-out/re-arm/complete handshake is, at bottom, a queue feeding one drain at
-a time into a channel only one waiter can read (`grp.pending` counts the ones
-that arrived while the runner was busy). Restructuring the barrier could never
-remove that — the delivery target had to change first. So `scopeEntry` now
-carries the channel of the instance that opened it and `completeScope` closes
-that; `scopeExec.awaitDrain` waits on its own channel, honoring ctx and
-`loopDone`. Both sequential composite kinds are on it, so every composite pass
-in the engine drains this way. A restored pass re-attaches to a loop-rebuilt
-entry, which has no channel of its own and adopts the re-attaching executor's.
+**What made the group necessary, and what removed it.** A drain used to be
+delivered by RESUMING THE HOST TRACK, and a track has one `evtCh` — so
+`miGroup` plus its fan-out/re-arm/complete handshake was, at bottom, a queue
+feeding one drain at a time into a channel only one waiter could read
+(`grp.pending` counted the ones that arrived while the runner was busy).
+Restructuring the barrier could never remove that; the delivery target had to
+change first. `scopeEntry` now carries the channel of the INSTANCE that
+opened it, `completeScope` closes that, and `scopeExec.awaitDrain` waits on
+its own — honoring ctx and `loopDone`. Every composite pass in the engine
+drains this way now, sequential included.
 
-**Remaining — the fan-out.** `iterDecorator.runParallel` already exists and
-drives N leaf instances with an ordinary N-of-N barrier (`awaitParallel`); the
-composite case should reach it through `buildInstance`, which M3a put in
-place. What still has to be solved, in rough order of care needed:
+The four sections below are the order it was built in, and each records a
+trap worth not re-entering.
 
-1. **Per-instance scope segment.** A parallel instance's scope is
-   `sp-<id>-<ordinal>` (`openParallelInstance`), a sequential one reuses
-   `sp-<id>` every pass. The segment must therefore come from the executor,
-   NOT be derived in `handleScopeOpen` — changing the sequential path would
-   move data paths, observability facts and restore compatibility.
+### The seam, landed unrouted at `94de2664`
 
-   **Resolved.** `scopeExec` carries its ordinal already. It passes a
-   `segment` on the `scopeOpen` request: `sp-<id>` when it is the only
-   instance (sequential pass, plain composite), `sp-<id>-<ord>` when the
-   decorator fanned it out. The loop appends what it is given rather than
-   deciding, so the sequential path keeps its exact present paths and only
-   the parallel caller is new. The per-instance binds `openParallelInstance`
-   does (`loopCounter` = ord, and the split `inputItem`) ride the same
-   request and are applied at the child scope before the body is seeded —
-   unchanged behaviour, new caller.
+Problems 1 and 2 plus the seam: `scopeExec` carries `segment`, `binds` and
+`capture`; `handleScopeOpen` applies them (falling back to `scopeSegment`
+when no segment is named, so the sequential path stayed byte-identical);
+`completeScope` calls `captureInstanceOutput` before closing the scope;
+`awaitParallel` reads the cell after the instance reports and stages
+through the leaf's own `instanceOutputs`.
 
-2. **Output capture.** Loop-side today (`captureParallelOutput`, keyed on
-   `entry.ordinal` into `grp.staging`). The entry needs the ordinal and a
-   staging target that is not the group — the leaf's `instanceOutputs` is the
-   model, but a composite's output lives in its child scope and can only be
-   read before that scope closes, so the capture stays loop-side.
-
-   **Resolved — the drain close is the handoff edge.** The executor allocates
-   its own capture cell and passes a pointer on the open request:
-
-   ```go
-   type instanceCapture struct {
-       item   string // output item to read from the child scope
-       value  any
-       filled bool
-   }
-   ```
-
-   `completeScope` fills it from the child scope **before** closing that
-   scope, then closes `entry.drain`. The instance goroutine reads it only
-   after its drain returns, so the close is the happens-before edge and no
-   lock is involved — the same discipline `scopeEntry.drain` already
-   established. `scopeExec.run` then stages into the decorator's existing
-   `instanceOutputs` by ordinal, which is where the leaf path already puts
-   it, so `awaitParallel` needs no composite special case and
-   `it.publishOutput` publishes both kinds identically.
-
-   This is what lets `grp.staging` go: the staging array becomes the
-   decorator's `miState.staging` (pre-sized by `presizedStaging`, already
-   written for the leaf), written by one goroutine per ordinal and read
-   after the barrier.
-
-**Type change `runParallel` needs.** `insts := make(map[int]*nodeExec, n)`
-and `instanceFor`'s return become `activityExec`, so `buildInstance` can
-answer with a `*scopeExec`. That is the whole seam — `awaitParallel`,
-`parallelStep`, `postPosition` and `restoredStates` are already
-kind-agnostic and stay as they are.
-
-### Both landed (`94de2664`) — and deliberately unrouted
-
-Problems 1 and 2 are implemented, plus the seam. `scopeExec` carries
-`segment`, `binds` and `capture`; `handleScopeOpen` applies them (falling
-back to `scopeSegment` when no segment is named, so the sequential path is
-byte-identical); `completeScope` calls `captureInstanceOutput` before
-closing the scope; `awaitParallel` reads the cell after the instance
-reports and stages through the leaf's own `instanceOutputs`.
-
-**Nothing routes a parallel composite there yet.** Every new field is zero
-on the paths in use, and the suite is unchanged at 3814. The flip is two
-edits, and it is the LAST thing to do, not the next:
-
-- `executeStep` (`std_loop.go:66`): drop the
-  `mi != nil && composite && !mi.IsSequential()` → `runMIParallel` branch.
-- `execFor` (`activity_exec.go`): drop the `!composite || mi.IsSequential()`
-  guard so every MI reaches `newIterDecorator`.
-
-Do them only after problems 3–5 below, because a parallel composite is the
-one shape where restore and boundary teardown are both live, and flipping
-first turns every restore test red at once with no way to tell which of the
-three causes is responsible.
-
-### The gate went RED at `2cb7fd3a`, and what cleared it
-
-Landing the executor half unrouted was a sequencing mistake: diff-coverage
-90.5% of 529 changed lines against a floor of 95. Lint and the whole suite
-were clean — `compositeInstanceFor`, `captureInstanceOutput`,
-`parallelRun.collectOutput` and `handleScopeOpen`'s segment/binds/ordinal
-branches simply had no caller, so they were uncovered by construction.
-
-Cleared at `dc375cee` with eleven white-box tests (96.3% of 508), NOT by
-relaxing `COVER_MIN` or excluding the paths. All four were reachable
-without the routing flip — `scope_exec_test.go`'s `openedScopeExec` is the
-model: a stand-in loop accepts the request and releases via
-`close(e.drain)`. **The lesson worth keeping: inert code cannot be
-covered, so do not land a slice ahead of the thing that routes it unless
-you are prepared to test it white-box in the same commit.**
+It landed with **nothing routing a parallel composite to it**, which cost a
+red gate at `2cb7fd3a`: diff-coverage 90.5% of 529 changed lines against a
+floor of 95, because inert code has no caller and cannot be covered. Lint
+and the suite were clean the whole time. Cleared at `dc375cee` with eleven
+white-box tests (96.3% of 508) — NOT by relaxing `COVER_MIN` or excluding
+the paths. **The lesson worth keeping: do not land a slice ahead of the
+thing that routes it unless you will test it white-box in the same
+commit.**
 
 ### Problems 3 and 5 — landed at `6a5ac97f`, as one lookup
 
@@ -327,34 +266,60 @@ Also swept, being the same shape as the open-side ordinal fix: the
 Completed and Canceled facts reported the host's shared loopCounter for a
 fanned-out instance. Both now ask `scopeFactOrdinal`.
 
-### What is left in M3b — the flip, then the retirement
+### The flip — landed at `80d76166`, and what it exposed
 
-The two flip edits above, plus `boundary_watch.go:569` (`cancelHostScope`)
-onto `instanceScopesOf` — an interrupting boundary on a fanned-out host
-(SRD-056.A FR-13) is the last caller of `cancelParallelGroup`.
+Two edits: `executeStep` (`std_loop.go`) stops routing a parallel composite
+to `runMIParallel`, and `execFor` drops the `!composite || mi.IsSequential()`
+guard. Every Multi-Instance now reaches `newIterDecorator`.
 
-Then retire: `miGroup`, `miParallelSeed`, `handleFanOut`, `handleReArm`,
-`handleComplete`, `handleReAttach`, `openParallelInstance`,
-`captureParallelOutput`, `cancelOpenInstances`, `cancelParallelGroup`, the
-`scopeFanOut`/`scopeReArm`/`scopeComplete`/`scopeReAttach` ops,
-`scopeEntry.group`, `track.awaitScopeDrained` (only `runMIParallel` still
-calls it), `doc.MIGroups` on the WRITE side (the read side stays for
-schema-5) — with `adoptRestoredGroups` and `MIGroupRecord.Open`, whose job
-the segment derivation took over — and `ls.miGroups` with `maybeDehydrate`'s
-`len(ls.miGroups) > 0` guard. T-8.
+Doing it last was right — it exposed two defects that only exist once
+something routes there, and both came from the same root: the decorator
+sets `miState` for a shape that never had one.
 
-Three entries this list carried before M3b are NOT retired, and the earlier
-draft was wrong to name them: `markIterDrain` still advances the mirror for
-every SERIAL pass, and `scopeEntry.ordinal` / `awaitAttach` /
-`drainPending` are what the executor-driven restore itself runs on — the
-ordinal identifies a fanned-out instance, and the other two hold its drain
-until its new executor re-attaches.
+1. **`captureSequentialOutput` staged every instance at slot 0.** It keys
+   on the HOST's `loopCounter`, which stands still for a whole fan-out, so
+   the last instance to drain overwrote the first — `[8,6,8]` where
+   `[4,6,8]` was expected, varying run to run. A fanned-out instance stages
+   through its own cell, and the serial capture now skips `entry.instance`.
+2. **A missing declared `outputDataItem` stopped faulting.** My
+   `captureInstanceOutput` tolerated it (matching the leaf's frame capture)
+   where the sequential composite faults. Publishing a nil slot makes the
+   assembled collection lie about what the instances returned, so it faults
+   — the softer rule was mine and it was wrong.
+
+The retirement went in the same commit, because unreachable code is a lint
+failure rather than a follow-up: `miGroup` and its registry, the four ops
+(`scopeFanOut`/`scopeReArm`/`scopeComplete`/`scopeReAttach`) with their
+handlers, `runMIParallel` and its barrier, `openParallelInstance`,
+`captureParallelOutput`, `cancelOpenInstances`, `cancelParallelGroup`,
+`miParallelSeed`, `awaitScopeDrained`, `scopeEntry.group`, the `MIGroups`
+WRITE side and `maybeDehydrate`'s group guard. Net **-570 lines**.
+
+**Schema-5 documents are translated, not refused.** `adoptRestoredGroups`
+now reads the retired `MIGroupRecord` and re-expresses it as the instance
+entries plus the executor set the decorator expects. The record stays
+readable and is documented as write-dead; it can go when schema-5 leaves
+support. Because nothing writes it any more, the test that exercises that
+path builds it — `asSchemaFive` in `composite_restore_test.go`.
+
+**Tests that drove the retired substrate** are gone where an executor-level
+equivalent already exists, and rewritten where the BEHAVIOR survives its
+mechanism (the boundary teardown, the publish and bind error paths, the
+drain-before-attach hold, the parallel restore suite). One of them,
+`pkg/thresher`'s `TestIterationRoutingKillAndResume`, waited on
+`doc.MIGroups` and would have burned its full 3s timeout on every run.
+
+### What is left in M3b
+
+Nothing. M3c is next.
 
 **M3c — residency by what an instance awaits (FR-8).** Not a predicate
 change. Confirmed by reading the release path:
 
-- `dehydrateCh` is observed ONLY in `awaitTrigger` (`track.go:1124`), so a
-  host parked in `awaitScopeDrained` cannot be released at all today.
+- `dehydrateCh` is observed ONLY in `awaitTrigger` (`track.go:1124`), so an
+  instance parked in `scopeExec.awaitDrain` cannot be released at all today
+  — and after M3b that is EVERY composite pass, sequential and fanned-out
+  alike, since they all wait on their own channel now.
 - A host must therefore (a) select on `dehydrateCh`, (b) unwind the decorator
   through a sentinel `run()` maps to `TrackDehydrated` rather than
   Canceled/Failed (`discardOrFail` would mis-route it), and (c) be **added to**
@@ -379,8 +344,11 @@ terminating the remaining children. T-9, T-10 — both genuinely new
 (`NewCallActivity` never appears with `WithLoop` today).
 
 **M4 — the sweep.** Old symbols absent not orphaned; the Schema-5
-compatibility path proven against documents captured by the previous release;
-the §9 absence check enforced; §10 filled.
+compatibility path proven against documents captured by the previous release
+— that path is now `adoptRestoredGroups`, which TRANSLATES an `MIGroupRecord`
+into instance entries plus an executor set, and `asSchemaFive` in
+`composite_restore_test.go` is what builds such a document to test it, since
+nothing writes one; the §9 absence check enforced; §10 filled.
 
 Then: `/check-srd`, **`/pr-review` (obligatory)**, sync linked docs, and only
 then the PR description.
@@ -455,7 +423,7 @@ refusal lifts, tested for its decision and unreachable until then; and
 `holdWait` (`track.go:689`) already offers a definition to durable holders
 before any in-hub waiter is made — B changes WHO offers, not the offering.
 
-## Discipline that cost time this session — do not relearn it
+## Discipline that cost time here — do not relearn it
 
 - **Judge `make ci` by `.ci/last-run.json`, never by an exit code.** A trailing
   `echo` masked a FAIL as exit 0 once here.
@@ -476,6 +444,21 @@ before any in-hub waiter is made — B changes WHO offers, not the offering.
   that way; the same tree read 97.7% once committed.
 - **Never bare `git stash`/`pop`** — other sessions share the stack. Push with
   a unique tag, capture the SHA, `apply` it, then drop by tag.
+- **A test that waits on a retired record shape HANGS instead of failing.**
+  Four of M3b's casualties burned a 3s `require.Eventually`/`select` timeout
+  each rather than saying what was wrong, and one lived in `pkg/thresher`,
+  a package the `internal/instance` loop never touches. After retiring a
+  document field, grep the WHOLE tree for it — including the packages you
+  are not working in — and expect timeouts, not assertion diffs.
+- **A mechanism swap is not equivalent until it is routed.** Two real
+  defects in M3b were invisible while the new path was unrouted and
+  appeared the moment it was: both came from the decorator setting
+  `miState` on a shape that never had one. Neither lint nor the suite
+  could have found them earlier. Flip early enough that the defects
+  surface while the mechanism is still fresh in your head.
+- **`go test` output is summarized by the rtk hook** — use `rtk proxy go
+  test … > log` when you need the actual `--- FAIL` lines and their
+  messages, not the count.
 
 ## Test edits M2b made (T-1 findings, reported and accepted)
 
