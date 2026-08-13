@@ -36,7 +36,7 @@ func TestDispositionForEveryContext(t *testing.T) {
 		// The refusals: an unmapped element is refused in every context,
 		// and the zero value of dispositionKind is what makes absence
 		// from the tables mean refusal rather than silent acceptance.
-		"adHocSubProcess under process":   {"adHocSubProcess", ctxProcess, refused},
+		"participant under process":       {"participant", ctxProcess, refused},
 		"boundaryEvent under process":     {"boundaryEvent", ctxProcess, refused},
 		"collaboration under definitions": {"collaboration", ctxDefinitions, refused},
 		"timerEventDefinition under node": {"timerEventDefinition", ctxNode, refused},

@@ -81,6 +81,13 @@ var refusalReasons = map[string]string{
 		"expression is not mechanical, and guessing one changes WHEN the " +
 		"gateway fires. Build it programmatically with WithActivationThreshold " +
 		"or WithActivation",
+
+	tagAdHocSubProcess: "an ad-hoc container is entered by a host-supplied " +
+		"adhoc.Router — a Go value deciding which of its activities run and " +
+		"in what order (ADR-035 §2.1) — where the document carries only a " +
+		"completion condition. A file cannot contain a Router, and inventing " +
+		"one would decide the container's execution order on the modeler's " +
+		"behalf. Build it programmatically with activities.WithAdHoc",
 }
 
 // annotations are the BPMN-namespace children carrying no execution
@@ -111,8 +118,10 @@ var policy = map[elementKey]dispositionKind{
 	{local: "globalBusinessRuleTask", ctx: ctxDefinitions}: notYet,
 
 	// The complex gateway is executable here and unreachable from XML —
-	// see refusalReasons.
-	{local: tagComplexGateway, ctx: ctxProcess}: notExpressible,
+	// see refusalReasons. The ad-hoc container is the same class for a
+	// different reason: its entry point is a Go closure.
+	{local: tagComplexGateway, ctx: ctxProcess}:  notExpressible,
+	{local: tagAdHocSubProcess, ctx: ctxProcess}: notExpressible,
 
 	// A node's incoming/outgoing duplicate the wiring <sequenceFlow>
 	// already carries through sourceRef/targetRef.

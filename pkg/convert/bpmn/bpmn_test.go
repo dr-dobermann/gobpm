@@ -167,11 +167,11 @@ func TestImportErrors(t *testing.T) {
 		{
 			name: "unsupported in-namespace element",
 			doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
-  <bpmn:process id="p"><bpmn:adHocSubProcess id="sub"/></bpmn:process>
+  <bpmn:process id="p"><bpmn:participant id="part"/></bpmn:process>
 </bpmn:definitions>`,
-			want:    `unsupported element "adHocSubProcess"`,
+			want:    `unsupported element "participant"`,
 			wantUee: true,
-			wantSec: "§13.3.4",
+			wantSec: "§10.1",
 		},
 		{
 			name: "unknown operationRef",
@@ -1016,7 +1016,7 @@ func TestImportInvalidFixtures(t *testing.T) {
 		{file: "duplicate-element-id.bpmn", want: "duplicate flow-element id"},
 		{file: "dangling-target.bpmn", want: "unknown targetRef"},
 		{file: "unknown-operation.bpmn", want: "unknown operationRef"},
-		{file: "unsupported-element.bpmn", want: `unsupported element "adHocSubProcess"`, wantUEE: true},
+		{file: "unsupported-element.bpmn", want: `unsupported element "participant"`, wantUEE: true},
 	}
 
 	for _, tc := range tests {

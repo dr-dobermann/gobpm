@@ -78,6 +78,10 @@ const (
 	tagCallActivity   = "callActivity"
 	attrCalledElement = "calledElement"
 
+	// tagAdHocSubProcess is entered by a host-supplied Router, so no
+	// document can express it (ADR-035 §2.1).
+	tagAdHocSubProcess = "adHocSubProcess"
+
 	// attrForCompensation marks an activity that runs only when
 	// compensation is thrown (elements/activities.md:19, default False).
 	attrForCompensation = "isForCompensation"
