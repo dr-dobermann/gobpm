@@ -171,8 +171,26 @@ func (ls *loopState) captureDocument(
 			return nil, "encode: " + err.Error()
 		}
 
-		doc.Scopes = append(doc.Scopes,
-			checkpoint.ScopeRecord{Path: string(path), Data: raw})
+		rec := checkpoint.ScopeRecord{Path: string(path), Data: raw}
+
+		// who opened it (Schema 7, SRD-090.A M3c). The loop's own entry
+		// already knows, so recording it costs one field and spares
+		// restore the search that needed a precedence rule. The root
+		// scope and any path with no entry are left unnamed — the same
+		// "nothing to rebuild" reading a Schema-6 document gets.
+		if entry, ok := ls.scopes[path]; ok && entry.host != nil {
+			rec.HostTrack = entry.host.ID()
+
+			// -1 marks a host's OWN scope; an instance carries its
+			// 0-based ordinal. The two are distinguished here rather
+			// than by re-reading the path, which is the whole point.
+			rec.Ordinal = -1
+			if entry.instance {
+				rec.Ordinal = entry.ordinal
+			}
+		}
+
+		doc.Scopes = append(doc.Scopes, rec)
 	}
 
 	for path, entries := range ls.ledgers {
@@ -223,7 +241,7 @@ func (ls *loopState) captureDocument(
 // record carries its AdHocActivity, and restore rebuilds the counts
 // from the track table rather than trusting two tables to agree.
 func (ls *loopState) adHocRecords() []checkpoint.AdHocRecord {
-	var out []checkpoint.AdHocRecord
+	out := make([]checkpoint.AdHocRecord, 0, len(ls.scopes))
 
 	for path, entry := range ls.scopes {
 		if entry.adHoc == nil {

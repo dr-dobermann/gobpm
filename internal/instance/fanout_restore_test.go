@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
 // fanOutFixture is a PARALLEL Multi-Instance composite host and the loop
@@ -322,4 +323,98 @@ func TestScopeFactOrdinal(t *testing.T) {
 
 	require.Equal(t, 4, scopeFactOrdinal(&scopeEntry{host: host, node: node}),
 		"a serial pass reports the host's pass counter")
+}
+
+// TestRecordedScopeHostResolvesWhatTheDerivationCannot is the point of the
+// Schema-7 scope record (SRD-090.A M3c). `sp-body-1` reads two ways — the
+// own scope of a track whose segment is spelled that way, and instance 1 of
+// a fanning-out host — and the derivation cannot tell which one opened it,
+// so it applies a precedence rule and always answers "own scope".
+//
+// That rule is a coin-flip dressed as a decision: when the instance IS the
+// opener, the derivation attaches the scope to the wrong host, and the
+// instance's drain is delivered to a track that never fanned out. The
+// record says who opened it, so the lookup answers correctly on exactly the
+// input the derivation gets wrong.
+func TestRecordedScopeHostResolvesWhatTheDerivationCannot(t *testing.T) {
+	inst, ls, node, host := fanOutFixture(t)
+
+	seg := scopeSegment(node) + "-1"
+	path := instancePath(t, host, seg)
+
+	// the sibling that makes the path ambiguous: its OWN scope is spelled
+	// exactly like the host's instance 1.
+	twin := &track{
+		steps:     []*stepInfo{{node: node}},
+		scopePath: host.scopePath,
+		scopeSeg:  seg,
+	}
+
+	initial := []*track{twin, host}
+
+	// what the derivation answers, unchanged — the own reading wins.
+	derived, _, derivedOrd := restoredScopeHost(initial, host.scopePath, path)
+	require.Same(t, twin, derived)
+	require.Equal(t, -1, derivedOrd)
+
+	// what the record answers: the host actually opened it, as instance 1.
+	inst.restoredScopes = []checkpoint.ScopeRecord{
+		{Path: string(path), HostTrack: host.ID(), Ordinal: 1},
+	}
+
+	got, gotNode, ord := ls.recordedScopeHost(initial, path)
+
+	require.Same(t, host, got, "the recorded opener, not the likelier one")
+	require.Equal(t, node.ID(), gotNode.ID())
+	require.Equal(t, 1, ord, "and the ordinal it recorded, not one re-read")
+}
+
+// TestRecordedScopeHostFallsBack: every way the record can fail to answer
+// sends the caller to the derivation instead of failing the restore. A
+// Schema ≤ 6 document carries no host at all, and that is the ONLY expected
+// case — the other three are documents whose tables disagree, where letting
+// the derivation speak keeps one error message for both routes.
+func TestRecordedScopeHostFallsBack(t *testing.T) {
+	inst, ls, node, host := fanOutFixture(t)
+
+	path := instancePath(t, host, scopeSegment(node)+"-2")
+	initial := []*track{host}
+
+	// a real identity, not the zero one: a bare &track{} has an empty ID,
+	// which the "no host recorded" branch swallows before the disagreement
+	// branch is ever reached — the subtest below would pass for the wrong
+	// reason and leave that branch untested.
+	leaf := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		steps:       []*stepInfo{{node: findNode(t, inst.s, "start")}},
+		scopePath:   host.scopePath,
+	}
+
+	for name, recs := range map[string][]checkpoint.ScopeRecord{
+		"a Schema 6 document names no host": {
+			{Path: string(path)},
+		},
+		"no record for this path at all": {
+			{Path: "/somewhere/else", HostTrack: host.ID()},
+		},
+		"the recorded host is not in the track table": {
+			{Path: string(path), HostTrack: "gone", Ordinal: 2},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			inst.restoredScopes = recs
+
+			got, _, _ := ls.recordedScopeHost(initial, path)
+			require.Nil(t, got, "no answer, so the derivation runs")
+		})
+	}
+
+	t.Run("the recorded host is no longer on a composite", func(t *testing.T) {
+		inst.restoredScopes = []checkpoint.ScopeRecord{
+			{Path: string(path), HostTrack: leaf.ID(), Ordinal: 2},
+		}
+
+		got, _, _ := ls.recordedScopeHost([]*track{leaf}, path)
+		require.Nil(t, got, "the two tables disagree — derivation speaks")
+	})
 }

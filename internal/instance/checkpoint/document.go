@@ -44,7 +44,15 @@ import (
 // (parallel), and neither describes an object that still exists. Both are
 // therefore translated on restore into the instances they meant, rather
 // than rebuilt as the tracks and scopes they named (FR-7).
-const CurrentSchema = 6
+// 6 → 7 (SRD-090.A M3c) made the scope table self-describing: a
+// ScopeRecord now names the track that opened it and the instance
+// ordinal it stands for. Additive in the wire sense — a Schema ≤ 6
+// document carries neither — and its read path keeps the derivation
+// those documents need: an absent HostTrack falls back to searching the
+// restored track table, precedence rule included. New documents are read
+// by lookup, which is what lets the search retire once Schema 6 leaves
+// support.
+const CurrentSchema = 7
 
 // Document is one instance's durable state (SRD-070 FR-3): identity +
 // the version pin, status, the scope table, conversation keys, the
@@ -144,11 +152,28 @@ type IncidentRecord struct {
 	Attempts   int             `json:"attempts"`
 }
 
-// ScopeRecord is one open scope: its path and the codec-encoded data
-// committed there.
+// ScopeRecord is one open scope: its path, the codec-encoded data
+// committed there, and — from Schema 7 — WHO opened it.
+//
+// HostTrack and Ordinal make the scope table self-describing (SRD-090.A
+// M3c). Before them, restore reconstructed both by searching the track
+// table for a track whose composite node derives this path, and read the
+// instance ordinal out of the path's own segment. That search needs a
+// precedence rule, because `sp-a-1` is BOTH instance 1 of node `a` and the
+// own scope of a node named `a-1`, and a path built to be read by a human
+// cannot distinguish them. Recording the host resolves it by lookup
+// instead — a track id survives a restore unchanged, so the answer is
+// exact rather than inferred.
+//
+// Ordinal is meaningful only when HostTrack is set: -1 for a host's own
+// scope (a plain composite, or a sequential pass reusing one scope), and
+// the 0-based instance number for one of N fanned out. An empty HostTrack
+// marks a Schema ≤ 6 document, whose restore falls back to the search.
 type ScopeRecord struct {
-	Path string          `json:"path"`
-	Data json.RawMessage `json:"data,omitempty"`
+	Path      string          `json:"path"`
+	HostTrack string          `json:"host_track,omitempty"`
+	Data      json.RawMessage `json:"data,omitempty"`
+	Ordinal   int             `json:"ordinal,omitempty"`
 }
 
 // LedgerRecord is one compensation-ledger entry (ADR-026): the scope it

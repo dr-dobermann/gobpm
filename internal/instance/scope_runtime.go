@@ -394,7 +394,11 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 				"restored scope %q has no parent path: %v", string(path), err)
 		}
 
-		host, node, ord := restoredScopeHost(initial, parent, path)
+		host, node, ord := ls.recordedScopeHost(initial, path)
+		if host == nil {
+			host, node, ord = restoredScopeHost(initial, parent, path)
+		}
+
 		if host == nil {
 			return errs.New(
 				errs.M("restored scope %q has no host track — the "+
@@ -566,9 +570,61 @@ func trackByID(initial []*track, id string) *track {
 	return nil
 }
 
+// recordedScopeHost resolves an open scope's host and ordinal by LOOKUP,
+// from what the Schema-7 record says rather than from what the path looks
+// like (SRD-090.A M3c). It reports a nil host when the document predates
+// Schema 7 or names a track the table does not carry, which sends the
+// caller to the derivation below.
+//
+// A track id survives a restore unchanged (restoredTrack rebuilds the
+// recorded identity), so this is exact where the derivation is inferential
+// — and it needs no precedence rule, because it never has to decide what a
+// path segment MEANT.
+//
+// A recorded host that is absent from the track table is NOT an error
+// here: a Schema-7 document could name a track whose record was pruned,
+// and falling through to the derivation is strictly better than refusing —
+// the derivation either finds a host or reports the disagreement itself,
+// with the message that already exists for it.
+func (ls *loopState) recordedScopeHost(
+	initial []*track, path scope.DataPath,
+) (*track, flow.Node, int) {
+	for i := range ls.inst.restoredScopes {
+		rec := &ls.inst.restoredScopes[i]
+		if rec.Path != string(path) || rec.HostTrack == "" {
+			continue
+		}
+
+		for _, t := range initial {
+			if t.ID() != rec.HostTrack {
+				continue
+			}
+
+			n := t.steps[len(t.steps)-1].node
+			if _, ok := n.(scopeHost); !ok {
+				// the recorded host is no longer on a composite — the
+				// document's two tables disagree. Let the derivation
+				// speak, so one message covers both routes.
+				return nil, nil, -1
+			}
+
+			return t, n, rec.Ordinal
+		}
+
+		return nil, nil, -1
+	}
+
+	return nil, nil, -1
+}
+
 // restoredScopeHost finds the restored track hosting the open scope at
 // path: a track in the parent scope whose current node is a composite
 // and whose child segment derives that path.
+//
+// **The Schema ≤ 6 path** (SRD-090.A M3c). A Schema-7 document answers by
+// lookup in recordedScopeHost above; this derivation stays for documents
+// written before the scope table named its own hosts, and retires with
+// Schema 6.
 //
 // It reports the instance ordinal the segment carries, or -1 for a host's
 // own scope. A FANNED-OUT instance's segment is `sp-<id>-<ord>`, so the

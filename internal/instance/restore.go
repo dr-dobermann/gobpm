@@ -131,6 +131,12 @@ func Restore(
 	inst.restoredCalls = doc.Calls
 	inst.restoredAdHoc = doc.AdHoc
 
+	// the scope table rides too, for the half of it the data plane does
+	// not carry: OpenPaths replays the paths, but only the record says
+	// which track opened each and which ordinal it is (Schema 7,
+	// SRD-090.A M3c).
+	inst.restoredScopes = doc.Scopes
+
 	// a recorded caller re-PARKS instead of re-invoking its child — the
 	// adoption re-links to the recorded child; a second InvokeProcess
 	// would duplicate the child instance (SRD-082 FR-7).

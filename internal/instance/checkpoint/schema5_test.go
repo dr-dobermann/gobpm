@@ -33,7 +33,7 @@ func TestSchemaFiveRoundTrip(t *testing.T) {
 
 	back, err := Unmarshal(raw)
 	require.NoError(t, err)
-	require.Equal(t, 6, back.Schema, "Marshal stamps the current schema")
+	require.Equal(t, CurrentSchema, back.Schema, "Marshal stamps the current schema")
 	require.Equal(t, doc.AdHoc, back.AdHoc)
 	require.Equal(t, "b", back.Tracks[0].AdHocActivity)
 }
@@ -65,7 +65,7 @@ func TestSchemaSixIterationRoundTrip(t *testing.T) {
 
 	back, err := roundTrip(t, doc)
 	require.NoError(t, err)
-	require.Equal(t, 6, back.Schema)
+	require.Equal(t, CurrentSchema, back.Schema)
 	require.Equal(t, doc.Tracks[0].Iteration, back.Tracks[0].Iteration)
 	require.Nil(t, back.Tracks[0].MI, "the mirror is retired for a leaf")
 
