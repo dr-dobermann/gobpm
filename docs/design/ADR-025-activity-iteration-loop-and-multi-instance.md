@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (v.3 — flips back to Accepted when the v.3 changes land) |
-| Version | v.3 |
-| Date | 2026-08-10 |
+| Status | Draft (v.4 — flips back to Accepted when the v.3/v.4 changes land) |
+| Version | v.4 |
+| Date | 2026-08-15 |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1.1](SAD-001-vision-and-architecture.md) §5 / §15.3, [ADR-023 v.3](ADR-023-sub-process-and-call-activity.md) (the execution-scope model this reuses), [ADR-018 v.1](ADR-018-boundary-events-and-activity-interruption.md) (boundary catch for thrown behavior events), [ADR-017 v.1](ADR-017-channel-based-event-processing.md) (the single-writer execution model §2.12–§2.13 extend), [ADR-006 v.5](ADR-006-events-and-subscriptions.md) (event throwing/catching; §2.9 in-instance delivery, whose processor-identity seam §2.13 moves) |
 | Related | [ADR-007 v.2.1](ADR-007-in-memory-long-waits.md) §2.4 (holdable waits and the per-arm releasability rule §2.13 extends to iteration granularity), [ADR-013 v.2](ADR-013-instance-observability.md) (the token view §2.9.1 enriches), [ADR-010 v.2](ADR-010-process-data-model.md) (the execution frame that isolates an iteration), [ADR-036 v.1](ADR-036-incidents-and-fault-tolerance.md) §2.1–§2.3 (the incident and retry contract §2.14 applies at iteration granularity) |
@@ -381,22 +381,59 @@ This subsection fixes *what* is thrown and *when*; the throw **executes** as an
 ordinary off-loop emit issued by the iteration decorator before it completes the
 activity (§2.12), which is what makes the boundary catch deterministic.
 
-### 2.9 Instance runtime attributes (engine convention)
+### 2.9 Instance runtime attributes (v.4 — the set is the standard's)
 
-The standard states that a Multi-Instance activity's *runtime attributes* are
-available to `completionCondition`, `ComplexBehaviorDefinition.condition`, and the
-behavior events' data associations, but the vendored extract does **not**
-enumerate them. gobpm therefore **defines** the following engine-provided
-variables as its realization of that under-enumerated set (an explicit engine
-choice, to be pinned against §13.3.7 when the KB is extended):
+**Corrected in v.4.** v.1–v.3 called this set an engine convention "to be pinned
+against §13.3.7 when the KB is extended", because the vendored extract did not
+enumerate it. The extract was incomplete, not the standard: BPMN 2.0 §10.3.8
+carries **two** instance-attribute tables, now extracted
+([instance-attributes.md](../bpmn-spec/semantics/instance-attributes.md)):
 
-| Variable | Meaning |
-|---|---|
-| `loopCounter` | 0-based ordinal of the current instance (also available inside each instance). |
-| `numberOfInstances` | Total instance count fixed at activation (§2.4). |
-| `numberOfActiveInstances` | Instances currently running (parallel) — ≤ 1 for sequential. |
-| `numberOfCompletedInstances` | Instances that have completed so far. |
-| `numberOfTerminatedInstances` | Instances cancelled by a completion condition (§2.7). |
+- **Table 10.27 — Loop Activity instance attributes** (p. 189): `loopCounter`,
+  *"used at runtime to count the number of loops and is automatically updated by
+  the process engine"*.
+- **Table 10.30 — Multi-instance Activity instance attributes** (p. 193): the
+  five below, with an inner/outer split the standard states explicitly.
+
+gobpm's variables are therefore **the standard's own**, spelled the standard's
+way — not an engine invention:
+
+| Variable | Provided for | Meaning |
+|---|---|---|
+| `loopCounter` | each **inner** instance | ordinal of the current instance (§2.9a — 0-based here, a stated deviation). |
+| `numberOfInstances` | the **outer** instance | total instance count fixed at activation (§2.4). |
+| `numberOfActiveInstances` | the **outer** instance | instances currently running — the standard caps this at 1 for a sequential MI. |
+| `numberOfCompletedInstances` | the **outer** instance | instances that have completed so far. |
+| `numberOfTerminatedInstances` | the **outer** instance | instances cancelled by a completion condition (§2.7). |
+
+The standard also fixes an **invariant** over them: `numberOfTerminatedInstances
++ numberOfCompletedInstances + numberOfActiveInstances` always equals
+`numberOfInstances`. The engine satisfies it by construction — the active count
+is *derived* as `N − completed − terminated` rather than tracked separately, so
+the three cannot drift apart.
+
+What remains an engine choice is **not the set** but three things about it: the
+0-based counter (§2.9a), the publication address and write-protection (§2.9.2),
+and the lifetime after the activity completes (§2.9.2).
+
+#### 2.9a `loopCounter` is 0-based — a stated deviation (v.4)
+
+Table 10.30 words the MI counter 1-based: *"if this value of some instance is
+n, the instance is the n-th instance that was generated."* Table 10.27 states no
+base for the Standard Loop. **gobpm is 0-based in both.**
+
+The reason is that this engine's counter is not only a counter: it is the index
+into the input collection it splits and the output collection it assembles
+positionally (§2.6). A 1-based counter would make every ordinal in the engine —
+the record's, the incident's, the compensation ledger's, the token
+projection's — either disagree with the variable a model reads, or carry an
+off-by-one at each boundary. One base, everywhere, is worth more than matching
+the wording of a table whose own Loop half is silent.
+
+It **is** a deviation, and the cost is named: a model ported from a 1-based
+engine reads one lower than its author expects. It is not detectable by the
+engine — an off-by-one ordinal is a perfectly valid ordinal — so it is stated
+here, in §2.11, and in the KB page.
 
 These are read-only in expressions; the engine maintains them as instances
 progress. **Where they live and why they cannot be overwritten is §2.9.2** —
@@ -462,6 +499,8 @@ answer, nor collide with it by naming a variable the same way.
 | Name | Shape | Available |
 |---|---|---|
 | `ITERATION_NUMBER` | the executing instance's 0-based ordinal | inside an instance |
+| `ITERATION_ID` | the executing instance's **stable identity** (§2.9.3) | inside an instance |
+| `ITERATION_MODE` | the executing instance's iteration shape — the `kind` of §2.9.3 | inside an instance |
 | `ITERATIONS` | map: activity id → `{kind, total, completed, terminated}` | during, **and after the activity completes** |
 | `ITERATION_OWNERS` | map: activity id → (ordinal → actual owner) | during, and after |
 
@@ -526,10 +565,60 @@ the **last** completer, for compatibility with every non-iterated model, and
 ordinal, which is what a fan-out over N approvers actually needs to be
 answerable.
 
-**Engine note.** BPMN says the runtime attributes are available to
-expressions and does not enumerate them (§2.9), says nothing about their
-lifetime after the activity, and has no concept of an engine-published
-read-only source. Everything in this subsection is an engine choice.
+**Engine note (corrected in v.4).** BPMN *does* enumerate the runtime attributes
+— Tables 10.27 and 10.30, §2.9 — and requires them to be available to
+expressions (§13.3.7). What it says nothing about is their **lifetime** after
+the activity completes, their **write-protection**, and the existence of an
+engine-published read-only source at all. Those three, and the `ITERATION_*`
+names that have no counterpart in the standard, are the engine choices in this
+subsection; the five BPMN-named attributes are not.
+
+#### 2.9.3 An instance has an identity, and it is derived (v.4)
+
+§2.10 already asserts that one identifier names one instance across all four
+surfaces — the record, the token projection, an incident, a compensation ledger
+entry — and that identifier is the **ordinal**. An ordinal alone is only unique
+*within one activation of one activity*, which is enough for those four because
+each is already scoped to the activity that owns it. It is not enough for a
+model, which sees ordinals from different activities side by side, nor for a
+delivery that must reach instance *k* of an activity named only by a
+subscription.
+
+**An instance's identity is therefore the ordinal qualified by where it runs:
+the enclosing scope path, the activity id, and the ordinal.** Three properties
+follow, and each is the reason to derive rather than mint:
+
+- **Stable across restore, with nothing stored.** All three components already
+  survive a checkpoint — the scope path is in the scope table, the activity id
+  is in the graph, the ordinal is in the executor set. A minted id would have to
+  be persisted to be stable, adding a field whose only job is to say what the
+  other three already say.
+- **Derivable in both directions.** Given an instance you can name it; given the
+  name you can find the instance. That is what a delivery needs (§2.13), and
+  what a restored scope needs in order to know whose it is — instead of the
+  reverse-engineering the current path grammar forces (**§2.9.3a**).
+- **One value, not a second vocabulary.** `ITERATION_ID` and `ITERATION_MODE`
+  publish what already exists — the ordinal and the record's `kind` — at an
+  address a model can read. Neither introduces state.
+
+**§2.9.3a — the identity is also the scope segment.** A composite instance's
+child scope is addressed by a segment built from the activity id and the
+ordinal. Two facts make the current grammar lossy: two concurrent hosts on one
+activity derive the *same* path, which forces a re-entry queue, and a segment
+`sp-a-1` is ambiguous between "instance 1 of activity `a`" and "the own scope of
+activity `a-1`", which forces a precedence rule at restore. **A segment that
+carries the instance identity is unambiguous by construction, and both
+mechanisms cease to exist rather than being ported.** Whether the identity is
+spelled into the path or the path→identity mapping is recorded is an
+implementation choice the SRD makes; what this ADR decides is that restore must
+not *parse* an identity out of a path built for humans.
+
+**Engine note.** The standard defines no instance identity and no mode
+attribute. It exposes sequentiality only indirectly, through Table 10.30's rule
+that `numberOfActiveInstances ≤ 1` for a sequential MI. `ITERATION_ID` and
+`ITERATION_MODE` are engine extensions in the sense §2.9.2 already establishes
+for the `ITERATION_*` family — published, read-only, and named the engine's way
+precisely because the standard does not name them.
 
 ### 2.10 Deferred: compensation of Multi-Instance
 
@@ -571,18 +660,30 @@ surfaces.
   gives a loop no aggregation at all (§13.3.6); the parallel default's
   order-dependence is documented as a property, never presented as a
   guarantee.
-- **Engine-published iteration values** (§2.9.2) are an engine choice
-  entirely: the standard neither enumerates the runtime attributes, nor says
-  anything about their lifetime after the activity, nor has a concept of a
-  read-only engine source. It does require them to be *available to
-  expressions* (§13.3.7), which they remain — at a stated address, where the
-  engine can guarantee the answer is its own.
+- **Engine-published iteration values** (§2.9.2) — the *publication*, not the
+  set. Corrected in v.4: the standard **does** enumerate the runtime attributes
+  (Tables 10.27/10.30) and requires them to be available to expressions
+  (§13.3.7). What it says nothing about is their lifetime after the activity,
+  their write-protection, or the existence of a read-only engine source — those
+  three are the choice, along with the `ITERATION_*` names it does not define.
+- **A 0-based `loopCounter`** (§2.9a) is a deviation from Table 10.30's 1-based
+  wording, taken so that one ordinal base serves the variable, the record, the
+  incident, the ledger and the token projection alike.
+- **Instance identity and mode** (§2.9.3) are engine extensions: the standard
+  defines neither, and exposes sequentiality only through the
+  `numberOfActiveInstances ≤ 1` rule.
+- **Decorator transparency** (§2.13a) is an engine invariant over an engine
+  mechanism. The standard has no decorator to be transparent about; the rule
+  exists to keep iteration knowledge out of the drivers, and its data-channel
+  clause is what keeps §2.9 mandatory rather than a leak.
 - **Positional output assembly** (§2.6) is the engine's concretization of the
   spec's under-specified mediator.
 - **Cardinality-vs-collection exclusivity** (§2.4) is an engine validation
   choice; the spec lists both attributes without forbidding both, but a
   well-formed MI activity uses exactly one source.
-- **Runtime-attribute set** (§2.9) is an engine convention pending a KB extension.
+- **Runtime-attribute set** (§2.9) is **the standard's**, pinned in v.4 to
+  Tables 10.27/10.30 (§10.3.8). The "engine convention pending a KB extension"
+  of v.1–v.3 was an artifact of an incomplete extract, not of the standard.
 
 ### 2.12 Composite iteration runs off the loop — the iteration decorator (v.2)
 
@@ -870,6 +971,93 @@ activity and says nothing about how the wrapper is realized, what a runtime
 to keep the engine's own invariants — single-writer state, one token per
 activity, a wait that survives a restart — and are invisible to a modeler.
 
+### 2.13a The decorator is a transparent intermediary (v.4)
+
+§2.13 decided *what* executes a node. This subsection decides the property that
+makes the model hold together, and whose absence is why the engine kept
+accumulating iteration special cases far from the iteration code:
+
+> **A decorator is transparent in both directions. Neither side can tell it is
+> there.**
+
+- **Downward, to the decorated node.** A node executing under a decorator sees
+  exactly what it sees executing directly: the same frame, the same data
+  resolution, the same registration call, the same delivery, the same boundary
+  arming. It never learns that it is instance *k* of *N*, and it never learns
+  that something other than a track is driving it.
+- **Upward, to the drivers — track, instance, event hub.** A decorated activity
+  presents as **one node executing once**: one step, one state transition, one
+  record, one subscriber, one scope request. No driver learns that the node
+  iterates.
+
+Everything the iteration needs — the ordinal, the split item, the staging, which
+scopes are open, which instance awaits what — is the **decorator's own state**.
+Not the track's, not the loop's, not a flag on a record.
+
+**Why this is a decision and not a style note.** The model of §2.13 is
+expressible without it, and the engine's history is what that costs: a marker on
+a spawned track whose whole job was to suppress a routing decision; a flag
+telling a track *not* to do its own bookkeeping; a loop-side mirror of the
+decorator's position that can disagree with it; two scope-open paths that drifted
+apart because one of them knew about iteration and the other did not; a
+registration path that skips a Multi-Instance host with a comment explaining
+why. Each was locally reasonable. Together they are one property, absent.
+
+**The acceptance criterion is mechanical**, which is the point of stating it
+this way: **iteration vocabulary must not appear outside the executor and
+decorator implementations.** A driver that asks "does this node iterate?" is a
+violation whether or not it is currently correct. This is checkable by
+inspection, and an SRD that leaves such a site behind has not landed its slice.
+
+#### 2.13a.1 The one sanctioned channel: data, not questions
+
+Transparency is about **mechanism**, not about **data**. A node may not *ask*
+whether it is decorated — not its track, not the loop, not its driver. It may
+*read* iteration state as ordinary data, because that is where the standard
+itself puts it: §2.9's attributes are required to be available to expressions
+(§13.3.7), and §10.4.3 exposes instance attributes to expressions generally.
+
+So the rule is one rule, not a compromise between two: **the decorator
+publishes; it never answers questions.** A node reading `loopCounter` reads a
+variable that happens to be bound, exactly as it reads any other — which is
+precisely why it stays transparent. A node *asking its driver* what it is would
+not be.
+
+Two consequences worth stating, because they cut in opposite directions:
+
+- The publication seam is **load-bearing** and must survive every simplification
+  made in the name of this invariant. Removing it as "driver knowledge" would
+  break §2.9, which the standard mandates.
+- Extending what is published (§2.9.2's `ITERATION_*` family, §2.9.3's identity
+  and mode) is **always** available without weakening transparency, because
+  publication is one-way. When a node genuinely needs to know something about
+  its iteration, the answer is a published value — never a query interface.
+
+#### 2.13a.2 Substitution, not special-casing
+
+The invariant is only affordable because the seams it needs already exist as
+**chains**, so a decorator inserts itself rather than being tested for:
+
+- **Events.** Registration already walks a chain of event producers — a node
+  registers with its instance, which delegates to the hub. The decorator becomes
+  one more link: the node's registration call is unchanged, the decorator
+  registers itself upward once per activity, and dispatches a delivery down to
+  the instance owning the matched subscription. This is the mechanism §2.13
+  named and [ADR-006](ADR-006-events-and-subscriptions.md) §2.9.5 decides in
+  full.
+- **Scope.** The scope protocol already carries a *request* to a single-writer
+  loop. The request carries **what to do**; the loop performs it without knowing
+  why. Which ordinals are live, which scopes they hold, their teardown order and
+  their output capture are the decorator's.
+- **Execution.** One dispatch point builds the executor for a node — a decorator
+  when it carries loop characteristics, a bare executor otherwise (§2.13's FR-2
+  in the accompanying SRD). Activity-level bookkeeping happens once, around the
+  executor, so nothing needs a flag to suppress it.
+
+Where a driver today branches on node kind, the target is a link in one of these
+chains. That is why the invariant *reduces* the engine rather than adding an
+abstraction layer to it.
+
 ### 2.14 A failed iteration is an ordinary incident, at iteration granularity (v.3)
 
 **One instance of a Multi-Instance activity failing must not cost the other
@@ -984,9 +1172,17 @@ those ADRs' to make.
 | `ImplicitThrowEvent` as the complex-behavior event | [events.md §ImplicitThrowEvent](../bpmn-spec/elements/events.md) |
 | Data split/assemble, output visibility barrier | [multi-instance.md §Data semantics](../bpmn-spec/semantics/multi-instance.md) |
 | Compensation ordering | [multi-instance.md §Compensation](../bpmn-spec/semantics/multi-instance.md) |
+| Loop Activity runtime attribute (`loopCounter`) | [instance-attributes.md §Loop Activity](../bpmn-spec/semantics/instance-attributes.md) — Table 10.27, §10.3.8 |
+| MI runtime attributes, inner/outer split, and the sum invariant | [instance-attributes.md §Multi-instance Activity](../bpmn-spec/semantics/instance-attributes.md) — Table 10.30, §10.3.8 |
+| Instance attributes are expression-accessible | [data.md §XPath bindings](../bpmn-spec/semantics/data.md) (§10.4.3) |
 
-Where the extract is silent (the MI runtime-attribute set), §2.9 marks the
-engine convention explicitly rather than asserting a spec mandate.
+**v.4 closes the one gap this section used to name.** v.1–v.3 said "where the
+extract is silent (the MI runtime-attribute set), §2.9 marks the engine
+convention explicitly rather than asserting a spec mandate". The extract was
+silent; the standard was not. Tables 10.27 and 10.30 are now extracted and
+pinned above, and §2.9 asserts the mandate it should always have asserted. What
+stays marked as engine choice is listed in §2.11 — and the list is shorter than
+it was.
 
 ---
 
@@ -1174,3 +1370,4 @@ None.
 | v.1 | 2026-07-19 | Ruslan Gabitov | Initial draft — Standard Loop & Multi-Instance iteration model: per-iteration isolation by a mechanism fitting the activity kind (in-place fresh-frame for a leaf Task, per-iteration child scope for a composite, distinct per-instance scope for parallel MI), cardinality (expression \| collection), sequential/parallel sequencing, split/assemble data mediator with visibility barrier, completion condition, full `behavior` event-throwing (All/None/One/Complex), engine-convention runtime attributes; MI compensation deferred to the future Transaction work. |
 | v.2 | 2026-07-21 | Ruslan Gabitov | Added §2.12 — composite iteration runs on the activity's own off-loop execution (an *iteration decorator*), not under control code on the per-instance loop goroutine; the decorator requests scope operations from the single-writer loop via a request/response protocol (ADR-017 v.1 invariant preserved), sequential/parallel become its two driving strategies, and the §2.8 behavior throw becomes an ordinary off-loop emit with a deterministic boundary catch (unimplementable correctly on the v.1 model). Semantics §2.1–§2.11 unchanged; only *who drives* composite iteration moves. Forward-pointers added to §2.2/§2.5/§2.8; execution-model alternatives added to §4; v.2 rework consequences/rollout added to §5/§7. Leaf-task loops unchanged. The SRDs that landed the loop-goroutine-driven composite model are superseded and deleted when the re-landing completes. |
 | v.3 | 2026-08-10 | Ruslan Gabitov | **Sharpens the node execution model** (§2.13), one model for every node kind — simple node, inline Sub-Process, Call Activity — and their conjunction with loop characteristics, motivated by a construct the engine refuses today: an iterated activity that WAITS. The **node executor** runs one instance of an activity and owns whatever that instance awaits (an event subscription, a child scope's drain, a child instance); a **decorator** holds N and implements the same interface, closing the composition, so a track drives one executor and cannot tell how many instances are behind it — a track means *a token walking a path* again. The decorator is the node's single registered EVENT processor (one owner, one dispatch point, one subscription per waiting instance; the hub's differentiation by correlation untouched, ADR-006 v.5 §2.9) — the seam whose absence made the waiting case unbuildable. Residency asks each executor WHAT IT AWAITS rather than whether it is running, which is what keeps an iterated Sub-Process dehydratable; hydration re-arms every waiting instance BEFORE accepting a delivery — not against loss (the broker buffers an unmatched envelope and delivers it when a subscription appears, per its conformance suite) but against a partially armed set matching an envelope into the WRONG instance; the executor set is recorded, frames are not (recomputable from the ordinal, §2.4 fixing cardinality once); boundary arming stays at activity level and positional assembly stays with the decorator. A call executor owns its child instance under the parent linkage the engine already records (ADR-033 v.5 §2.10, ADR-023 v.3 §2.7): under iteration the caller owns N children, so the record maps child to ORDINAL or positional assembly binds the right output into the wrong slot, and cancelling an iteration terminates a durable child instance. Four accepted decisions change with it — **§2.2** replaces v.1's "parallel Multi-Instance always needs a distinct per-instance scope" with ONE isolation rule (a frame per iteration always, a scope only where the activity is a scope host); **§2.9.1** gives an iterated activity one token carrying its iteration state, the previous N-tokens reporting the mechanism and telling an operator how many instances were parked but never which, and nothing at all for a sequential loop; **§2.12**'s composite-only scope widens to every iterated activity; **§2.14** keeps failure at the granularity of execution — an incident carries an iteration section of the same shape §2.9.1 puts on the token, is retried alone, and cannot be completed around (positional assembly would publish a collection with a hole), with the cardinality/collection expressions and the decorator's own post-start work staying activity-level, the latter resuming against the recorded instances. Consequences accepted: the refusal retires, a parallel leaf loses its per-instance scopes, and the durable record carries the executor set. Contract changes named for their owners: the token's iteration field (ADR-013), the incident's iteration section and its track-keyed retry unit incl. "re-run the whole Call Activity" for a failed child (ADR-036). New **§2.6.1** decides iteration RESULT semantics, which §2.2's frame rule alone does not settle — a frame bounds an execution, but its commit target is the enclosing scope, so isolating an execution is not hiding its writes (§2.2 corrected). Default: **last write wins**, which makes a sequential iteration a **reduce** (already the Standard Loop's de-facto behaviour, previously implicit) and makes a parallel MI order-dependent for undeclared writes — documented as a property, not hidden. Three opt-in deterministic strategies: **array** by ordinal (the spec's collection for MI, an engine extension for a loop), **map** by a key **expression** evaluated in the completing instance's frame (an engine extension; the User Task assignee is the motivating case, unknown until the task is claimed), and **reduce** named explicitly. An empty key refuses; a duplicate key overwrites by default with **ErrorOnKeyRewrite** making it a fault — permissive by default because the loss is detectable against §2.9.2's total, strict on request for a fan-out where each participant must answer once. New **§2.9.2** publishes EVERY iteration value in the reserved read-only RUNTIME source — the five BPMN-named attributes (`RUNTIME/loopCounter`, `RUNTIME/numberOf*`) as well as the maps `ITERATIONS` (activity id → kind/total/completed/terminated) and `ITERATION_OWNERS` (activity id → ordinal → actual owner). The counters were ordinary scope data, so a model could overwrite one and read its own value back from an expression indistinguishable from the engine's; leaving them out of the tool the project already built against exactly that would keep one rule with an exception on the most-read names. Naming rule: a value the standard names keeps the standard's spelling (a pure prefix migration), a value the engine invented follows the engine's convention. Two consequences stated rather than discovered: it is a **breaking change** for models reading the bare names — measured at 14 Go files including three runnable examples, plus two guides — and it requires the runtime source to know WHICH execution is asking, since `loopCounter` differs per instance while the supplier is handed only a name; the reader already holds the asking execution's frame, and that seam is **ADR-010 v.2**'s to change. A model declaring a colliding property name now refuses at BUILD time, naming the element, rather than silently shadowing the engine's value and surfacing as a wrong answer three nodes later. Maps rather than a name per activity, because the RUNTIME name set is closed; keying by activity id is also what lets them **outlive the activity**, where a frame dies with its execution and a counter with its token. §2.9's BPMN-named variables keep their names and addresses — relocating them would break every existing expression — and stay writable, a hole named here and left to ADR-010 v.2, since write-protecting reserved data names is the data model's decision. The performer register gains its iterated-case rule: it keeps the LAST completer for compatibility, and `ITERATION_OWNERS` is the honest per-ordinal source — without which an iterated User Task would report one of N performers arbitrarily the moment the construct becomes buildable. Semantics §2.1–§2.11 otherwise unchanged. Three pre-existing claims refreshed at the bump, since a version re-asserts the whole document as current: **§2.10**'s "gobpm has no compensation substrate yet" was false — ADR-026 v.1 owns compensation and already states the per-instance snapshot rule for an iterated activity, so the deferral is replaced by the obligation this ADR owes it, now met through the ordinal rather than the per-instance scope §2.2 removes; **§2.5**'s "distinct per-instance scopes" contradicted the revised §2.2 and becomes "distinct per-instance execution contexts"; and **§7**'s rollout, whose slices have all landed, gains the v.3 sequence (executor contract → the waiting instance → the composite kinds → the record and the public surfaces, the surface-changing steps last). |
+| v.4 | 2026-08-15 | Ruslan Gabitov | **States the invariant §2.13's model was missing** and **corrects a standard-grounding error §2.9 carried since v.1.** New **§2.13a**: a decorator is TRANSPARENT IN BOTH DIRECTIONS — the decorated node sees exactly what it sees executing directly (same frame, same registration call, same delivery, same boundary arming; it never learns it is instance *k* of *N*), and the drivers see one node executing once (one step, one state transition, one record, one subscriber, one scope request; no driver learns the node iterates). All iteration state is the decorator's own. This is a decision rather than a style note because the model of §2.13 is expressible without it, and the engine's accumulated special cases are what that costs: a marker on a spawned track whose job was to suppress a routing decision, a flag telling a track not to do its own bookkeeping, a loop-side mirror of the decorator's position that can disagree with it, two scope-open paths that drifted apart because one knew about iteration, a registration path that skips a Multi-Instance host. The acceptance criterion is deliberately mechanical — iteration vocabulary must not appear outside the executor and decorator implementations, and a driver asking "does this node iterate?" is a violation whether or not it is currently correct. **§2.13a.1** fixes the one sanctioned channel: transparency is about MECHANISM, not DATA — a node may not ASK whether it is decorated, but may READ iteration state as ordinary data, which is what §13.3.7/§10.4.3 require; the decorator publishes and never answers questions, so the publication seam is load-bearing and extending what is published never weakens the invariant. **§2.13a.2** records why the invariant is affordable: the seams are already CHAINS (event producers, the scope request protocol, one execution dispatch), so a decorator inserts itself as a link instead of being tested for — which is why the rule reduces the engine rather than layering it. **§2.9 corrected**: v.1–v.3 called the runtime-attribute set an engine convention "pending a KB extension" because the vendored extract did not enumerate it; the EXTRACT was incomplete, not the standard. BPMN §10.3.8 carries two instance-attribute tables — **Table 10.27** (Loop Activity: `loopCounter`) and **Table 10.30** (Multi-instance Activity: `loopCounter` per INNER instance, `numberOfInstances` / `numberOfActiveInstances` / `numberOfCompletedInstances` / `numberOfTerminatedInstances` for the OUTER instance only) — now extracted into the KB and pinned in §3. gobpm's variables are the standard's own, spelled the standard's way; the standard's sum invariant (terminated + completed + active = total) is satisfied by construction, the active count being derived rather than tracked. What remains an engine choice is not the SET but the 0-based counter, the publication address and write-protection, and the lifetime after completion — §2.11's list is correspondingly shorter, and its "engine convention pending a KB extension" bullet is retired. New **§2.9a** states the 0-based `loopCounter` as an explicit deviation from Table 10.30's 1-based wording, taken so one ordinal base serves the variable, the record, the incident, the ledger and the token projection alike; the cost — a model ported from a 1-based engine reads one lower, undetectably — is named rather than left to be discovered. New **§2.9.3**: an instance has an IDENTITY, derived (enclosing scope path + activity id + ordinal) rather than minted, so it is stable across restore with nothing stored, resolvable in both directions, and introduces no second vocabulary — `ITERATION_ID` and `ITERATION_MODE` publish what the ordinal and the record's `kind` already are. **§2.9.3a** applies it to the scope segment: the current grammar is lossy in two ways — two concurrent hosts on one activity derive the same path (forcing a re-entry queue) and `sp-a-1` is ambiguous between instance 1 of `a` and the own scope of `a-1` (forcing a precedence rule at restore) — and a segment carrying the instance identity makes both mechanisms cease to exist rather than be ported; restore must not PARSE an identity out of a path built for humans. |

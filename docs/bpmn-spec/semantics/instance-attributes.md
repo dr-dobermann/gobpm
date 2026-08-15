@@ -1,6 +1,7 @@
 # Instance Attributes
 
-_Source: BPMN 2.0 §10.3.4.1 (User Task), §10.4.3 (expression bindings). Authored from the spec text — **not** generated._
+_Source: BPMN 2.0 §10.3.4.1 (User Task), §10.3.8 (Loop Characteristics), §10.4.3
+(expression bindings). Authored from the spec text — **not** generated._
 
 BPMN splits an element's attributes across two kinds of table:
 
@@ -72,6 +73,54 @@ p. 151), and it has exactly one row:
   "not yet extracted". It was never extractable *as an instance-attribute table*, because it
   is not one.
 
+## Loop Activity (Standard Loop)
+
+**Table 10.27 – Loop Activity instance attributes** (§10.3.8, spec p. 189)
+
+| Attribute | Description / Usage |
+|---|---|
+| `loopCounter: integer` | The LoopCounter attribute is used at runtime to count the number of loops and is automatically updated by the process engine. |
+
+## Multi-instance Activity
+
+**Table 10.30 – Multi-instance Activity instance attributes** (§10.3.8, spec p. 193)
+
+| Attribute | Description / Usage |
+|---|---|
+| `loopCounter: integer` | Provided **for each generated (inner) instance** of the Activity. It contains the sequence number of the generated instance — if this value of some instance is *n*, the instance is the *n*-th instance that was generated. |
+| `numberOfInstances: integer` | Provided **for the outer instance only**. The total number of inner instances created for the Multi-Instance Activity. |
+| `numberOfActiveInstances: integer` | Outer instance only. The number of currently active inner instances. For a **sequential** MI Activity this value cannot be greater than 1; for a **parallel** one it cannot exceed `numberOfInstances`. |
+| `numberOfCompletedInstances: integer` | Outer instance only. The number of already completed inner instances. |
+| `numberOfTerminatedInstances: integer` | Outer instance only. The number of terminated inner instances. **The sum of `numberOfTerminatedInstances`, `numberOfCompletedInstances` and `numberOfActiveInstances` always sums up to `numberOfInstances`.** |
+
+These are the variables §13.3.7 makes available to a `completionCondition`, to a
+`ComplexBehaviorDefinition` condition and to the `DataInputAssociation` of its
+event — see [multi-instance.md](multi-instance.md) — and they are what the
+implicit `SignalEventDefinition` thrown on `behavior=none`/`one` carries.
+
+**Engine notes:**
+
+- gobpm binds the standard's names verbatim: `loopCounter` per instance and the
+  four counts at the host (outer) scope, which is the inner/outer split the two
+  tables prescribe. `numberOfActiveInstances` is derived as
+  `numberOfInstances − completed − terminated`, so the standard's sum invariant
+  holds by construction rather than by convention.
+- **`loopCounter` is 0-based in gobpm; Table 10.30's wording is 1-based** ("if
+  this value is *n*, the instance is the *n*-th generated"). Table 10.27 states
+  no base for the Standard Loop. The 0-based choice is deliberate — it indexes
+  the input collection and the output collection directly, which is what
+  positional assembly needs — but it **is** a deviation on the MI side, and a
+  model ported from another engine may read one lower than its author expects.
+  Registered as an engine choice in
+  [ADR-025 §2.11](../../design/ADR-025-activity-iteration-loop-and-multi-instance.md).
+- The standard defines **no** runtime attribute naming the iteration *mode*.
+  Sequentiality is observable only indirectly, through Table 10.30's own rule
+  that `numberOfActiveInstances ≤ 1` for a sequential MI. Any published mode
+  value is an engine extension, not a standard attribute.
+- Neither table is reachable from `elements/activities.md`: the generator emits
+  Table 10.29 (`MultiInstanceLoopCharacteristics` **model** attributes) and can
+  never emit 10.27/10.30, for the reason stated at the top of this page.
+
 ---
 
 ## Reading an instance attribute from an expression
@@ -85,5 +134,7 @@ values, not merely as engine internals. See [data.md](data.md) for the full func
 - Model attributes of the same elements: [../elements/activities.md](../elements/activities.md)
   (`UserTask` — `implementation`, `renderings`), generated.
 - Resource assignment (who *may* act): [../elements/human-interaction.md](../elements/human-interaction.md)
+- Loop / Multi-Instance execution semantics, and where these attributes are
+  readable from: [multi-instance.md](multi-instance.md)
 - Per-task execution behavior: [tasks.md](tasks.md)
 - Activity lifecycle states: [../state-machines/activity-lifecycle.md](../state-machines/activity-lifecycle.md)
