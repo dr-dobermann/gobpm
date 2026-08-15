@@ -90,10 +90,25 @@ type scopeRequest struct {
 	op    scopeOp
 	// n is the completed-instance count a scopeIterPost carries.
 	n int
+	// factOrdinal is the ordinal this scope's lifecycle facts carry, or -1
+	// to omit the attribute. A fanned-out instance reports its own; a
+	// serial pass reports the host's pass counter; a plain composite has
+	// none. Supplied rather than derived, for the same reason as iterating.
+	factOrdinal int
 	// ordinal is the instance's own 0-based index, reported as its Opened
 	// fact (FR-14) rather than the host's shared loopCounter. Read only
 	// when segment is set, since that is what marks a per-instance open.
 	ordinal int
+	// iterating says this open belongs to an activity that runs its node
+	// more than once, so the loop keeps a position mirror for the capture
+	// (SRD-082 FR-2) and reports the pass ordinal on the scope's facts.
+	//
+	// The REQUESTER declares it. The loop used to ask the node — a
+	// drivesOwnIteration probe on the way in — which is the shape FR-11
+	// removes: a driver that tests whether a node iterates knows something
+	// the decorator was supposed to own. Answering from the executor costs
+	// one bool and puts the knowledge where it already lives.
+	iterating bool
 	// persist marks this open as an observable lifecycle transition, so the
 	// loop takes a checkpoint once the scope is up (ADR-033 §2.2).
 	//
@@ -240,7 +255,7 @@ func (ls *loopState) reattachScope(
 ) {
 	ls.waiting[req.host.ID()] = struct{}{}
 
-	if drivesOwnIteration(req.node) {
+	if req.iterating {
 		ls.ensureIterMirror(req.host, req.node)
 	}
 
@@ -401,19 +416,12 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 
 	// mirror the decorator's position for the capture (SRD-082 FR-2);
 	// the runner is parked in its roundtrip, so the reads are fenced.
-	if drivesOwnIteration(req.node) {
+	if req.iterating {
 		ls.ensureIterMirror(req.host, req.node)
 	}
 
-	// a fanned-out instance reports its OWN ordinal, not the host's shared
-	// loopCounter (SRD-056.A FR-14); a sequential pass has no ordinal of
-	// its own and the host's counter is the position.
-	ord := scopeLoopCounter(req.node, req.host)
-	if req.segment != "" {
-		ord = req.ordinal
-	}
-
-	ls.reportScope(observability.PhaseOpened, req.node, child, ord)
+	ls.reportScope(
+		observability.PhaseOpened, req.node, child, req.factOrdinal)
 	ls.seedScope(ctx, sh, child)
 	ls.armScopeHandlers(ctx, sh.Nodes(), child)
 

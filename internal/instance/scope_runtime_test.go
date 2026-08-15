@@ -755,3 +755,72 @@ func openScopeFor(
 		return scopeReply{}, false
 	}
 }
+
+// TestTwoHostsOneComposite (T-15, SRD-090.A M3c): two tokens reach the SAME
+// Sub-Process concurrently — a parallel gateway forks into it — and both
+// bodies run to completion.
+//
+// This is the case the scope re-entry queue exists for, and the reason it
+// is the milestone's principal regression risk: one DataPath holds one
+// scope, so the second host has to wait for the first, and M3c MOVED that
+// queue from the retired loop-driven open path onto the executor's request
+// path, where waiting means a DEFERRED REPLY rather than a parked track.
+//
+// It is asserted end to end rather than white-box because the white-box
+// subtests pin the queue's SHAPE and would keep passing if the deferred
+// reply never arrived: the host would simply hang, and a hang inside a
+// 3-second helper reads as a timeout, not as a queue that stopped serving.
+// Counting body runs is what distinguishes "both hosts got the scope" from
+// "one host got it twice" and from "the second never woke".
+func TestTwoHostsOneComposite(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	var body atomic.Int32
+
+	sub, err := activities.NewSubProcess("shared")
+	require.NoError(t, err)
+
+	sStart, err := events.NewStartEvent("s-start")
+	require.NoError(t, err)
+	inner := hitTask(t, "inner", &body, "", 0)
+	sEnd, err := events.NewEndEvent("s-end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{sStart, inner, sEnd} {
+		require.NoError(t, sub.Add(e))
+	}
+
+	linkAll(t,
+		[2]flow.Element{sStart, inner}, [2]flow.Element{inner, sEnd})
+
+	p, err := process.New("two-hosts")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	split, err := gateways.NewParallelGateway()
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, split, sub, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	// BOTH of the split's outgoing flows target the one Sub-Process, so the
+	// two tokens derive the same child path and collide there.
+	linkAll(t,
+		[2]flow.Element{start, split},
+		[2]flow.Element{split, sub},
+		[2]flow.Element{split, sub},
+		[2]flow.Element{sub, end})
+
+	inst := runInstance(t, p)
+
+	require.Equal(t, Completed, inst.State())
+	require.EqualValues(t, 2, body.Load(),
+		"both hosts entered the shared scope — the second waited for the "+
+			"first rather than being refused or lost")
+}

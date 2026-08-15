@@ -631,3 +631,72 @@ func TestDrivesOwnIteration(t *testing.T) {
 	require.False(t, drivesOwnIteration(plainNode))
 	require.False(t, drivesOwnIteration(evNode))
 }
+
+// TestMICounterSumInvariant (T-16, SRD-090.A): BPMN Table 10.30 states an
+// invariant over the Multi-Instance runtime attributes —
+// numberOfTerminatedInstances + numberOfCompletedInstances +
+// numberOfActiveInstances always sums to numberOfInstances.
+//
+// gobpm satisfies it BY CONSTRUCTION: the active count is derived as
+// n − completed − terminated rather than tracked alongside the other two, so
+// the three cannot drift apart. That is exactly why it is worth a test —
+// a construction-satisfied invariant has no failing case to notice, and the
+// change that would break it (tracking `active` separately, which reads as a
+// harmless refactor) would break it silently.
+//
+// White-box over the binding, deliberately: the live progression is already
+// covered end to end by TestMultiInstanceRuntimeCounters and the parallel
+// attribute tests, but neither reaches a state with a NON-ZERO terminated
+// count — the instances a fired completionCondition cancels never run, so
+// nothing inside the activity is left to read the counters afterwards.
+func TestMICounterSumInvariant(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, _ := openInstance(t)
+
+	host := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		instance:    inst,
+		scopePath:   inst.sc.root,
+	}
+
+	read := func(t *testing.T, name string) int {
+		t.Helper()
+
+		d, err := inst.sc.plane.GetData(host.scopePath, name)
+		require.NoError(t, err)
+
+		n, ok := d.Value().Get(t.Context()).(int)
+		require.True(t, ok, "%s is an integer attribute", name)
+
+		return n
+	}
+
+	for name, c := range map[string]struct{ n, completed, terminated int }{
+		"nothing has happened yet":      {5, 0, 0},
+		"some completed":                {5, 2, 0},
+		"a completionCondition fired":   {5, 2, 3},
+		"every instance completed":      {5, 5, 0},
+		"every instance was terminated": {5, 0, 5},
+		"one instance, done":            {1, 1, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t,
+				host.bindMICounters(c.n, c.completed, c.terminated))
+
+			total := read(t, "numberOfInstances")
+			active := read(t, "numberOfActiveInstances")
+			completed := read(t, "numberOfCompletedInstances")
+			terminated := read(t, "numberOfTerminatedInstances")
+
+			require.Equal(t, c.n, total)
+			require.Equal(t, c.completed, completed)
+			require.Equal(t, c.terminated, terminated)
+
+			require.Equal(t, total, terminated+completed+active,
+				"Table 10.30: terminated + completed + active == total")
+			require.GreaterOrEqual(t, active, 0,
+				"a negative active count would satisfy the sum and mean nothing")
+		})
+	}
+}

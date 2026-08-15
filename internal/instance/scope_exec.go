@@ -93,6 +93,11 @@ func (e *scopeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 		// checkpoint; one pass of a decorated one is interior to a step
 		// and persists through the decorator's position post instead.
 		persist: e.exits,
+		// an instance held by a decorator iterates; the whole activity,
+		// running once, does not. The executor knows which it is without
+		// asking anything about the node (SRD-090.A FR-11).
+		iterating:   !e.exits,
+		factOrdinal: e.factOrdinal(),
 	}); err != nil {
 		return nil, err
 	}
@@ -118,6 +123,25 @@ func (e *scopeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	}
 
 	return nil, nil
+}
+
+// factOrdinal is the ordinal this instance's scope lifecycle facts carry,
+// or -1 to omit the attribute (SRD-054 FR-11, SRD-055 FR-13).
+//
+// A FANNED-OUT instance reports its OWN — the host's loopCounter is shared
+// by all N and stands still for the whole fan-out, so it cannot name any of
+// them. A serial pass has no ordinal of its own and the host's pass counter
+// IS its position. The whole activity, running once, has no pass to report.
+func (e *scopeExec) factOrdinal() int {
+	switch {
+	case e.exits:
+		return -1
+
+	case e.segment != "":
+		return e.ord
+	}
+
+	return e.t.loopCounterSnap()
 }
 
 // awaitDrain parks this instance until the loop reports its scope drained,
