@@ -12,7 +12,7 @@ import (
 
 // scopeExec is the sub-process realization of activityExec: it runs ONE
 // instance of a COMPOSITE activity, and an instance of a composite activity
-// is a child scope (ADR-025 v.3 §2.13, ADR-023 v.3 §2.4).
+// is a child scope (ADR-025 §2.13, ADR-023 §2.4).
 //
 // It executes no node. A composite's work IS its body, and the body's tokens
 // are ordinary tracks the loop seeds into the opened scope (FR-3) — so this

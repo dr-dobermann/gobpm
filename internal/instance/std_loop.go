@@ -42,7 +42,7 @@ func standardLoopOf(node flow.Node) standardLoop {
 }
 
 // executeStep runs the current node through the executor that holds its
-// instances (ADR-025 v.3 §2.13): a decorator when the node iterates, a single
+// instances (ADR-025 §2.13): a decorator when the node iterates, a single
 // executor otherwise. It returns the outgoing flows to follow exactly once,
 // on exit.
 //
@@ -63,7 +63,7 @@ func (t *track) executeStep(
 }
 
 // loopDecorator drives a COMPOSITE activity's Standard Loop, holding the
-// executor for the pass currently running (ADR-025 v.3 §2.13, BPMN §13.3.6).
+// executor for the pass currently running (ADR-025 §2.13, BPMN §13.3.6).
 // It is the condition-driven sibling of iterDecorator: where a Multi-Instance
 // resolves its instance count once and gives each instance its own slice of
 // the input, a Standard Loop runs passes until its loopCondition says stop
@@ -72,7 +72,7 @@ func (t *track) executeStep(
 // That difference is the whole reason it is a second type rather than a flag
 // on the first. The two share no state — no cardinality, no collection, no
 // staging, no completionCondition — and the only thing they have in common is
-// what they hold, which is exactly the interface (ADR-025 v.3 §2.13).
+// what they hold, which is exactly the interface (ADR-025 §2.13).
 type loopDecorator struct {
 	t    *track
 	step *stepInfo
@@ -166,7 +166,7 @@ func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
 }
 
 // awaits reports what the pass currently running awaits — a child scope's
-// drain, or nothing between passes. The conjunction ADR-025 v.3 §2.13 states
+// drain, or nothing between passes. The conjunction ADR-025 §2.13 states
 // is trivial here: a Standard Loop holds one pass at a time.
 func (d *loopDecorator) awaits() awaitKind {
 	if d.live == nil {

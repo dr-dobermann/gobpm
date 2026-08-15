@@ -112,7 +112,7 @@ func TestScopeExecRefusesAnUnopenableScope(t *testing.T) {
 // TestLoopDecoratorAwaitsItsLivePass: a Standard-Loop decorator answers for
 // the pass currently running and reports nothing between passes — the same
 // contract iterDecorator holds, which is what lets a track drive either
-// without knowing which it has (ADR-025 v.3 §2.13).
+// without knowing which it has (ADR-025 §2.13).
 func TestLoopDecoratorAwaitsItsLivePass(t *testing.T) {
 	inst, _, node, host := decoratorFixture(t)
 

@@ -14,7 +14,7 @@ import (
 )
 
 // awaitKind classifies what an activity instance is currently waiting on.
-// The distinction is load-bearing twice over (ADR-025 v.3 §2.13): only an
+// The distinction is load-bearing twice over (ADR-025 §2.13): only an
 // awaitEvent instance holds a subscription the hub must know about, and only
 // an awaitEvent instance contributes to the instance's residency. An
 // instance awaiting a child scope's drain or a child instance is NOT doing
@@ -37,7 +37,7 @@ const (
 )
 
 // instanceState reports one activity instance in the iteration vocabulary
-// (ADR-025 v.3 §2.9.1): the ordinal identifies it, and the rest says what it
+// (ADR-025 §2.9.1): the ordinal identifies it, and the rest says what it
 // is doing. The same shape is what the durable record persists, what the
 // token view projects and what an incident carries — one vocabulary, so the
 // three surfaces cannot describe an instance differently (SRD-090.C).
@@ -51,7 +51,7 @@ type instanceState struct {
 }
 
 // activityExec executes ONE instance of an activity and owns whatever that
-// instance awaits (ADR-025 v.3 §2.13).
+// instance awaits (ADR-025 §2.13).
 //
 // It is deliberately NOT exec.NodeExecutor (pkg/exec), which is the
 // interface a NODE implements to execute itself: that answers "how does this
@@ -105,7 +105,7 @@ type nodeExec struct {
 // carries loop characteristics this slice has converted, a single instance
 // otherwise. The caller does not care which — both satisfy activityExec, so
 // a track drives one executor and cannot tell how many instances are behind
-// it (ADR-025 v.3 §2.13).
+// it (ADR-025 §2.13).
 //
 // The one kind still routed by executeStep — a LEAF Standard Loop, which
 // re-runs its node in place — moves here when it converts (SRD-090.B).
@@ -129,7 +129,7 @@ func execFor(t *track, step *stepInfo) activityExec {
 }
 
 // iterDecorator drives the instances of a Multi-Instance activity, holding
-// one executor per instance (ADR-025 v.3 §2.13). It implements activityExec
+// one executor per instance (ADR-025 §2.13). It implements activityExec
 // itself, which is what closes the composition: to the track it is the thing
 // that runs the activity, exactly as a single instance would be.
 //
@@ -307,7 +307,7 @@ func (d *iterDecorator) refuseIfParked(i int) error {
 }
 
 // awaits reports what the decorator's live instance awaits — the conjunction
-// is trivial while at most one instance runs (ADR-025 v.3 §2.13's
+// is trivial while at most one instance runs (ADR-025 §2.13's
 // releasability rule takes its general form when parallel instances arrive).
 func (d *iterDecorator) awaits() awaitKind {
 	if d.live == nil {
@@ -329,7 +329,7 @@ func (d *iterDecorator) state() instanceState {
 }
 
 // runParallel drives every instance of a parallel leaf activity at once and
-// awaits them all (ADR-025 v.3 §2.13, SRD-090.A FR-5). The N-of-N barrier is
+// awaits them all (ADR-025 §2.13, SRD-090.A FR-5). The N-of-N barrier is
 // ordinary control flow on the decorator's own goroutine: no loop-owned
 // group, no per-instance scope, and nothing spawns a track to iterate.
 //
@@ -907,7 +907,7 @@ func (e *nodeExec) state() instanceState {
 
 // runPass executes ONE instance of a sequential activity through the
 // executor the decorator holds for it. It lives on the decorator because the
-// decorator OWNS the iteration (ADR-025 v.3 §2.13) — leaving it on the track
+// decorator OWNS the iteration (ADR-025 §2.13) — leaving it on the track
 // left the driver split across both types, so the decorator delegated back to
 // the thing it was replacing. Originally SRD-086 FR-1's pass: bind,
 // run the instance, take its output, post the pass to the loop's iteration

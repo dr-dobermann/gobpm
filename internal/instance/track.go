@@ -1386,7 +1386,7 @@ func (t *track) executeNode(
 	return t.executeNodeAs(ctx, step, activityInstance{})
 }
 
-// executeNodeAs runs the node as ONE instance of its activity (ADR-025 v.3
+// executeNodeAs runs the node as ONE instance of its activity (ADR-025
 // §2.13). ai carries what distinguishes this instance from its siblings: the
 // data only it sees, and whether it is a member of a set whose decorator owns
 // the track-wide bookkeeping. A plain node is the degenerate case — one
@@ -1429,7 +1429,7 @@ func (t *track) executeNodeAs(
 	}
 
 	// ONE instance of an iterated activity carries its own data frame-local
-	// (ADR-025 v.3 §2.2, SRD-090.A FR-4): binding it at the shared container
+	// (ADR-025 §2.2, SRD-090.A FR-4): binding it at the shared container
 	// scope is safe only while a single instance runs at a time, and the
 	// instances of a parallel activity run at once. Bound before the node
 	// loads its inputs, which resolve frame-first through it.
@@ -1470,12 +1470,12 @@ func (t *track) executeNodeAs(
 }
 
 // activityInstance is what distinguishes ONE instance of an activity from its
-// siblings when a decorator drives several of them (ADR-025 v.3 §2.13).
+// siblings when a decorator drives several of them (ADR-025 §2.13).
 type activityInstance struct {
 	// capture, when set, is called with this execution's frame once the node
 	// has produced its outputs and BEFORE they commit to the shared
 	// container scope. It is how a decorator takes ONE instance's declared
-	// output for positional assembly (ADR-025 v.3 §2.6): with no
+	// output for positional assembly (ADR-025 §2.6): with no
 	// per-instance scope to read it from, concurrent siblings overwrite the
 	// output's name in the container scope, so the value has to be taken
 	// while it is still this instance's own.
@@ -1607,7 +1607,7 @@ func (t *track) finalizeNodeExecution(
 	}
 
 	// take this instance's own output before the commit makes the name a
-	// shared one (ADR-025 v.3 §2.6).
+	// shared one (ADR-025 §2.6).
 	if ai.capture != nil {
 		if cerr := ai.capture(f); cerr != nil {
 			return cerr

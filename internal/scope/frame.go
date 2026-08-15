@@ -206,7 +206,7 @@ func (f *Frame) LoadProperties(defs []*data.Property) error {
 // 0-based loopCounter, the split input item) when the instances share a
 // container scope: binding those at the scope is safe only while one
 // instance runs at a time, and N concurrent instances would overwrite each
-// other's. The frame is the isolation (ADR-025 v.3 §2.2), and this is the
+// other's. The frame is the isolation (ADR-025 §2.2), and this is the
 // door into it.
 //
 // A repeated name overwrites, as Put does within one execution. The node's

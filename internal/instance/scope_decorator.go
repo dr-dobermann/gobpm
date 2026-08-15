@@ -11,7 +11,7 @@ import (
 )
 
 // scopeOp is the operation a scopeRequest asks the single-writer loop to
-// perform for an off-loop iteration decorator (ADR-025 v.3 §2.13). scopeOpen
+// perform for an off-loop iteration decorator (ADR-025 §2.13). scopeOpen
 // serves EVERY instance that is a child scope — a serial pass and one of N
 // fanned out alike, which is what let the group barrier's four ops (fan out,
 // re-arm, complete, re-attach) retire: a decorator that holds its instances

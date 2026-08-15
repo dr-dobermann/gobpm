@@ -120,4 +120,3 @@ func miParFixture(t *testing.T) (*Instance, flow.Node, *track) {
 
 	return inst, node, host
 }
-

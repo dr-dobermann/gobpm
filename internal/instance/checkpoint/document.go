@@ -242,7 +242,7 @@ type MIRecord struct {
 //
 // Frames are deliberately absent: the split item is the collection
 // element at the ordinal and the counter IS the ordinal, both recomputed
-// (ADR-025 v.3 §2.4 fixes cardinality once, so the collection cannot
+// (ADR-025 §2.4 fixes cardinality once, so the collection cannot
 // shift underneath).
 type IterationInstance struct {
 	State   string `json:"state"` // running | waiting | completed
