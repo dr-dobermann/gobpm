@@ -67,7 +67,7 @@ func (ls *loopState) armScopeHandlers(
 		return
 	}
 
-	var ws []*scopeHandlerWatch
+	ws := make([]*scopeHandlerWatch, 0, len(nodes))
 
 	for _, n := range nodes {
 		if !isEventSubHandler(n) {

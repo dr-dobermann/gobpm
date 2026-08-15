@@ -307,9 +307,10 @@ func (ls *loopState) armBoundaries(
 func (ls *loopState) armOne(
 	t *track, node flow.Node, bev flow.BoundaryEvent,
 ) ([]*boundaryWatch, bool) {
-	var ws []*boundaryWatch
+	defs := bev.Definitions()
+	ws := make([]*boundaryWatch, 0, len(defs))
 
-	for di, d := range bev.Definitions() {
+	for di, d := range defs {
 		// An Error boundary is not a waiting catch — an error is not a published
 		// trigger that arrives on the hub. It is matched against the failing
 		// activity in the loop's evFailed handling (matchErrorBoundary, FR-9), so
