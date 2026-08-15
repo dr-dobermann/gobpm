@@ -377,14 +377,15 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 	// construction-immutable, so this read is safe pre-run.
 	ls.armConditionals(ctx, t)
 
-	// a track born parked ON a composite (a fork straight into a sub-process,
-	// or an initial node that is one) opens its scope from the spawn path —
-	// the twin of the mid-run evScopeOpen (SRD-049 FR-8; construction never
-	// emits, the SRD-048 deadlock rule).
+	// A composite is deliberately absent here (SRD-090.A M3c). A track born
+	// on one used to be born PARKED, so the spawn path had to open its scope
+	// on the loop goroutine — construction cannot emit, the SRD-048 deadlock
+	// rule. It is no longer a wait at all: the track starts Ready, reaches
+	// its step on its own goroutine, and its executor requests the open
+	// through the ordinary roundtrip. Nothing is owed here, and this guard
+	// never fires for it because recordBornWaiter returns early on a track
+	// that is not parked.
 	node := t.currentStep().node
-	if _, isComposite := node.(scopeHost); isComposite {
-		ls.onScopeOpen(ctx, t, node)
-	}
 
 	// a track born parked ON a Call Activity (a fork straight onto one, or an
 	// initial node that is one) launches its child from the spawn path — the

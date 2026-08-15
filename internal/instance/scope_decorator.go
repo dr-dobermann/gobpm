@@ -94,6 +94,22 @@ type scopeRequest struct {
 	// fact (FR-14) rather than the host's shared loopCounter. Read only
 	// when segment is set, since that is what marks a per-instance open.
 	ordinal int
+	// persist marks this open as an observable lifecycle transition, so the
+	// loop takes a checkpoint once the scope is up (ADR-033 §2.2).
+	//
+	// Only the WHOLE activity's open is one: a plain composite entering its
+	// body is a token's step, while a decorator's per-pass open is interior
+	// to one step and persists through the position post instead. The
+	// requester decides, because the loop must not ask whether the node
+	// iterates (SRD-090.A FR-11).
+	//
+	// It replaces a persist point the mechanism used to supply by accident:
+	// the loop-driven open was requested by a track EVENT, and that event
+	// was on the checkpoint list — which silently gave every plain-composite
+	// open a checkpoint and every decorator pass none. Checkpointing all of
+	// them instead re-ran a restored sequential pass, because a document
+	// captured mid-pass records the position that pass has not reached yet.
+	persist bool
 }
 
 // instanceCapture is one fanned-out composite instance's output slot.
@@ -209,7 +225,102 @@ func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 // the loop, §4.6) before this request, so the seeded body reads it by walk-up. Scope
 // close stays on the existing drain path (completeScope), so no close request is
 // needed here (§4.3).
+// reattachScope re-binds a RESTORED scope to the fresh executor now asking
+// for it (SRD-082 FR-3/FR-5): the scope was rebuilt at loop start and its
+// inner tracks respawned, so there is nothing to open or seed — only to hand
+// the instance the channel and the cell it will read its result from.
+//
+// Split out of handleScopeOpen when that function absorbed the retired
+// loop-driven path and outgrew the complexity budget (SRD-090.A M3c).
+func (ls *loopState) reattachScope(
+	ctx context.Context,
+	req scopeRequest,
+	child scope.DataPath,
+	entry *scopeEntry,
+) {
+	ls.waiting[req.host.ID()] = struct{}{}
+
+	if drivesOwnIteration(req.node) {
+		ls.ensureIterMirror(req.host, req.node)
+	}
+
+	entry.awaitAttach = false
+
+	// the re-attaching instance is a NEW executor over an old scope, so the
+	// entry adopts its channel AND its output cell: the restored scope was
+	// rebuilt by the loop and has neither of its own (SRD-090.A M3b).
+	// Without the cell a resumed instance's output would be read from
+	// nowhere and its slot would stay nil, which reads downstream as an
+	// instance that produced nothing.
+	entry.drain = req.drain
+	entry.capture = req.capture
+
+	req.reply <- scopeReply{scopePath: child}
+
+	// a drain that arrived before the re-attach completes now — the
+	// roundtrip above is the fence that makes the host state loop-readable
+	// (SRD-082 FR-3).
+	if entry.drainPending {
+		entry.drainPending = false
+		ls.completeScope(ctx, child, entry)
+	}
+}
+
+// seedOpenedScope publishes into a freshly-opened child scope everything the
+// body must resolve by name before it is seeded — the three seeds the merged
+// open path owes, gathered here because handleScopeOpen outgrew its budget
+// once it absorbed the retired loop-driven path (SRD-090.A M3c):
+//
+//   - a compensation event-sub handler's ledger snapshot (SRD-059 FR-4).
+//     Reads inside the handler resolve child-first, so the snapshot shadows
+//     the live parent data and the handler's own writes die with the scope
+//     (an ADR-026 §2.5 engine note). It rides the HOST, which is why the
+//     executor-driven open reaches it without the request naming it.
+//   - the composite's SubProcess-level Data Objects (SRD-063 FR-4).
+//   - this instance's per-pass data, published at its OWN scope so a
+//     fanned-out sibling cannot overwrite it.
+func (ls *loopState) seedOpenedScope(
+	req scopeRequest, child scope.DataPath,
+) error {
+	if req.host.compScopeSeed != nil {
+		if _, err := ls.inst.sc.plane.Commit(
+			child, req.host.compScopeSeed...); err != nil {
+			return errs.New(
+				errs.M("couldn't seed compensation snapshot into %q",
+					string(child)),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+	}
+
+	if err := seedDataObjects(ls.inst.sc.plane, req.node, child); err != nil {
+		return err
+	}
+
+	for _, b := range req.binds {
+		if err := ls.inst.sc.bindDataItemAt(child, b.name, b.value); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
+	// a terminating instance opens nothing (the loop-driven path returned
+	// early here too). The requester is REFUSED rather than dropped: it is
+	// parked in its roundtrip, and while loopDone would eventually free it,
+	// an answer names the reason instead of leaving it to a race between
+	// two shutdown signals.
+	if ls.stopping {
+		req.reply <- scopeReply{err: errs.New(
+			errs.M("instance %q is terminating — scope open refused for %q",
+				ls.inst.ID(), req.node.ID()),
+			errs.C(errorClass, errs.InvalidState))}
+
+		return
+	}
+
 	sh, ok := req.node.(scopeHost)
 	if !ok {
 		// checkNodeType only routes scopeHost nodes to the decorator; a mismatch
@@ -222,12 +333,7 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 		return
 	}
 
-	// the executor names the segment when it is one of N fanned-out
-	// instances; otherwise the node's own is the segment, unchanged.
-	seg := req.segment
-	if seg == "" {
-		seg = scopeSegment(req.node)
-	}
+	seg := scopeSegmentFor(req.host, req.node, req.segment)
 
 	child, err := req.host.scopePath.Append(seg)
 	if err != nil {
@@ -241,32 +347,23 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 	// initial tracks — so the runner RE-ATTACHES: no reopen, no reseed,
 	// just park for the drain.
 	if entry, open := ls.scopes[child]; open && entry.host == req.host {
-		ls.waiting[req.host.ID()] = struct{}{}
+		ls.reattachScope(ctx, req, child, entry)
 
-		if drivesOwnIteration(req.node) {
-			ls.ensureIterMirror(req.host, req.node)
-		}
+		return
+	}
 
-		entry.awaitAttach = false
-
-		// the re-attaching instance is a NEW executor over an old scope, so
-		// the entry adopts its channel AND its output cell: the restored
-		// scope was rebuilt by the loop and has neither of its own
-		// (SRD-090.A M3b). Without the cell a resumed instance's output
-		// would be read from nowhere and its slot would stay nil, which
-		// reads downstream as an instance that produced nothing.
-		entry.drain = req.drain
-		entry.capture = req.capture
-
-		req.reply <- scopeReply{scopePath: child}
-
-		// a drain that arrived before the re-attach completes now — the
-		// roundtrip above is the fence that makes the host state
-		// loop-readable (SRD-082 FR-3).
-		if entry.drainPending {
-			entry.drainPending = false
-			ls.completeScope(ctx, child, entry)
-		}
+	// a DIFFERENT host already holds this path (SRD-049 §4.4): two tokens
+	// reached one composite — a gateway forked into it — and one DataPath
+	// holds one scope, so the second waits. The request is queued and its
+	// reply DEFERRED; completeScope serves it when the scope frees. The
+	// requester is parked in its roundtrip, which already honors ctx and
+	// loopDone, so a deferred reply cannot strand it.
+	//
+	// Recording the scope's owner (Schema 7) does not remove this: the
+	// collision is between two LIVE scopes, not two readings of one name
+	// (ADR-025 §2.9.3a).
+	if entry, open := ls.scopes[child]; open {
+		entry.queue = append(entry.queue, req)
 
 		return
 	}
@@ -277,6 +374,12 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 				string(child), req.node.ID()),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))}
+
+		return
+	}
+
+	if err := ls.seedOpenedScope(req, child); err != nil {
+		req.reply <- scopeReply{err: err}
 
 		return
 	}
@@ -302,16 +405,6 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 		ls.ensureIterMirror(req.host, req.node)
 	}
 
-	// instance i's per-pass data, published at its OWN scope before the
-	// body is seeded, so the body reads it by name.
-	for _, b := range req.binds {
-		if err := ls.inst.sc.bindDataItemAt(child, b.name, b.value); err != nil {
-			req.reply <- scopeReply{err: err}
-
-			return
-		}
-	}
-
 	// a fanned-out instance reports its OWN ordinal, not the host's shared
 	// loopCounter (SRD-056.A FR-14); a sequential pass has no ordinal of
 	// its own and the host's counter is the position.
@@ -323,6 +416,14 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 	ls.reportScope(observability.PhaseOpened, req.node, child, ord)
 	ls.seedScope(ctx, sh, child)
 	ls.armScopeHandlers(ctx, sh.Nodes(), child)
+
+	// the persist point the requester asked for (req.persist): taken BEFORE
+	// the reply, while the requester is still parked in its roundtrip —
+	// that park is the fence which makes its state readable here, the same
+	// reason the position mirror is written above.
+	if req.persist {
+		ls.checkpointNow(ctx)
+	}
 
 	req.reply <- scopeReply{scopePath: child}
 }

@@ -41,7 +41,6 @@ var checkpointTransitions = map[trackEventKind]bool{
 	evWaiting:     true,
 	evTaskWaiting: true,
 	evJobWaiting:  true,
-	evScopeOpen:   true,
 	// a Call Activity park is a persist point since the call is
 	// recorded (SRD-082 FR-7, M4): the parent's document must carry the
 	// in-flight call the moment the child exists — a crash between the

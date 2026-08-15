@@ -47,10 +47,18 @@ type scopeExec struct {
 	// thing, so a flag says all there is to say.
 	parked atomic.Bool
 
+	// exits marks this executor as the WHOLE activity rather than one of
+	// N: a plain composite, which has no decorator above it to follow the
+	// outgoing flow once the instances are done (SRD-090.A M3c). It is the
+	// executor's own business, not a caller's type test — which is what
+	// keeps executeStep at one decision (FR-2, FR-11).
+	exits bool
+
 	ord int
 }
 
-// newScopeExec builds the executor for one instance of a composite activity.
+// newScopeExec builds the executor for one instance of a composite activity,
+// held by a decorator that follows the activity's exit flow itself.
 func newScopeExec(t *track, step *stepInfo, ordinal int) *scopeExec {
 	return &scopeExec{
 		t:     t,
@@ -58,6 +66,16 @@ func newScopeExec(t *track, step *stepInfo, ordinal int) *scopeExec {
 		ord:   ordinal,
 		drain: make(chan struct{}),
 	}
+}
+
+// newPlainScopeExec builds the executor for a NON-iterated composite —
+// instance zero of one, and the whole activity — so it follows the exit
+// flow itself when its scope drains.
+func newPlainScopeExec(t *track, step *stepInfo) *scopeExec {
+	e := newScopeExec(t, step, 0)
+	e.exits = true
+
+	return e
 }
 
 // run opens this instance's child scope and awaits its drain.
@@ -71,6 +89,10 @@ func (e *scopeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 		op: scopeOpen, host: e.t, node: e.step.node, drain: e.drain,
 		segment: e.segment, binds: e.binds, capture: e.capture,
 		ordinal: e.ord,
+		// the whole activity's open is a lifecycle transition worth a
+		// checkpoint; one pass of a decorated one is interior to a step
+		// and persists through the decorator's position post instead.
+		persist: e.exits,
 	}); err != nil {
 		return nil, err
 	}
@@ -84,6 +106,15 @@ func (e *scopeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 
 	if err := e.awaitDrain(ctx); err != nil {
 		return nil, err
+	}
+
+	// A composite's outgoing flow is selected by RE-RUNNING its node once
+	// the body is done — the body ran in the child scope, and the node
+	// execution is what picks the flow (the same rule a decorator's exit
+	// follows for a composite). Only the whole activity does this: one
+	// instance of N leaves it to the decorator, which does it once.
+	if e.exits {
+		return e.t.executeNode(ctx, e.step)
 	}
 
 	return nil, nil

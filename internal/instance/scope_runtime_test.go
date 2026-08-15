@@ -505,37 +505,47 @@ func TestScopeRuntimeDirect(t *testing.T) {
 		return inst, ls, host, node
 	}
 
-	t.Run("stopping drops the open", func(t *testing.T) {
+	// T-1 findings, SRD-090.A M3c: the two below asserted that a bad open
+	// FAULTS the instance. The loop-driven path had nobody to answer, so
+	// stopAll was the only way to be loud. An open is a request now, and a
+	// refusal goes back to the activity instance that asked — which is how
+	// every other error in this path already behaved.
+	t.Run("stopping refuses the open", func(t *testing.T) {
 		_, ls, host, node := build(t)
 		ls.stopping = true
 
-		ls.onScopeOpen(t.Context(), host, node)
+		reply, answered := openScopeFor(t.Context(), t, ls, host, node)
+
+		require.True(t, answered)
+		require.Error(t, reply.err)
 		require.Empty(t, ls.scopes)
 	})
 
-	t.Run("non-composite node faults", func(t *testing.T) {
-		inst, ls, host, _ := build(t)
+	t.Run("non-composite node is refused", func(t *testing.T) {
+		_, ls, host, _ := build(t)
 
 		plain, err := events.NewEndEvent("plain")
 		require.NoError(t, err)
 
-		ls.onScopeOpen(t.Context(), host, plain)
-		require.True(t, ls.stopping)
-		require.Error(t, inst.LastErr())
+		reply, answered := openScopeFor(t.Context(), t, ls, host, plain)
+
+		require.True(t, answered)
+		require.Error(t, reply.err)
+		require.Empty(t, ls.scopes)
 	})
 
 	t.Run("queue and reopen are deterministic", func(t *testing.T) {
 		inst, ls, host, node := build(t)
 		ctx := t.Context()
 
-		ls.onScopeOpen(ctx, host, node)
+		openScopeFor(ctx, t, ls, host, node)
 		require.Len(t, ls.scopes, 1)
 
 		// a second host on the same composite queues.
 		host2, err := newTrack(node, inst, nil)
 		require.NoError(t, err)
 
-		ls.onScopeOpen(ctx, host2, node)
+		openScopeFor(ctx, t, ls, host2, node)
 		require.Len(t, ls.scopes, 1, "one open scope per composite")
 
 		var path scope.DataPath
@@ -560,15 +570,15 @@ func TestScopeRuntimeDirect(t *testing.T) {
 		inst, ls, host, node := build(t)
 		ctx := t.Context()
 
-		ls.onScopeOpen(ctx, host, node)
+		openScopeFor(ctx, t, ls, host, node)
 
 		h2, err := newTrack(node, inst, nil)
 		require.NoError(t, err)
 		h3, err := newTrack(node, inst, nil)
 		require.NoError(t, err)
 
-		ls.onScopeOpen(ctx, h2, node)
-		ls.onScopeOpen(ctx, h3, node)
+		openScopeFor(ctx, t, ls, h2, node)
+		openScopeFor(ctx, t, ls, h3, node)
 
 		var path scope.DataPath
 		var entry *scopeEntry
@@ -585,18 +595,16 @@ func TestScopeRuntimeDirect(t *testing.T) {
 		require.True(t, ok)
 		require.Same(t, h2, fresh.host)
 		require.Len(t, fresh.queue, 1)
-		require.Same(t, h3, fresh.queue[0])
+		require.Same(t, h3, fresh.queue[0].host,
+			"the queue holds REQUESTS now — each with its own deferred reply")
 	})
 
-	t.Run("born-parked composite opens from spawn", func(t *testing.T) {
-		_, ls, host, _ := build(t)
-
-		// spawn runs recordBornWaiter, which opens the scope for a track
-		// born parked ON a composite (a fork straight into a sub-process).
-		ls.spawn(t.Context(), host)
-
-		require.Len(t, ls.scopes, 1)
-	})
+	// T-1 finding, SRD-090.A M3c: "born-parked composite opens from spawn"
+	// is deleted rather than rewritten. A track born on a composite is no
+	// longer born PARKED at all, so the spawn path opens no scope: it starts
+	// Ready, reaches its step on its own goroutine, and its executor asks
+	// for the open through the ordinary roundtrip. The behaviour the subtest
+	// pinned has no successor — the mechanism it existed for is gone.
 
 	t.Run("late scope terminate is a no-op", func(t *testing.T) {
 		_, ls, host, _ := build(t)
@@ -609,7 +617,7 @@ func TestScopeRuntimeDirect(t *testing.T) {
 		inst, ls, host, node := build(t)
 		ctx := t.Context()
 
-		ls.onScopeOpen(ctx, host, node)
+		openScopeFor(ctx, t, ls, host, node)
 
 		var path scope.DataPath
 		var entry *scopeEntry
@@ -633,15 +641,19 @@ func TestScopeRuntimeDirect(t *testing.T) {
 		inst, ls, host, node := build(t)
 		ctx := t.Context()
 
-		// pre-open the child path — onScopeOpen's OpenScope then duplicates.
+		// pre-open the child path on the PLANE only, leaving the loop's
+		// table empty: the open then duplicates rather than queueing.
 		child, err := host.scopePath.Append(scopeSegment(node))
 		require.NoError(t, err)
 		require.NoError(t, inst.sc.plane.OpenScope(child))
 
-		ls.onScopeOpen(ctx, host, node)
+		reply, answered := openScopeFor(ctx, t, ls, host, node)
 
-		require.True(t, ls.stopping)
-		require.Error(t, inst.LastErr())
+		// T-1 finding, SRD-090.A M3c: was `ls.stopping` — see the two
+		// refusals above for why a bad open answers instead of faulting.
+		require.True(t, answered)
+		require.Error(t, reply.err)
+		require.Empty(t, ls.scopes)
 	})
 
 	t.Run("seed build failure faults", func(t *testing.T) {
@@ -704,3 +716,42 @@ type badHost struct {
 
 // Nodes returns the single non-executor seed.
 func (b badHost) Nodes() []flow.Node { return []flow.Node{b.bad} }
+
+// openScopeFor drives the surviving scope-open path the way an activity
+// instance's executor does, synchronously on the caller's goroutine
+// (SRD-090.A M3c).
+//
+// It replaces the direct ls.onScopeOpen(...) these tests used before the
+// loop-driven open path retired. The mechanism moved; the behaviour under
+// test did not, which is why these are rewrites rather than deletions.
+//
+// The reply channel is BUFFERED so handleScopeOpen's send does not block
+// with no runner parked on the other end, and the read is non-blocking: a
+// request that lands on an already-open path is QUEUED and its reply
+// deferred until the path frees, which is the one case with no answer yet.
+func openScopeFor(
+	ctx context.Context,
+	t *testing.T,
+	ls *loopState,
+	host *track,
+	node flow.Node,
+) (scopeReply, bool) {
+	t.Helper()
+
+	req := scopeRequest{
+		op:    scopeOpen,
+		host:  host,
+		node:  node,
+		drain: make(chan struct{}),
+		reply: make(chan scopeReply, 1),
+	}
+
+	ls.handleScopeOpen(ctx, req)
+
+	select {
+	case r := <-req.reply:
+		return r, true
+	default:
+		return scopeReply{}, false
+	}
+}

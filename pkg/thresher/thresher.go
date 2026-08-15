@@ -613,9 +613,11 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// replaced the pair can never cancel the newer engine.
 	// The cancel is retained in the engine pair below and called by Shutdown
 	// and by every Run rollback — it outlives this scope by design, which is
-	// what an engine-lifetime context means. (A gosec G118 suppression stood
-	// here until the analyzer stopped flagging it; nolintlint reports an
-	// unused directive, so the reasoning stays as prose.)
+	// what an engine-lifetime context means, so G118 is a false positive
+	// here. The directive is a SINGLE line immediately above the statement:
+	// wrapped across the explanation it read as unused to nolintlint while
+	// still suppressing, and dropping it re-exposed the finding.
+	//nolint:gosec // G118 — the cancel outlives this scope by design; see above.
 	engCtx, engCancel := context.WithCancel(ctx)
 	ec := &engineCtx{ctx: engCtx, cancel: engCancel}
 	t.engine.Store(ec)

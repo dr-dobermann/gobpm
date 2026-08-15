@@ -601,17 +601,38 @@ follow, and each is the reason to derive rather than mint:
   publish what already exists — the ordinal and the record's `kind` — at an
   address a model can read. Neither introduces state.
 
-**§2.9.3a — the identity is also the scope segment.** A composite instance's
-child scope is addressed by a segment built from the activity id and the
-ordinal. Two facts make the current grammar lossy: two concurrent hosts on one
-activity derive the *same* path, which forces a re-entry queue, and a segment
-`sp-a-1` is ambiguous between "instance 1 of activity `a`" and "the own scope of
-activity `a-1`", which forces a precedence rule at restore. **A segment that
-carries the instance identity is unambiguous by construction, and both
-mechanisms cease to exist rather than being ported.** Whether the identity is
-spelled into the path or the path→identity mapping is recorded is an
-implementation choice the SRD makes; what this ADR decides is that restore must
-not *parse* an identity out of a path built for humans.
+**§2.9.3a — where the identity has to live.** A composite instance's child scope
+is addressed by a segment built from the activity id and the ordinal, and that
+grammar is lossy in two independent ways. They are worth separating, because
+one decision does not buy both:
+
+- **Restore cannot tell what a segment meant.** `sp-a-1` is both "instance 1 of
+  activity `a`" and "the own scope of activity `a-1`", so reconstructing a
+  scope's owner from its path needs a precedence rule — a rule that must guess,
+  and guesses wrong whenever the instance was the opener. **This ADR decides
+  that restore must not parse an identity out of a path built for humans.**
+  Either recording the path→identity mapping or spelling the identity into the
+  path satisfies it; which one is the SRD's choice.
+- **At runtime, two concurrent hosts on one activity derive the same path.** One
+  DataPath holds one scope, so the second host must wait for the first — a
+  re-entry queue. **This is fixed only by making the paths distinct**, which
+  means spelling the identity into the segment. Recording a mapping does
+  nothing for it: the collision is between two live scopes, not between two
+  readings of one name.
+
+An earlier revision of this subsection claimed both mechanisms "cease to exist
+rather than being ported" under either choice. That was wrong, and it was
+wrong in the direction that flatters the decision: a recorded mapping answers
+the restore question exactly and leaves the runtime collision untouched.
+
+**Engine note.** gobpm takes the recorded mapping (SRD-090.A M3c), which keeps
+scope paths — and therefore the scope lifecycle facts that carry them —
+byte-identical, at the price of keeping the re-entry queue. Spelling the
+identity into the segment would retire the queue too, and costs an observable
+change plus a constraint on element ids (no id may contain the separator, which
+nothing validates today). The queue is a bounded, well-understood mechanism;
+an observable path change is not. Should that trade ever be revisited, this is
+the subsection that records what each side buys.
 
 **Engine note.** The standard defines no instance identity and no mode
 attribute. It exposes sequentiality only indirectly, through Table 10.30's rule

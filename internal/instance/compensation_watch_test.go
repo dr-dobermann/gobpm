@@ -594,10 +594,17 @@ func TestSeedFrameInputsRejectsNonParameter(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestOnScopeOpenSeedCommitFailure (white-box): a compensation snapshot that
-// cannot commit into the handler's fresh child scope is an invariant
-// violation — fail loud (the TestOnScopeOpenAppendError shape).
-func TestOnScopeOpenSeedCommitFailure(t *testing.T) {
+// TestScopeOpenSeedCommitFailure (white-box): a compensation snapshot that
+// cannot commit into the handler's fresh child scope is refused loudly
+// (the TestScopeOpenAppendError shape).
+//
+// **T-1 finding, SRD-090.A M3c.** It asserted `ls.stopping`: the loop-driven
+// open faulted the whole instance because nothing was waiting for an answer.
+// The refusal now travels back to the instance that requested the open,
+// which is how the rest of this function already reported failure — and it
+// is the better granularity, since one instance of a fan-out failing to seed
+// is not a reason to stop its siblings.
+func TestScopeOpenSeedCommitFailure(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
 	inst, ls := openInstance(t)
@@ -612,8 +619,9 @@ func TestOnScopeOpenSeedCommitFailure(t *testing.T) {
 		compScopeSeed: []data.Data{&data.Parameter{}},
 	}
 
-	ls.onScopeOpen(t.Context(), host, sp)
+	reply, answered := openScopeFor(t.Context(), t, ls, host, sp)
 
-	require.True(t, ls.stopping)
-	require.Error(t, inst.LastErr())
+	require.True(t, answered, "a refusal is an answer, not a deferral")
+	require.Error(t, reply.err)
+	require.Empty(t, ls.scopes, "the half-seeded scope is not left behind")
 }

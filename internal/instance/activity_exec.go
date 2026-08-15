@@ -121,10 +121,20 @@ func execFor(t *track, step *stepInfo) activityExec {
 	}
 
 	// A plain activity is instance zero of one — the common case kept
-	// uniform rather than special-cased. A plain COMPOSITE never reaches
-	// here at all: it parks on entry for the loop-driven scope re-entry
-	// (enterComposite), so its single instance is not executed from a
-	// step.
+	// uniform rather than special-cased, INCLUDING a plain composite
+	// (SRD-090.A M3c). It used to decide earlier and elsewhere: it parked
+	// on entry for a loop-driven scope re-entry, so its single instance
+	// was never executed from a step at all, and FR-2's "one decision"
+	// was two.
+	//
+	// Routing it here is also what makes FR-8 one rule: a plain composite
+	// host is not a wait, its token forked into a child scope, and asking
+	// the NODE whether its wait can be externalized was a category error
+	// that pinned every Sub-Process in memory.
+	if composite {
+		return newPlainScopeExec(t, step)
+	}
+
 	return newNodeExec(t, step, 0)
 }
 

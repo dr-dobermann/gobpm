@@ -95,7 +95,7 @@ type loopState struct {
 	scopeInterrupted map[scope.DataPath]bool
 	// scopes is the loop-owned nested-scope registry (SRD-049 FR-9): open
 	// child path → its entry (parked host, composite node, drain counter,
-	// re-entry queue). Opened on evScopeOpen / a born-parked composite,
+	// re-entry queue). Opened by an activity instance's executor,
 	// drained by the terminal-event accounting, closed + host-resumed at
 	// zero.
 	scopes map[scope.DataPath]*scopeEntry
@@ -598,7 +598,7 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		ls.applyFailed(ctx, ev)
 
 	case evWaiting, evTaskWaiting, evJobWaiting, evCallWaiting, evDeliver,
-		evScopeOpen, evDataCommit, evDehydrated:
+		evDataCommit, evDehydrated:
 		// the wait/deliver plane — parks, deliveries, and the signals that
 		// re-evaluate or resume them; sub-dispatched to keep apply under the
 		// complexity limit (the applyParked precedent).
@@ -682,11 +682,6 @@ func (ls *loopState) applyWaitPlane(ctx context.Context, ev trackEvent) {
 
 	case evDeliver:
 		ls.dispatchToParked(ctx, ev)
-
-	case evScopeOpen:
-		// a track parked on a composite — open its child scope and seed the
-		// inner tracks (SRD-049 FR-8).
-		ls.onScopeOpen(ctx, ev.track, ev.node)
 
 	case evDataCommit:
 		// a node's frame commit changed data — sweep the armed conditionals:

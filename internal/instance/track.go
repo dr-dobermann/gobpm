@@ -833,22 +833,24 @@ func (t *track) stashTimerPlan(
 
 // checkActivityWaitKind classifies the non-event wait nodes (done=true when
 // the node was recognized and handled): a UserTask parks for a human Complete
-// (SRD-034); a composite enters through enterComposite (SRD-049 FR-8 park, or
-// the ADR-025 v.2 off-loop iteration); a Call Activity parks for its child
-// instance (SRD-050); a ServiceTask marked WithWorker parks for the worker's
-// report (SRD-036 — checked after the call capability, a CallActivity is not
-// an ExternalWorker). Each is recognized by capability, keeping the runtime
+// (SRD-034); a Call Activity parks for its child instance (SRD-050); a
+// ServiceTask marked WithWorker parks for the worker's report (SRD-036 —
+// checked after the call capability, a CallActivity is not an
+// ExternalWorker). Each is recognized by capability, keeping the runtime
 // model-agnostic.
+//
+// A COMPOSITE is deliberately absent (SRD-090.A M3c). It used to park here,
+// which made entering a Sub-Process a wait — and it is not one: the token
+// forks into a child scope and the body's own tracks do the waiting. Its
+// executor opens the scope from the step instead, like every other activity
+// instance, which is FR-2's one decision and FR-11's transparency in the
+// same move.
 func (t *track) checkActivityWaitKind(
 	node flow.Node,
 	atConstruction bool,
 ) (bool, error) {
 	if _, ok := node.(interactor.HumanTask); ok {
 		return true, t.parkHumanTask(node)
-	}
-
-	if _, ok := node.(scopeHost); ok {
-		return true, t.enterComposite(node, atConstruction)
 	}
 
 	if _, ok := node.(interface{ CalledKey() string }); ok {
@@ -883,39 +885,6 @@ func (t *track) checkThrowNode(
 	}
 
 	return true, nil
-}
-
-// enterComposite routes a composite host reached by a token: a composite that
-// drives its own iteration off the loop (a Standard-Loop or a sequential
-// Multi-Instance composite, ADR-025 v.2 §2.12) must NOT park — run() reaches it and
-// executeStep routes it to runCompositeLoop / runMISequential; every other
-// composite (plain Sub-Process, parallel Multi-Instance) parks for the loop-driven
-// scope re-entry.
-func (t *track) enterComposite(node flow.Node, atConstruction bool) error {
-	if drivesOwnIteration(node) {
-		return nil
-	}
-
-	return t.parkScopeHost(node, atConstruction)
-}
-
-// parkScopeHost parks the track on a composite node (SRD-049 FR-8): the
-// host waits on evtCh for the scope-drain completion. Mid-run the loop is
-// told via evScopeOpen; at construction (incl. a fork born ON a composite,
-// which runs on the loop goroutine — the SRD-048 deadlock rule) the spawn
-// path opens the scope via recordBornWaiter instead.
-func (t *track) parkScopeHost(node flow.Node, atConstruction bool) error {
-	t.updateState(TrackWaitForEvent)
-
-	if !atConstruction && t.instance.State() == Active {
-		t.instance.emit(trackEvent{
-			kind:  evScopeOpen,
-			track: t,
-			node:  node,
-		})
-	}
-
-	return nil
 }
 
 // parkCompensationThrow parks the track on a wait-for-completion Compensation

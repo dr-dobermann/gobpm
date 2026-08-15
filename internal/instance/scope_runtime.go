@@ -90,10 +90,16 @@ type scopeEntry struct {
 	// adHoc is the routing state of an Ad-Hoc scope (SRD-074 §3.4), nil for
 	// every other scope: the per-activity completed/running counts the Router
 	// decides on, and whether routing has already stopped.
-	adHoc   *adHocProgress
-	node    flow.Node
-	parent  scope.DataPath
-	queue   []*track
+	adHoc  *adHocProgress
+	node   flow.Node
+	parent scope.DataPath
+	// queue holds the open requests waiting for this path to free — a
+	// second host reached the same composite while this scope was open
+	// (§4.4). Each carries its own reply channel, deferred until
+	// completeScope serves it; the requester is parked in its roundtrip
+	// meanwhile (SRD-090.A M3c, which moved the queue off the retired
+	// loop-driven open path).
+	queue   []scopeRequest
 	active  int
 	ordinal int
 	// aborting marks a Transaction scope whose Cancel abort is in flight
@@ -145,117 +151,28 @@ func scopeSegment(node flow.Node) string {
 	return "sp-" + node.ID()
 }
 
-// onScopeOpen opens the nested scope for a parked composite host (SRD-049
-// FR-8): derive the child path, open the data-plane scope, register the
-// entry, and seed the inner tracks per the validated shape. A second host
-// arriving while the scope is open queues (one DataPath cannot hold two
-// concurrent scopes; multi-instance owns real parallelism — ADR-023 §2.8).
-// Runs on the loop goroutine.
-func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Node) {
-	if ls.stopping {
-		return
+// scopeSegmentFor picks the child segment a host opens under, in the one
+// order every opener agrees on (SRD-090.A M3c): an EXECUTOR-named segment
+// wins — it is one of N fanned-out instances, and only the executor knows
+// its ordinal; then the HOST's own override, which a non-interrupting Event
+// Sub-Process handler carries so concurrent fires of one handler open
+// distinct scopes (SRD-053) and a restored track carries from its record;
+// then the node's own segment, which is every ordinary composite.
+//
+// It exists because the two open paths derived this differently — the
+// loop-driven one knew about the host override and not the executor's, the
+// executor-driven one the reverse — and a merged path cannot have two
+// answers.
+func scopeSegmentFor(host *track, node flow.Node, instanceSeg string) string {
+	if instanceSeg != "" {
+		return instanceSeg
 	}
 
-	sh, ok := node.(scopeHost)
-	if !ok {
-		// checkNodeType only routes scopeHost nodes here; a mismatch is a
-		// corrupt graph.
-		ls.inst.fail(errs.New(
-			errs.M("scope open for a non-composite node %q", node.ID()),
-			errs.C(errorClass, errs.TypeCastingError)))
-		ls.stopAll()
-
-		return
-	}
-
-	// a host may override the child segment (SRD-053): a non-interrupting
-	// Event Sub-Process handler carries a unique per-fire segment so concurrent
-	// instances of the same node open distinct scopes; every normal composite
-	// uses scopeSegment(node).
-	seg := scopeSegment(node)
 	if host.scopeSeg != "" {
-		seg = host.scopeSeg
+		return host.scopeSeg
 	}
 
-	child, err := host.scopePath.Append(seg)
-	if err != nil {
-		ls.inst.fail(err)
-		ls.stopAll()
-
-		return
-	}
-
-	if entry, open := ls.scopes[child]; open {
-		// a RESTORED host re-entering its own already-open scope
-		// (SRD-082 FR-5) re-attaches: it parks for the drain the derived
-		// entry will deliver — queueing it behind itself would re-run
-		// the body after the drain.
-		if entry.host == host {
-			ls.waiting[host.ID()] = struct{}{}
-
-			return
-		}
-
-		// re-entry while open — queue this host; it reopens after the close.
-		entry.queue = append(entry.queue, host)
-
-		return
-	}
-
-	if err := ls.inst.sc.plane.OpenScope(child); err != nil {
-		ls.inst.fail(errs.New(
-			errs.M("couldn't open scope %q for sub-process %q",
-				string(child), node.ID()),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err)))
-		ls.stopAll()
-
-		return
-	}
-
-	// the host parked on its evtCh — record it parked-and-undelivered so
-	// the drain's synthetic completion can dispatch to it (the
-	// onTaskWaiting discipline); idempotent for the born-parked path.
-	ls.waiting[host.ID()] = struct{}{}
-
-	// a compensation event-sub handler's fresh child scope is seeded with the
-	// ledger entry's snapshot (SRD-059 FR-4): reads inside the handler resolve
-	// child-first, so the snapshot shadows the live parent data; the handler's
-	// local writes die with this scope (an ADR-026 §2.5 engine note).
-	if host.compScopeSeed != nil {
-		if _, err := ls.inst.sc.plane.Commit(
-			child, host.compScopeSeed...); err != nil {
-			ls.inst.fail(errs.New(
-				errs.M("couldn't seed compensation snapshot into %q",
-					string(child)),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err)))
-			ls.stopAll()
-
-			return
-		}
-	}
-
-	// SubProcess-level Data Objects seed the freshly-opened child scope
-	// (SRD-063 FR-4).
-	if err := seedDataObjects(ls.inst.sc.plane, node, child); err != nil {
-		ls.inst.fail(err)
-		ls.stopAll()
-
-		return
-	}
-
-	entry := &scopeEntry{host: host, node: node, parent: host.scopePath}
-	ls.scopes[child] = entry
-
-	ls.reportScope(observability.PhaseOpened, node, child,
-		scopeLoopCounter(node, host))
-
-	ls.seedScope(ctx, sh, child)
-
-	// arm the scope's Event Sub-Process handlers while it is open (SRD-052
-	// FR-5) — the boundary-watch pattern at scope granularity.
-	ls.armScopeHandlers(ctx, sh.Nodes(), child)
+	return scopeSegment(node)
 }
 
 // seedScope spawns the inner entry tracks per the ADR-023 §2.3 validated
@@ -882,59 +799,62 @@ func (ls *loopState) completeScope(
 	// close is the signal — one scope drains exactly once, and a closed
 	// channel needs no reader to be present yet, so an instance still
 	// between its open and its wait cannot miss it.
-	if entry.drain != nil {
-		close(entry.drain)
-
-		return
-	}
-
-	ls.resumeScopeHost(ctx, path, entry)
+	ls.releaseScopeHost(ctx, path, entry)
 }
 
-// resumeScopeHost resumes a closed scope's parked host with the synthetic
-// completion and reopens the scope for a queued re-entry host (§4.4). Runs
-// on the loop goroutine.
-func (ls *loopState) resumeScopeHost(
-	ctx context.Context,
-	path scope.DataPath,
-	entry *scopeEntry,
+// releaseScopeHost wakes whatever was waiting on a scope that has just left
+// the table — drained, canceled or terminated — and hands the path to the
+// next host queued for it (§4.4).
+//
+// Every scope is opened by an activity instance's executor now (SRD-090.A
+// M3c), so the wake is its drain channel: closing it needs no reader to be
+// present yet, which is what lets an instance still between its open and
+// its wait not miss the signal. A restored entry carries no channel until
+// its runner re-attaches, and closing nothing is correct there — the
+// re-attach either finds the entry and adopts its drain, or finds the path
+// free and opens it afresh.
+func (ls *loopState) releaseScopeHost(
+	ctx context.Context, path scope.DataPath, entry *scopeEntry,
 ) {
-	// ADR-025 v.2 §2.12: a composite that drives its own iteration off the loop (a
-	// Standard-Loop or a sequential Multi-Instance composite) decides re-entry
-	// itself — the loop just delivers the drain to the parked decorator
-	// (runCompositeLoop / runMISequential), which tests its condition and requests
-	// the next pass. Only a parallel Multi-Instance still uses the loop-driven seam.
-	if drivesOwnIteration(entry.node) {
-		ls.dispatchToParked(ctx, trackEvent{
-			kind:  evDeliver,
-			track: entry.host,
-			eDef:  newScopeDone(),
-		})
+	if entry.drain != nil {
+		close(entry.drain)
+	}
+
+	ls.serveScopeQueue(ctx, path, entry)
+}
+
+// serveScopeQueue re-opens a just-closed path for the host that has been
+// waiting on it (§4.4). Runs on the loop goroutine, after the scope is
+// closed and its entry removed, so the open sees a free path.
+//
+// The remaining queue is carried onto the fresh entry rather than served
+// in a loop: only one of them can hold the path, and the next one waits
+// exactly as this one did.
+func (ls *loopState) serveScopeQueue(
+	ctx context.Context, path scope.DataPath, entry *scopeEntry,
+) {
+	if len(entry.queue) == 0 {
+		return
+	}
+
+	next, rest := entry.queue[0], entry.queue[1:]
+
+	ls.handleScopeOpen(ctx, next)
+
+	if len(rest) == 0 {
+		return
+	}
+
+	if fresh, ok := ls.scopes[path]; ok {
+		fresh.queue = append(fresh.queue, rest...)
 
 		return
 	}
 
-	// resume the parked host through the standard parked-dispatch contract.
-	ls.dispatchToParked(ctx, trackEvent{
-		kind:  evDeliver,
-		track: entry.host,
-		eDef:  newScopeDone(),
-	})
-
-	// a queued sibling host reopens the scope (sequential re-entry, §4.4).
-	if len(entry.queue) > 0 {
-		next := entry.queue[0]
-		entry.queue = entry.queue[1:]
-
-		ls.onScopeOpen(ctx, next, entry.node)
-
-		if len(entry.queue) > 0 {
-			// carry the remaining queue into the fresh entry.
-			if fresh, ok := ls.scopes[path]; ok {
-				fresh.queue = entry.queue
-			}
-		}
-	}
+	// the re-open failed and replied with the error, so nothing holds the
+	// path now. Serving the next one keeps the queue draining instead of
+	// stranding every host behind a single failure.
+	ls.serveScopeQueue(ctx, path, &scopeEntry{queue: rest})
 }
 
 // underScope reports whether p is path itself or a descendant of it.
@@ -1025,7 +945,7 @@ func (ls *loopState) terminateScope(ctx context.Context, path scope.DataPath) {
 	}
 
 	ls.cancelScope(path, observability.PhaseTerminated)
-	ls.resumeScopeHost(ctx, path, entry)
+	ls.releaseScopeHost(ctx, path, entry)
 }
 
 // reportScope emits one scope-lifecycle fact (SRD-049 FR-13).
