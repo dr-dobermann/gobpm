@@ -293,6 +293,12 @@ func TestReAttachAdoptsTheInstancesCell(t *testing.T) {
 // advance the iteration mirror. The host's loopCounter stands still for the
 // whole fan-out, so deriving the position from it would overwrite the
 // decorator's posted set with a zero (SRD-090.A M3b).
+//
+// **T-1 finding, SRD-090.A M3c.** The entries below now set `iterating`,
+// which handleScopeOpen copies from the request: the drain accounting reads
+// what the scope's OPENER declared instead of asking the node whether it
+// iterates (FR-11). A hand-built entry has to say so, and one that does not
+// is correctly ignored — which is what the third case pins.
 func TestMarkIterDrainSkipsAFannedOutInstance(t *testing.T) {
 	_, ls, node, host := fanOutFixture(t)
 
@@ -300,13 +306,19 @@ func TestMarkIterDrainSkipsAFannedOutInstance(t *testing.T) {
 	m.completed = 3
 
 	ls.markIterDrain(&scopeEntry{
-		host: host, node: node, instance: true, ordinal: 1})
+		host: host, node: node, iterating: true, instance: true, ordinal: 1})
 	require.Equal(t, 3, m.completed, "the posted set stands")
 
 	// the SERIAL pass of the same node still advances it: one open scope,
 	// one pass, and the host's counter is the position.
-	ls.markIterDrain(&scopeEntry{host: host, node: node})
+	ls.markIterDrain(&scopeEntry{host: host, node: node, iterating: true})
 	require.Equal(t, host.loopCounterSnap()+1, m.completed)
+
+	// a scope whose opener did NOT iterate never advances a mirror, whatever
+	// the node's own characteristics say — the opener is the authority.
+	m.completed = 3
+	ls.markIterDrain(&scopeEntry{host: host, node: node})
+	require.Equal(t, 3, m.completed, "a plain open touches no mirror")
 }
 
 // TestScopeFactOrdinal pins the ordinal a scope's Completed / Canceled fact

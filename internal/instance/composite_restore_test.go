@@ -1884,3 +1884,109 @@ func TestChildLinkageAccessors(t *testing.T) {
 	require.Equal(t, "parent-1", child.ParentID())
 	require.Equal(t, "call-node-1", child.CallNodeID())
 }
+
+// TestRestoredPlainCompositeHoldsItsDrain (SRD-090.A M3c): a restored PLAIN
+// composite whose body drains before its host re-attaches must hold the
+// drain, not complete on it.
+//
+// The window is real and the failure is silent. adoptRestoredScopes rebuilds
+// the entry before the spawns, and a restored entry carries NO drain channel
+// — the channel belongs to the executor, which does not exist until the host
+// track reaches its step and asks to re-attach. If the body's tracks finish
+// first, completing the scope there closes nothing at all, and the re-attach
+// that follows finds the path free and opens a SECOND scope: the body runs
+// twice, which is the one outcome a restore exists to prevent.
+//
+// Only own-iteration scopes held their drain before M3c, and that was right
+// while a plain composite's host waited on its evtCh — a drain could be
+// delivered to it, parked or not. It stopped being right the moment every
+// scope became executor-driven.
+func TestRestoredPlainCompositeHoldsItsDrain(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, ls := openInstance(t)
+
+	sp, err := activities.NewSubProcess("held")
+	require.NoError(t, err)
+
+	host := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		instance:    inst,
+		scopePath:   inst.sc.root,
+		steps:       []*stepInfo{{node: sp}},
+	}
+
+	child, err := host.scopePath.Append(scopeSegment(sp))
+	require.NoError(t, err)
+	require.NoError(t, inst.sc.plane.OpenScope(child))
+
+	// the entry adoptRestoredScopes builds: no drain channel yet, because
+	// the executor that owns one has not asked to re-attach.
+	entry := &scopeEntry{
+		host: host, node: sp, parent: host.scopePath, awaitAttach: true,
+	}
+	ls.scopes[child] = entry
+	ls.waiting[host.ID()] = struct{}{}
+
+	// the body's last track leaves the scope: the drain arrives FIRST.
+	body := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		instance:    inst,
+		scopePath:   child,
+	}
+	entry.active = 1
+
+	ls.decScope(t.Context(), body)
+
+	require.True(t, entry.drainPending,
+		"the drain is held for the re-attach, not spent on nothing")
+	require.Contains(t, ls.scopes, child,
+		"and the scope stays open, so the re-attach finds it")
+
+	// now the host's executor arrives: it re-attaches to the SAME scope and
+	// the held drain is delivered to the channel it brought.
+	reply, answered := openScopeFor(t.Context(), t, ls, host, sp)
+
+	require.True(t, answered)
+	require.NoError(t, reply.err)
+	require.Equal(t, child, reply.scopePath,
+		"the restored scope, not a second one opened beside it")
+	require.NotContains(t, ls.scopes, child, "the held drain completed it")
+}
+
+// TestAdoptedPlainCompositeAwaitsItsReattach pins the line the test above
+// depends on: the ADOPTION is what marks a restored scope as awaiting its
+// re-attach, and before SRD-090.A M3c it marked only own-iteration ones.
+//
+// Split from that test deliberately. The one above builds its entry by hand
+// to force the drain-before-re-attach ordering, so it would keep passing
+// with the adoption unfixed — it proves decScope honours the flag, not that
+// anything sets it.
+func TestAdoptedPlainCompositeAwaitsItsReattach(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, ls := openInstance(t)
+
+	sp, err := activities.NewSubProcess("adopted")
+	require.NoError(t, err)
+
+	host := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		instance:    inst,
+		scopePath:   inst.sc.root,
+		steps:       []*stepInfo{{node: sp}},
+	}
+
+	child, err := host.scopePath.Append(scopeSegment(sp))
+	require.NoError(t, err)
+	require.NoError(t, inst.sc.plane.OpenScope(child))
+
+	require.NoError(t, ls.adoptRestoredScopes([]*track{host}))
+
+	entry, ok := ls.scopes[child]
+	require.True(t, ok, "the restored scope is adopted")
+	require.True(t, entry.awaitAttach,
+		"a PLAIN composite's restored scope holds its drain too — it has no "+
+			"channel until its executor re-attaches, so completing early "+
+			"would close nothing and let the re-attach open a second scope")
+}

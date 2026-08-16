@@ -405,13 +405,14 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 	// instance that opened the scope, over the channel on the entry.
 	ls.waiting[req.host.ID()] = struct{}{}
 	ls.scopes[child] = &scopeEntry{
-		host:     req.host,
-		node:     req.node,
-		parent:   req.host.scopePath,
-		drain:    req.drain,
-		capture:  req.capture,
-		instance: req.segment != "",
-		ordinal:  req.ordinal,
+		host:      req.host,
+		node:      req.node,
+		parent:    req.host.scopePath,
+		drain:     req.drain,
+		capture:   req.capture,
+		instance:  req.segment != "",
+		ordinal:   req.ordinal,
+		iterating: req.iterating,
 	}
 
 	// mirror the decorator's position for the capture (SRD-082 FR-2);

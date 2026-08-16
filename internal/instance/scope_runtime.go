@@ -107,13 +107,24 @@ type scopeEntry struct {
 	// resume the host normally — finalizeTransaction owns the teardown, driven
 	// off the compensation sweep's own completion.
 	aborting bool
-	// awaitAttach marks a RESTORED own-iteration scope whose decorator
-	// runner has not re-attached yet (SRD-082 FR-3): its drain must wait
-	// for the re-attach roundtrip — the fence that makes the host's
-	// miState readable on the loop. drainPending records a drain that
-	// arrived early; the re-attach completes it.
+	// awaitAttach marks a RESTORED scope whose executor has not re-attached
+	// yet (SRD-082 FR-3): its drain must wait for the re-attach roundtrip —
+	// the fence that makes the host's state readable on the loop, and the
+	// moment the entry is handed the drain channel it has to signal.
+	// drainPending records a drain that arrived early; the re-attach
+	// completes it.
+	//
+	// EVERY restored scope now, not only an own-iteration one (SRD-090.A
+	// M3c): a restored entry has no channel until its executor brings one,
+	// so a drain spent before then closes nothing and the re-attach that
+	// follows opens a second scope over the same path.
 	awaitAttach  bool
 	drainPending bool
+	// iterating records that this scope belongs to an activity running its
+	// node more than once, as its OPENER declared (SRD-090.A FR-11). The
+	// drain accounting reads it instead of asking the node whether it
+	// iterates — same answer, from the party that owns the question.
+	iterating bool
 	// instance marks this scope as ONE of N fanned out from its host's
 	// activity rather than the host's own pass (SRD-090.A M3b). It is what
 	// ordinal means something on, and it is why the drain must not advance
@@ -352,12 +363,23 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 		// for the re-attach exactly as a serial pass's does: the instance
 		// that resumes it is a NEW executor, and until it arrives there is
 		// nothing to signal.
+		// EVERY restored scope holds its drain for the re-attach now
+		// (SRD-090.A M3c) — it used to be only the own-iteration ones.
+		//
+		// The condition was right while a plain composite's host waited on
+		// its evtCh: a drain arriving before the host resumed could be
+		// delivered to it, parked or not. It is wrong now that every scope
+		// is executor-driven, because a restored entry has NO drain channel
+		// until its runner re-attaches and hands one over. Completing it
+		// early would close nothing, and the re-attach that followed would
+		// find the path free and open a SECOND scope — running the body
+		// twice, which is the failure a restore exists to prevent.
 		ls.scopes[path] = &scopeEntry{
 			host:        host,
 			node:        node,
 			parent:      parent,
 			active:      pins,
-			awaitAttach: drivesOwnIteration(node),
+			awaitAttach: true,
 			instance:    ord >= 0,
 			ordinal:     max(ord, 0),
 		}
