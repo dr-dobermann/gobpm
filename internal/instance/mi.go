@@ -347,7 +347,10 @@ func (t *track) seedSequentialStart(
 	stop := seed.ConditionMet
 
 	if !stop && mi.CompletionCondition() != nil {
-		if err := t.bindMICounters(n, start, 0); err != nil {
+		// nothing is running while the restored condition is evaluated —
+		// this is between passes for a sequential activity and before the
+		// fan-out for a parallel one.
+		if err := t.bindMICounters(n, 0, start, 0); err != nil {
 			return 0, err
 		}
 
@@ -428,16 +431,31 @@ func drivesOwnIteration(node flow.Node) bool {
 	return multiInstanceOf(node) != nil
 }
 
-// bindMICounters publishes the §2.9 runtime attributes at the host scope off the
-// loop (SRD-056.A FR-12) — the frozen instance count, the still-running count
-// (n − completed − terminated), and the completed / terminated counts. Called by
-// the decorator after each delivered drain, before it evaluates the
-// completionCondition. A mutex-safe plane write, like the sequential slice's
-// off-loop binds.
-func (t *track) bindMICounters(n, completed, terminated int) error {
+// bindMICounters publishes the §2.9 runtime attributes at the host scope off
+// the loop (SRD-056.A FR-12): the frozen instance count, and the running /
+// completed / terminated counts. A mutex-safe plane write, like the
+// sequential slice's off-loop binds.
+//
+// active is STATED by the caller rather than derived here (SRD-090.A M3g),
+// because the two iteration kinds cannot share one derivation. Table 10.30
+// defines the attribute as what is CURRENTLY ACTIVE and caps it at 1 for a
+// sequential activity, while also requiring the three counts to sum to n —
+// clauses a sequential activity cannot satisfy at once, since its
+// not-yet-started instances belong to no category (ADR-025 §2.9).
+//
+// A PARALLEL caller passes `n − completed − terminated`: every instance
+// exists from activation, so what is outstanding is what is running and both
+// clauses hold. A SEQUENTIAL caller passes what is actually running — 1
+// during a pass (bindInstance), 0 between passes and at the end — which
+// honors the cap and makes the sum exact at every terminal state.
+//
+// Deriving it here published BOTH readings within one pass: bindInstance set
+// 1, and this function then set n − completed, so a behavior event thrown
+// between the two carried whichever fired last.
+func (t *track) bindMICounters(n, active, completed, terminated int) error {
 	binds := []miBinding{
 		{name: "numberOfInstances", value: n},
-		{name: "numberOfActiveInstances", value: n - completed - terminated},
+		{name: "numberOfActiveInstances", value: active},
 		{name: "numberOfCompletedInstances", value: completed},
 		{name: "numberOfTerminatedInstances", value: terminated},
 	}

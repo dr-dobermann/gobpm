@@ -672,6 +672,9 @@ func TestMICounterSumInvariant(t *testing.T) {
 		return n
 	}
 
+	// active is STATED by the caller now (M3g), so the cases carry the value
+	// a PARALLEL publisher derives — n − completed − terminated — which is
+	// the shape that satisfies both of Table 10.30's clauses at once.
 	for name, c := range map[string]struct{ n, completed, terminated int }{
 		"nothing has happened yet":      {5, 0, 0},
 		"some completed":                {5, 2, 0},
@@ -681,8 +684,8 @@ func TestMICounterSumInvariant(t *testing.T) {
 		"one instance, done":            {1, 1, 0},
 	} {
 		t.Run(name, func(t *testing.T) {
-			require.NoError(t,
-				host.bindMICounters(c.n, c.completed, c.terminated))
+			require.NoError(t, host.bindMICounters(
+				c.n, c.n-c.completed-c.terminated, c.completed, c.terminated))
 
 			total := read(t, "numberOfInstances")
 			active := read(t, "numberOfActiveInstances")
@@ -699,4 +702,80 @@ func TestMICounterSumInvariant(t *testing.T) {
 				"a negative active count would satisfy the sum and mean nothing")
 		})
 	}
+}
+
+// TestSequentialMICountsTerminatedInstances (T-16, sequential half — the one
+// that fails before SRD-090.A M3g).
+//
+// A fired `completionCondition` CANCELS the instances that will now never run
+// (`multi-instance.md §Completion`), and Table 10.30 counts those as
+// terminated. The engine published a literal 0, so a sequential activity of
+// five stopping after two completions reported `2 + 0 + 0` where the table
+// requires `2 + 3`.
+//
+// The **terminal** state is where this is assertable at all. Mid-run the
+// table contradicts itself for a sequential activity — the `≤ 1` cap on
+// `numberOfActiveInstances` and the sum cannot both hold while instances are
+// still unstarted — and ADR-025 §2.9 records that the engine honours the cap.
+// Once nothing is running, every instance is completed or terminated and the
+// sum is exact.
+//
+// End-to-end rather than over the binder: the first version of this test
+// exercised `bindMICounters` directly with explicit triples, which is the one
+// publisher that was already correct, so it passed while the sequential path
+// was wrong.
+func TestSequentialMICountsTerminatedInstances(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	const total = 5
+
+	op, err := gooper.New("pass",
+		func(_ context.Context, _ service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	// stop as soon as two instances have completed — three are cancelled.
+	mi := mustSeqMI(t,
+		activities.WithCardinality(cardExpr(t, total)),
+		activities.WithCompletionCondition(
+			attrAtLeast(t, "numberOfCompletedInstances", 2)))
+
+	inst := miSubProcessInstanceOp(t, op, mi)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+
+	read := func(name string) int {
+		t.Helper()
+
+		d, rerr := inst.sc.plane.GetData(inst.sc.root, name)
+		require.NoError(t, rerr, "%s is published at the host scope", name)
+
+		n, ok := d.Value().Get(t.Context()).(int)
+		require.True(t, ok, "%s is an integer attribute", name)
+
+		return n
+	}
+
+	active := read("numberOfActiveInstances")
+	completed := read("numberOfCompletedInstances")
+	terminated := read("numberOfTerminatedInstances")
+
+	// THREE, not two, and that is a second finding rather than a typo: the
+	// condition is evaluated against the count PUBLISHED at the start of the
+	// pass, so it reads one behind. `>= 2` therefore fires after the third
+	// instance, not the second. M3g does not change it — the lag is its own
+	// defect, tracked separately — and this test asserts the engine's actual
+	// stopping point so the terminated arithmetic is checked against reality.
+	require.Equal(t, 3, completed,
+		"the condition sees a one-pass-stale count (separate finding)")
+	require.Equal(t, 0, active, "nothing runs once the activity has stopped")
+	require.Equal(t, total-completed, terminated,
+		"the instances the fired condition cancelled are TERMINATED, not "+
+			"absent — this is the assertion that fails before M3g")
+
+	require.Equal(t, total, terminated+completed+active,
+		"Table 10.30's sum, at the terminal state where it is satisfiable")
 }

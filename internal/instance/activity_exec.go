@@ -645,7 +645,10 @@ func (d *iterDecorator) awaitParallel(
 	// the terminated count is only whole once every instance has reported,
 	// so the §2.9 attributes settle here (the parallel counterpart of the
 	// post-cancel rebind the loop-owned barrier did).
-	if err := t.bindMICounters(run.n, completed, terminated); err != nil {
+	// PARALLEL: every instance exists from activation, so outstanding IS
+	// running and the derivation satisfies both of Table 10.30's clauses.
+	if err := t.bindMICounters(
+		run.n, run.n-completed-terminated, completed, terminated); err != nil {
 		return nil, err
 	}
 
@@ -670,7 +673,9 @@ func (d *iterDecorator) parallelStep(
 ) (bool, error) {
 	t, mi := d.t, d.mi
 
-	if err := t.bindMICounters(n, completed, terminated); err != nil {
+	// PARALLEL, as above: outstanding is running.
+	if err := t.bindMICounters(
+		n, n-completed-terminated, completed, terminated); err != nil {
 		return false, err
 	}
 
@@ -989,9 +994,20 @@ func (d *iterDecorator) runPass(
 		stop = met
 	}
 
+	// SEQUENTIAL: the pass has drained, so nothing is running — active is 0
+	// until the next pass binds its own 1. A fired completionCondition
+	// CANCELS the instances that will now never run, and the spec counts
+	// those as terminated; publishing 0 there left a terminal state whose
+	// counts did not add up to n (SRD-090.A M3g).
+	terminated := 0
+	if stop {
+		terminated = n - t.miState.completed
+	}
+
 	// the behavior event carries the CURRENT §2.9 counts (SRD-056.B):
 	// republish post-drain, then throw.
-	if err := t.bindMICounters(n, t.miState.completed, 0); err != nil {
+	if err := t.bindMICounters(
+		n, 0, t.miState.completed, terminated); err != nil {
 		return nil, false, err
 	}
 
