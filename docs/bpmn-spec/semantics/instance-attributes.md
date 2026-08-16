@@ -102,9 +102,23 @@ implicit `SignalEventDefinition` thrown on `behavior=none`/`one` carries.
 
 - gobpm binds the standard's names verbatim: `loopCounter` per instance and the
   four counts at the host (outer) scope, which is the inner/outer split the two
-  tables prescribe. `numberOfActiveInstances` is derived as
-  `numberOfInstances − completed − terminated`, so the standard's sum invariant
-  holds by construction rather than by convention.
+  tables prescribe.
+- **The two clauses about `numberOfActiveInstances` cannot both hold for a
+  SEQUENTIAL Multi-Instance mid-run**, and this is a tension in the table
+  rather than in any engine. The cap says the value cannot exceed 1; the sum
+  says terminated + completed + active equals the total. A sequential activity
+  of five at its third pass has two completed and one running — satisfying the
+  sum would need `active = 3`, which the cap forbids, and the not-yet-started
+  instances belong to no category the table offers. For a **parallel**
+  activity there is no tension: every instance exists from activation, so the
+  sum holds throughout.
+- gobpm honours the **cap**, publishing what is *currently running* — the
+  attribute's own definition — so a sequential activity's sum is short by the
+  not-yet-started remainder while it runs, and exact at any terminal state.
+  Reading `active` as "outstanding" instead would satisfy the sum, break the
+  cap, and make the attribute mean two different things depending on
+  `isSequential`. For the parallel case the count is *derived* as
+  `numberOfInstances − completed − terminated`, so the three cannot drift.
 - **`loopCounter` is 0-based in gobpm; Table 10.30's wording is 1-based** ("if
   this value is *n*, the instance is the *n*-th generated"). Table 10.27 states
   no base for the Standard Loop. The 0-based choice is deliberate — it indexes

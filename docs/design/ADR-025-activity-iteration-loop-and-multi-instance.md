@@ -570,19 +570,39 @@ The standard also fixes an **invariant** over them: `numberOfTerminatedInstances
 + numberOfCompletedInstances + numberOfActiveInstances` always equals
 `numberOfInstances`.
 
-**Where the engine derives the active count, it holds by construction** — as
-`N − completed − terminated`, so the three cannot drift apart. That is the
-rule this ADR prescribes, and the shape every publisher must take.
+**For a parallel Multi-Instance it holds throughout**, and by construction:
+the active count is *derived* as `N − completed − terminated` rather than
+tracked separately, so the three cannot drift apart. That is the shape every
+publisher should take where it can.
 
-**It does not hold on the sequential path today**, and the gap is named here
-rather than left to be discovered: a sequential Multi-Instance publishes
-`numberOfActiveInstances` as a literal 1 and its terminated count as a literal
-0 — including after a `completionCondition` has fired and the remaining
-instances are cancelled, which
-[multi-instance.md §Compensation of Multi-Instance](../bpmn-spec/semantics/multi-instance.md)
-and §2.7 both treat as termination. A sequential MI of five stopping at pass
-two therefore reports `2 + 0 + 1 = 3`, not 5. Closing it is implementation
-work owed to this subsection, not a change to it.
+**For a sequential Multi-Instance the two clauses cannot both hold mid-run,
+and the standard is the reason.** Table 10.30 caps `numberOfActiveInstances`
+at **1** for a sequential activity *and* requires the three to sum to
+`numberOfInstances`. A sequential MI of five at its third pass has two
+completed and one running; satisfying the sum would need `active = 3`, which
+the cap forbids. The instances not yet started belong to no category the
+table offers.
+
+**The engine honours the cap.** `numberOfActiveInstances` is what is
+*currently running* — the attribute's own definition — so a sequential
+activity publishes 1 while a pass runs and the sum is short by the
+not-yet-started remainder. The alternative reading, "active = outstanding",
+satisfies the sum and breaks the cap, and would also make `active` mean two
+different things depending on `isSequential`. One definition across both
+kinds is worth more than an invariant the standard cannot keep for one of
+them.
+
+**Where the invariant CAN hold for a sequential activity, it must.** At a
+terminal state every instance is either completed or terminated and nothing
+is running, so the sum is exactly `numberOfInstances`. This is the case the
+engine gets wrong today: after a `completionCondition` fires, the remaining
+instances are cancelled —
+[multi-instance.md §Completion](../bpmn-spec/semantics/multi-instance.md)
+and §2.7 both treat that as termination — and the engine publishes
+`numberOfTerminatedInstances` as a literal 0. A sequential MI of five
+stopping after two completions reports `2 + 0 + 0`, where the standard
+requires `2 + 3`. Closing that is implementation work owed to this
+subsection, not a change to it.
 
 What remains an engine choice is **not the set** but three things about it: the
 0-based counter (§2.9a), the publication address and write-protection (§2.9.2),
