@@ -116,7 +116,7 @@ func TestScopeExecRefusesAnUnopenableScope(t *testing.T) {
 func TestLoopDecoratorAwaitsItsLivePass(t *testing.T) {
 	inst, _, node, host := decoratorFixture(t)
 
-	d := newLoopDecorator(host, &stepInfo{node: node}, standardLoopOf(node))
+	d := newLoopDecorator(host, &stepInfo{node: node}, standardLoopOf(node), true)
 
 	require.Equal(t, awaitNothing, d.awaits(),
 		"a decorator between passes awaits nothing")
@@ -145,7 +145,7 @@ func TestLoopDecoratorSatisfiesActivityExec(t *testing.T) {
 	)
 
 	require.Implements(t, (*activityExec)(nil),
-		newLoopDecorator(&track{}, &stepInfo{}, nil))
+		newLoopDecorator(&track{}, &stepInfo{}, nil, true))
 }
 
 // seededSet is a restored executor set marking ordinal 0 complete — the
@@ -198,7 +198,7 @@ func TestIterationTakesItsSeedFromTheTrack(t *testing.T) {
 		host.iterSeed = seededSet()
 
 		_, err := newLoopDecorator(host, &stepInfo{node: node},
-			standardLoopOf(node)).run(t.Context())
+			standardLoopOf(node), true).run(t.Context())
 		require.Error(t, err)
 
 		require.Nil(t, host.iterSeed,

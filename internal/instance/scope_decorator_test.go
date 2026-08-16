@@ -128,7 +128,7 @@ func TestRunCompositeLoopBindError(t *testing.T) {
 	host.scopePath = scope.DataPath("/nope") // unopened → the bind Commit fails
 
 	_, err := newLoopDecorator(
-		host, &stepInfo{node: node}, standardLoopOf(node)).run(t.Context())
+		host, &stepInfo{node: node}, standardLoopOf(node), true).run(t.Context())
 	require.Error(t, err)
 }
 
@@ -140,7 +140,7 @@ func TestRunCompositeLoopRequestError(t *testing.T) {
 	close(inst.loopDone) // scopeRoundtrip returns the not-running error
 
 	_, err := newLoopDecorator(
-		host, &stepInfo{node: node}, standardLoopOf(node)).run(t.Context())
+		host, &stepInfo{node: node}, standardLoopOf(node), true).run(t.Context())
 	require.Error(t, err)
 }
 

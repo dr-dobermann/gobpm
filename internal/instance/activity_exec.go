@@ -107,13 +107,14 @@ type nodeExec struct {
 // a track drives one executor and cannot tell how many instances are behind
 // it (ADR-025 §2.13).
 //
-// The one kind still routed by executeStep — a LEAF Standard Loop, which
-// re-runs its node in place — moves here when it converts (SRD-090.B).
+// Every kind routes through here now (SRD-090.A M3c): the leaf Standard
+// Loop was the last exception, and it is a decorator over node executors
+// like the rest.
 func execFor(t *track, step *stepInfo) activityExec {
 	_, composite := step.node.(scopeHost)
 
-	if sl := standardLoopOf(step.node); sl != nil && composite {
-		return newLoopDecorator(t, step, sl)
+	if sl := standardLoopOf(step.node); sl != nil {
+		return newLoopDecorator(t, step, sl, composite)
 	}
 
 	if mi := multiInstanceOf(step.node); mi != nil {
@@ -942,7 +943,8 @@ func (d *iterDecorator) runPass(
 		return nil, false, err
 	}
 
-	// re-arm the step for another execution (the runStandardLoop idiom):
+	// re-arm the step for another execution (the same idiom a Standard Loop
+	// pass uses):
 	// finalizeNodeExecution ended the previous pass. A composite executes
 	// its node ONCE, on exit, so its step is never re-armed — its
 	// instances open scopes rather than re-running it.

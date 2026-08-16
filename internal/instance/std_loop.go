@@ -46,19 +46,14 @@ func standardLoopOf(node flow.Node) standardLoop {
 // executor otherwise. It returns the outgoing flows to follow exactly once,
 // on exit.
 //
-// ONE kind is still driven from here rather than by an executor: a LEAF
-// Standard Loop re-runs its node in place and has no per-instance object
-// yet. It converts with SRD-090.B, which is what makes an iterated waiting
-// activity buildable at all.
+// ONE decision, with no exceptions left (SRD-090.A FR-2/FR-11). The leaf
+// Standard Loop was the last one driven from here — it re-ran its node in
+// place, with no per-instance object — and it is a loopDecorator over node
+// executors now, which is the same shape every other iterated activity
+// already had.
 func (t *track) executeStep(
 	ctx context.Context, step *stepInfo,
 ) ([]*flow.SequenceFlow, error) {
-	_, composite := step.node.(scopeHost)
-
-	if sl := standardLoopOf(step.node); sl != nil && !composite {
-		return t.runStandardLoop(ctx, step, sl)
-	}
-
 	return execFor(t, step).run(ctx)
 }
 
@@ -73,6 +68,9 @@ func (t *track) executeStep(
 // on the first. The two share no state — no cardinality, no collection, no
 // staging, no completionCondition — and the only thing they have in common is
 // what they hold, which is exactly the interface (ADR-025 §2.13).
+// composite records which realization this activity's passes take — a child
+// scope, or an execution of the node — the same one difference iterDecorator
+// carries, leaking in the same three places and named where each occurs.
 type loopDecorator struct {
 	t    *track
 	step *stepInfo
@@ -81,13 +79,22 @@ type loopDecorator struct {
 	// live is the pass currently executing, or nil between passes and once
 	// the loop has finished. A Standard Loop runs one pass at a time.
 	live activityExec
+
+	// lastFlows is the flows the most recent LEAF pass produced. A leaf's
+	// node execution is the activity, so the flows it selected on its final
+	// pass are the activity's; a composite re-runs its node once on exit
+	// instead (exitFlows).
+	lastFlows []*flow.SequenceFlow
+
+	composite bool
 }
 
-// newLoopDecorator builds the decorator for a looped composite activity.
+// newLoopDecorator builds the decorator for a Standard-Loop activity, leaf
+// or composite.
 func newLoopDecorator(
-	t *track, step *stepInfo, sl standardLoop,
+	t *track, step *stepInfo, sl standardLoop, composite bool,
 ) *loopDecorator {
-	return &loopDecorator{t: t, step: step, sl: sl}
+	return &loopDecorator{t: t, step: step, sl: sl, composite: composite}
 }
 
 // run drives the passes and follows the composite's outgoing flow once, on
@@ -118,14 +125,20 @@ func (d *loopDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	}
 
 	for pass := first; ; pass++ {
-		t.setLoopCounter(pass)
+		// the track-side counter is the COMPOSITE's position, read by the
+		// scope facts and the capture. A leaf loop has no scope and has
+		// never recorded one, so setting it here would change what a
+		// checkpoint says about a leaf's pass.
+		if d.composite {
+			t.setLoopCounter(pass)
+		}
 
 		if err := t.instance.sc.bindLoopCounterAt(t.scopePath, pass); err != nil {
 			return nil, err
 		}
 
 		// pre-tested (while) tests every pass; post-tested (do-while) skips
-		// the first — one test site, matching runStandardLoop.
+		// the first — one test site for both.
 		if d.sl.TestBefore() || pass > 0 {
 			cont, err := t.evalLoopCond(ctx, step.node, d.sl)
 			if err != nil {
@@ -148,21 +161,61 @@ func (d *loopDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 
 	d.live = nil
 
-	// the loop finished — follow the composite's outgoing once (SubProcess
-	// selects it; the body already ran through the scopes, so this only
-	// routes the token onward), mirroring runStandardLoop's single
-	// post-loop exit.
-	return t.executeNode(ctx, step)
+	return d.exitFlows(ctx)
 }
 
 // runPass runs one pass as its own instance: the executor opens that pass's
 // child scope and parks for its drain.
 func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
-	d.live = newScopeExec(d.t, d.step, pass)
+	if d.composite {
+		d.live = newScopeExec(d.t, d.step, pass)
 
-	_, err := d.live.run(ctx)
+		_, err := d.live.run(ctx)
 
-	return err
+		return err
+	}
+
+	// a LEAF re-runs its node, so the step must be re-armed: the previous
+	// pass ended it at StepEnded (finalizeNodeExecution). A composite's node
+	// is not executed per pass at all — its body runs in the child scope —
+	// so it has nothing to re-arm.
+	d.step.state = StepCreated
+
+	d.live = newNodeExec(d.t, d.step, pass)
+
+	flows, err := d.live.run(ctx)
+	if err != nil {
+		return err
+	}
+
+	d.lastFlows = flows
+
+	return nil
+}
+
+// exitFlows follows the activity's outgoing flow ONCE, on exit.
+//
+// A composite re-runs its node: the body already ran in the child scopes and
+// the node execution is what selects the flow. A leaf must NOT — executing
+// the node IS the activity, and the passes already did that, so the flows
+// its LAST pass selected are the activity's.
+//
+// A pre-tested loop whose condition is false at entry runs zero passes and
+// selected nothing, but the token still leaves by the activity's outgoing
+// flow (BPMN §13.3.6). A leaf loop carries no conditional flow selection, so
+// its declared outgoing is the answer.
+func (d *loopDecorator) exitFlows(
+	ctx context.Context,
+) ([]*flow.SequenceFlow, error) {
+	if d.composite {
+		return d.t.executeNode(ctx, d.step)
+	}
+
+	if d.lastFlows == nil {
+		return d.step.node.Outgoing(), nil
+	}
+
+	return d.lastFlows, nil
 }
 
 // awaits reports what the pass currently running awaits — a child scope's
@@ -185,71 +238,6 @@ func (d *loopDecorator) state() instanceState {
 	}
 
 	return d.live.state()
-}
-
-// runStandardLoop executes a leaf activity repeatedly while its loopCondition
-// holds (BPMN §13.3.6): testBefore selects a pre-tested (while) or post-tested
-// (do-while) loop, loopMaximum caps the count, and a 0-based loopCounter is
-// published each pass. Each pass re-runs executeNode, which opens a fresh
-// execution frame — that per-pass frame IS the iteration isolation (ADR-025
-// §2.2), so no scope is needed. The single outgoing flow is followed once, after
-// the loop.
-func (t *track) runStandardLoop(
-	ctx context.Context, step *stepInfo, sl standardLoop,
-) ([]*flow.SequenceFlow, error) {
-	loopCounter := 0
-
-	var nextFlows []*flow.SequenceFlow
-
-	for {
-		// publish the 0-based ordinal so both the condition and the inner
-		// activity resolve it by name via scope walk-up (SRD-054 FR-10).
-		if err := t.instance.sc.bindLoopCounterAt(
-			t.scopePath, loopCounter); err != nil {
-			return nil, err
-		}
-
-		// A pre-tested (while) loop tests before every pass; a post-tested
-		// (do-while) loop skips the test on the first pass only, so both share
-		// one test site.
-		if sl.TestBefore() || loopCounter > 0 {
-			cont, err := t.evalLoopCond(ctx, step.node, sl)
-			if err != nil {
-				return nil, err
-			}
-
-			if !cont {
-				break
-			}
-		}
-
-		// re-arm the step for another execution — finalizeNodeExecution ended
-		// the previous pass at StepEnded.
-		step.state = StepCreated
-
-		flows, err := t.executeNode(ctx, step)
-		if err != nil {
-			return nil, err
-		}
-
-		nextFlows = flows
-		loopCounter++
-
-		if m, ok := sl.LoopMaximum(); ok && loopCounter >= m {
-			break
-		}
-	}
-
-	// A pre-tested loop whose condition is false at entry runs the body zero
-	// times, so executeNode produced no flows — but the token still leaves via
-	// the activity's outgoing sequence flow (BPMN §13.3.6). A leaf loop activity
-	// carries no conditional flow selection, so its declared outgoing flows are
-	// the ones to follow.
-	if nextFlows == nil {
-		nextFlows = step.node.Outgoing()
-	}
-
-	return nextFlows, nil
 }
 
 // evalLoopCond evaluates the loop's boolean loopCondition against a transient
