@@ -112,9 +112,17 @@ func (ls *loopState) recordLeafCompletion(ev trackEvent, departed flow.Node) {
 // is readable): the Sub-Process becomes the parent scope's entry when it has
 // its own handler (a Compensation boundary or a compensation Event
 // Sub-Process, FR-7) or when its child ledger is non-empty (folded entries
-// stay addressable by a targeted throw). An ITERATED composite's scopes are
-// skipped (drivesOwnIteration covers every shape the off-loop decorators
-// drive) — their compensation rides the ADR-025 §2.10 deferral.
+// stay addressable by a targeted throw).
+//
+// An ITERATED composite's scopes are skipped (drivesOwnIteration covers
+// every shape the off-loop decorators drive), so such an activity cannot be
+// compensated at all — a later throw finds nothing to address, silently.
+//
+// This used to cite "the ADR-025 §2.10 deferral", and that deferral no
+// longer exists: §2.10 was refreshed in v.3 and hands MI compensation to
+// ADR-026, which states the per-instance rule, while §2.10 supplies the
+// ordinal addressability it consumes. Both halves are decided and neither
+// is implemented — #327, which is what this skip now waits for.
 func (ls *loopState) recordScopeCompletion(
 	path scope.DataPath,
 	entry *scopeEntry,
