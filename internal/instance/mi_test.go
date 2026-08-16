@@ -763,14 +763,12 @@ func TestSequentialMICountsTerminatedInstances(t *testing.T) {
 	completed := read("numberOfCompletedInstances")
 	terminated := read("numberOfTerminatedInstances")
 
-	// THREE, not two, and that is a second finding rather than a typo: the
-	// condition is evaluated against the count PUBLISHED at the start of the
-	// pass, so it reads one behind. `>= 2` therefore fires after the third
-	// instance, not the second. M3g does not change it — the lag is its own
-	// defect, tracked separately — and this test asserts the engine's actual
-	// stopping point so the terminated arithmetic is checked against reality.
-	require.Equal(t, 3, completed,
-		"the condition sees a one-pass-stale count (separate finding)")
+	// TWO, which is what `>= 2` means. Until M3h the condition was evaluated
+	// against the count published at the START of the pass — one completion
+	// behind — so it stopped after THREE. This assertion was written to
+	// document that lag and now pins its absence.
+	require.Equal(t, 2, completed,
+		"the condition sees the instance that just completed (§13.3.7)")
 	require.Equal(t, 0, active, "nothing runs once the activity has stopped")
 	require.Equal(t, total-completed, terminated,
 		"the instances the fired condition cancelled are TERMINATED, not "+

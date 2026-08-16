@@ -187,9 +187,10 @@ func TestLeafMISequentialCompletionStops(t *testing.T) {
 
 			n, _ := d.Value().Get(ctx).(int)
 
-			// evaluated with PASS-START counts (the SRD-055 family
-			// semantics): true once at least one pass completed —
-			// which the evaluation after pass 2 sees.
+			// evaluated with POST-DRAIN counts, which is what
+			// SRD-055 FR-11 and §4.3 prescribe: the decorator
+			// rebinds before evalCompletion, so the condition sees
+			// the instance that just completed. True after pass 1.
 			return values.NewVariable(n >= 1), nil
 		})
 
@@ -198,8 +199,14 @@ func TestLeafMISequentialCompletionStops(t *testing.T) {
 	runLeafMI(t, s)
 
 	mu.Lock()
-	require.Equal(t, []string{"0:a", "1:b"}, log,
-		"a true condition after pass 2 must stop pass 3")
+	// **T-1 finding, SRD-090.A M3h.** This asserted `{"0:a", "1:b"}` and
+	// called the extra pass "the SRD-055 family semantics" — which is the
+	// opposite of what SRD-055 says. FR-11 and §4.3 both prescribe the
+	// rebind BEFORE the evaluation, so `>= 1` is true after pass 1 and pass
+	// 2 never launches. The code had drifted from its own accepted SRD and
+	// this test held the drift in place.
+	require.Equal(t, []string{"0:a"}, log,
+		"a condition true after pass 1 must stop pass 2")
 	mu.Unlock()
 }
 

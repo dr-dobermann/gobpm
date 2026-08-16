@@ -665,6 +665,54 @@ func (d *iterDecorator) awaitParallel(
 	return step.node.Outgoing(), nil
 }
 
+// sequentialStep publishes the post-drain counts, throws the behavior event
+// and evaluates the completionCondition — the sequential twin of
+// parallelStep, in the same order: bind, throw, evaluate.
+//
+// The ORDER is the point (SRD-090.A M3h). SRD-055 FR-11 and §4.3 both
+// prescribe the rebind BEFORE the evaluation, so the condition sees the
+// instance that just completed — "evaluated every time an instance
+// completes" (§13.3.7). This path evaluated first and read what bindInstance
+// published at the START of the pass, one completion behind, so
+// `numberOfCompletedInstances >= 2` stopped a five-instance activity after
+// THREE. The parallel path never had the defect; this is its order.
+//
+// active is 0 throughout: the pass has drained and the next one binds its
+// own 1 (ADR-025 §2.9 — a sequential activity honors the cap).
+func (d *iterDecorator) sequentialStep(
+	ctx context.Context, it miIterator, n int,
+) (bool, error) {
+	t, mi, step := d.t, d.mi, d.step
+
+	if err := t.bindMICounters(n, 0, t.miState.completed, 0); err != nil {
+		return false, err
+	}
+
+	if err := t.throwMIBehavior(
+		ctx, mi, step.node, t.miState.completed); err != nil {
+		return false, err
+	}
+
+	if t.miState.completed >= n || mi.CompletionCondition() == nil {
+		return false, nil
+	}
+
+	met, err := it.evalCompletion(ctx, t, step.node)
+	if err != nil || !met {
+		return false, err
+	}
+
+	// a fired completionCondition CANCELS the instances that will now never
+	// run, and the spec counts those as terminated; publishing 0 left a
+	// terminal state whose counts did not add up to n (SRD-090.A M3g).
+	if err := t.bindMICounters(
+		n, 0, t.miState.completed, n-t.miState.completed); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
 // parallelStep is the barrier's per-completion work: publish the running
 // §2.9 counts, throw this completion's behavior event, then test the
 // completionCondition. It reports whether the condition fired.
@@ -937,7 +985,7 @@ func (e *nodeExec) state() instanceState {
 func (d *iterDecorator) runPass(
 	ctx context.Context, it miIterator, i, n int,
 ) ([]*flow.SequenceFlow, bool, error) {
-	t, step, mi := d.t, d.step, d.mi
+	t, step := d.t, d.step
 
 	t.setLoopCounter(i)
 
@@ -983,37 +1031,12 @@ func (d *iterDecorator) runPass(
 		}
 	}
 
-	stop := false
-
-	if t.miState.completed < n && mi.CompletionCondition() != nil {
-		met, cerr := it.evalCompletion(ctx, t, step.node)
-		if cerr != nil {
-			return nil, false, cerr
-		}
-
-		stop = met
-	}
-
-	// SEQUENTIAL: the pass has drained, so nothing is running — active is 0
-	// until the next pass binds its own 1. A fired completionCondition
-	// CANCELS the instances that will now never run, and the spec counts
-	// those as terminated; publishing 0 there left a terminal state whose
-	// counts did not add up to n (SRD-090.A M3g).
-	terminated := 0
-	if stop {
-		terminated = n - t.miState.completed
-	}
-
-	// the behavior event carries the CURRENT §2.9 counts (SRD-056.B):
-	// republish post-drain, then throw.
-	if err := t.bindMICounters(
-		n, 0, t.miState.completed, terminated); err != nil {
-		return nil, false, err
-	}
-
-	if err := t.throwMIBehavior(
-		ctx, mi, step.node, t.miState.completed); err != nil {
-		return nil, false, err
+	// serr, not err: reusing the name would extend the run() error's live
+	// range to the end of the function and turn the two `if err :=` guards
+	// above into shadows.
+	stop, serr := d.sequentialStep(ctx, it, n)
+	if serr != nil {
+		return nil, false, serr
 	}
 
 	if stop {
