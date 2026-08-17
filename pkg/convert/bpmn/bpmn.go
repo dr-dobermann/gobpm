@@ -118,6 +118,11 @@ const (
 	attrCapacity     = "capacity"
 	attrIsUnlimited  = "isUnlimited"
 
+	// A <property> is data private to the process, activity or event that
+	// declares it — the three owners BPMN allows and the model's three
+	// PropertyOption takers (§10.4.1 Table 10.57, SRD-089.F FR-6).
+	tagProperty = "property"
+
 	// The lane partition, model-only in every container that carries it
 	// (conformance.md line 173).
 	tagLaneSet      = "laneSet"

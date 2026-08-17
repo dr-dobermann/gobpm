@@ -1,6 +1,7 @@
 package bpmn
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -80,17 +81,19 @@ func TestBareDataStoreReportsNoCapacity(t *testing.T) {
 	}
 }
 
-// TestWorkedDataExample is SRD-089.F §4a without its <property> (that is
-// M5): one collapsed object, one store reference, and EXACTLY three
-// losses — two means one is silent, four means something implemented is
-// being reported.
+// TestWorkedDataExample is SRD-089.F §4a in full: one float64 property,
+// one collapsed object, one store reference, and EXACTLY three losses —
+// two means one is silent, four means something implemented is being
+// reported.
 func TestWorkedDataExample(t *testing.T) {
-	res, err := importEventDoc(t, dataDoc(
+	res, err := importEventDoc(t, propDoc(
 		`  <bpmn:import importType="http://www.w3.org/2001/XMLSchema"
                location="order.xsd" namespace="http://example.com/schema"/>
+  <bpmn:itemDefinition id="idCount" structureRef="xsd:int"/>
   <bpmn:itemDefinition id="idOrder" structureRef="ex:PurchaseOrder"/>
   <bpmn:dataStore id="ordersDB" name="Orders" capacity="1000"/>`,
-		`    <bpmn:dataObject id="do1" name="order" itemSubjectRef="idOrder"/>
+		`    <bpmn:property id="p1" name="retries" itemSubjectRef="idCount"/>
+    <bpmn:dataObject id="do1" name="order" itemSubjectRef="idOrder"/>
     <bpmn:dataObjectReference id="dor1" dataObjectRef="do1">
       <bpmn:dataState name="Approved"/>
     </bpmn:dataObjectReference>
@@ -101,6 +104,17 @@ func TestWorkedDataExample(t *testing.T) {
 	}
 
 	proc := res.Processes[0]
+
+	props := proc.Properties()
+	if len(props) != 1 || props[0].Name() != "retries" {
+		t.Fatalf("Properties() = %v, want retries", props)
+	}
+
+	if got := props[0].ItemDefinition().Structure().Get(
+		context.Background()); got != float64(0) {
+		t.Errorf("retries = %#v (%T), want a float64 zero, not an int (§4.1)",
+			got, got)
+	}
 
 	if dos := proc.DataObjects(); len(dos) != 1 || dos[0].Name() != "order" {
 		t.Errorf("DataObjects() = %v, want the one collapsed object", dos)

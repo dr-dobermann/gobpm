@@ -254,7 +254,7 @@ var dataBuilders = map[string]dataBuilder{
 func buildDataObject(
 	p *parser, asm *assembly, s *dataSpec,
 ) (flow.Element, error) {
-	item, err := itemFor(p, asm, s)
+	item, err := itemFor(p, asm, s.owner(), s.id, s.itemRef)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +327,7 @@ func buildDataObjectReference(
 func buildDataStoreReference(
 	p *parser, asm *assembly, s *dataSpec,
 ) (flow.Element, error) {
-	item, err := itemFor(p, asm, s)
+	item, err := itemFor(p, asm, s.owner(), s.id, s.itemRef)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +342,9 @@ func buildDataStoreReference(
 	return dsr, nil
 }
 
-// itemFor returns the ItemDefinition a data element carries.
+// itemFor returns the ItemDefinition an item-aware element carries —
+// from is the element as an error names it, id its own id, ref its
+// itemSubjectRef.
 //
 // Each element gets its OWN instance, even when several name one
 // <itemDefinition>: the structure IS the value (ADR-010), so a shared
@@ -355,25 +357,25 @@ func buildDataStoreReference(
 // is what an untyped item-aware element is — BPMN permits itemSubjectRef
 // at 0..1 (semantics/data.md:26).
 func itemFor(
-	p *parser, asm *assembly, s *dataSpec,
+	p *parser, asm *assembly, from, id, ref string,
 ) (*data.ItemDefinition, error) {
-	if s.itemRef == "" {
-		return emptyItem(s.id)
+	if ref == "" {
+		return emptyItem(id)
 	}
 
-	declared, ok := asm.items[s.itemRef]
+	declared, ok := asm.items[ref]
 	if !ok {
 		site := refSite{
-			from:   s.owner(),
+			from:   from,
 			attr:   attrItemSubjectRef,
-			target: s.itemRef,
+			target: ref,
 		}
 
-		if kind, taken := asm.declared[s.itemRef]; taken {
+		if kind, taken := asm.declared[ref]; taken {
 			return nil, site.wrongKind(tagItemDefinition, kind)
 		}
 
-		if kind, taken := p.cat.kinds[s.itemRef]; taken &&
+		if kind, taken := p.cat.kinds[ref]; taken &&
 			kind != tagItemDefinition {
 			return nil, site.wrongKind(tagItemDefinition, kind)
 		}

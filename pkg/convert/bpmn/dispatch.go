@@ -530,6 +530,7 @@ var nodeChildParsers = func() map[string]nodeChildParser {
 	ncp := map[string]nodeChildParser{
 		tagDocumentation: parseNodeDocElem,
 		tagScript:        parseScriptElem,
+		tagProperty:      parsePropertyElem,
 	}
 
 	// Every event definition is a node child, derived from defBuilders

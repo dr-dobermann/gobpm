@@ -113,6 +113,9 @@ type nodeBody struct {
 	// as a CONSTRUCTION option, which is why they are collected with the
 	// rest of the body and not added afterwards.
 	laneSets []laneSetSpec
+	// props are the node's <property> children, reaching their owner the
+	// same way a laneSet does — as a construction option (§4.6).
+	props []propSpec
 	// extra are options read from the element's own attributes by the one
 	// funnel every node passes through, rather than by each builder that
 	// remembers to. A builder that forgets is how a documented attribute
@@ -237,6 +240,9 @@ type assembly struct {
 	// object, or a reference to one — built after the nodes, since the
 	// container holding one IS a node (SRD-089.F §4.4).
 	datas []dataSpec
+	// spec is the buffered <process> itself, built first in pass 2 — see
+	// procSpec.
+	spec procSpec
 }
 
 // parser wraps the xml.Decoder token stream with import state.
@@ -426,6 +432,12 @@ func (p *parser) parseProcess(se xml.StartElement) (*assembly, error) {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	// The process's own id joins the one ledger too: a node reusing it
+	// was as silent as any other cross-table duplicate (§4.11).
+	if err := p.claimID(id, tagProcess); err != nil {
+		return nil, err
+	}
+
 	// process.New demands a non-empty name; fall back to the id.
 	name := fallbackName(id, attrValue(se, "name"))
 
@@ -478,6 +490,10 @@ type procBuild struct {
 	// process as a construction option, and BPMN serializes a container's
 	// laneSets ahead of its flowElements.
 	laneSets []laneSetSpec
+	// props are buffered for the same reason again (§4.6): a property is
+	// a construction option, and BPMN serializes a process's properties
+	// ahead of its flowElements too.
+	props []propSpec
 }
 
 // child handles one child element of <bpmn:process>, constructing the
@@ -495,10 +511,12 @@ func (pb *procBuild) child(se xml.StartElement) error {
 		return pb.laneSet(se)
 	}
 
+	if se.Name.Local == tagProperty {
+		return pb.property(se)
+	}
+
 	if pb.asm == nil {
-		if err := pb.build(); err != nil {
-			return err
-		}
+		pb.build()
 	}
 
 	return pb.p.parseFlowElement(pb.asm, se)
@@ -548,64 +566,112 @@ func (pb *procBuild) laneSet(se xml.StartElement) error {
 	return nil
 }
 
-// build constructs the process and the pass-1 state around it.
-func (pb *procBuild) build() error {
-	asm, err := pb.p.newAssembly(pb.id, pb.name, pb.docs, pb.laneSets)
+// property records a <property>, or refuses one that arrives after the
+// process's flow elements — the same two halves as laneSet(), for the
+// same reasons (§4.6).
+func (pb *procBuild) property(se xml.StartElement) error {
+	if pb.asm != nil {
+		return errs.New(
+			errs.M("bpmn: <process> %q carries <property> after its flow "+
+				"elements; a process's properties precede its flowElements",
+				pb.id),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	spec, err := pb.p.parsePropertySpec(se)
 	if err != nil {
 		return err
 	}
 
-	pb.asm = asm
+	pb.props = append(pb.props, spec)
 
 	return nil
+}
+
+// build creates the pass-1 state; the process itself is built in pass 2.
+func (pb *procBuild) build() {
+	pb.asm = pb.p.newAssembly(procSpec{
+		id:       pb.id,
+		name:     pb.name,
+		docs:     pb.docs,
+		laneSets: pb.laneSets,
+		props:    pb.props,
+	})
 }
 
 // finish returns the assembly, building an empty process when the element
 // carried no flow elements at all.
 func (pb *procBuild) finish() (*assembly, error) {
 	if pb.asm == nil {
-		if err := pb.build(); err != nil {
-			return nil, err
-		}
+		pb.build()
 	}
 
 	return pb.asm, nil
 }
 
-// newAssembly builds the process and the pass-1 state around it.
-func (p *parser) newAssembly(
-	id, name string, docs []docSpec, laneSets []laneSetSpec,
-) (*assembly, error) {
-	var places []placement
+// procSpec is the <process> as pass 1 read it: everything its
+// construction options need. The process was built when its first flow
+// element arrived until properties landed; a property's itemSubjectRef
+// may name an <itemDefinition> declared AFTER the </process>, so the
+// construction moved to pass 2 with the nodes — the same document-order
+// freedom that defers them defers it (§4.6).
+type procSpec struct {
+	id, name string
+	docs     []docSpec
+	laneSets []laneSetSpec
+	props    []propSpec
+}
 
-	sets, err := buildLaneSets(&places, laneSets)
-	if err != nil {
-		return nil, err
-	}
-
-	opts := append([]options.Option{foundation.WithID(id)}, docOptions(docs)...)
-	if len(sets) != 0 {
-		opts = append(opts, lanes.WithLaneSets(sets...))
-	}
-
-	proc, err := p.newProcess(name, opts...)
-	if err != nil {
-		return nil, errs.New(
-			errs.M("bpmn: couldn't create process %q", id),
-			errs.C(errorClass, errs.BulidingFailed),
-			errs.E(err))
-	}
-
+// newAssembly builds the pass-1 state the flow elements are parsed into.
+func (p *parser) newAssembly(spec procSpec) *assembly {
 	return &assembly{
-		places:       places,
-		proc:         proc,
+		spec:         spec,
 		byID:         make(map[string]flow.Node),
 		declared:     make(map[string]string),
 		interfaces:   p.interfaces,
 		ops:          p.ops,
 		cat:          p.cat,
 		exprLanguage: p.exprLanguage,
-	}, nil
+	}
+}
+
+// constructProcess builds the process from its buffered spec. It runs
+// first in pass 2 — after buildItems, so a property can resolve its item,
+// and before buildNodes, which adds every node to it.
+func constructProcess(p *parser, asm *assembly) error {
+	spec := asm.spec
+
+	sets, err := buildLaneSets(&asm.places, spec.laneSets)
+	if err != nil {
+		return err
+	}
+
+	opts := append(
+		[]options.Option{foundation.WithID(spec.id)}, docOptions(spec.docs)...)
+	if len(sets) != 0 {
+		opts = append(opts, lanes.WithLaneSets(sets...))
+	}
+
+	if len(spec.props) != 0 {
+		props, propErr := buildProperties(p, asm, spec.props)
+		if propErr != nil {
+			return propErr
+		}
+
+		opts = append(opts, data.WithProperties(props...))
+	}
+
+	proc, err := p.newProcess(spec.name, opts...)
+	if err != nil {
+		return errs.New(
+			errs.M("bpmn: couldn't create process %q", spec.id),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
+	}
+
+	asm.proc = proc
+
+	return nil
 }
 
 // parseFlowElement dispatches one child of <bpmn:process> through the
@@ -912,6 +978,19 @@ func buildNode(p *parser, asm *assembly, s *nodeSpec) (flow.Node, error) {
 	// carrying it on a gateway.
 	if attrBool(s.se, attrForCompensation, false) {
 		s.body.extra = append(s.body.extra, activities.WithCompensation())
+	}
+
+	// Properties ride the same funnel and the same rule: BPMN gives them
+	// to a process, an activity and an event, which are exactly the model
+	// types that take the option — anything else refuses it itself, with
+	// this node's id wrapped around the refusal (SRD-089.F FR-6).
+	if len(s.body.props) != 0 {
+		props, err := buildProperties(p, asm, s.body.props)
+		if err != nil {
+			return nil, err
+		}
+
+		s.body.extra = append(s.body.extra, data.WithProperties(props...))
 	}
 
 	outer := p.owner
@@ -1423,6 +1502,12 @@ func build(p *parser, asm *assembly) (*process.Process, error) {
 	}
 
 	asm.items = items
+
+	// The process first: everything else is added TO it, and its own
+	// properties resolve against the items built just above (§4.6).
+	if err := constructProcess(p, asm); err != nil {
+		return nil, err
+	}
 
 	if err := buildNodes(p, asm); err != nil {
 		return nil, err

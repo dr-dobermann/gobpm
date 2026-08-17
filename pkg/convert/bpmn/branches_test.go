@@ -254,43 +254,9 @@ func bpmnStartElement(local, id string) xml.StartElement {
 // contract verified without malformed global state.
 func TestImporterDefensiveConstructorBranches(t *testing.T) {
 	t.Run("process constructor error", func(t *testing.T) {
-		constructorErr := errors.New("process constructor failed")
-
-		// The process is constructed lazily now — on its first flow
-		// element, or at its end tag when it has none — so the parser
-		// needs a real token stream to reach the constructor at all.
-		dec := xml.NewDecoder(strings.NewReader(
-			`<bpmn:process xmlns:bpmn="` + nsBPMN + `" id="p"></bpmn:process>`))
-
-		p := &parser{
-			dec:        dec,
-			ctx:        context.Background(),
-			interfaces: map[string]string{},
-			ops:        map[string]opSpec{},
-			ids:        map[string]string{},
-			newProcess: func(
-				string,
-				...options.Option,
-			) (*process.Process, error) {
-				return nil, constructorErr
-			},
-		}
-
-		se, err := p.rootElement2()
-		if err != nil {
-			t.Fatalf("reading the process start element: %v", err)
-		}
-
-		proc, err := p.parseProcess(se)
-		if proc != nil || !errors.Is(err, constructorErr) {
-			t.Fatalf("parseProcess = %v, %v; want wrapped constructor error", proc, err)
-		}
-	})
-
-	t.Run("process constructor error on the first flow element", func(t *testing.T) {
-		// The empty-process case above reaches the constructor through
-		// finish(); a process WITH content reaches it through child(),
-		// which is the path every real document takes.
+		// The process is constructed in pass 2 now — after the items, so
+		// its properties can resolve them (SRD-089.F §4.6) — so the
+		// constructor error surfaces from build, not from the parse.
 		constructorErr := errors.New("process constructor failed")
 
 		dec := xml.NewDecoder(strings.NewReader(
@@ -303,6 +269,7 @@ func TestImporterDefensiveConstructorBranches(t *testing.T) {
 			interfaces: map[string]string{},
 			ops:        map[string]opSpec{},
 			ids:        map[string]string{},
+			items:      newItems(),
 			newProcess: func(
 				string,
 				...options.Option,
@@ -316,9 +283,14 @@ func TestImporterDefensiveConstructorBranches(t *testing.T) {
 			t.Fatalf("reading the process start element: %v", err)
 		}
 
-		proc, err := p.parseProcess(se)
+		asm, err := p.parseProcess(se)
+		if err != nil {
+			t.Fatalf("parseProcess: %v", err)
+		}
+
+		proc, err := build(p, asm)
 		if proc != nil || !errors.Is(err, constructorErr) {
-			t.Fatalf("parseProcess = %v, %v; want wrapped constructor error", proc, err)
+			t.Fatalf("build = %v, %v; want wrapped constructor error", proc, err)
 		}
 	})
 
@@ -501,7 +473,7 @@ func buildWithNode(
 	return build(
 		newParser(context.Background(), strings.NewReader("")),
 		&assembly{
-			proc:  proc,
+			spec:  procSpec{id: proc.ID(), name: proc.Name()},
 			byID:  map[string]flow.Node{},
 			specs: specs,
 		})
