@@ -207,12 +207,27 @@ type stepInfo struct {
 	state  stepState
 }
 
+// execHandle carries an activityExec through an atomic.Pointer — the
+// interface value needs a concrete box to live in.
+type execHandle struct {
+	e activityExec
+}
+
 // track processed single line of the process from start noed or
 // from fork of sequence flow.
 type track struct {
-	lastErr     error
-	ctx         context.Context
-	hist        atomic.Pointer[[]stepUpdate]
+	lastErr error
+	ctx     context.Context
+	hist    atomic.Pointer[[]stepUpdate]
+	// exec is the executor currently running this track's step, or nil
+	// between steps. The track's OWN goroutine writes it; the LOOP reads it
+	// to ask what the activity awaits (SRD-090.A FR-8) — which is why it is
+	// atomic and why the answer comes from the executor rather than from a
+	// mirror the loop would have to keep in step.
+	//
+	// A pointer to a one-field struct because the value is an interface:
+	// atomic.Pointer needs a concrete type to point at.
+	exec        atomic.Pointer[execHandle]
 	instance    *Instance
 	cancel      context.CancelFunc
 	miState     *miState
@@ -1223,6 +1238,15 @@ func (t *track) run(
 
 		nextFlows, err := t.executeStep(ctx, step)
 		if err != nil {
+			// the loop released this executor while it held something open
+			// (SRD-090.A FR-8). Not a discard and not a failure: the
+			// activity is mid-flight and stays that way durably, the
+			// release already set TrackDehydrated, and the goroutine's
+			// only remaining job is to stop existing.
+			if errors.Is(err, errDehydrated) {
+				return
+			}
+
 			t.discardOrFail(ctx, err)
 
 			return

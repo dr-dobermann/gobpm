@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"sync/atomic"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -54,7 +55,32 @@ func standardLoopOf(node flow.Node) standardLoop {
 func (t *track) executeStep(
 	ctx context.Context, step *stepInfo,
 ) ([]*flow.SequenceFlow, error) {
-	return execFor(t, step).run(ctx)
+	e := execFor(t, step)
+
+	// the loop asks the executor what this activity awaits while it runs
+	// (SRD-090.A FR-8) — a composite parked for its body's drain is NOT
+	// doing work, and only the executor can say so. Cleared on the way out,
+	// including the error path: a track between steps awaits nothing.
+	t.exec.Store(&execHandle{e: e})
+	defer t.exec.Store(nil)
+
+	return e.run(ctx)
+}
+
+// awaits reports what this track's activity is waiting on right now, asked
+// of the executor that is running it (SRD-090.A FR-8, ADR-025 §2.13).
+//
+// It is not a question about the NODE — the loop never learns whether the
+// activity iterates, how many instances it holds, or what kind they are
+// (FR-11). It learns one thing: whether this token's goroutine is doing work
+// or holding something open on someone else's behalf.
+func (t *track) awaits() awaitKind {
+	h := t.exec.Load()
+	if h == nil {
+		return awaitNothing
+	}
+
+	return h.e.awaits()
 }
 
 // loopDecorator drives a COMPOSITE activity's Standard Loop, holding the
@@ -78,7 +104,12 @@ type loopDecorator struct {
 
 	// live is the pass currently executing, or nil between passes and once
 	// the loop has finished. A Standard Loop runs one pass at a time.
-	live activityExec
+	//
+	// Atomic because the decorator's own goroutine writes it while the LOOP
+	// reads it to ask what this activity awaits (SRD-090.A FR-8). The handle
+	// on the track is atomic too, but that only fences WHICH executor is
+	// current — this fences the field it points at.
+	live atomic.Pointer[execHandle]
 
 	// lastFlows is the flows the most recent LEAF pass produced. A leaf's
 	// node execution is the activity, so the flows it selected on its final
@@ -164,7 +195,7 @@ func (d *loopDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 		}
 	}
 
-	d.live = nil
+	d.live.Store(nil)
 
 	// the exit runs while STILL iterating — a composite's exit executes its
 	// node, and leaving the state first would record a second step for an
@@ -192,9 +223,9 @@ func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
 	if d.composite {
 		e := newScopeExec(d.t, d.step, pass)
 		e.iterKind = d.iterKind()
-		d.live = e
+		d.live.Store(&execHandle{e: e})
 
-		_, err := d.live.run(ctx)
+		_, err := e.run(ctx)
 
 		return err
 	}
@@ -205,9 +236,10 @@ func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
 	// so it has nothing to re-arm.
 	d.step.state = StepCreated
 
-	d.live = newNodeExec(d.t, d.step, pass)
+	e := newNodeExec(d.t, d.step, pass)
+	d.live.Store(&execHandle{e: e})
 
-	flows, err := d.live.run(ctx)
+	flows, err := e.run(ctx)
 	if err != nil {
 		return err
 	}
@@ -246,22 +278,24 @@ func (d *loopDecorator) exitFlows(
 // drain, or nothing between passes. The conjunction ADR-025 §2.13 states
 // is trivial here: a Standard Loop holds one pass at a time.
 func (d *loopDecorator) awaits() awaitKind {
-	if d.live == nil {
+	h := d.live.Load()
+	if h == nil {
 		return awaitNothing
 	}
 
-	return d.live.awaits()
+	return h.e.awaits()
 }
 
 // state reports the ACTIVITY's iteration state: the live pass's ordinal and
 // what it is doing. Its own ordinal is 0 — the activity is one instance of
 // itself from the track's point of view.
 func (d *loopDecorator) state() instanceState {
-	if d.live == nil {
+	h := d.live.Load()
+	if h == nil {
 		return instanceState{ordinal: 0, await: awaitNothing}
 	}
 
-	return d.live.state()
+	return h.e.state()
 }
 
 // evalLoopCond evaluates the loop's boolean loopCondition against a transient

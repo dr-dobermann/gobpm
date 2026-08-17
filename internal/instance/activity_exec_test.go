@@ -116,7 +116,7 @@ func TestLeafDecoratorAwaitsItsLiveInstance(t *testing.T) {
 	require.Equal(t, 0, d.state().ordinal)
 
 	// instance 2 is running and parks
-	d.live = newNodeExec(tr, &stepInfo{}, 2)
+	d.live.Store(&execHandle{e: newNodeExec(tr, &stepInfo{}, 2)})
 	tr.state = TrackWaitForEvent
 
 	require.Equal(t, awaitEvent, d.awaits(),
@@ -173,7 +173,7 @@ func TestRefuseIfParked(t *testing.T) {
 	require.NoError(t, d.refuseIfParked(0),
 		"no live instance is not a parked one")
 
-	d.live = newNodeExec(tr, &stepInfo{node: host}, 3)
+	d.live.Store(&execHandle{e: newNodeExec(tr, &stepInfo{node: host}, 3)})
 	tr.state = TrackExecutingStep
 	require.NoError(t, d.refuseIfParked(3),
 		"an executing instance does not stop the iteration")

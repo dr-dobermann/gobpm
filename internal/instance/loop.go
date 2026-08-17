@@ -1309,6 +1309,20 @@ func (ls *loopState) maybeDehydrate(ctx context.Context) {
 		return
 	}
 
+	// An OPEN INCIDENT owns the park (SRD-090.A T-17, ADR-036 §2.2). The
+	// loop's tail tries dehydration before parkOnIncidents, so the two exits
+	// are not mutually exclusive by position — they were only ever
+	// mutually exclusive because a failing track ends TrackIncident, which
+	// is absent from liveTrackStates and therefore read as a terminal
+	// record, while its composite HOST disqualified the instance through
+	// the default arm. FR-8 removes that second half, so the guard has to
+	// be stated rather than inherited: an instance waiting for a retry or
+	// an operator parks as itself, with the incident records carrying its
+	// continuations, and not as Dehydrated.
+	if ls.inst.openIncidents() > 0 || ls.inst.deadLetters() > 0 {
+		return
+	}
+
 	parked := ls.dehydratableParked(ctx)
 	if parked == nil {
 		return // not fully idle, or nothing to release
@@ -1378,7 +1392,7 @@ func waitKindOf(node flow.Node) string {
 func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 	inst := ls.inst
 
-	var parked []*track
+	var parked, hosts []*track
 
 	for _, t := range inst.tracks {
 		switch {
@@ -1418,6 +1432,30 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 		case t.inState(TrackDehydrated):
 			// already released (a partial prior pass) — retained record.
 
+		case t.awaits() == awaitScope:
+			// FR-8: a host parked for its body's drain is NOT doing work —
+			// the body's own tracks are, and they answer for themselves in
+			// the arms above. Before this, such a host fell to the default
+			// arm and disqualified its whole instance, so an iterated
+			// Sub-Process holding parked User Tasks pinned it for as long
+			// as the approvals took — the case ADR-007 v.2.1 exists for.
+			//
+			// Its boundaries still have to be held, for the same reason a
+			// parked track's do: an unheld boundary dies with the released
+			// instance, and "approve within 24h or escalate" would never
+			// escalate. The guarded activity here is the composite itself.
+			if !ls.boundariesHeld(t.ID()) {
+				return nil
+			}
+
+			// Released, but NOT counted as a reason to release. A host
+			// holds no wait — ADR-007 §2.4 is per-WAIT — so nothing
+			// external can wake it, and an instance whose only "wait" is
+			// a scope host would park on a drain that was about to
+			// arrive from inside. It rides along with the body's waits
+			// or it does not go at all.
+			hosts = append(hosts, t)
+
 		case !liveTrackStates[t.currentState()]:
 			// terminal (Ended/Merged/Canceled/Failed) — a retained record.
 
@@ -1428,11 +1466,14 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 		}
 	}
 
+	// at least one REAL wait, or there is nothing to hydrate this instance
+	// back: a released instance wakes on a trigger, and only a held wait
+	// has one.
 	if len(parked) == 0 {
 		return nil
 	}
 
-	return parked
+	return append(parked, hosts...)
 }
 
 // waitReleasable reports whether a parked track's wait is both eligible

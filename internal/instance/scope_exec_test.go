@@ -124,7 +124,7 @@ func TestLoopDecoratorAwaitsItsLivePass(t *testing.T) {
 	require.Equal(t, 0, d.state().ordinal)
 
 	e, done := openedScopeExec(t, inst, host, node, 1)
-	d.live = e
+	d.live.Store(&execHandle{e: e})
 
 	require.Equal(t, awaitScope, d.awaits(),
 		"the decorator reports what its live pass awaits")

@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync/atomic"
 
@@ -9,6 +10,13 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
+
+// errDehydrated unwinds a track whose executor the loop released while it
+// held something open (SRD-090.A FR-8). It is NOT a failure and not a
+// cancellation: the activity is mid-flight and stays that way, durably, and
+// the run loop returns without touching the terminal state the release
+// already set.
+var errDehydrated = errors.New("the loop released this executor")
 
 // scopeExec is the sub-process realization of activityExec: it runs ONE
 // instance of a COMPOSITE activity, and an instance of a composite activity
@@ -182,6 +190,17 @@ func (e *scopeExec) awaitDrain(ctx context.Context) error {
 		// the loop stopped mid-pass; the scope will never drain. Reported
 		// as a cancellation, which is how the evtCh close read before.
 		return context.Canceled
+
+	case <-e.t.dehydrateCh:
+		// the loop released this host (SRD-090.A FR-8): every live track,
+		// this instance's body included, is parked on a held wait, so the
+		// whole instance is going away and the drain will not arrive in
+		// this process. The scope is NOT closed and the body is NOT torn
+		// down — both are durable, and a restore re-enters this decorator
+		// at its recorded position, re-attaching to the scope it left.
+		e.t.updateState(TrackDehydrated)
+
+		return errDehydrated
 
 	case <-e.drain:
 		return nil

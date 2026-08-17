@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/scope"
@@ -161,7 +162,12 @@ type iterDecorator struct {
 
 	// live is the instance currently executing, or nil between passes and
 	// after the last one. A sequential decorator holds at most one.
-	live activityExec
+	//
+	// Atomic because the decorator's own goroutine writes it while the LOOP
+	// reads it to ask what this activity awaits (SRD-090.A FR-8). The handle
+	// on the track is atomic too, but that only fences WHICH executor is
+	// current — this fences the field it points at.
+	live atomic.Pointer[execHandle]
 
 	// seed is the restored executor set this activity resumes from, taken
 	// from the track at the start of the run (SRD-090.A FR-7).
@@ -273,7 +279,7 @@ func (d *iterDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 
 	d.t.miState = nil
 	d.t.setLoopCounter(0)
-	d.live = nil
+	d.live.Store(nil)
 
 	// a condition-stopped (or zero-flow) run still leaves via the
 	// activity's outgoing flow, exactly once. A composite's instances
@@ -318,7 +324,7 @@ func (d *iterDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 func (d *iterDecorator) runInstance(
 	ctx context.Context, it miIterator, i, n int,
 ) ([]*flow.SequenceFlow, bool, error) {
-	d.live = d.buildInstance(i)
+	d.live.Store(&execHandle{e: d.buildInstance(i)})
 
 	flows, stop, err := d.runPass(ctx, it, i, n)
 	if err != nil {
@@ -337,7 +343,8 @@ func (d *iterDecorator) runInstance(
 // the snapshot refuses, but WHAT it decides — a waiting instance stops the
 // iteration, naming which one — is ordinary logic and is pinned as such.
 func (d *iterDecorator) refuseIfParked(i int) error {
-	if d.live == nil || d.live.awaits() == awaitNothing {
+	h := d.live.Load()
+	if h == nil || h.e.awaits() == awaitNothing {
 		return nil
 	}
 
@@ -353,22 +360,24 @@ func (d *iterDecorator) refuseIfParked(i int) error {
 // is trivial while at most one instance runs (ADR-025 §2.13's
 // releasability rule takes its general form when parallel instances arrive).
 func (d *iterDecorator) awaits() awaitKind {
-	if d.live == nil {
+	h := d.live.Load()
+	if h == nil {
 		return awaitNothing
 	}
 
-	return d.live.awaits()
+	return h.e.awaits()
 }
 
 // state reports the ACTIVITY's iteration state: the live instance's ordinal
 // and what it is doing. Its own ordinal is 0 — the activity is one instance
 // of itself from the track's point of view.
 func (d *iterDecorator) state() instanceState {
-	if d.live == nil {
+	h := d.live.Load()
+	if h == nil {
 		return instanceState{ordinal: 0, await: awaitNothing}
 	}
 
-	return d.live.state()
+	return h.e.state()
 }
 
 // runParallel drives every instance of a parallel leaf activity at once and
@@ -1085,7 +1094,9 @@ func (d *iterDecorator) runPass(
 		step.state = StepCreated
 	}
 
-	flows, err := d.live.run(ctx)
+	h := d.live.Load()
+
+	flows, err := h.e.run(ctx)
 	if err != nil {
 		return nil, false, err
 	}
