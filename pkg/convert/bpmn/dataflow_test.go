@@ -264,18 +264,21 @@ func TestDataAssociationRecordsTheRefusableShapes(t *testing.T) {
 	}
 }
 
-// TestDataAssociationDocumentation: the one decorating child.
+// TestDataAssociationDocumentation: tolerated and skipped by
+// declaration — the association is built by the data element's
+// Associate* methods, which take no documentation, so there is no model
+// element to attach it to (the policy-table pattern).
 func TestDataAssociationDocumentation(t *testing.T) {
 	spec, err := assocFrag(t, data.Input, tagDataInputAssoc,
 		`<bpmn:documentation>fills the order</bpmn:documentation>
 		 <bpmn:sourceRef>do1</bpmn:sourceRef>
 		 <bpmn:targetRef>din1</bpmn:targetRef>`)
 	if err != nil {
-		t.Fatalf("parse: %v", err)
+		t.Fatalf("parse: %v — a documented association must still parse", err)
 	}
 
-	if len(spec.docs) != 1 || spec.docs[0].text != "fills the order" {
-		t.Errorf("docs = %v, want the file's one line", spec.docs)
+	if spec.elemRef != "do1" || spec.paramRef != "din1" {
+		t.Errorf("spec = %+v, want both ends read past the documentation", spec)
 	}
 }
 

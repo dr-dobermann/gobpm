@@ -243,6 +243,93 @@ func TestAssociationEndErrors(t *testing.T) {
 	}
 }
 
+// TestDialectAttrsOnTheDataFlowFamily: the .D reporting funnel covers
+// the family's own elements — a Camunda attribute on the spec, a set or
+// an association is reported, never silently dropped.
+func TestDialectAttrsOnTheDataFlowFamily(t *testing.T) {
+	res, err := importEventDoc(t, `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                  xmlns:camunda="http://camunda.org/schema/1.0/bpmn">
+  <bpmn:itemDefinition id="idOrder" structureRef="xsd:string"/>
+  <bpmn:process id="P" name="P">
+    <bpmn:dataObject id="do1" name="order" itemSubjectRef="idOrder"/>
+    <bpmn:startEvent id="s1"/>
+    <bpmn:task id="t1" name="Work">
+      <bpmn:ioSpecification id="io1" camunda:a="1">
+        <bpmn:dataInput id="din1" name="in" itemSubjectRef="idOrder"/>
+        <bpmn:inputSet id="is1" camunda:b="2">
+          <bpmn:dataInputRefs>din1</bpmn:dataInputRefs>
+        </bpmn:inputSet>
+      </bpmn:ioSpecification>
+      <bpmn:dataInputAssociation id="dia1" camunda:c="3">
+        <bpmn:sourceRef>do1</bpmn:sourceRef>
+        <bpmn:targetRef>din1</bpmn:targetRef>
+      </bpmn:dataInputAssociation>
+    </bpmn:task>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	got := map[string]string{}
+	for _, d := range res.Dropped {
+		got[d.Construct] = d.Element
+	}
+
+	want := map[string]string{
+		"camunda:a": "io1", "camunda:b": "is1", "camunda:c": "dia1",
+	}
+
+	for construct, elem := range want {
+		if got[construct] != elem {
+			t.Errorf("Dropped[%s] = %q, want %q — the funnel must cover the "+
+				"family's own elements", construct, got[construct], elem)
+		}
+	}
+}
+
+// TestArtifactAssociationIDJoinsTheLedger: the .E artifact association's
+// id was the last declared id outside the §4.11 ledger.
+func TestArtifactAssociationIDJoinsTheLedger(t *testing.T) {
+	_, err := importEventDoc(t, propDoc("",
+		`    <bpmn:textAnnotation id="note"><bpmn:text>x</bpmn:text></bpmn:textAnnotation>
+    <bpmn:association id="s1" sourceRef="note" targetRef="e1"/>`))
+	if err == nil || !strings.Contains(err.Error(), "duplicate id") {
+		t.Fatalf("error = %v, want the ledger's refusal", err)
+	}
+}
+
+// TestReferenceRetargetActuallyBinds: the duplicate-binding guard fires
+// only against a BOUND association, so a second association to the same
+// object proves the retargeted first one really attached (the
+// under-constrained-positive finding from the independent review).
+func TestReferenceRetargetActuallyBinds(t *testing.T) {
+	_, err := importEventDoc(t, assocDoc("",
+		`      <bpmn:ioSpecification id="io1">
+        <bpmn:dataInput id="din1" name="in" itemSubjectRef="idOrder"/>
+      </bpmn:ioSpecification>
+      <bpmn:dataInputAssociation id="dia1">
+        <bpmn:sourceRef>dor1</bpmn:sourceRef>
+        <bpmn:targetRef>din1</bpmn:targetRef>
+      </bpmn:dataInputAssociation>
+      <bpmn:dataInputAssociation id="dia2">
+        <bpmn:sourceRef>do1</bpmn:sourceRef>
+        <bpmn:targetRef>din1</bpmn:targetRef>
+      </bpmn:dataInputAssociation>
+      </bpmn:task>
+    <bpmn:dataObjectReference id="dor1" dataObjectRef="do1"/>
+    <bpmn:task id="tpad" name="pad">`))
+	if err == nil || !strings.Contains(err.Error(), "duplicate association") {
+		t.Fatalf("error = %v, want the model's duplicate guard — it can only "+
+			"fire if the retargeted first association BOUND", err)
+	}
+}
+
 // TestUntypedParameterWithoutMatchingAssociation: adoption only serves
 // an association's end — an untyped parameter with none (the node's one
 // association belongs to the other direction) keeps an empty item of

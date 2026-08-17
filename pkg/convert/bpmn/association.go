@@ -39,8 +39,19 @@ func parseAssociationElem(p *parser, asm *assembly, se xml.StartElement) error {
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
+	// The id stays optional — an Artifact, not a flow element — but a
+	// declared one joins the document's one ledger like every other
+	// (SRD-089.F §4.11): before this claim, an association could silently
+	// reuse a task's id.
+	id := strings.TrimSpace(attrValue(se, "id"))
+	if id != "" {
+		if err := p.claimID(id, se.Name.Local); err != nil {
+			return err
+		}
+	}
+
 	asm.assocs = append(asm.assocs, assocSpec{
-		id:     strings.TrimSpace(attrValue(se, "id")),
+		id:     id,
 		srcRef: src,
 		trgRef: trg,
 	})

@@ -491,6 +491,11 @@ func TestCatalogDocumentationError(t *testing.T) {
 		t.Fatalf("Import with an element nested in documentation = %v, "+
 			"want it refused", err)
 	}
+
+	if uee.Tag != "task" {
+		t.Errorf("Tag = %q, want the nested element itself refused, not a "+
+			"bystander", uee.Tag)
+	}
 }
 
 // TestCatalogTruncatedStream pins that a stream ending inside a catalog

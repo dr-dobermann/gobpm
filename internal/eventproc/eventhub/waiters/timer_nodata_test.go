@@ -65,4 +65,7 @@ func TestTimerWaiterExpressionNeedingData(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "fireAt"),
 		"the error must name the variable the expression wanted, got: %v", err)
+	require.True(t, strings.Contains(err.Error(), "not a data source"),
+		"the error must carry the instructional context — the reader has to "+
+			"learn WHY the lookup failed, not just what failed; got: %v", err)
 }

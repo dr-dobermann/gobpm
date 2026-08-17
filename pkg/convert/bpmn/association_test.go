@@ -97,6 +97,11 @@ func TestAssociationDirectionIsNotReversed(t *testing.T) {
 	if err == nil {
 		t.Fatal("a reversed association must not be read as a handler link")
 	}
+
+	if !strings.Contains(err.Error(), "cb") {
+		t.Errorf("error = %v, want the boundary event named — a reversed "+
+			"link must fail as a MISSING handler link, not something else", err)
+	}
 }
 
 // TestAssociationToANonActivity refuses a handler that cannot be one.

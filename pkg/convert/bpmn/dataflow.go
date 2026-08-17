@@ -64,7 +64,6 @@ type dataAssocSpec struct {
 	// extraSources are sourceRefs beyond the first on an input
 	// association — refused with the transformation rule (§4.6).
 	extraSources []string
-	docs         []docSpec
 	// hasTransformation records a <transformation> child — refused,
 	// never mapped (§4.6); the flag exists so the refusal can name the
 	// association that carries it.
@@ -250,9 +249,15 @@ func buildIOParams(
 		byDir[spec.dir] = append(byDir[spec.dir], param)
 	}
 
+	// Fixed order, not a map range: option order is behaviorally inert
+	// today (each option touches only its own direction's list), but
+	// deterministic enumeration is the house rule (ADR-011 §2.9) — the
+	// one order stable across runs is the one a debugger can rely on.
 	opts := make([]options.Option, 0, len(byDir))
-	for dir, params := range byDir {
-		opts = append(opts, activities.WithParameters(dir, params...))
+	for _, dir := range []data.Direction{data.Input, data.Output} {
+		if params := byDir[dir]; len(params) != 0 {
+			opts = append(opts, activities.WithParameters(dir, params...))
+		}
 	}
 
 	return opts, nil
@@ -379,6 +384,8 @@ func (p *parser) parseIOSpecification(se xml.StartElement) (*ioSpec, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	p.reportUnmappedAttrs(se, id, nil)
 
 	return io, nil
 }
@@ -508,7 +515,13 @@ func (p *parser) parseIOSet(
 
 	p.owner = outer
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	p.reportUnmappedAttrs(se, id, nil)
+
+	return nil
 }
 
 // parseIOSetBody walks a set's ref lists, flagging the named parameters.
@@ -596,6 +609,8 @@ func (p *parser) parseDataAssociation(
 		return dataAssocSpec{}, err
 	}
 
+	p.reportUnmappedAttrs(se, id, nil)
+
 	return spec, nil
 }
 
@@ -668,14 +683,11 @@ func (p *parser) parseDataAssocChild(
 		return p.skipElement()
 
 	case tagDocumentation:
-		d, err := p.parseDoc(se)
-		if err != nil {
-			return err
-		}
-
-		spec.docs = append(spec.docs, d)
-
-		return nil
+		// Skipped by declaration, the policy-table pattern for a context
+		// with no model element to attach it to: the association is built
+		// by the data element's Associate* methods, which take no
+		// documentation.
+		return p.skipElement()
 	}
 
 	return p.settle(ctxData, se)

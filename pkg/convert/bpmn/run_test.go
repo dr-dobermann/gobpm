@@ -6,6 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dr-dobermann/gobpm/pkg/datastore/memstore"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
 
@@ -245,6 +248,89 @@ func TestDataFlowRunsOnAThresher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WaitCompletion: %v — a run that does not finish means the "+
 			"associations or the readiness gates were wired wrongly", err)
+	}
+
+	t.Logf("instance completed: %s", state)
+}
+
+// TestStoreAssociationRunsOnAThresher pins the store wiring
+// BEHAVIORALLY — the independent review's point that a no-error import
+// proves nothing about binding. The task's input is REQUIRED, so the
+// readiness gate passes only if the store association actually moved
+// the pre-filled value: an unbound association leaves the input
+// Unavailable and the run cannot complete.
+func TestStoreAssociationRunsOnAThresher(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <bpmn:itemDefinition id="idOrder" structureRef="xsd:string"/>
+  <bpmn:process id="StoreFlow" name="store flow" isExecutable="true">
+    <bpmn:dataStoreReference id="dsr1" name="orders" dataStoreRef="S"
+                             itemSubjectRef="idOrder"/>
+    <bpmn:startEvent id="s1"/>
+    <bpmn:task id="t1" name="work">
+      <bpmn:ioSpecification id="io1">
+        <bpmn:dataInput id="din1" name="in" itemSubjectRef="idOrder"/>
+        <bpmn:inputSet id="is1">
+          <bpmn:dataInputRefs>din1</bpmn:dataInputRefs>
+        </bpmn:inputSet>
+      </bpmn:ioSpecification>
+      <bpmn:dataInputAssociation id="dia1">
+        <bpmn:sourceRef>dsr1</bpmn:sourceRef>
+        <bpmn:targetRef>din1</bpmn:targetRef>
+      </bpmn:dataInputAssociation>
+    </bpmn:task>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	p, err := importer{}.Import(ctx, strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	if err := data.CreateDefaultStates(); err != nil {
+		t.Fatalf("CreateDefaultStates: %v", err)
+	}
+
+	// The engine store, pre-filled under the association's item name —
+	// the key SRD-068 FR-4 reads by.
+	store := memstore.New()
+	if err := store.Put(ctx, "orders", data.MustItemAwareElement(
+		data.MustItemDefinition(values.NewVariable("ORD-1")),
+		data.ReadyDataState)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	engine, err := thresher.New("store-flow-engine",
+		thresher.WithDataStore("S", store))
+	if err != nil {
+		t.Fatalf("thresher.New: %v", err)
+	}
+
+	if _, err = engine.RegisterProcess(p); err != nil {
+		t.Fatalf("RegisterProcess: %v", err)
+	}
+
+	if err = engine.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	h, err := engine.StartLatest(p.ID())
+	if err != nil {
+		t.Fatalf("StartLatest: %v", err)
+	}
+
+	state, err := h.WaitCompletion(ctx)
+	if err != nil {
+		t.Fatalf("WaitCompletion: %v — the REQUIRED input gates completion, "+
+			"so an unbound store association cannot produce this failure "+
+			"quietly", err)
 	}
 
 	t.Logf("instance completed: %s", state)
