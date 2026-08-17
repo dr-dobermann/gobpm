@@ -389,6 +389,39 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 	return nil
 }
 
+// adoptLegacyLeafGroup resumes a SCHEMA-5 parallel LEAF fan-out (SRD-090.A
+// FR-7). Its still-running instances were recorded as tracks, which
+// restoreTracks discarded — a leaf instance is an execution now, not a track,
+// and rebuilding one would re-decorate the activity and fan it out again —
+// keeping only their ordinals, which is the executor set this rebuilds.
+//
+// An ordinal the document did not carry a track for had already completed
+// before the capture and its output is in the staging, so it is marked
+// completed and never re-runs.
+func (ls *loopState) adoptLegacyLeafGroup(
+	host *track, rec *checkpoint.MIGroupRecord,
+) {
+	running := ls.inst.restoredLeafOrdinals[rec.HostTrack]
+
+	live := make([]checkpoint.IterationInstance, 0, len(running))
+	for _, ord := range running {
+		live = append(live, checkpoint.IterationInstance{
+			Ordinal: ord, State: instanceRunning,
+		})
+	}
+
+	host.iterSeed = &checkpoint.IterationRecord{
+		Kind:      iterKindMIParallel,
+		N:         rec.N,
+		Completed: rec.N - len(running),
+		Staging:   rec.Staging,
+		Instances: completedOutside(live, rec.N),
+	}
+	host.miSeed = &checkpoint.MIRecord{
+		N: rec.N, Completed: rec.N - len(running), Staging: rec.Staging,
+	}
+}
+
 // adoptRestoredGroups translates a SCHEMA-5 parallel Multi-Instance group
 // record into the executor-model state its own restore derives from the
 // scope table (SRD-082 FR-4 → SRD-090.A FR-7).
@@ -421,6 +454,16 @@ func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 				errs.M("restored MI group host %q is not a Multi-Instance "+
 					"node", node.ID()),
 				errs.C(errorClass, errs.InvalidState))
+		}
+
+		// a LEAF group carries no Open scopes — a leaf instance never had
+		// one, so its running set was recorded as TRACKS and rides here as
+		// their ordinals (SRD-090.A FR-7). Deriving Completed from
+		// len(rec.Open) would call every ordinal finished and resume none.
+		if _, composite := node.(scopeHost); !composite {
+			ls.adoptLegacyLeafGroup(host, rec)
+
+			continue
 		}
 
 		open := ls.inst.sc.plane.OpenPaths()

@@ -277,6 +277,83 @@ func ledgerEntryFromRecord(
 	return entry, nil
 }
 
+// legacyLeafInstances names the track records a SCHEMA-5 document carries for
+// the instances of a parallel LEAF Multi-Instance, which must not be rebuilt
+// as tracks (SRD-090.A FR-7).
+//
+// Schema 5 spawned a track per instance of a parallel leaf and kept it out of
+// the iteration routing with a `leafPlain` marker. SRD-090.A M2b made a leaf
+// instance an execution rather than a track and deleted both — so restoring
+// such a record now produces a track standing on the iterated node, which
+// reaches execFor, builds a decorator of its OWN over the same activity, and
+// fans the whole thing out again. The body runs N extra times per stray
+// record, and nothing fails: the work is simply done more than once.
+//
+// The host is the one the group names; every other record on the same node is
+// an instance. A COMPOSITE group is untouched — its instances were child
+// scopes, which adoptRestoredGroups rebuilds from the group's Open paths, and
+// its host is the only track that was ever recorded for the node.
+//
+// The records are not merely dropped: for a leaf they ARE the executor set,
+// since the group's Open list names scopes and a leaf instance had none. Each
+// carries its ordinal as its LoopCounter, so the second return maps a group's
+// host to the ordinals still running — which adoptRestoredGroups needs to
+// resume exactly those and no others.
+func legacyLeafInstances(
+	inst *Instance, doc *checkpoint.Document,
+) (map[string]bool, map[string][]int) {
+	if len(doc.MIGroups) == 0 {
+		return nil, nil
+	}
+
+	legacy := map[string]bool{}
+	ordinals := map[string][]int{}
+
+	for i := range doc.MIGroups {
+		grp := &doc.MIGroups[i]
+
+		host := trackRecordByID(doc, grp.HostTrack)
+		if host == nil {
+			continue // the refusal for this belongs to adoptRestoredGroups
+		}
+
+		node, ok := inst.s.NodeByID(host.NodeID)
+		if !ok {
+			continue
+		}
+
+		if _, composite := node.(scopeHost); composite {
+			continue // its instances were scopes, not tracks
+		}
+
+		for j := range doc.Tracks {
+			rec := &doc.Tracks[j]
+			if rec.NodeID == host.NodeID && rec.ID != grp.HostTrack {
+				legacy[rec.ID] = true
+				ordinals[grp.HostTrack] = append(
+					ordinals[grp.HostTrack], rec.LoopCounter)
+			}
+		}
+
+		sort.Ints(ordinals[grp.HostTrack])
+	}
+
+	return legacy, ordinals
+}
+
+// trackRecordByID finds a track record by id, or nil.
+func trackRecordByID(
+	doc *checkpoint.Document, id string,
+) *checkpoint.TrackRecord {
+	for i := range doc.Tracks {
+		if doc.Tracks[i].ID == id {
+			return &doc.Tracks[i]
+		}
+	}
+
+	return nil
+}
+
 // restoreTracks rebuilds the live tracks at their recorded nodes for
 // the loop to spawn — the re-enter respawn. When pending names a track,
 // that one becomes a wake-on-trigger continuation fork (fires through its
@@ -291,8 +368,18 @@ func (inst *Instance) restoreTracks(
 	// simply re-arms fresh, which is what that document was written expecting.
 	inst.seedBoundaryPlans(doc.Boundaries)
 
+	legacy, ordinals := legacyLeafInstances(inst, doc)
+	inst.restoredLeafOrdinals = ordinals
+
 	for i := range doc.Tracks {
 		rec := &doc.Tracks[i]
+
+		// a Schema-5 parallel LEAF instance is not a track any more
+		// (SRD-090.A FR-7) — rebuilding it as one would re-decorate the
+		// activity, see below.
+		if legacy[rec.ID] {
+			continue
+		}
 
 		node, ok := inst.s.NodeByID(rec.NodeID)
 		if !ok {
