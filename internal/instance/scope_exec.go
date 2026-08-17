@@ -109,6 +109,18 @@ func (e *scopeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	e.parked.Store(true)
 	defer e.parked.Store(false)
 
+	// the token says what it is doing (ADR-025 §2.13b.1e): this activity has
+	// forked into a child scope and is waiting for the body to drain — not
+	// executing, which is what it reported before, and not waiting for an
+	// event either, since nothing external will wake it.
+	//
+	// Only the WHOLE activity says so. One instance of N is inside an
+	// iterating track, and the state of a token is what its activity is
+	// doing, not what one of its instances is.
+	if e.exits {
+		e.t.updateState(TrackHostingScope)
+	}
+
 	if err := e.awaitDrain(ctx); err != nil {
 		return nil, err
 	}

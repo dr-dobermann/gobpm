@@ -824,3 +824,101 @@ func TestTwoHostsOneComposite(t *testing.T) {
 		"both hosts entered the shared scope — the second waited for the "+
 			"first rather than being refused or lost")
 }
+
+// TestCompositeHostReportsHostingScope (SRD-090.A M3f): while a plain
+// Sub-Process's body runs, its host token reports HOSTING A SCOPE — not
+// EXECUTING, which is what it said before.
+//
+// The correction is the same one ADR-025 §2.13 named one level down and fixed
+// only inside the runtime: "parked for a child's drain was, from outside the
+// runner's own stack, indistinguishable from executing". The executor learned
+// the difference (awaitScope); the token kept reporting the old answer.
+//
+// It is asserted WHILE the body runs, which is the only moment the states
+// differ — an inner task holds the scope open until the assertion has been
+// made, so this is a fence rather than a sleep.
+func TestCompositeHostReportsHostingScope(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+
+	op, err := gooper.New("hold",
+		func(ctx context.Context, _ service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			close(entered)
+
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	inner, err := activities.NewServiceTask("inner", op,
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	sp, err := activities.NewSubProcess("held")
+	require.NoError(t, err)
+
+	sStart, err := events.NewStartEvent("s-start")
+	require.NoError(t, err)
+	sEnd, err := events.NewEndEvent("s-end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{sStart, inner, sEnd} {
+		require.NoError(t, sp.Add(e))
+	}
+
+	linkAll(t,
+		[2]flow.Element{sStart, inner}, [2]flow.Element{inner, sEnd})
+
+	var ran atomic.Int32
+
+	after := hitTask(t, "after", &ran, "", 0)
+
+	s, err := snapshot.New(wrapSP(t, "hosting-state", sp, after))
+	require.NoError(t, err)
+
+	ep := &capturingProducer{procs: map[string]eventproc.EventProcessor{}}
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(), ep, nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	require.NoError(t, inst.Run(ctx))
+
+	<-entered // the body is inside the scope now
+
+	// the host is the track standing on the Sub-Process node.
+	var host *track
+
+	require.Eventually(t, func() bool {
+		for _, tr := range inst.tracks {
+			st := tr.currentStep()
+			if st != nil && st.node != nil && st.node.ID() == sp.ID() {
+				host = tr
+
+				return true
+			}
+		}
+
+		return false
+	}, 2*time.Second, 5*time.Millisecond, "the Sub-Process host track")
+
+	require.True(t, host.inState(TrackHostingScope),
+		"the host has forked into a child scope and is waiting for it to "+
+			"drain — not executing, and not waiting for an event")
+
+	close(release)
+
+	require.Eventually(t, func() bool { return inst.State() == Completed },
+		3*time.Second, 5*time.Millisecond)
+
+	require.EqualValues(t, 1, ran.Load(), "the host resumed onto its outgoing")
+}
