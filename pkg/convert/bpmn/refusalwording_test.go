@@ -98,17 +98,16 @@ func TestStagedRefusalsNameTheirPlan(t *testing.T) {
     </bpmn:task>`)
 	}
 
-	// "ioSpecification on a task" left this sweep when SRD-089.G M2
-	// started importing it; the remaining rows shrink milestone by
-	// milestone until the family's §4.6/§4.7 refusals replace them.
+	// "ioSpecification on a task" left this sweep at SRD-089.G M2, the
+	// two association rows at M3 — each now imports (or refuses through
+	// the wiring pass's own §4.6/§4.7 wordings). The remaining rows
+	// shrink until M4 rewords the family's last refusals.
 	tests := map[string]string{
 		"ioSpecification on a process": propDoc("", `    <bpmn:ioSpecification id="io1"/>`),
 		"dataInput":                    onTask(`<bpmn:dataInput id="di1"/>`),
 		"dataOutput":                   onTask(`<bpmn:dataOutput id="do1"/>`),
 		"inputSet":                     onTask(`<bpmn:inputSet id="is1"/>`),
 		"outputSet":                    onTask(`<bpmn:outputSet id="os1"/>`),
-		"dataInputAssociation":         onTask(`<bpmn:dataInputAssociation id="dia1"/>`),
-		"dataOutputAssociation":        onTask(`<bpmn:dataOutputAssociation id="doa1"/>`),
 	}
 
 	for name, doc := range tests {

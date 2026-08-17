@@ -118,6 +118,9 @@ type nodeBody struct {
 	props []propSpec
 	// io is the node's <ioSpecification>, at most one (SRD-089.G FR-1).
 	io *ioSpec
+	// dataAssocs are the node's data associations, wired in the pass
+	// after the data elements exist (SRD-089.G §4.1).
+	dataAssocs []dataAssocSpec
 	// extra are options read from the element's own attributes by the one
 	// funnel every node passes through, rather than by each builder that
 	// remembers to. A builder that forgets is how a documented attribute
@@ -203,6 +206,12 @@ type opSpec struct {
 type assembly struct {
 	proc *process.Process
 	byID map[string]flow.Node
+	// dataElems are the built data elements by id, recorded by
+	// buildDataElements for the association pass that wires them
+	// (SRD-089.G §4.1). A collapsed reference contributes no entry — the
+	// pass retargets through the SPEC (rule 2), then looks the object up
+	// here.
+	dataElems map[string]flow.Element
 	// exprLanguage is the document's expressionLanguage, carried here so
 	// pass 2 can resolve a condition's language without the parser.
 	exprLanguage string
@@ -630,6 +639,7 @@ func (p *parser) newAssembly(spec procSpec) *assembly {
 		spec:         spec,
 		byID:         make(map[string]flow.Node),
 		declared:     make(map[string]string),
+		dataElems:    make(map[string]flow.Element),
 		interfaces:   p.interfaces,
 		ops:          p.ops,
 		cat:          p.cat,
@@ -1543,6 +1553,12 @@ func build(p *parser, asm *assembly) (*process.Process, error) {
 	// report telling the host which store ids the file expects the
 	// engine's registry to hold (§4.5).
 	p.reportDataStores()
+
+	// After both families exist: the data associations, wired through
+	// the elements' own Associate* (SRD-089.G §4.1).
+	if err := wireDataAssociations(p, asm); err != nil {
+		return nil, err
+	}
 
 	// After the nodes exist and before Validate: a lane names nodes, and
 	// the container's own validation checks that what a lane holds is what

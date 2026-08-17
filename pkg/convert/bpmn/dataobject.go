@@ -228,6 +228,11 @@ func buildDataElements(p *parser, asm *assembly) error {
 				errs.BulidingFailed,
 				err)
 		}
+
+		// For the association pass: a data element is wired by the
+		// Associate* methods on the ELEMENT, so the pass needs the built
+		// object back by id (SRD-089.G §4.1).
+		asm.dataElems[s.id] = elem
 	}
 
 	return nil

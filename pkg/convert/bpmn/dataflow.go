@@ -141,6 +141,32 @@ func parseIOSpecElem(p *parser, body *nodeBody, se xml.StartElement) error {
 	return nil
 }
 
+// parseDataAssocElem records a node's data association into its body —
+// wired in pass 2, once both ends exist (§4.1).
+func parseDataAssocElem(p *parser, body *nodeBody, se xml.StartElement) error {
+	spec, err := p.parseDataAssociation(assocDirs[se.Name.Local], se)
+	if err != nil {
+		return err
+	}
+
+	body.dataAssocs = append(body.dataAssocs, spec)
+
+	return nil
+}
+
+// assocDirs maps the two association tags to their direction.
+var assocDirs = map[string]data.Direction{
+	tagDataInputAssoc:  data.Input,
+	tagDataOutputAssoc: data.Output,
+}
+
+// The two ref ELEMENTS of a data association — children carrying an id
+// as text, unlike the sequence flow's same-named attributes.
+const (
+	tagSourceRef = "sourceRef"
+	tagTargetRef = "targetRef"
+)
+
 // ioSpecMisplaced refuses an <ioSpecification> on a node the standard
 // does not give one to — "Only Tasks and CallableElements (Processes,
 // GlobalTasks) MAY define DataInputs/DataOutputs … Embedded SubProcesses
@@ -176,7 +202,7 @@ func buildIOParams(
 		spec := &s.body.io.params[i]
 		from := spec.local() + " " + strconv.Quote(spec.id)
 
-		item, err := itemFor(p, asm, from, spec.id, spec.itemRef)
+		item, err := paramItem(p, asm, s, spec, from)
 		if err != nil {
 			return nil, err
 		}
@@ -239,6 +265,89 @@ func (s *paramSpec) local() string {
 	}
 
 	return tagDataOutput
+}
+
+// paramItem resolves the item a parameter is built over: its own
+// itemSubjectRef when it names one; its association partner's item when
+// it does not (§4.3 case 2 — the parameter ADOPTS); an empty item of its
+// own when it is no association's end at all.
+//
+// The partner is resolved through its parse SPEC, never a built element:
+// data elements build after the nodes (SRD-089.F §4.4), but their specs
+// are complete by pass 2.
+func paramItem(
+	p *parser, asm *assembly, s *nodeSpec, spec *paramSpec, from string,
+) (*data.ItemDefinition, error) {
+	if spec.itemRef != "" {
+		return itemFor(p, asm, from, spec.id, spec.itemRef)
+	}
+
+	elem := assocPartnerSpec(asm, s, spec.id, spec.dir)
+	if elem == nil {
+		return emptyItem(spec.id)
+	}
+
+	// §4.3 case 3: the element never adopts — it may feed several nodes,
+	// and typing it from one association would make the others' types a
+	// function of build order.
+	if elem.itemRef == "" {
+		return nil, errs.New(
+			errs.M("bpmn: %s is an association end and neither it nor %s "+
+				"names an itemSubjectRef; the element may feed several nodes, "+
+				"so the converter will not choose its type from one of them — "+
+				"give %s an itemSubjectRef",
+				from, elem.owner(), elem.owner()),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return itemFor(p, asm, from, spec.id, elem.itemRef)
+}
+
+// assocPartnerSpec finds the data element at the other end of the
+// association naming param as its activity-side end — nil when the
+// parameter is no association's end, or the end is not a data element
+// (the wiring pass owns that refusal).
+func assocPartnerSpec(
+	asm *assembly, s *nodeSpec, param string, dir data.Direction,
+) *dataSpec {
+	for i := range s.body.dataAssocs {
+		a := &s.body.dataAssocs[i]
+		if a.dir != dir || a.paramRef != param {
+			continue
+		}
+
+		return dataSpecFor(asm, a.elemRef)
+	}
+
+	return nil
+}
+
+// dataSpecFor finds a data element's parse spec by id, following a
+// <dataObjectReference> to its object — SAD-001 §14.1 rule 2, applied at
+// the spec level. One hop only: a reference's target is validated to be
+// a data object when the elements build, so a deeper chain never wires.
+func dataSpecFor(asm *assembly, id string) *dataSpec {
+	s := rawDataSpec(asm, id)
+	if s != nil && s.local == tagDataObjectRef {
+		s = rawDataSpec(asm, s.targetRef)
+	}
+
+	if s == nil || s.local == tagDataObjectRef {
+		return nil
+	}
+
+	return s
+}
+
+// rawDataSpec finds a data element's parse spec by id, no following.
+func rawDataSpec(asm *assembly, id string) *dataSpec {
+	for i := range asm.datas {
+		if asm.datas[i].id == id {
+			return &asm.datas[i]
+		}
+	}
+
+	return nil
 }
 
 // parseIOSpecification reads one <ioSpecification> into an ioSpec.
@@ -528,7 +637,7 @@ func (p *parser) parseDataAssocChild(
 	}
 
 	switch se.Name.Local {
-	case "sourceRef":
+	case tagSourceRef:
 		ref, err := p.readText(se)
 		if err != nil {
 			return err
@@ -538,7 +647,7 @@ func (p *parser) parseDataAssocChild(
 
 		return nil
 
-	case "targetRef":
+	case tagTargetRef:
 		ref, err := p.readText(se)
 		if err != nil {
 			return err
