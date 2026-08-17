@@ -1100,6 +1100,21 @@ func (t *track) currentStep() *stepInfo {
 	return t.steps[len(t.steps)-1]
 }
 
+// alive reports whether this track can still act — it has not reached a
+// terminal state and has not been asked to stop.
+//
+// Read by the LOOP about another goroutine's track, which is safe because the
+// state is mutex-guarded and the answer is only ever used to decline work: a
+// track that dies immediately after this returns true simply gets work it
+// then abandons, exactly as it would have without the check.
+func (t *track) alive() bool {
+	if t.stopIt.Load() {
+		return false
+	}
+
+	return liveTrackStates[t.currentState()]
+}
+
 // stop terminates track execution.
 func (t *track) stop() {
 	t.stopIt.Store(true)

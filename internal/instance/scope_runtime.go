@@ -898,6 +898,18 @@ func (ls *loopState) releaseScopeHost(
 func (ls *loopState) serveScopeQueue(
 	ctx context.Context, path scope.DataPath, entry *scopeEntry,
 ) {
+	// drop the requests whose host no longer exists to serve. A queued host
+	// waits inside its roundtrip, which honors its context — so a boundary
+	// fire or a terminate can take it away while it waits, leaving a request
+	// nobody is listening for. Opening its scope anyway would seed the
+	// sub-process body and run it DETACHED from any live token: real work,
+	// real side effects, no one to receive the result (SRD-090.A M4b).
+	//
+	// Its reply channel is buffered, so the unsent reply costs nothing.
+	for len(entry.queue) > 0 && !entry.queue[0].host.alive() {
+		entry.queue = entry.queue[1:]
+	}
+
 	if len(entry.queue) == 0 {
 		return
 	}

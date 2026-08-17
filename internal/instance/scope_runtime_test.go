@@ -451,59 +451,66 @@ func TestScopeDoneSentinel(t *testing.T) {
 }
 
 // TestScopeRuntimeDirect — the deterministic direct-drive of the branches
+// scopeQueueFixture builds a plain composite and a host track standing on
+// it, with a loop state that is NOT running — the white-box pieces the
+// scope-open and re-entry-queue tests drive directly.
+func scopeQueueFixture(
+	t *testing.T,
+) (*Instance, *loopState, *track, flow.Node) {
+	t.Helper()
+
+	sp, err := activities.NewSubProcess("body")
+	require.NoError(t, err)
+	ss, err := events.NewStartEvent("s")
+	require.NoError(t, err)
+	se, err := events.NewEndEvent("e")
+	require.NoError(t, err)
+	require.NoError(t, sp.Add(ss))
+	require.NoError(t, sp.Add(se))
+	linkAll(t, [2]flow.Element{ss, se})
+
+	p, err := process.New("direct")
+	require.NoError(t, err)
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+	for _, e := range []flow.Element{start, sp, end} {
+		require.NoError(t, p.Add(e))
+	}
+	linkAll(t, [2]flow.Element{start, sp}, [2]flow.Element{sp, end})
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
+		mockeventproc.NewMockEventProducer(t), nil)
+	require.NoError(t, err)
+	inst.tracks = map[string]*track{}
+
+	var node flow.Node
+	for _, n := range inst.s.Nodes {
+		if _, ok := n.(scopeHost); ok {
+			node = n
+		}
+	}
+	require.NotNil(t, node)
+
+	host, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+
+	ls := newLoopState(inst)
+	ls.position[host.ID()] = node
+
+	return inst, ls, host, node
+}
+
 // integration timing can't pin: queueing, reopen, and the failure paths.
 func TestScopeRuntimeDirect(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
 	// a parked-host fixture: instance with one composite, un-run loop.
-	build := func(t *testing.T) (*Instance, *loopState, *track, flow.Node) {
-		t.Helper()
-
-		sp, err := activities.NewSubProcess("body")
-		require.NoError(t, err)
-		ss, err := events.NewStartEvent("s")
-		require.NoError(t, err)
-		se, err := events.NewEndEvent("e")
-		require.NoError(t, err)
-		require.NoError(t, sp.Add(ss))
-		require.NoError(t, sp.Add(se))
-		linkAll(t, [2]flow.Element{ss, se})
-
-		p, err := process.New("direct")
-		require.NoError(t, err)
-		start, err := events.NewStartEvent("start")
-		require.NoError(t, err)
-		end, err := events.NewEndEvent("end")
-		require.NoError(t, err)
-		for _, e := range []flow.Element{start, sp, end} {
-			require.NoError(t, p.Add(e))
-		}
-		linkAll(t, [2]flow.Element{start, sp}, [2]flow.Element{sp, end})
-
-		s, err := snapshot.New(p)
-		require.NoError(t, err)
-
-		inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
-			mockeventproc.NewMockEventProducer(t), nil)
-		require.NoError(t, err)
-		inst.tracks = map[string]*track{}
-
-		var node flow.Node
-		for _, n := range inst.s.Nodes {
-			if _, ok := n.(scopeHost); ok {
-				node = n
-			}
-		}
-		require.NotNil(t, node)
-
-		host, err := newTrack(node, inst, nil)
-		require.NoError(t, err)
-
-		ls := newLoopState(inst)
-		ls.position[host.ID()] = node
-
-		return inst, ls, host, node
-	}
+	build := scopeQueueFixture
 
 	// T-1 findings, SRD-090.A M3c: the two below asserted that a bad open
 	// FAULTS the instance. The loop-driven path had nobody to answer, so
@@ -921,4 +928,94 @@ func TestCompositeHostReportsHostingScope(t *testing.T) {
 		3*time.Second, 5*time.Millisecond)
 
 	require.EqualValues(t, 1, ran.Load(), "the host resumed onto its outgoing")
+}
+
+// TestQueuedScopeOpenSkipsADeadHost (SRD-090.A M4b): a host that queued for a
+// composite's scope and then died must not have that scope opened on its
+// behalf when the path frees.
+//
+// A queued host waits inside its roundtrip, which honors its context — so a
+// boundary fire or an instance terminate can take it away mid-wait, leaving a
+// request in the queue that nobody is listening for. Serving it opens the
+// scope and SEEDS THE BODY, which then runs detached from any live token:
+// real work and real side effects with no one to receive the result. The
+// failure is silent — the body simply runs.
+//
+// White-box because the ordering is the whole point: the host must be dead
+// BEFORE the path frees, which a real race cannot pin.
+func TestQueuedScopeOpenSkipsADeadHost(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, ls, host, node := scopeQueueFixture(t)
+
+	// host holds the scope.
+	_, answered := openScopeFor(t.Context(), t, ls, host, node)
+	require.True(t, answered)
+	require.Len(t, ls.scopes, 1)
+
+	// a second host queues behind it.
+	dead, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+
+	_, answered = openScopeFor(t.Context(), t, ls, dead, node)
+	require.False(t, answered, "queued — its reply is deferred")
+
+	var path scope.DataPath
+
+	var entry *scopeEntry
+
+	for p, e := range ls.scopes {
+		path, entry = p, e
+	}
+
+	require.Len(t, entry.queue, 1)
+
+	// the queued host is taken away while it waits.
+	dead.updateState(TrackCanceled)
+
+	// the path frees.
+	entry.active = 0
+	ls.completeScope(t.Context(), path, entry)
+
+	require.Empty(t, ls.scopes,
+		"the dead host's scope is NOT opened on its behalf — a body seeded "+
+			"here would run detached from any live token")
+}
+
+// TestQueuedScopeOpenServesTheFirstLiveHost: a dead host in the queue is
+// skipped, not treated as a barrier — the live host behind it still gets the
+// path.
+func TestQueuedScopeOpenServesTheFirstLiveHost(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, ls, host, node := scopeQueueFixture(t)
+
+	_, _ = openScopeFor(t.Context(), t, ls, host, node)
+
+	dead, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+	live, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+
+	_, _ = openScopeFor(t.Context(), t, ls, dead, node)
+	_, _ = openScopeFor(t.Context(), t, ls, live, node)
+
+	var path scope.DataPath
+
+	var entry *scopeEntry
+
+	for p, e := range ls.scopes {
+		path, entry = p, e
+	}
+
+	require.Len(t, entry.queue, 2)
+
+	dead.updateState(TrackCanceled)
+
+	entry.active = 0
+	ls.completeScope(t.Context(), path, entry)
+
+	fresh, ok := ls.scopes[path]
+	require.True(t, ok, "the live host behind the dead one gets the path")
+	require.Same(t, live, fresh.host)
 }
