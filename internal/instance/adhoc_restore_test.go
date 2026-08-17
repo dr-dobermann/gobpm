@@ -399,11 +399,32 @@ func TestAdHocRestoreRefusals(t *testing.T) {
 
 	s := adHocSnapshot(t, key, r, &gate, instantOp(t, key+"-op"))
 
+	// b's OWN child scope must be open in the capture: the last refusal
+	// below needs a three-segment path hosted by the plain sub-process b.
+	//
+	// **T-1 finding, SRD-090.A M3c.** That used to be implied by "a track is
+	// at b" — arriving at a plain composite WAS parking (enterComposite →
+	// parkScopeHost → evScopeOpen), and evScopeOpen was a checkpoint
+	// transition, so the arrival and the open were the same moment. The
+	// executor requests the open now, so a track can stand at a composite
+	// whose scope is not open yet; the capture could land in that window and
+	// the subtest then found no three-segment path. The state is legitimate
+	// and restores fine — the track re-enters and opens — so the fix is to
+	// state the precondition the mechanism used to supply.
 	base := captureAt(t, s, func(d *checkpoint.Document) bool {
 		rec := adHocRec(d)
+		if rec == nil || rec.Completed[key+"-a"] != 1 ||
+			trackAtAdHoc(d, key+"-b") == nil {
+			return false
+		}
 
-		return rec != nil && rec.Completed[key+"-a"] == 1 &&
-			trackAtAdHoc(d, key+"-b") != nil
+		for _, sc := range d.Scopes {
+			if strings.Count(sc.Path, "/") == 3 {
+				return true
+			}
+		}
+
+		return false
 	})
 
 	t.Run("a ghost host track", func(t *testing.T) {
