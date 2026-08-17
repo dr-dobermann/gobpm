@@ -63,7 +63,9 @@ mkdir -p "$CI_DIR"
 rm -f "$status"
 
 total="${#steps[@]}"
-started_at="$(date -Is)"
+# -u +%FT%TZ rather than -Is: BSD/macOS date has no -I, and the GNU-only
+# spelling left started/finished empty in last-run.json on every Mac run.
+started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_start="$(date +%s)"
 head_sha="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 durations=""
@@ -111,7 +113,7 @@ write_status() {
 		printf '  "note": "%s",\n' "$note"
 		printf '  "head": "%s",\n' "$head_sha"
 		printf '  "started": "%s",\n' "$started_at"
-		printf '  "finished": "%s",\n' "$(date -Is)"
+		printf '  "finished": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		printf '  "seconds": %s,\n' "$elapsed"
 		printf '  "steps": {%s}\n' "$durations"
 		printf '}\n'
