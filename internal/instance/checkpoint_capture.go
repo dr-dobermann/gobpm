@@ -268,7 +268,7 @@ func (ls *loopState) adHocRecords() []checkpoint.AdHocRecord {
 	}
 
 	// scope paths are unique, so the sort makes the document
-	// deterministic (the miGroupRecords discipline).
+	// deterministic (the ordered-records discipline).
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].ScopePath < out[j].ScopePath
 	})

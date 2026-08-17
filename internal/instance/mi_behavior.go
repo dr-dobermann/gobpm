@@ -10,7 +10,7 @@ import (
 // throwMIBehavior throws the Multi-Instance's boundary-catchable behavior event for
 // one instance completion (ADR-025 §2.8): None on every completion, One on the
 // first, Complex per matching condition; All (the default) throws nothing. Called
-// off the loop by both decorators (runMISequential / parallelBarrierStep) after the
+// off the loop by both decorators (sequentialStep / parallelBarrierStep) after the
 // drain and BEFORE the activity completes, so the event's boundary fire is enqueued
 // while the host boundary is still armed (ADR-025 v.2 §2.12, SRD-056.B FR-6). The
 // throw rides Instance.PropagateEvent, which — on the runner goroutine, not the

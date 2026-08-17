@@ -928,7 +928,7 @@ func (t *track) checkThrowNode(
 // drains and delivers the completion sentinel. Mid-run the loop is told via
 // evCompensate; at construction (a fork born ON the throw, which runs on the
 // loop goroutine — the SRD-048 deadlock rule) the spawn path starts the sweep
-// via recordBornWaiter instead. Mirrors parkScopeHost.
+// via recordBornWaiter instead.
 func (t *track) parkCompensationThrow(
 	node flow.Node,
 	ref string,
@@ -958,7 +958,7 @@ func (t *track) parkCompensationThrow(
 // waits on evtCh for the child instance's completion. Mid-run the loop is told
 // via evCallWaiting; at construction (a fork born ON a Call Activity, which runs
 // on the loop goroutine — the SRD-048 deadlock rule) the spawn path launches the
-// call via recordBornWaiter instead. Mirrors parkScopeHost.
+// call via recordBornWaiter instead.
 func (t *track) parkCallActivity(node flow.Node, atConstruction bool) error {
 	t.updateState(TrackWaitForEvent)
 

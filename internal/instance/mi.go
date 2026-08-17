@@ -57,7 +57,7 @@ func multiInstanceOf(node flow.Node) multiInstance {
 // cardinality-driven Multi-Instance), the per-instance item name, the private
 // output staging collection assembled across instances (nil when the activity
 // assembles no output), the output ref/item names, and the running count of
-// completed instances. Owned by the host RUNNER goroutine (runMISequential drives
+// completed instances. Owned by the host RUNNER goroutine (the decorator drives
 // it off the loop, ADR-025 v.2 §2.12), with ONE deliberate cross-goroutine field:
 // `staging` receives a per-pass `SetAt` from the loop (captureSequentialOutput /
 // the beforeClose capture, which must read the child scope before it closes) —
@@ -419,8 +419,8 @@ func fansOut(node flow.Node) bool {
 
 // drivesOwnIteration reports whether a looped composite drives its OWN iteration
 // off the loop (the iteration decorator, ADR-025 v.2 §2.12): a Standard-Loop
-// composite (runCompositeLoop) or ANY Multi-Instance composite — sequential
-// (runMISequential, await-each) or parallel (runMIParallel, fan-out-then-await-all).
+// composite (a loopDecorator) or ANY Multi-Instance composite — sequential
+// (await-each) or parallel (fan-out-then-await-all), both an iterDecorator.
 // A plain (non-looped) composite does NOT — it parks for the loop-driven scope
 // re-entry.
 func drivesOwnIteration(node flow.Node) bool {

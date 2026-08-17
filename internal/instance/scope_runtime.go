@@ -290,7 +290,7 @@ func isEventSubHandler(node flow.Node) bool {
 // (an open or dead-lettered incident holds its scope, SRD-079 §3.2);
 // the spawn loop's incScope counts the live tracks in. The host is
 // marked parked-for-drain up front: its runner re-attaches (the
-// re-attach branches in onScopeOpen / handleScopeOpen), and a scope
+// re-attach branch in handleScopeOpen), and a scope
 // that drains before the re-attach must still deliver, not drop.
 // Runs on the loop goroutine, BEFORE the initial spawns.
 func (ls *loopState) adoptRestoredScopes(initial []*track) error {

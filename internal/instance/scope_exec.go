@@ -193,9 +193,10 @@ func (e *scopeExec) awaits() awaitKind {
 // out, in ordinal order — never its own serial pass's scope, which is one
 // scope reused and answers to the host's own counter.
 //
-// It is the one lookup that answers both of the questions a retired miGroup
-// used to answer: which scopes a fired completionCondition must tear down,
-// and which an interrupting boundary must (SRD-090.A M3b). Keeping them one
+// It is the one lookup that answers both of the questions the retired
+// loop-owned group barrier used to answer: which scopes a fired
+// completionCondition must tear down, and which an interrupting boundary
+// must. Keeping them one
 // lookup is the point — two would drift, and the group existed partly
 // because there was no way to ask this at all.
 //

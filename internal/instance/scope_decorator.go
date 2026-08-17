@@ -399,8 +399,8 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 		return
 	}
 
-	// the host is recorded parked-and-undelivered (the onScopeOpen
-	// discipline) — a scope this host opened is outstanding, which is what
+	// the host is recorded parked-and-undelivered — a scope this host
+	// opened is outstanding, which is what
 	// keeps the loop from treating it as idle. The DRAIN itself goes to the
 	// instance that opened the scope, over the channel on the entry.
 	ls.waiting[req.host.ID()] = struct{}{}

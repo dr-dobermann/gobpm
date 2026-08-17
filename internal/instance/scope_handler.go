@@ -304,9 +304,10 @@ func (ls *loopState) runScopeHandler(
 		}
 	}
 
-	// spawn the handler as a track in the enclosing scope; it parks as a
-	// scopeHost and opens its own child scope (onScopeOpen → seedScope →
-	// handlerSeeds, the triggered start treated as fired). spawn's incScope
+	// spawn the handler as a track in the enclosing scope; it reaches its
+	// composite node and its executor opens the child scope (handleScopeOpen
+	// → seedScope → handlerSeeds, the triggered start treated as fired).
+	// spawn's incScope
 	// counts it into the enclosing scope before the canceled siblings decrement
 	// it, so the scope stays open until the handler itself drains.
 	ht, err := newTrack(w.handler, ls.inst, nil)
