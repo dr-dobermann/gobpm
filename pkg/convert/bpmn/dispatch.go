@@ -292,6 +292,7 @@ var definitionsParsers = map[string]defsParser{
 	tagEscalation:     parseCatalogElem,
 	tagItemDefinition: parseItemDefElem,
 	tagImport:         parseImportElem,
+	tagDataStore:      parseDataStoreElem,
 }
 
 // parseCatalogElem parses one definitions-level catalog object — the

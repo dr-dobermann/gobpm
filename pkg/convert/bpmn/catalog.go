@@ -117,11 +117,9 @@ func (p *parser) parseCatalogElement(se xml.StartElement) error {
 
 	local := se.Name.Local
 
-	if kind, dup := p.cat.kinds[id]; dup {
-		return errs.New(
-			errs.M("bpmn: duplicate id %q on <%s>; <%s> already declared it",
-				id, local, kind),
-			errs.C(errorClass, errs.DuplicateObject))
+	err = p.claimID(id, local)
+	if err != nil {
+		return err
 	}
 
 	spec := catalogSpec{

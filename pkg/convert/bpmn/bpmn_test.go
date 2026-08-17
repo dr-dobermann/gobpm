@@ -205,14 +205,14 @@ func TestImportErrors(t *testing.T) {
 			want: "has no id",
 		},
 		{
-			name: "duplicate flow-element id",
+			name: "duplicate id",
 			doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
   <bpmn:process id="p">
     <bpmn:startEvent id="s"/>
     <bpmn:task id="s"/>
   </bpmn:process>
 </bpmn:definitions>`,
-			want: `duplicate flow-element id "s"`,
+			want: `duplicate id "s"`,
 		},
 		{
 			name: "dangling sourceRef",
@@ -1036,7 +1036,7 @@ func TestImportInvalidFixtures(t *testing.T) {
 		wantUEE bool
 	}{
 		{file: "missing-process-id.bpmn", want: "has no id"},
-		{file: "duplicate-element-id.bpmn", want: "duplicate flow-element id"},
+		{file: "duplicate-element-id.bpmn", want: "duplicate id"},
 		{file: "dangling-target.bpmn", want: "unknown targetRef"},
 		{file: "unknown-operation.bpmn", want: "unknown operationRef"},
 		{file: "unsupported-element.bpmn", want: `unsupported element "participant"`, wantUEE: true},

@@ -106,10 +106,10 @@ func TestImportInterfaceCatalogBranches(t *testing.T) {
 		"operation without name falls back to id": {
 			doc: iface(`<bpmn:operation id="o1"/>`),
 		},
-		"duplicate operation id": {
+		"duplicate id on an operation": {
 			doc: iface(`<bpmn:operation id="o1"/>` +
 				`<bpmn:operation id="o1"/>`),
-			want: "duplicate operation id",
+			want: "duplicate id",
 		},
 		"operation records outMessageRef": {
 			doc: op(`<bpmn:outMessageRef>msg-out</bpmn:outMessageRef>`),
@@ -267,6 +267,7 @@ func TestImporterDefensiveConstructorBranches(t *testing.T) {
 			ctx:        context.Background(),
 			interfaces: map[string]string{},
 			ops:        map[string]opSpec{},
+			ids:        map[string]string{},
 			newProcess: func(
 				string,
 				...options.Option,
@@ -301,6 +302,7 @@ func TestImporterDefensiveConstructorBranches(t *testing.T) {
 			ctx:        context.Background(),
 			interfaces: map[string]string{},
 			ops:        map[string]opSpec{},
+			ids:        map[string]string{},
 			newProcess: func(
 				string,
 				...options.Option,
@@ -323,7 +325,8 @@ func TestImporterDefensiveConstructorBranches(t *testing.T) {
 	t.Run("missing node mapping", func(t *testing.T) {
 		asm := &assembly{byID: make(map[string]flow.Node)}
 
-		err := (&parser{}).parseNode(asm, bpmnStartElement("unmappedNode", "n"))
+		err := (&parser{ids: map[string]string{}}).parseNode(
+			asm, bpmnStartElement("unmappedNode", "n"))
 		if err == nil || !strings.Contains(err.Error(), "no constructor mapping") {
 			t.Fatalf("parseNode error = %v, want missing-constructor error", err)
 		}
@@ -431,10 +434,14 @@ func TestImportSequenceFlowIdentityBranches(t *testing.T) {
 			doc:  graph(`<bpmn:sequenceFlow id="f3" sourceRef="t" targetRef="s"/>`),
 			want: "is not a sequence target",
 		},
+		// Before the id ledger this surfaced as a pass-2 link error —
+		// "couldn't link sequenceFlow" — after the second flow silently
+		// overwrote the first in the id→flow table. The ledger refuses it
+		// at declaration, where the file's line still identifies it.
 		"duplicate sequenceFlow id": {
 			doc: graph(
 				`<bpmn:sequenceFlow id="f1" sourceRef="s" targetRef="e"/>`),
-			want: "couldn't link sequenceFlow",
+			want: "duplicate id",
 		},
 	})
 }

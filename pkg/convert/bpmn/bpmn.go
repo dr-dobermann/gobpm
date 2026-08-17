@@ -107,6 +107,17 @@ const (
 	attrItemSubjectRef = "itemSubjectRef"
 	attrDataObjectRef  = "dataObjectRef"
 
+	// The store family: a definitions-level <dataStore> declares storage
+	// the ENGINE supplies through its registry, so the declaration is
+	// reported as a host obligation rather than built; the in-process
+	// <dataStoreReference> imports carrying its dataStoreRef verbatim
+	// (semantics/data.md §10.4.1 Table 10.55, SRD-089.F §4.5).
+	tagDataStore     = "dataStore"
+	tagDataStoreRef  = "dataStoreReference"
+	attrDataStoreRef = "dataStoreRef"
+	attrCapacity     = "capacity"
+	attrIsUnlimited  = "isUnlimited"
+
 	// The lane partition, model-only in every container that carries it
 	// (conformance.md line 173).
 	tagLaneSet      = "laneSet"

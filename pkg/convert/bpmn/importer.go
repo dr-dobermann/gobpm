@@ -255,6 +255,13 @@ type parser struct {
 	// <import>s they name and the xmlns prefixes that connect the two
 	// (SRD-089.F §4.1, §4.8).
 	items *items
+	// stores holds the document's <dataStore> declarations, kept only to
+	// be reported as host obligations (SRD-089.F §4.5).
+	stores []dataStoreSpec
+	// ids is the document's one id ledger: every element that declares an
+	// id claims it here, whatever per-kind table it lands in afterwards —
+	// see claimID.
+	ids map[string]string
 	// exprLanguage is <definitions expressionLanguage>, the default an
 	// expression that declares none inherits (ADR-024 §2.10).
 	exprLanguage string
@@ -297,6 +304,7 @@ func newParser(ctx context.Context, r io.Reader) *parser {
 		ops:        make(map[string]opSpec),
 		cat:        newCatalog(),
 		items:      newItems(),
+		ids:        make(map[string]string),
 	}
 }
 
@@ -619,11 +627,9 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 		return err
 	}
 
-	if kind, dup := asm.declared[id]; dup {
-		return errs.New(
-			errs.M("bpmn: duplicate flow-element id %q on <%s>; <%s> already "+
-				"declared it", id, se.Name.Local, kind),
-			errs.C(errorClass, errs.DuplicateObject))
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return err
 	}
 
 	if _, ok := nodeBuilders[se.Name.Local]; !ok {
@@ -675,11 +681,9 @@ func (p *parser) parseContainer(asm *assembly, se xml.StartElement) error {
 		return err
 	}
 
-	if kind, dup := asm.declared[id]; dup {
-		return errs.New(
-			errs.M("bpmn: duplicate flow-element id %q on <%s>; <%s> already "+
-				"declared it", id, se.Name.Local, kind),
-			errs.C(errorClass, errs.DuplicateObject))
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return err
 	}
 
 	idx := len(asm.specs)
@@ -947,6 +951,11 @@ func (p *parser) parseInterface(se xml.StartElement) error {
 		return err
 	}
 
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return err
+	}
+
 	name := attrValue(se, "name")
 	if strings.TrimSpace(name) == "" {
 		name = id
@@ -994,10 +1003,9 @@ func (p *parser) parseOperation(interfaceID string, se xml.StartElement) error {
 		return err
 	}
 
-	if _, dup := p.ops[id]; dup {
-		return errs.New(
-			errs.M("bpmn: duplicate operation id %q", id),
-			errs.C(errorClass, errs.DuplicateObject))
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return err
 	}
 
 	name := attrValue(se, "name")
@@ -1248,6 +1256,15 @@ func (p *parser) parseSequenceFlow(se xml.StartElement) (*flowSpec, error) {
 		return nil, err
 	}
 
+	// A flow's id was unguarded before the ledger (SRD-089.F §4.11): two
+	// flows sharing one silently overwrote each other in pass 2's
+	// id→flow table, and a flow reusing a node's id poisoned every
+	// reference to that node.
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return nil, err
+	}
+
 	fs := &flowSpec{
 		id:     id,
 		name:   attrValue(se, "name"),
@@ -1417,6 +1434,11 @@ func build(p *parser, asm *assembly) (*process.Process, error) {
 	if err := buildDataElements(p, asm); err != nil {
 		return nil, err
 	}
+
+	// A declared <dataStore> builds nothing; what it produces is the
+	// report telling the host which store ids the file expects the
+	// engine's registry to hold (§4.5).
+	p.reportDataStores()
 
 	// After the nodes exist and before Validate: a lane names nodes, and
 	// the container's own validation checks that what a lane holds is what
@@ -1666,6 +1688,31 @@ func requiredID(se xml.StartElement) (string, error) {
 	}
 
 	return id, nil
+}
+
+// claimID claims id in the document's one id ledger, or says who holds it.
+//
+// The parser keeps several per-kind tables — the flow elements, the
+// catalog objects, the item definitions, the stores, the operations — but
+// the ids they hold are one vocabulary: every reference attribute in a
+// document (a dataObjectRef, an itemSubjectRef, an operationRef, an
+// attachedToRef) resolves by id, and resolution probes those tables in a
+// fixed order. Two elements sharing an id would collide in no table and
+// would instead make every reference to that id silently ambiguous — the
+// resolver finding whichever of the two its probe order reaches first.
+// So uniqueness is enforced here, once, at declaration, whatever table
+// the element lands in afterwards.
+func (p *parser) claimID(id, local string) error {
+	if kind, dup := p.ids[id]; dup {
+		return errs.New(
+			errs.M("bpmn: duplicate id %q on <%s>; <%s> already declared it",
+				id, local, kind),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	p.ids[id] = local
+
+	return nil
 }
 
 // attrValue returns the value of the first unprefixed attribute with the

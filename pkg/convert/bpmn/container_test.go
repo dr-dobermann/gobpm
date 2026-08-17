@@ -167,7 +167,7 @@ func TestDuplicateIDAcrossContainers(t *testing.T) {
 		t.Fatal("an id reused inside a sub-process must still be refused")
 	}
 
-	if !strings.Contains(err.Error(), "duplicate flow-element id") {
+	if !strings.Contains(err.Error(), "duplicate id") {
 		t.Errorf("error = %v, want the duplicate-id refusal", err)
 	}
 }
@@ -182,7 +182,7 @@ func TestContainerIDIsClaimedBeforeItsChildren(t *testing.T) {
 		t.Fatal("a child reusing its container's id must be refused")
 	}
 
-	if !strings.Contains(err.Error(), "duplicate flow-element id") {
+	if !strings.Contains(err.Error(), "duplicate id") {
 		t.Errorf("error = %v, want the duplicate-id refusal", err)
 	}
 }
@@ -317,7 +317,7 @@ func TestContainerReusingADeclaredIDIsRefused(t *testing.T) {
 		t.Fatal("a container reusing a declared id must be refused")
 	}
 
-	if !strings.Contains(err.Error(), "duplicate flow-element id") {
+	if !strings.Contains(err.Error(), "duplicate id") {
 		t.Errorf("error = %v, want the duplicate-id refusal", err)
 	}
 }

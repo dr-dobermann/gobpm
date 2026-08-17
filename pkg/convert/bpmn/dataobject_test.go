@@ -333,7 +333,7 @@ func TestDuplicateDataObjectName(t *testing.T) {
 func TestDataObjectIDCollidesWithANode(t *testing.T) {
 	_, err := importEventDoc(t, dataDoc("",
 		`    <bpmn:dataObject id="s1" name="order"/>`))
-	if err == nil || !strings.Contains(err.Error(), "duplicate flow-element id") {
+	if err == nil || !strings.Contains(err.Error(), "duplicate id") {
 		t.Fatalf("error = %v, want the duplicate-id refusal", err)
 	}
 }

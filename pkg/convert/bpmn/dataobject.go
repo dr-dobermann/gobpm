@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
+	datastores "github.com/dr-dobermann/gobpm/pkg/model/data_stores"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -54,6 +55,15 @@ func (s dataSpec) owner() string {
 var dataElements = map[string]bool{
 	tagDataObject:    true,
 	tagDataObjectRef: true,
+	tagDataStoreRef:  true,
+}
+
+// targetAttrs maps a data element to the attribute naming its target — a
+// lookup miss means the element carries none, and attrValue reads an
+// empty attribute name as absent.
+var targetAttrs = map[string]string{
+	tagDataObjectRef: attrDataObjectRef,
+	tagDataStoreRef:  attrDataStoreRef,
 }
 
 // parseDataElem parses one item-aware flow element of a container.
@@ -73,11 +83,9 @@ func (p *parser) parseDataElement(asm *assembly, se xml.StartElement) error {
 		return err
 	}
 
-	if kind, dup := asm.declared[id]; dup {
-		return errs.New(
-			errs.M("bpmn: duplicate flow-element id %q on <%s>; <%s> already "+
-				"declared it", id, se.Name.Local, kind),
-			errs.C(errorClass, errs.DuplicateObject))
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return err
 	}
 
 	asm.declared[id] = se.Name.Local
@@ -88,7 +96,7 @@ func (p *parser) parseDataElement(asm *assembly, se xml.StartElement) error {
 		name:      strings.TrimSpace(attrValue(se, "name")),
 		container: p.container,
 		itemRef:   strings.TrimSpace(attrValue(se, attrItemSubjectRef)),
-		targetRef: strings.TrimSpace(attrValue(se, attrDataObjectRef)),
+		targetRef: strings.TrimSpace(attrValue(se, targetAttrs[se.Name.Local])),
 	}
 
 	// The element's own id owns whatever its subtree reports.
@@ -234,6 +242,7 @@ type dataBuilder func(*parser, *assembly, *dataSpec) (flow.Element, error)
 var dataBuilders = map[string]dataBuilder{
 	tagDataObject:    buildDataObject,
 	tagDataObjectRef: buildDataObjectReference,
+	tagDataStoreRef:  buildDataStoreReference,
 }
 
 // buildDataObject builds a Data Object over the item its itemSubjectRef
@@ -302,6 +311,35 @@ func buildDataObjectReference(
 	}
 
 	return nil, nil
+}
+
+// buildDataStoreReference builds a Data Store Reference carrying its
+// dataStoreRef verbatim (FR-5).
+//
+// Verbatim is a decision, not an omission: the store the id names is
+// engine infrastructure resolved from the engine's registry at run time
+// (ADR-030 §2.5), so the document is not the authority the reference
+// resolves against — a file may reference a store it never declares, and
+// a declared <dataStore> is reported as a host obligation rather than
+// consulted. An EMPTY dataStoreRef is still refused, by the model's own
+// check (NFR-4): a reference to no store at all can never be resolved by
+// any registry.
+func buildDataStoreReference(
+	p *parser, asm *assembly, s *dataSpec,
+) (flow.Element, error) {
+	item, err := itemFor(p, asm, s)
+	if err != nil {
+		return nil, err
+	}
+
+	dsr, err := datastores.New(
+		fallbackName(s.id, s.name), s.targetRef, item, nil, s.opts()...)
+	if err != nil {
+		return nil, wrapErr(
+			"bpmn: couldn't create "+s.owner(), errs.BulidingFailed, err)
+	}
+
+	return dsr, nil
 }
 
 // itemFor returns the ItemDefinition a data element carries.
