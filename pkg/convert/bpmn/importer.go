@@ -116,6 +116,8 @@ type nodeBody struct {
 	// props are the node's <property> children, reaching their owner the
 	// same way a laneSet does — as a construction option (§4.6).
 	props []propSpec
+	// io is the node's <ioSpecification>, at most one (SRD-089.G FR-1).
+	io *ioSpec
 	// extra are options read from the element's own attributes by the one
 	// funnel every node passes through, rather than by each builder that
 	// remembers to. A builder that forgets is how a documented attribute
@@ -991,6 +993,23 @@ func buildNode(p *parser, asm *assembly, s *nodeSpec) (flow.Node, error) {
 		}
 
 		s.body.extra = append(s.body.extra, data.WithProperties(props...))
+	}
+
+	// An ioSpecification is refused here, not at parse, for the node
+	// kinds that cannot hold one: the child table is deliberately
+	// uniform, and only the build knows the owner's kind (SRD-089.G
+	// §4.7/§4.7a).
+	if s.body.io != nil {
+		if !paramOwners[s.se.Name.Local] {
+			return nil, ioSpecMisplaced(s)
+		}
+
+		ioOpts, err := buildIOParams(p, asm, s)
+		if err != nil {
+			return nil, err
+		}
+
+		s.body.extra = append(s.body.extra, ioOpts...)
 	}
 
 	outer := p.owner

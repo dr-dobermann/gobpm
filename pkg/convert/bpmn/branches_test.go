@@ -140,8 +140,10 @@ func TestImportNodeBodyBranches(t *testing.T) {
 		"node skips foreign-namespace child": {
 			doc: wrapDefs(linearProcess(`<x:bounds w="10"/>`, "")),
 		},
+		// <ioSpecification> left this case when SRD-089.G claimed it; the
+		// unmapped sample is now a monitoring element no stage schedules.
 		"node rejects unmapped bpmn child": {
-			doc:  wrapDefs(linearProcess(`<bpmn:ioSpecification id="io"/>`, "")),
+			doc:  wrapDefs(linearProcess(`<bpmn:monitoring id="mon"/>`, "")),
 			want: "unsupported element",
 		},
 	})

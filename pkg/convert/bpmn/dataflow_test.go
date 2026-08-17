@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/convert"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 )
 
@@ -330,6 +331,293 @@ func TestSetSectionsRows(t *testing.T) {
 		if got := sections[tag]; got != "§10.4.1" {
 			t.Errorf("sections[%q] = %q, want §10.4.1", tag, got)
 		}
+	}
+}
+
+// ioTaskDoc wraps a task carrying body around the smallest runnable
+// graph, with one string item declared.
+func ioTaskDoc(taskBody string) string {
+	return propDoc(
+		`  <bpmn:itemDefinition id="idOrder" structureRef="xsd:string"/>
+  <bpmn:itemDefinition id="idCount" structureRef="xsd:int"/>`,
+		`    <bpmn:task id="t1" name="Work">
+`+taskBody+`
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`)
+}
+
+// taskOf returns the imported t1 as the manual task it maps to.
+func taskOf(t *testing.T, res *convert.Result) *activities.ManualTask {
+	t.Helper()
+
+	mt, ok := nodeByID(t, res, "t1").(*activities.ManualTask)
+	if !ok {
+		t.Fatalf("t1 is not a *activities.ManualTask")
+	}
+
+	return mt
+}
+
+// TestIOSpecificationImportsOntoATask is T-1 (FR-1): both directions,
+// carried items, through the model's one door.
+func TestIOSpecificationImportsOntoATask(t *testing.T) {
+	res, err := importEventDoc(t, ioTaskDoc(
+		`      <bpmn:ioSpecification id="io1">
+        <bpmn:dataInput id="din1" name="in" itemSubjectRef="idOrder"/>
+        <bpmn:dataOutput id="dout1" name="out" itemSubjectRef="idCount"/>
+      </bpmn:ioSpecification>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	mt := taskOf(t, res)
+
+	ins, outs := mt.Inputs(), mt.Outputs()
+	if len(ins) != 1 || ins[0].ItemDefinition().ID() != "idOrder" {
+		t.Errorf("Inputs() = %v, want one over idOrder", ins)
+	}
+
+	if len(outs) != 1 || outs[0].ItemDefinition().ID() != "idCount" {
+		t.Errorf("Outputs() = %v, want one over idCount", outs)
+	}
+
+	if len(res.Dropped) != 0 {
+		t.Errorf("Dropped = %v, want nothing", res.Dropped)
+	}
+}
+
+// TestParameterFlagsSurvive is T-4's build half: the set's ref lists
+// arrive on the model's parameters.
+func TestParameterFlagsSurvive(t *testing.T) {
+	res, err := importEventDoc(t, ioTaskDoc(
+		`      <bpmn:ioSpecification id="io1">
+        <bpmn:dataInput id="din1" name="in" itemSubjectRef="idOrder"/>
+        <bpmn:dataInput id="din2" name="mid" itemSubjectRef="idCount"/>
+        <bpmn:inputSet id="is1">
+          <bpmn:dataInputRefs>din1</bpmn:dataInputRefs>
+          <bpmn:dataInputRefs>din2</bpmn:dataInputRefs>
+          <bpmn:optionalInputRefs>din1</bpmn:optionalInputRefs>
+          <bpmn:whileExecutingInputRefs>din2</bpmn:whileExecutingInputRefs>
+        </bpmn:inputSet>
+      </bpmn:ioSpecification>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	params := taskOf(t, res).IoSpec.InputSet()
+	if len(params) != 2 || !params[0].IsOptional() ||
+		!params[1].IsWhileExecuting() {
+		t.Errorf("InputSet() = %v, want optional din1 and whileExecuting din2",
+			params)
+	}
+}
+
+// TestUnnamedParameterTakesItsID is T-2: fallbackName serves parameters
+// as it serves every named element.
+func TestUnnamedParameterTakesItsID(t *testing.T) {
+	res, err := importEventDoc(t, ioTaskDoc(
+		`      <bpmn:ioSpecification id="io1">
+        <bpmn:dataInput id="din1" itemSubjectRef="idOrder"/>
+      </bpmn:ioSpecification>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	params := taskOf(t, res).IoSpec.InputSet()
+	if len(params) != 1 || params[0].Name() != "din1" {
+		t.Errorf("InputSet() = %v, want the id as the name", params)
+	}
+}
+
+// TestEmptyIOSpecificationImports is T-3: an empty spec means the
+// activity requires no data, and imports as exactly that.
+func TestEmptyIOSpecificationImports(t *testing.T) {
+	res, err := importEventDoc(t, ioTaskDoc(
+		`      <bpmn:ioSpecification id="io1">
+        <bpmn:inputSet id="is1"/>
+        <bpmn:outputSet id="os1"/>
+      </bpmn:ioSpecification>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	mt := taskOf(t, res)
+	if len(mt.Inputs()) != 0 || len(mt.Outputs()) != 0 {
+		t.Errorf("params = %d/%d, want none", len(mt.Inputs()), len(mt.Outputs()))
+	}
+}
+
+// TestDuplicateItemParametersRefused is T-27 (§4.3a): the model
+// addresses a direction's parameters by item id, so a duplicate is one
+// parameter declared twice.
+func TestDuplicateItemParametersRefused(t *testing.T) {
+	_, err := importEventDoc(t, ioTaskDoc(
+		`      <bpmn:ioSpecification id="io1">
+        <bpmn:dataInput id="din1" name="a" itemSubjectRef="idOrder"/>
+        <bpmn:dataInput id="din2" name="b" itemSubjectRef="idOrder"/>
+      </bpmn:ioSpecification>`))
+	if err == nil || !strings.Contains(err.Error(), "one parameter declared twice") {
+		t.Fatalf("error = %v, want the §4.3a refusal", err)
+	}
+}
+
+// TestSecondIOSpecificationRefused: an activity has at most one
+// (§10.4.1 Table 10.58).
+func TestSecondIOSpecificationRefused(t *testing.T) {
+	_, err := importEventDoc(t, ioTaskDoc(
+		`      <bpmn:ioSpecification id="io1"/>
+      <bpmn:ioSpecification id="io2"/>`))
+	if err == nil || !strings.Contains(err.Error(), "second <ioSpecification>") {
+		t.Fatalf("error = %v, want the 0..1 refusal", err)
+	}
+}
+
+// TestIOSpecificationMisplaced is T-29 (§4.7a): the owners the standard
+// itself refuses, each with the § a modeler can read.
+func TestIOSpecificationMisplaced(t *testing.T) {
+	const io = `<bpmn:ioSpecification id="io1"/>`
+
+	tests := map[string]string{
+		"sub-process": subProcessDoc(innerGraph + `
+      ` + io),
+		"call activity": propDoc("",
+			`    <bpmn:callActivity id="ca1" calledElement="P2">`+io+`</bpmn:callActivity>`),
+		"gateway": propDoc("",
+			`    <bpmn:exclusiveGateway id="g1">`+io+`</bpmn:exclusiveGateway>`),
+		"event": propDoc("",
+			`    <bpmn:startEvent id="se1">`+io+`</bpmn:startEvent>`),
+	}
+
+	for name, doc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, doc)
+			if err == nil {
+				t.Fatal("an ioSpecification outside a task must be refused")
+			}
+
+			for _, want := range []string{"§10.4.1", "gives only to tasks"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %v, want it to carry %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestUserTaskWithIOSpecification is T-21 (§4.5): real parameters, no
+// WithoutParams to discard them, the renderer placeholder intact.
+func TestUserTaskWithIOSpecification(t *testing.T) {
+	res, err := importEventDoc(t, propDoc(
+		`  <bpmn:itemDefinition id="idOrder" structureRef="xsd:string"/>`,
+		`    <bpmn:userTask id="u1" name="Check">
+      <bpmn:ioSpecification id="io1">
+        <bpmn:dataInput id="din1" name="in" itemSubjectRef="idOrder"/>
+      </bpmn:ioSpecification>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="u1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="u1" targetRef="e1"/>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	ut, ok := nodeByID(t, res, "u1").(*activities.UserTask)
+	if !ok {
+		t.Fatalf("u1 is not a *activities.UserTask")
+	}
+
+	ins := ut.Inputs()
+	if len(ins) != 1 || ins[0].ItemDefinition().ID() != "idOrder" {
+		t.Errorf("Inputs() = %v, want the declared parameter — WithoutParams "+
+			"would have discarded it", ins)
+	}
+}
+
+// TestUserTaskWithoutIOSpecification is T-22: today's synthesized pair,
+// unchanged for the files that declare nothing.
+func TestUserTaskWithoutIOSpecification(t *testing.T) {
+	res, err := importEventDoc(t, propDoc("",
+		`    <bpmn:userTask id="u1" name="Check"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="u1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="u1" targetRef="e1"/>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	ut, ok := nodeByID(t, res, "u1").(*activities.UserTask)
+	if !ok {
+		t.Fatalf("u1 is not a *activities.UserTask")
+	}
+
+	// The synthesized pair: an explicitly empty input side, and the one
+	// placeholder renderer output the model demands.
+	if len(ut.Inputs()) != 0 || len(ut.Outputs()) != 1 {
+		t.Errorf("params = %d/%d, want 0 inputs and the placeholder output",
+			len(ut.Inputs()), len(ut.Outputs()))
+	}
+}
+
+// TestParameterItemRefErrors: itemFor's refusals reach a parameter with
+// the parameter named as the referrer.
+func TestParameterItemRefErrors(t *testing.T) {
+	_, err := importEventDoc(t, ioTaskDoc(
+		`      <bpmn:ioSpecification id="io1">
+        <bpmn:dataInput id="din1" name="in" itemSubjectRef="ghost"/>
+      </bpmn:ioSpecification>`))
+	if err == nil || !strings.Contains(err.Error(), "no such element is declared") {
+		t.Fatalf("error = %v, want the dangling-item refusal", err)
+	}
+
+	if !strings.Contains(err.Error(), `dataInput "din1"`) {
+		t.Errorf("error = %v, want the parameter named as the referrer", err)
+	}
+}
+
+// TestReservedCharacterParameterName: the model's name rule reaches a
+// parameter through NewParameter's own CheckName, with the file's id
+// wrapped around it (NFR-4).
+func TestReservedCharacterParameterName(t *testing.T) {
+	_, err := importEventDoc(t, ioTaskDoc(
+		`      <bpmn:ioSpecification id="io1">
+        <bpmn:dataInput id="din1" name="in.v2" itemSubjectRef="idOrder"/>
+      </bpmn:ioSpecification>`))
+	if err == nil {
+		t.Fatal("a parameter name with a reserved character must be refused")
+	}
+
+	for _, want := range []string{`"din1"`, "reserved character"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to carry %q", err, want)
+		}
+	}
+}
+
+// TestBrokenIOSpecificationInsideATask: the parse error surfaces through
+// the node-child registration, not only the direct call.
+func TestBrokenIOSpecificationInsideATask(t *testing.T) {
+	_, err := importEventDoc(t, ioTaskDoc(
+		`      <bpmn:ioSpecification/>`))
+	if err == nil || !strings.Contains(err.Error(), "has no id") {
+		t.Fatalf("error = %v, want the missing-id refusal", err)
+	}
+}
+
+// TestParameterDocumentation: a parameter's documentation lands on its
+// ItemAwareElement — the one place the model can hold it (NFR-1).
+func TestParameterDocumentation(t *testing.T) {
+	res, err := importEventDoc(t, ioTaskDoc(
+		`      <bpmn:ioSpecification id="io1">
+        <bpmn:dataInput id="din1" name="in" itemSubjectRef="idOrder">
+          <bpmn:documentation>the order under review</bpmn:documentation>
+        </bpmn:dataInput>
+      </bpmn:ioSpecification>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	docs := taskOf(t, res).IoSpec.InputSet()[0].Docs()
+	if len(docs) != 1 || docs[0].Text() != "the order under review" {
+		t.Errorf("Docs() = %v, want the file's one line", docs)
 	}
 }
 

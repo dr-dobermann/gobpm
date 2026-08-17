@@ -98,8 +98,10 @@ func TestStagedRefusalsNameTheirPlan(t *testing.T) {
     </bpmn:task>`)
 	}
 
+	// "ioSpecification on a task" left this sweep when SRD-089.G M2
+	// started importing it; the remaining rows shrink milestone by
+	// milestone until the family's §4.6/§4.7 refusals replace them.
 	tests := map[string]string{
-		"ioSpecification on a task":    onTask(`<bpmn:ioSpecification id="io1"/>`),
 		"ioSpecification on a process": propDoc("", `    <bpmn:ioSpecification id="io1"/>`),
 		"dataInput":                    onTask(`<bpmn:dataInput id="di1"/>`),
 		"dataOutput":                   onTask(`<bpmn:dataOutput id="do1"/>`),

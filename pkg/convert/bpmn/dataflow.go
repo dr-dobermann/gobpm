@@ -2,10 +2,14 @@ package bpmn
 
 import (
 	"encoding/xml"
+	"strconv"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // paramSpec is a <dataInput> or <dataOutput> as read from an
@@ -99,6 +103,142 @@ var setRefTags = map[string]func(*paramSpec){
 var memberRefTags = map[string]bool{
 	"dataInputRefs":  true,
 	"dataOutputRefs": true,
+}
+
+// paramOwners are the node kinds the standard lets declare an
+// <ioSpecification>: its Tasks. CallableElements — the Process and the
+// GlobalTask family — are not flow nodes here, and everything else an
+// XML file could put one on (an embedded sub-process, a transaction, a
+// call activity, an event, a gateway) is the containment rule's to
+// refuse (§4.7a; semantics/data.md:96-98).
+var paramOwners = map[string]bool{
+	tagTask:             true,
+	tagManualTask:       true,
+	tagUserTask:         true,
+	tagServiceTask:      true,
+	tagScriptTask:       true,
+	tagBusinessRuleTask: true,
+	tagSendTask:         true,
+	tagReceiveTask:      true,
+}
+
+// parseIOSpecElem records a node's <ioSpecification> into its body.
+func parseIOSpecElem(p *parser, body *nodeBody, se xml.StartElement) error {
+	if body.io != nil {
+		return errs.New(
+			errs.M("bpmn: %q carries a second <ioSpecification>; an activity "+
+				"has at most one (§10.4.1 Table 10.58)", p.owner),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	io, err := p.parseIOSpecification(se)
+	if err != nil {
+		return err
+	}
+
+	body.io = io
+
+	return nil
+}
+
+// ioSpecMisplaced refuses an <ioSpecification> on a node the standard
+// does not give one to — "Only Tasks and CallableElements (Processes,
+// GlobalTasks) MAY define DataInputs/DataOutputs … Embedded SubProcesses
+// MUST NOT define DataInputs/DataOutputs directly" (§10.4.1,
+// semantics/data.md:96-98). The standard's refusal, not the engine's: an
+// embedded container reaches data through its parent scope, and an
+// event's I/O is its own form, not an ioSpecification.
+func ioSpecMisplaced(s *nodeSpec) error {
+	return errs.New(
+		errs.M("bpmn: <%s> %q carries an <ioSpecification>, which §10.4.1 "+
+			"gives only to tasks (and to callable elements — a process, a "+
+			"global task); move the parameters to the tasks that read them",
+			s.se.Name.Local, s.id),
+		errs.C(errorClass, errs.InvalidObject))
+}
+
+// buildIOParams builds a node's parameters from its parsed ioSpec and
+// returns the WithParameters options its constructor takes — the one
+// door the model has (activity_options.go:190, SRD-089.G §1).
+func buildIOParams(
+	p *parser, asm *assembly, s *nodeSpec,
+) ([]options.Option, error) {
+	byDir := map[data.Direction][]*data.Parameter{}
+	// seen implements §4.3a: the model addresses a direction's parameters
+	// by item-definition id, so a duplicate is one parameter declared
+	// twice, and the runtime would merge the pair silently.
+	seen := map[data.Direction]map[string]string{
+		data.Input:  {},
+		data.Output: {},
+	}
+
+	for i := range s.body.io.params {
+		spec := &s.body.io.params[i]
+		from := spec.local() + " " + strconv.Quote(spec.id)
+
+		item, err := itemFor(p, asm, from, spec.id, spec.itemRef)
+		if err != nil {
+			return nil, err
+		}
+
+		if prior, dup := seen[spec.dir][item.ID()]; dup {
+			return nil, errs.New(
+				errs.M("bpmn: %s and %q declare one itemSubjectRef %q; the "+
+					"engine addresses a direction's parameters by item id — "+
+					"the association match, the readiness gate, the load loop "+
+					"— so this is one parameter declared twice; give each its "+
+					"own <itemDefinition>", from, prior, item.ID()),
+				errs.C(errorClass, errs.DuplicateObject))
+		}
+
+		seen[spec.dir][item.ID()] = spec.id
+
+		// Unreachable for any document: the item is non-nil (itemFor), the
+		// default states exist (build creates them first), and the base
+		// options are a non-empty id plus documentation. Said in the form
+		// the coverage gate reads.
+		iae, err := data.NewItemAwareElement(item, nil,
+			append([]options.Option{foundation.WithID(spec.id)},
+				docOptions(spec.docs)...)...)
+		if err != nil {
+			return nil, errs.Invariant(
+				"%s rejected its own ItemAwareElement: %w", from, err)
+		}
+
+		var popts []data.ParameterOption
+		if spec.optional {
+			popts = append(popts, data.Optional())
+		}
+
+		if spec.whileExecuting {
+			popts = append(popts, data.WhileExecuting())
+		}
+
+		param, err := data.NewParameter(
+			fallbackName(spec.id, spec.name), iae, popts...)
+		if err != nil {
+			return nil, wrapErr(
+				"bpmn: couldn't create "+from, errs.BulidingFailed, err)
+		}
+
+		byDir[spec.dir] = append(byDir[spec.dir], param)
+	}
+
+	opts := make([]options.Option, 0, len(byDir))
+	for dir, params := range byDir {
+		opts = append(opts, activities.WithParameters(dir, params...))
+	}
+
+	return opts, nil
+}
+
+// local names a parameter's element as the file wrote it.
+func (s *paramSpec) local() string {
+	if s.dir == data.Input {
+		return tagDataInput
+	}
+
+	return tagDataOutput
 }
 
 // parseIOSpecification reads one <ioSpecification> into an ioSpec.

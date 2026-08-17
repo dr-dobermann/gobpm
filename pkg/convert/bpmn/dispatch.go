@@ -530,9 +530,10 @@ type nodeChildParser func(p *parser, body *nodeBody, se xml.StartElement) error
 // built, not how it is decorated.
 var nodeChildParsers = func() map[string]nodeChildParser {
 	ncp := map[string]nodeChildParser{
-		tagDocumentation: parseNodeDocElem,
-		tagScript:        parseScriptElem,
-		tagProperty:      parsePropertyElem,
+		tagDocumentation:   parseNodeDocElem,
+		tagScript:          parseScriptElem,
+		tagProperty:        parsePropertyElem,
+		tagIOSpecification: parseIOSpecElem,
 	}
 
 	// Every event definition is a node child, derived from defBuilders
@@ -605,14 +606,22 @@ var nodeBuilders = map[string]nodeBuilder{
 	tagUserTask: func(
 		p *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,
 	) (flow.Node, error) {
-		// gobpm's UserTask demands at least one output resource parameter
-		// (bpmncommon.NewResource rejects an empty parameter list), while
-		// this slice carries no ioSpecification — so import synthesizes one
-		// optional placeholder output. It is model plumbing, not BPMN
-		// content, and is not written back on export.
-		opts := append(body.opts(id),
-			activities.WithoutParams(),
-			activities.WithOutput("result", typeBool, false))
+		opts := body.opts(id)
+
+		// A file that declares no <ioSpecification> gets the synthesized
+		// pair this builder always carried: WithoutParams (an explicitly
+		// empty IOSpec) plus one optional placeholder renderer output,
+		// because bpmncommon.NewResource rejects an empty parameter list.
+		// A file that DOES declare one gets its real parameters instead —
+		// WithoutParams would silently discard them
+		// (activity_options.go:220-231, SRD-089.G §4.5). The renderer
+		// placeholder stays in both branches: it is renderer plumbing,
+		// not IOSpec content, and is not written back on export.
+		if body.io == nil {
+			opts = append(opts, activities.WithoutParams())
+		}
+
+		opts = append(opts, activities.WithOutput("result", typeBool, false))
 
 		return activities.NewUserTask(fallbackName(id, name),
 			append(opts, p.camundaOptions(se, id)...)...)
