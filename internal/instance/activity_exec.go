@@ -1094,7 +1094,16 @@ func (d *iterDecorator) runPass(
 		step.state = StepCreated
 	}
 
+	// runInstance stores the instance before calling this, and nothing else
+	// calls it — so the handle is always set here, where the two other
+	// Load sites guard because they answer the LOOP, which can ask between
+	// instances. Failing loudly beats a nil dereference three frames down
+	// if a future caller breaks that.
 	h := d.live.Load()
+	if h == nil {
+		return nil, false, errs.Invariant(
+			"no live instance for %q at ordinal %d", d.step.node.Name(), i)
+	}
 
 	flows, err := h.e.run(ctx)
 	if err != nil {
