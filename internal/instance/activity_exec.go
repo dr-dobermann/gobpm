@@ -581,6 +581,89 @@ func (d *iterDecorator) postPosition(
 // the completionCondition — canceling the instances still running when it
 // fires (§2.7). It drains ALL N reports whatever happens, so no instance
 // goroutine is left writing into a run nobody is reading.
+// parallelBarrier is the N-of-N barrier's running state: how many instances
+// have completed or been terminated, and the first failure if one happened.
+//
+// A struct rather than locals so the per-report handling can be its own
+// method — the loop that drives it decides only whether a report is a
+// failure, which keeps both readable.
+type parallelBarrier struct {
+	d   *iterDecorator
+	err error
+	run parallelRun
+
+	completed  int
+	terminated int
+	stopping   bool
+}
+
+// fail records a mid-barrier failure the way a fired completionCondition is
+// recorded, and for the reason the stop path already states: the barrier must
+// take all launched reports whatever happens. Returning early left the
+// still-running instances' scopes open — an instance cannot close its own
+// scope on the way out, since what wakes it IS the canceled context, so the
+// teardown belongs to whoever canceled (SRD-090.A M4c).
+//
+// The first failure wins; later ones are already downstream of it.
+func (b *parallelBarrier) fail(ctx context.Context, err error) {
+	if b.err != nil {
+		return
+	}
+
+	b.err = err
+	b.stopping = true
+
+	if terr := b.d.stopRemaining(ctx, b.run); terr != nil {
+		b.err = terr
+	}
+}
+
+// took applies ONE completed instance's report: its output is staged, the
+// position posted, and the completionCondition consulted. Any failure becomes
+// the run's, through fail, rather than abandoning the barrier.
+func (b *parallelBarrier) took(
+	ctx context.Context, it miIterator, ord int,
+) {
+	b.completed++
+	b.run.states[ord] = instanceCompleted
+
+	b.run.collectOutput(ord)
+
+	if err := b.run.outs.stage(ctx, b.d.t.miState, ord); err != nil {
+		b.fail(ctx, err)
+
+		return
+	}
+
+	// a completed instance IS the observable transition (ADR-033 §2.2): the
+	// whole N-instance run is one step execution emitting no track events, so
+	// without this post the position never persists (SRD-090.A FR-6).
+	if err := b.d.postPosition(ctx, b.completed, b.run.states); err != nil {
+		b.fail(ctx, err)
+
+		return
+	}
+
+	if b.err != nil || b.stopping {
+		return
+	}
+
+	stop, err := b.d.parallelStep(ctx, it, b.run.n, b.completed, b.terminated)
+	if err != nil {
+		b.fail(ctx, err)
+
+		return
+	}
+
+	if stop {
+		b.stopping = true
+
+		// a teardown failure becomes the RUN's error rather than an early
+		// return, for the same reason fail exists.
+		b.err = b.d.stopRemaining(ctx, b.run)
+	}
+}
+
 func (d *iterDecorator) awaitParallel(
 	ctx context.Context, it miIterator, run parallelRun, step *stepInfo,
 ) ([]*flow.SequenceFlow, error) {
@@ -589,77 +672,32 @@ func (d *iterDecorator) awaitParallel(
 	// the instances a restore found already complete count as completed
 	// from the start: their outputs are in the restored staging, and the
 	// §2.9 attributes must not report them as still to come.
-	completed := run.n - run.launched
-
-	var (
-		terminated int
-		runErr     error
-		stopping   bool
-	)
+	b := &parallelBarrier{d: d, run: run, completed: run.n - run.launched}
 
 	for range run.launched {
 		res := <-run.done
 
 		if res.err != nil {
-			// an instance WE stopped is terminated, not failed: it
-			// reports the cancellation of the context this decorator
-			// closed. A cancellation from above is the caller's, and
-			// faults like any other error.
-			if stopping && ctx.Err() == nil {
-				terminated++
+			// an instance WE stopped is terminated, not failed: it reports
+			// the cancellation of the context this decorator closed. A
+			// cancellation from above is the caller's, and faults like any
+			// other error.
+			if b.stopping && ctx.Err() == nil {
+				b.terminated++
 
 				continue
 			}
 
-			if runErr == nil {
-				runErr = res.err
-				stopping = true
-
-				run.cancelRest()
-			}
+			b.fail(ctx, res.err)
 
 			continue
 		}
 
-		completed++
-		run.states[res.ord] = instanceCompleted
-
-		run.collectOutput(res.ord)
-
-		if err := run.outs.stage(ctx, t.miState, res.ord); err != nil {
-			return nil, err
-		}
-
-		// a completed instance IS the observable transition (ADR-033
-		// §2.2): the whole N-instance run is one step execution emitting
-		// no track events, so without this post the position never
-		// persists (SRD-090.A FR-6).
-		if err := d.postPosition(ctx, completed, run.states); err != nil {
-			return nil, err
-		}
-
-		if runErr != nil || stopping {
-			continue
-		}
-
-		stop, err := d.parallelStep(ctx, it, run.n, completed, terminated)
-		if err != nil {
-			return nil, err
-		}
-
-		if stop {
-			stopping = true
-
-			// a teardown failure becomes the RUN's error rather than an
-			// early return: this loop must take all launched reports
-			// whatever happens, or an instance goroutine is left writing
-			// into a run nobody reads.
-			runErr = d.stopRemaining(ctx, run)
-		}
+		b.took(ctx, it, res.ord)
 	}
 
-	if runErr != nil {
-		return nil, runErr
+	if b.err != nil {
+		return nil, b.err
 	}
 
 	// the terminated count is only whole once every instance has reported,
@@ -668,7 +706,8 @@ func (d *iterDecorator) awaitParallel(
 	// PARALLEL: every instance exists from activation, so outstanding IS
 	// running and the derivation satisfies both of Table 10.30's clauses.
 	if err := t.bindMICounters(
-		run.n, run.n-completed-terminated, completed, terminated); err != nil {
+		run.n, run.n-b.completed-b.terminated,
+		b.completed, b.terminated); err != nil {
 		return nil, err
 	}
 

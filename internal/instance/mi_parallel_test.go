@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -471,18 +472,65 @@ func TestParallelStepBindError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestStopRemainingTeardownError: a fired completionCondition tears the
-// remaining instances down through the loop, and a stopped instance makes
-// that request fail — which becomes the run's error rather than a silent
-// leak of the scopes it meant to close.
-func TestStopRemainingTeardownError(t *testing.T) {
+// TestRunMIParallelDrainError is the parallel twin of
+// TestRunMISequentialDrainError: a stand-in loop takes the fan-out's scope
+// opens and then stops, so every instance's drain wait unblocks with an error
+// rather than hanging on scopes that will never close.
+//
+// The barrier must still take ALL launched reports and fault the run once,
+// rather than returning on the first — an abandoned barrier leaves the
+// still-running instances' scopes open, which is what M4c's `fail` exists to
+// prevent.
+func TestRunMIParallelDrainError(t *testing.T) {
+	inst, node, host := miParFixture(t)
+
+	go func() {
+		// serve the fan-out's opens, then stop the loop without ever
+		// draining any of them.
+		for range 3 {
+			req, ok := <-inst.scopeReq
+			if !ok {
+				return
+			}
+
+			req.reply <- scopeReply{scopePath: host.scopePath}
+		}
+
+		close(inst.loopDone)
+	}()
+
+	_, err := newIterDecorator(
+		host, &stepInfo{node: node}, multiInstanceOf(node), true,
+	).run(t.Context())
+
+	require.Error(t, err, "the run faults rather than hanging")
+}
+
+// TestParallelBarrierKeepsATeardownError (SRD-090.A M4c): when a mid-barrier
+// failure's teardown ALSO fails, the teardown's error is what the run
+// reports — it is the more serious of the two, since it means instance scopes
+// were left open.
+//
+// Driven through the barrier rather than by calling stopRemaining directly.
+// The isolated call proves the helper returns an error; it cannot prove the
+// caller keeps it, which is the half that would silently regress if `fail`
+// dropped the assignment.
+func TestParallelBarrierKeepsATeardownError(t *testing.T) {
 	inst, node, host := miParFixture(t)
 	close(inst.loopDone) // the teardown roundtrip returns not-running
 
 	d := newIterDecorator(host, &stepInfo{node: node},
 		multiInstanceOf(node), true)
 
-	require.Error(t, d.stopRemaining(t.Context(), parallelRun{
-		cancelRest: func() {},
-	}))
+	b := &parallelBarrier{
+		d:   d,
+		run: parallelRun{cancelRest: func() {}},
+	}
+
+	b.fail(t.Context(), errors.New("the instance failed"))
+
+	require.Error(t, b.err)
+	require.NotContains(t, b.err.Error(), "the instance failed",
+		"the teardown failure replaces the instance's — scopes stayed open")
+	require.True(t, b.stopping)
 }
