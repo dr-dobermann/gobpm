@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strconv"
 	"time"
@@ -40,7 +41,6 @@ var checkpointTransitions = map[trackEventKind]bool{
 	evWaiting:     true,
 	evTaskWaiting: true,
 	evJobWaiting:  true,
-	evScopeOpen:   true,
 	// a Call Activity park is a persist point since the call is
 	// recorded (SRD-082 FR-7, M4): the parent's document must carry the
 	// in-flight call the moment the child exists — a crash between the
@@ -62,6 +62,11 @@ var liveTrackStates = map[trackState]bool{
 	TrackExecutingStep:      true,
 	TrackProcessStepResults: true,
 	TrackWaitForEvent:       true,
+	// An iterating or scope-hosting track is live and working (ADR-025
+	// §2.13b.1e): its activity is mid-flight, so the document must carry it
+	// or a restore would lose the token altogether.
+	TrackIterating:    true,
+	TrackHostingScope: true,
 	// AwaitingMerge restores too: the track already ARRIVED at its join,
 	// and the join's reachability math needs that arrival — re-entering
 	// the join node re-delivers it.
@@ -170,8 +175,26 @@ func (ls *loopState) captureDocument(
 			return nil, "encode: " + err.Error()
 		}
 
-		doc.Scopes = append(doc.Scopes,
-			checkpoint.ScopeRecord{Path: string(path), Data: raw})
+		rec := checkpoint.ScopeRecord{Path: string(path), Data: raw}
+
+		// who opened it (Schema 7, SRD-090.A M3c). The loop's own entry
+		// already knows, so recording it costs one field and spares
+		// restore the search that needed a precedence rule. The root
+		// scope and any path with no entry are left unnamed — the same
+		// "nothing to rebuild" reading a Schema-6 document gets.
+		if entry, ok := ls.scopes[path]; ok && entry.host != nil {
+			rec.HostTrack = entry.host.ID()
+
+			// -1 marks a host's OWN scope; an instance carries its
+			// 0-based ordinal. The two are distinguished here rather
+			// than by re-reading the path, which is the whole point.
+			rec.Ordinal = -1
+			if entry.instance {
+				rec.Ordinal = entry.ordinal
+			}
+		}
+
+		doc.Scopes = append(doc.Scopes, rec)
 	}
 
 	for path, entries := range ls.ledgers {
@@ -201,13 +224,6 @@ func (ls *loopState) captureDocument(
 		}
 	}
 
-	groups, encErr := ls.miGroupRecords(ctx)
-	if encErr != "" {
-		return nil, encErr
-	}
-
-	doc.MIGroups = groups
-
 	sweeps, encErr := ls.sweepRecords(ctx)
 	if encErr != "" {
 		return nil, encErr
@@ -229,7 +245,7 @@ func (ls *loopState) captureDocument(
 // record carries its AdHocActivity, and restore rebuilds the counts
 // from the track table rather than trusting two tables to agree.
 func (ls *loopState) adHocRecords() []checkpoint.AdHocRecord {
-	var out []checkpoint.AdHocRecord
+	out := make([]checkpoint.AdHocRecord, 0, len(ls.scopes))
 
 	for path, entry := range ls.scopes {
 		if entry.adHoc == nil {
@@ -252,63 +268,12 @@ func (ls *loopState) adHocRecords() []checkpoint.AdHocRecord {
 	}
 
 	// scope paths are unique, so the sort makes the document
-	// deterministic (the miGroupRecords discipline).
+	// deterministic (the ordered-records discipline).
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].ScopePath < out[j].ScopePath
 	})
 
 	return out
-}
-
-// miGroupRecords captures the parallel Multi-Instance open sets
-// (SRD-082 FR-4). Everything read — the group registry, the open map,
-// the staging the loop itself writes — is loop-owned, so the capture
-// is a consistent cut by construction. Open sets sort by ordinal for a
-// deterministic document.
-func (ls *loopState) miGroupRecords(
-	ctx context.Context,
-) ([]checkpoint.MIGroupRecord, string) {
-	if len(ls.miGroups) == 0 {
-		return nil, ""
-	}
-
-	out := make([]checkpoint.MIGroupRecord, 0, len(ls.miGroups))
-
-	for _, grp := range ls.miGroups {
-		rec := checkpoint.MIGroupRecord{
-			HostTrack: grp.host.ID(),
-			N:         grp.n,
-			Pending:   grp.pending,
-			Open:      make([]checkpoint.OpenScope, 0, len(grp.open)),
-		}
-
-		for p, ord := range grp.open {
-			rec.Open = append(rec.Open,
-				checkpoint.OpenScope{Path: string(p), Ordinal: ord})
-		}
-
-		sort.Slice(rec.Open, func(i, j int) bool {
-			return rec.Open[i].Ordinal < rec.Open[j].Ordinal
-		})
-
-		if grp.staging != nil {
-			raw, err := checkpoint.EncodeValue(
-				ctx, "mi group "+grp.host.ID(), grp.staging)
-			if err != nil {
-				return nil, "encode: " + err.Error()
-			}
-
-			rec.Staging = raw
-		}
-
-		out = append(out, rec)
-	}
-
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].HostTrack < out[j].HostTrack
-	})
-
-	return out, ""
 }
 
 // boundaryRecords captures the boundary events armed over the live tracks
@@ -523,26 +488,49 @@ func trackRecord(
 	// The mirror is loop-owned and staging is loop-written, so both
 	// reads are loop-serialized.
 	if mirror != nil {
-		mi := &checkpoint.MIRecord{
-			N:            mirror.n,
-			Completed:    mirror.completed,
-			ConditionMet: mirror.conditionMet,
+		if err := recordIteration(ctx, &rec, t, mirror); err != nil {
+			return checkpoint.TrackRecord{}, false, err
 		}
-
-		if mirror.staging != nil {
-			raw, err := checkpoint.EncodeValue(
-				ctx, "track "+t.ID(), mirror.staging)
-			if err != nil {
-				return checkpoint.TrackRecord{}, false, err
-			}
-
-			mi.Staging = raw
-		}
-
-		rec.MI = mi
 	}
 
 	return rec, true, nil
+}
+
+// recordIteration writes the host's iteration position onto its track
+// record, as the executor set that replaced the per-instance tracks and
+// scopes (SRD-090.A FR-6).
+//
+// Every mirrored host writes one. `TrackRecord.MI` — the mirror a
+// sequential iteration used to ride — is no longer written by anything: it
+// survives on the READ side alone, so a schema-5 document captured before
+// this slice still restores (FR-7). The one iterated kind that reaches no
+// mirror at all is a parallel COMPOSITE Multi-Instance, whose position is
+// still the loop-owned group's until M3b retires it.
+func recordIteration(
+	ctx context.Context, rec *checkpoint.TrackRecord, t *track,
+	mirror *iterMirror,
+) error {
+	var staging json.RawMessage
+
+	if mirror.staging != nil {
+		raw, err := checkpoint.EncodeValue(ctx, "track "+t.ID(), mirror.staging)
+		if err != nil {
+			return err
+		}
+
+		staging = raw
+	}
+
+	rec.Iteration = &checkpoint.IterationRecord{
+		Kind:         mirror.kind,
+		N:            mirror.n,
+		Completed:    mirror.completed,
+		ConditionMet: mirror.conditionMet,
+		Staging:      staging,
+		Instances:    mirror.instances,
+	}
+
+	return nil
 }
 
 // persistedStatus maps the runtime lifecycle onto the repository's

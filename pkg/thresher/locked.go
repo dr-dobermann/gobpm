@@ -132,7 +132,7 @@ func (t *Thresher) claimLatestRegistrationsLocked() []*ProcessRegistration {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	var claimed []*ProcessRegistration
+	claimed := make([]*ProcessRegistration, 0, len(t.registrations))
 
 	for _, regs := range t.registrations {
 		n := len(regs)

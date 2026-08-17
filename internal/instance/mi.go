@@ -57,7 +57,7 @@ func multiInstanceOf(node flow.Node) multiInstance {
 // cardinality-driven Multi-Instance), the per-instance item name, the private
 // output staging collection assembled across instances (nil when the activity
 // assembles no output), the output ref/item names, and the running count of
-// completed instances. Owned by the host RUNNER goroutine (runMISequential drives
+// completed instances. Owned by the host RUNNER goroutine (the decorator drives
 // it off the loop, ADR-025 v.2 §2.12), with ONE deliberate cross-goroutine field:
 // `staging` receives a per-pass `SetAt` from the loop (captureSequentialOutput /
 // the beforeClose capture, which must read the child scope before it closes) —
@@ -98,6 +98,15 @@ func (ls *loopState) captureSequentialOutput(
 ) error {
 	st := entry.host.miState
 	if st == nil || st.staging == nil {
+		return nil
+	}
+
+	// a FANNED-OUT instance stages through its own cell (captureInstanceOutput
+	// → the decorator's positional slot), never through the host's pass
+	// counter: that counter stands still for the whole fan-out, so every
+	// instance would write slot 0 and the last one to drain would win
+	// (SRD-090.A M3b).
+	if entry.instance {
 		return nil
 	}
 
@@ -252,13 +261,17 @@ func (it miIterator) bindInstance(
 	return nil
 }
 
-// prepareSequential resolves the activation, builds the host's miState
+// prepareIteration resolves the activation, builds the host's miState
 // (staging included) and applies a restored seed (SRD-082 FR-3): the
 // recorded N is the frozen activation count (§13.3.7) — the cardinality
 // expression must not re-resolve to a different bound after the restart
-// — and the recorded staging returns the completed passes' outputs. It
-// returns the frozen instance count and the first pass to launch.
-func (t *track) prepareSequential(
+// — and the recorded staging returns the completed instances' outputs. It
+// returns the frozen instance count and the first instance to launch.
+//
+// It serves both kinds a leaf decorator drives: a sequential iteration
+// resumes AT the returned ordinal, a parallel one reads it as the count
+// already behind it and launches the rest.
+func (t *track) prepareIteration(
 	ctx context.Context, it miIterator, mi multiInstance, step *stepInfo,
 ) (int, int, error) {
 	n, col, err := it.resolveActivation(ctx, t, step.node)
@@ -334,7 +347,10 @@ func (t *track) seedSequentialStart(
 	stop := seed.ConditionMet
 
 	if !stop && mi.CompletionCondition() != nil {
-		if err := t.bindMICounters(n, start, 0); err != nil {
+		// nothing is running while the restored condition is evaluated —
+		// this is between passes for a sequential activity and before the
+		// fan-out for a parallel one.
+		if err := t.bindMICounters(n, 0, start, 0); err != nil {
 			return 0, err
 		}
 
@@ -392,10 +408,19 @@ func seedStaging(
 	return nil
 }
 
+// fansOut reports whether a node runs its instances CONCURRENTLY — a
+// parallel Multi-Instance, the one shape whose instances get scopes of
+// their own (`sp-<id>-<ord>`) rather than one scope reused pass by pass.
+func fansOut(node flow.Node) bool {
+	mi := multiInstanceOf(node)
+
+	return mi != nil && !mi.IsSequential()
+}
+
 // drivesOwnIteration reports whether a looped composite drives its OWN iteration
 // off the loop (the iteration decorator, ADR-025 v.2 §2.12): a Standard-Loop
-// composite (runCompositeLoop) or ANY Multi-Instance composite — sequential
-// (runMISequential, await-each) or parallel (runMIParallel, fan-out-then-await-all).
+// composite (a loopDecorator) or ANY Multi-Instance composite — sequential
+// (await-each) or parallel (fan-out-then-await-all), both an iterDecorator.
 // A plain (non-looped) composite does NOT — it parks for the loop-driven scope
 // re-entry.
 func drivesOwnIteration(node flow.Node) bool {
@@ -406,101 +431,41 @@ func drivesOwnIteration(node flow.Node) bool {
 	return multiInstanceOf(node) != nil
 }
 
-// runMISequential drives a sequential Multi-Instance composite from the host's own
-// runner goroutine — the off-loop iteration decorator (SRD-055, ADR-025 v.2
-// §2.12), the count-driven sibling of runCompositeLoop. It resolves N once, then
-// for each instance splits the input datum off the loop, requests the child scope
-// (scopeRoundtrip), parks for the drain (awaitScopeDrained — during which the loop
-// captures the instance's output before the scope closes, §4.2), advances the
-// completion count, and stops early when the completionCondition holds. On exit it
-// publishes the assembled output once (the visibility barrier) and follows the
-// composite's single outgoing flow. It reuses the miIterator's resolveActivation /
-// bindInstance / evalCompletion / publishOutput, only relocating the control off
-// the loop.
-func (t *track) runMISequential(
-	ctx context.Context, step *stepInfo, mi multiInstance,
-) ([]*flow.SequenceFlow, error) {
-	it := miIterator{mi: mi}
-
-	n, start, err := t.prepareSequential(ctx, it, mi, step)
-	if err != nil {
-		return nil, err
+// bindMICounters publishes the §2.9 runtime attributes at the host scope off
+// the loop (SRD-056.A FR-12): the frozen instance count, and the running /
+// completed / terminated counts. A mutex-safe plane write, like the
+// sequential slice's off-loop binds.
+//
+// active is STATED by the caller rather than derived here (SRD-090.A M3g),
+// because the two iteration kinds cannot share one derivation. Table 10.30
+// defines the attribute as what is CURRENTLY ACTIVE and caps it at 1 for a
+// sequential activity, while also requiring the three counts to sum to n —
+// clauses a sequential activity cannot satisfy at once, since its
+// not-yet-started instances belong to no category (ADR-025 §2.9).
+//
+// A PARALLEL caller passes `n − completed − terminated`: every instance
+// exists from activation, so what is outstanding is what is running and both
+// clauses hold. A SEQUENTIAL caller passes what is actually running — 1
+// during a pass (bindInstance), 0 between passes and at the end — which
+// honors the cap and makes the sum exact at every terminal state.
+//
+// Deriving it here published BOTH readings within one pass: bindInstance set
+// 1, and this function then set n − completed, so a behavior event thrown
+// between the two carried whichever fired last.
+func (t *track) bindMICounters(n, active, completed, terminated int) error {
+	binds := []miBinding{
+		{name: "numberOfInstances", value: n},
+		{name: "numberOfActiveInstances", value: active},
+		{name: "numberOfCompletedInstances", value: completed},
+		{name: "numberOfTerminatedInstances", value: terminated},
 	}
 
-	// N <= 0 runs zero instances — follow the outgoing flow once, no scope, no
-	// publish (staging is unallocated).
-	if n <= 0 {
-		t.miState = nil
-
-		return t.executeNode(ctx, step)
-	}
-
-	for i := start; i < n; i++ {
-		t.setLoopCounter(i)
-
-		// split the per-instance data at the host scope BEFORE the open, off the
-		// loop (loopCounter=i, numberOf* attrs, inputItem=collection[i]); the seeded
-		// body reads them by walk-up.
-		if err := it.bindInstance(ctx, t, i); err != nil {
-			return nil, err
-		}
-
-		if _, err := t.instance.scopeRoundtrip(ctx,
-			scopeRequest{op: scopeOpen, host: t, node: step.node}); err != nil {
-			return nil, err
-		}
-
-		if err := t.awaitScopeDrained(ctx); err != nil {
-			return nil, err
-		}
-
-		// advance the completion count, then test the completionCondition against
-		// the attributes bound at THIS pass's start (not rebound) — the exact value
-		// SRD-055 exposed. completed >= n stops via the loop's natural exit; a true
-		// condition stops early ("stop launching"). Capture the decision before the
-		// behavior rebind so the condition keeps its pass-start counts.
-		t.miState.completed++
-
-		stop := false
-		if t.miState.completed < n && mi.CompletionCondition() != nil {
-			met, err := it.evalCompletion(ctx, t, step.node)
-			if err != nil {
-				return nil, err
-			}
-
-			stop = met
-		}
-
-		// SRD-056.B: the behavior event carries the CURRENT §2.9 counts, so
-		// republish the post-drain counts (sequential binds them at pass start),
-		// then throw before the activity completes (FR-6/FR-7).
-		if err := t.bindMICounters(n, t.miState.completed, 0); err != nil {
-			return nil, err
-		}
-
-		if err := t.throwMIBehavior(
-			ctx, mi, step.node, t.miState.completed); err != nil {
-			return nil, err
-		}
-
-		if stop {
-			// the loop's iteration mirror cannot observe this verdict from
-			// the open/drain protocol — post it (SRD-082 FR-2).
-			if _, err := t.instance.scopeExchange(ctx,
-				scopeRequest{op: scopeNote, host: t}); err != nil {
-				return nil, err
-			}
-
-			break
+	for _, b := range binds {
+		if err := t.instance.sc.bindDataItemAt(
+			t.scopePath, b.name, b.value); err != nil {
+			return err
 		}
 	}
 
-	if err := it.publishOutput(t); err != nil {
-		return nil, err
-	}
-
-	t.miState = nil
-	t.setLoopCounter(0)
-
-	return t.executeNode(ctx, step)
+	return nil
 }

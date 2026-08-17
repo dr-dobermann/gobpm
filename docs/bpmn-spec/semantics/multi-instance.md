@@ -67,7 +67,7 @@ For `none` and `one`: the `EventDefinition` is referenced from `MultiInstanceLoo
 - The `Event`s can be caught on the **boundary of the MI Activity** — allowing different flows depending on progress state.
 
 **Available variables** inside `completionCondition`, `condition` in `ComplexBehaviorDefinition`, and `DataInputAssociation` of an `Event` in `ComplexBehaviorDefinition`:
-- MI Activity instance runtime attributes
+- MI Activity instance runtime attributes — `loopCounter`, `numberOfInstances`, `numberOfActiveInstances`, `numberOfCompletedInstances`, `numberOfTerminatedInstances`; enumerated with their exact semantics in [instance-attributes.md](instance-attributes.md) (Table 10.30, §10.3.8)
 - `loopDataInput`, `loopDataOutput`, `inputDataItem`, `outputDataItem` (from `MultiInstanceLoopCharacteristics`)
 
 ## Data semantics for Multi-Instance
@@ -130,4 +130,5 @@ For parallel MI: instances can be compensated in parallel.
 - Activity lifecycle (MI does not replace the lifecycle; each instance follows it): [../state-machines/activity-lifecycle.md](../state-machines/activity-lifecycle.md)
 - Compensation per-instance snapshot: [compensation.md](compensation.md)
 - Structural attributes of MultiInstanceLoopCharacteristics / ComplexBehaviorDefinition: [../elements/activities.md](../elements/activities.md)
+- Runtime (instance) attributes of a Loop / Multi-Instance Activity — Tables 10.27 and 10.30: [instance-attributes.md](instance-attributes.md)
 - Data flow basics: see §10.4 in the spec PDF (not yet in this KB)

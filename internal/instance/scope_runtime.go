@@ -2,10 +2,11 @@ package instance
 
 import (
 	"context"
-	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"slices"
 	"strconv"
+	"strings"
 
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -74,18 +75,31 @@ func seedDataObjects(
 // accompanying SRD) reopens the scope after the close.
 type scopeEntry struct {
 	host *track
-	// group is the parallel Multi-Instance group this scope is an instance of
-	// (SRD-056.A), nil for every serial scope; ordinal is the instance's 0-based
-	// index. When set, the scope's drain decrements the group barrier instead of
-	// resuming the host through the serial re-entry.
-	group *miGroup
+	// drain is the activity instance waiting for this scope, signaled when
+	// it closes. An entry opened by an executor is signaled DIRECTLY rather
+	// than by resuming the host: N instances of one activity share one host
+	// track, and a track has one park — which is the entire reason a
+	// loop-owned group barrier had to serialize N concurrent drains onto it
+	// (SRD-090.A M3b). nil for a scope no executor opened, which still
+	// resumes its parked host the original way.
+	drain chan struct{}
+	// capture is the opening instance's output cell, filled from this scope
+	// just before it closes and read by that instance after its drain
+	// (SRD-090.A M3b). nil when the activity assembles no output.
+	capture *instanceCapture
 	// adHoc is the routing state of an Ad-Hoc scope (SRD-074 §3.4), nil for
 	// every other scope: the per-activity completed/running counts the Router
 	// decides on, and whether routing has already stopped.
-	adHoc   *adHocProgress
-	node    flow.Node
-	parent  scope.DataPath
-	queue   []*track
+	adHoc  *adHocProgress
+	node   flow.Node
+	parent scope.DataPath
+	// queue holds the open requests waiting for this path to free — a
+	// second host reached the same composite while this scope was open
+	// (§4.4). Each carries its own reply channel, deferred until
+	// completeScope serves it; the requester is parked in its roundtrip
+	// meanwhile (SRD-090.A M3c, which moved the queue off the retired
+	// loop-driven open path).
+	queue   []scopeRequest
 	active  int
 	ordinal int
 	// aborting marks a Transaction scope whose Cancel abort is in flight
@@ -93,13 +107,31 @@ type scopeEntry struct {
 	// resume the host normally — finalizeTransaction owns the teardown, driven
 	// off the compensation sweep's own completion.
 	aborting bool
-	// awaitAttach marks a RESTORED own-iteration scope whose decorator
-	// runner has not re-attached yet (SRD-082 FR-3): its drain must wait
-	// for the re-attach roundtrip — the fence that makes the host's
-	// miState readable on the loop. drainPending records a drain that
-	// arrived early; the re-attach completes it.
+	// awaitAttach marks a RESTORED scope whose executor has not re-attached
+	// yet (SRD-082 FR-3): its drain must wait for the re-attach roundtrip —
+	// the fence that makes the host's state readable on the loop, and the
+	// moment the entry is handed the drain channel it has to signal.
+	// drainPending records a drain that arrived early; the re-attach
+	// completes it.
+	//
+	// EVERY restored scope now, not only an own-iteration one (SRD-090.A
+	// M3c): a restored entry has no channel until its executor brings one,
+	// so a drain spent before then closes nothing and the re-attach that
+	// follows opens a second scope over the same path.
 	awaitAttach  bool
 	drainPending bool
+	// iterating records that this scope belongs to an activity running its
+	// node more than once, as its OPENER declared (SRD-090.A FR-11). The
+	// drain accounting reads it instead of asking the node whether it
+	// iterates — same answer, from the party that owns the question.
+	iterating bool
+	// instance marks this scope as ONE of N fanned out from its host's
+	// activity rather than the host's own pass (SRD-090.A M3b). It is what
+	// ordinal means something on, and it is why the drain must not advance
+	// the iteration mirror: a fanned-out position is the decorator's to
+	// report (postPosition), never the host's loopCounter, which stands
+	// still for the whole fan-out.
+	instance bool
 }
 
 // scopeDoneTrigger is the internal trigger of the scope-completion
@@ -130,117 +162,28 @@ func scopeSegment(node flow.Node) string {
 	return "sp-" + node.ID()
 }
 
-// onScopeOpen opens the nested scope for a parked composite host (SRD-049
-// FR-8): derive the child path, open the data-plane scope, register the
-// entry, and seed the inner tracks per the validated shape. A second host
-// arriving while the scope is open queues (one DataPath cannot hold two
-// concurrent scopes; multi-instance owns real parallelism — ADR-023 §2.8).
-// Runs on the loop goroutine.
-func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Node) {
-	if ls.stopping {
-		return
+// scopeSegmentFor picks the child segment a host opens under, in the one
+// order every opener agrees on (SRD-090.A M3c): an EXECUTOR-named segment
+// wins — it is one of N fanned-out instances, and only the executor knows
+// its ordinal; then the HOST's own override, which a non-interrupting Event
+// Sub-Process handler carries so concurrent fires of one handler open
+// distinct scopes (SRD-053) and a restored track carries from its record;
+// then the node's own segment, which is every ordinary composite.
+//
+// It exists because the two open paths derived this differently — the
+// loop-driven one knew about the host override and not the executor's, the
+// executor-driven one the reverse — and a merged path cannot have two
+// answers.
+func scopeSegmentFor(host *track, node flow.Node, instanceSeg string) string {
+	if instanceSeg != "" {
+		return instanceSeg
 	}
 
-	sh, ok := node.(scopeHost)
-	if !ok {
-		// checkNodeType only routes scopeHost nodes here; a mismatch is a
-		// corrupt graph.
-		ls.inst.fail(errs.New(
-			errs.M("scope open for a non-composite node %q", node.ID()),
-			errs.C(errorClass, errs.TypeCastingError)))
-		ls.stopAll()
-
-		return
-	}
-
-	// a host may override the child segment (SRD-053): a non-interrupting
-	// Event Sub-Process handler carries a unique per-fire segment so concurrent
-	// instances of the same node open distinct scopes; every normal composite
-	// uses scopeSegment(node).
-	seg := scopeSegment(node)
 	if host.scopeSeg != "" {
-		seg = host.scopeSeg
+		return host.scopeSeg
 	}
 
-	child, err := host.scopePath.Append(seg)
-	if err != nil {
-		ls.inst.fail(err)
-		ls.stopAll()
-
-		return
-	}
-
-	if entry, open := ls.scopes[child]; open {
-		// a RESTORED host re-entering its own already-open scope
-		// (SRD-082 FR-5) re-attaches: it parks for the drain the derived
-		// entry will deliver — queueing it behind itself would re-run
-		// the body after the drain.
-		if entry.host == host {
-			ls.waiting[host.ID()] = struct{}{}
-
-			return
-		}
-
-		// re-entry while open — queue this host; it reopens after the close.
-		entry.queue = append(entry.queue, host)
-
-		return
-	}
-
-	if err := ls.inst.sc.plane.OpenScope(child); err != nil {
-		ls.inst.fail(errs.New(
-			errs.M("couldn't open scope %q for sub-process %q",
-				string(child), node.ID()),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err)))
-		ls.stopAll()
-
-		return
-	}
-
-	// the host parked on its evtCh — record it parked-and-undelivered so
-	// the drain's synthetic completion can dispatch to it (the
-	// onTaskWaiting discipline); idempotent for the born-parked path.
-	ls.waiting[host.ID()] = struct{}{}
-
-	// a compensation event-sub handler's fresh child scope is seeded with the
-	// ledger entry's snapshot (SRD-059 FR-4): reads inside the handler resolve
-	// child-first, so the snapshot shadows the live parent data; the handler's
-	// local writes die with this scope (an ADR-026 §2.5 engine note).
-	if host.compScopeSeed != nil {
-		if _, err := ls.inst.sc.plane.Commit(
-			child, host.compScopeSeed...); err != nil {
-			ls.inst.fail(errs.New(
-				errs.M("couldn't seed compensation snapshot into %q",
-					string(child)),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err)))
-			ls.stopAll()
-
-			return
-		}
-	}
-
-	// SubProcess-level Data Objects seed the freshly-opened child scope
-	// (SRD-063 FR-4).
-	if err := seedDataObjects(ls.inst.sc.plane, node, child); err != nil {
-		ls.inst.fail(err)
-		ls.stopAll()
-
-		return
-	}
-
-	entry := &scopeEntry{host: host, node: node, parent: host.scopePath}
-	ls.scopes[child] = entry
-
-	ls.reportScope(observability.PhaseOpened, node, child,
-		scopeLoopCounter(node, host))
-
-	ls.seedScope(ctx, sh, child)
-
-	// arm the scope's Event Sub-Process handlers while it is open (SRD-052
-	// FR-5) — the boundary-watch pattern at scope granularity.
-	ls.armScopeHandlers(ctx, sh.Nodes(), child)
+	return scopeSegment(node)
 }
 
 // seedScope spawns the inner entry tracks per the ADR-023 §2.3 validated
@@ -347,7 +290,7 @@ func isEventSubHandler(node flow.Node) bool {
 // (an open or dead-lettered incident holds its scope, SRD-079 §3.2);
 // the spawn loop's incScope counts the live tracks in. The host is
 // marked parked-for-drain up front: its runner re-attaches (the
-// re-attach branches in onScopeOpen / handleScopeOpen), and a scope
+// re-attach branch in handleScopeOpen), and a scope
 // that drains before the re-attach must still deliver, not drop.
 // Runs on the loop goroutine, BEFORE the initial spawns.
 func (ls *loopState) adoptRestoredScopes(initial []*track) error {
@@ -379,11 +322,29 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 				"restored scope %q has no parent path: %v", string(path), err)
 		}
 
-		host, node := restoredScopeHost(initial, parent, path)
+		host, node, ord := ls.recordedScopeHost(initial, path)
+		if host == nil {
+			host, node, ord = restoredScopeHost(initial, parent, path)
+		}
+
 		if host == nil {
 			return errs.New(
 				errs.M("restored scope %q has no host track — the "+
 					"checkpoint's scope and track tables disagree",
+					string(path)),
+				errs.C(errorClass, errs.InvalidState))
+		}
+
+		// an instance whose scope is still open cannot also be recorded
+		// finished: the drain closes the scope BEFORE the decorator reports
+		// it, so the reverse window does not exist. If a document says both,
+		// its scope table and its executor set describe different moments —
+		// and nothing would ever re-attach to that scope, leaving it open for
+		// the life of the instance.
+		if ord >= 0 && instanceRecordedDone(host, ord) {
+			return errs.New(
+				errs.M("restored instance scope %q is recorded completed — "+
+					"the checkpoint's scope table and executor set disagree",
 					string(path)),
 				errs.C(errorClass, errs.InvalidState))
 		}
@@ -396,12 +357,31 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 			}
 		}
 
+		// a FANNED-OUT instance's scope carries its ordinal in its own
+		// segment, so the entry is rebuilt from the path alone — no open-set
+		// record, and no group to belong to (SRD-090.A M3b). Its drain waits
+		// for the re-attach exactly as a serial pass's does: the instance
+		// that resumes it is a NEW executor, and until it arrives there is
+		// nothing to signal.
+		// EVERY restored scope holds its drain for the re-attach now
+		// (SRD-090.A M3c) — it used to be only the own-iteration ones.
+		//
+		// The condition was right while a plain composite's host waited on
+		// its evtCh: a drain arriving before the host resumed could be
+		// delivered to it, parked or not. It is wrong now that every scope
+		// is executor-driven, because a restored entry has NO drain channel
+		// until its runner re-attaches and hands one over. Completing it
+		// early would close nothing, and the re-attach that followed would
+		// find the path free and open a SECOND scope — running the body
+		// twice, which is the failure a restore exists to prevent.
 		ls.scopes[path] = &scopeEntry{
 			host:        host,
 			node:        node,
 			parent:      parent,
 			active:      pins,
-			awaitAttach: drivesOwnIteration(node),
+			awaitAttach: true,
+			instance:    ord >= 0,
+			ordinal:     max(ord, 0),
 		}
 		ls.waiting[host.ID()] = struct{}{}
 	}
@@ -409,11 +389,52 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 	return nil
 }
 
-// adoptRestoredGroups rebuilds the parallel Multi-Instance barriers
-// from the recorded open sets (SRD-082 FR-4): the loop-owned miGroup,
-// one awaitAttach scope entry per still-open instance (their drains
-// hold for the runner's re-attach), the decoded staging, and the
-// host's seed — the runner then re-attaches instead of fanning out.
+// adoptLegacyLeafGroup resumes a SCHEMA-5 parallel LEAF fan-out (SRD-090.A
+// FR-7). Its still-running instances were recorded as tracks, which
+// restoreTracks discarded — a leaf instance is an execution now, not a track,
+// and rebuilding one would re-decorate the activity and fan it out again —
+// keeping only their ordinals, which is the executor set this rebuilds.
+//
+// An ordinal the document did not carry a track for had already completed
+// before the capture and its output is in the staging, so it is marked
+// completed and never re-runs.
+func (ls *loopState) adoptLegacyLeafGroup(
+	host *track, rec *checkpoint.MIGroupRecord,
+) {
+	running := ls.inst.restoredLeafOrdinals[rec.HostTrack]
+
+	live := make([]checkpoint.IterationInstance, 0, len(running))
+	for _, ord := range running {
+		live = append(live, checkpoint.IterationInstance{
+			Ordinal: ord, State: instanceRunning,
+		})
+	}
+
+	host.iterSeed = &checkpoint.IterationRecord{
+		Kind:      iterKindMIParallel,
+		N:         rec.N,
+		Completed: rec.N - len(running),
+		Staging:   rec.Staging,
+		Instances: completedOutside(live, rec.N),
+	}
+	host.miSeed = &checkpoint.MIRecord{
+		N: rec.N, Completed: rec.N - len(running), Staging: rec.Staging,
+	}
+}
+
+// adoptRestoredGroups translates a SCHEMA-5 parallel Multi-Instance group
+// record into the executor-model state its own restore derives from the
+// scope table (SRD-082 FR-4 → SRD-090.A FR-7).
+//
+// It is a migration, not a mechanism. Nothing writes an MIGroupRecord any
+// more: a schema-6 capture records the executor set on the host's track and
+// the instance ordinals in the scope paths themselves, which is why the
+// generic derivation below needs no record at all. A document captured
+// before that still has to restore, so its open set is read here and
+// re-expressed as what the decorator now expects — one instance entry per
+// open scope, and the executor set seeded on the host.
+//
+// It can go once schema-5 documents are out of support.
 func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 	for i := range ls.inst.restoredGroups {
 		rec := &ls.inst.restoredGroups[i]
@@ -428,36 +449,25 @@ func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 
 		node := host.steps[len(host.steps)-1].node
 
-		mi := multiInstanceOf(node)
-		if mi == nil {
+		if multiInstanceOf(node) == nil {
 			return errs.New(
 				errs.M("restored MI group host %q is not a Multi-Instance "+
 					"node", node.ID()),
 				errs.C(errorClass, errs.InvalidState))
 		}
 
-		grp := &miGroup{
-			host:       host,
-			node:       node,
-			open:       make(map[scope.DataPath]int, len(rec.Open)),
-			inputItem:  mi.InputDataItem(),
-			outputRef:  mi.LoopDataOutputRef(),
-			outputItem: mi.OutputDataItem(),
-			n:          rec.N,
-		}
+		// a LEAF group carries no Open scopes — a leaf instance never had
+		// one, so its running set was recorded as TRACKS and rides here as
+		// their ordinals (SRD-090.A FR-7). Deriving Completed from
+		// len(rec.Open) would call every ordinal finished and resume none.
+		if _, composite := node.(scopeHost); !composite {
+			ls.adoptLegacyLeafGroup(host, rec)
 
-		if grp.outputRef != "" {
-			grp.staging = values.NewArray[any](make([]any, rec.N)...)
-
-			if rec.Staging != nil {
-				if err := seedStaging(context.Background(), grp.staging,
-					rec.Staging); err != nil {
-					return err
-				}
-			}
+			continue
 		}
 
 		open := ls.inst.sc.plane.OpenPaths()
+		live := make([]checkpoint.IterationInstance, 0, len(rec.Open))
 
 		for _, o := range rec.Open {
 			path := scope.DataPath(o.Path)
@@ -469,41 +479,66 @@ func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 					errs.C(errorClass, errs.InvalidState))
 			}
 
-			// a LEAF instance scope's restored track sits at the GROUP
-			// NODE itself (SRD-086 FR-2): re-mark it for plain
-			// execution, or its executeStep would re-enter the MI
-			// decorator and fan out from inside the fan-out.
-			for _, tr := range initial {
-				if tr.scopePath == path &&
-					tr.steps[len(tr.steps)-1].node == node {
-					tr.leafPlain = true
-				}
-			}
-
 			ls.scopes[path] = &scopeEntry{
 				host:        host,
-				group:       grp,
 				node:        node,
 				parent:      host.scopePath,
 				ordinal:     o.Ordinal,
+				instance:    true,
 				awaitAttach: true,
 			}
-			grp.open[path] = o.Ordinal
+
+			live = append(live, checkpoint.IterationInstance{
+				Ordinal: o.Ordinal, State: instanceRunning,
+			})
 		}
 
-		ls.miGroups[host.ID()] = grp
 		ls.waiting[host.ID()] = struct{}{}
 
-		// the drains already absorbed by the capture (closed scopes,
-		// staged outputs) seed the runner's delivered count; recorded
-		// pending folds in — those drains completed before the crash.
-		host.miParallelSeed = &miParallelSeed{
-			n:         rec.N,
-			completed: rec.N - len(rec.Open),
+		// an ordinal the record does not list as open had already drained
+		// before the capture, and its output is in the staging — so the
+		// set names the open ones running and everything else completed,
+		// which is exactly what restoredStates reads.
+		host.iterSeed = &checkpoint.IterationRecord{
+			Kind:      iterKindMIParallel,
+			N:         rec.N,
+			Completed: rec.N - len(rec.Open),
+			Staging:   rec.Staging,
+			Instances: completedOutside(live, rec.N),
+		}
+		host.miSeed = &checkpoint.MIRecord{
+			N: rec.N, Completed: rec.N - len(rec.Open), Staging: rec.Staging,
 		}
 	}
 
 	return nil
+}
+
+// completedOutside fills the ordinals live does not name, up to n, as
+// completed instances — the half of a restored fan-out's executor set that
+// a group record recorded only by omission.
+func completedOutside(
+	live []checkpoint.IterationInstance, n int,
+) []checkpoint.IterationInstance {
+	open := make(map[int]struct{}, len(live))
+	for _, inst := range live {
+		open[inst.Ordinal] = struct{}{}
+	}
+
+	set := make([]checkpoint.IterationInstance, 0, n)
+
+	for ord := range n {
+		state := instanceCompleted
+		if _, ok := open[ord]; ok {
+			state = instanceRunning
+		}
+
+		set = append(set, checkpoint.IterationInstance{
+			Ordinal: ord, State: state,
+		})
+	}
+
+	return set
 }
 
 // trackByID finds a restored track by its recorded id.
@@ -517,36 +552,168 @@ func trackByID(initial []*track, id string) *track {
 	return nil
 }
 
+// recordedScopeHost resolves an open scope's host and ordinal by LOOKUP,
+// from what the Schema-7 record says rather than from what the path looks
+// like (SRD-090.A M3c). It reports a nil host when the document predates
+// Schema 7 or names a track the table does not carry, which sends the
+// caller to the derivation below.
+//
+// A track id survives a restore unchanged (restoredTrack rebuilds the
+// recorded identity), so this is exact where the derivation is inferential
+// — and it needs no precedence rule, because it never has to decide what a
+// path segment MEANT.
+//
+// A recorded host that is absent from the track table is NOT an error
+// here: a Schema-7 document could name a track whose record was pruned,
+// and falling through to the derivation is strictly better than refusing —
+// the derivation either finds a host or reports the disagreement itself,
+// with the message that already exists for it.
+func (ls *loopState) recordedScopeHost(
+	initial []*track, path scope.DataPath,
+) (*track, flow.Node, int) {
+	for i := range ls.inst.restoredScopes {
+		rec := &ls.inst.restoredScopes[i]
+		if rec.Path != string(path) || rec.HostTrack == "" {
+			continue
+		}
+
+		for _, t := range initial {
+			if t.ID() != rec.HostTrack {
+				continue
+			}
+
+			n := t.steps[len(t.steps)-1].node
+			if _, ok := n.(scopeHost); !ok {
+				// the recorded host is no longer on a composite — the
+				// document's two tables disagree. Let the derivation
+				// speak, so one message covers both routes.
+				return nil, nil, -1
+			}
+
+			return t, n, rec.Ordinal
+		}
+
+		return nil, nil, -1
+	}
+
+	return nil, nil, -1
+}
+
 // restoredScopeHost finds the restored track hosting the open scope at
 // path: a track in the parent scope whose current node is a composite
 // and whose child segment derives that path.
+//
+// **The Schema ≤ 6 path** (SRD-090.A M3c). A Schema-7 document answers by
+// lookup in recordedScopeHost above; this derivation stays for documents
+// written before the scope table named its own hosts, and retires with
+// Schema 6.
+//
+// It reports the instance ordinal the segment carries, or -1 for a host's
+// own scope. A FANNED-OUT instance's segment is `sp-<id>-<ord>`, so the
+// ordinal — the one thing about an open instance that the track table
+// cannot show — is derivable from the path itself, and the open set needs
+// no record of its own (SRD-090.A M3b, retiring MIGroupRecord.Open).
+// A host's OWN scope is looked for across ALL candidates before any
+// instance reading is tried, and only a node that actually fans out can own
+// an instance. Both rules exist for the same collision: `sp-a-1` is node
+// `a-1`'s own scope AND instance 1 of node `a`, and a single pass would
+// answer whichever the track table happened to list first. Only one of the
+// two can be open at a time — they are the same DataPath — so the
+// precedence decides an interpretation, not a conflict.
 func restoredScopeHost(
 	initial []*track, parent, path scope.DataPath,
-) (*track, flow.Node) {
+) (*track, flow.Node, int) {
 	for _, t := range initial {
-		if t.scopePath != parent {
+		n, seg, ok := restoredHostSegment(t, parent)
+		if !ok {
 			continue
 		}
 
-		n := t.steps[len(t.steps)-1].node
-		if _, ok := n.(scopeHost); !ok {
-			continue
+		if child, err := t.scopePath.Append(seg); err == nil && child == path {
+			return t, n, -1
 		}
-
-		seg := scopeSegment(n)
-		if t.scopeSeg != "" {
-			seg = t.scopeSeg
-		}
-
-		child, err := t.scopePath.Append(seg)
-		if err != nil || child != path {
-			continue
-		}
-
-		return t, n
 	}
 
-	return nil, nil
+	for _, t := range initial {
+		n, seg, ok := restoredHostSegment(t, parent)
+		if !ok || !fansOut(n) {
+			continue
+		}
+
+		if ord, ok := instanceOrdinalOf(t, seg, path); ok {
+			return t, n, ord
+		}
+	}
+
+	return nil, nil, -1
+}
+
+// restoredHostSegment reports the composite node a restored track is
+// executing and the scope segment that track opens under parent, or false
+// when the track hosts no scope there.
+func restoredHostSegment(
+	t *track, parent scope.DataPath,
+) (flow.Node, string, bool) {
+	if t.scopePath != parent {
+		return nil, "", false
+	}
+
+	n := t.steps[len(t.steps)-1].node
+	if _, ok := n.(scopeHost); !ok {
+		return nil, "", false
+	}
+
+	if t.scopeSeg != "" {
+		return n, t.scopeSeg, true
+	}
+
+	return n, scopeSegment(n), true
+}
+
+// instanceRecordedDone reports whether the host's restored executor set
+// calls instance ord finished. False when the host carries no set at all —
+// a document written before Schema 6, whose fanned-out position rides the
+// group record instead (SRD-090.A FR-7).
+func instanceRecordedDone(host *track, ord int) bool {
+	if host.iterSeed == nil {
+		return false
+	}
+
+	for _, inst := range host.iterSeed.Instances {
+		if inst.Ordinal == ord {
+			return inst.State == instanceCompleted
+		}
+	}
+
+	return false
+}
+
+// instanceOrdinalOf reports the ordinal path carries as an instance scope
+// of the host track's segment — `<seg>-<ord>` under the host's own scope.
+//
+// The prefix is built with Append rather than compared as a string, so the
+// path grammar stays in one place; and what follows it must read back as
+// exactly the number it names — which is also what keeps a DESCENDANT of an
+// instance scope out, since any deeper path still carries a separator.
+func instanceOrdinalOf(
+	t *track, seg string, path scope.DataPath,
+) (int, bool) {
+	prefix, err := t.scopePath.Append(seg + "-")
+	if err != nil {
+		return 0, false
+	}
+
+	rest, found := strings.CutPrefix(string(path), string(prefix))
+	if !found {
+		return 0, false
+	}
+
+	ord, err := strconv.Atoi(rest)
+	if err != nil || ord < 0 || strconv.Itoa(ord) != rest {
+		return 0, false
+	}
+
+	return ord, true
 }
 
 // incidentHoldsScope reports whether the incident still holds its
@@ -652,15 +819,14 @@ func (ls *loopState) completeScope(
 		return
 	}
 
-	// SRD-056.A: a PARALLEL Multi-Instance instance captures its output the same
-	// way, keyed by its group's ordinal rather than the sequential host's.
-	if entry.group != nil {
-		if err := ls.captureParallelOutput(ctx, entry, path); err != nil {
-			ls.inst.fail(err)
-			ls.stopAll()
+	// SRD-090.A M3b: the OPENING INSTANCE's own capture, the executor-driven
+	// successor to both of the above — read here for the same reason, and
+	// handed over by the drain close below rather than by a lock.
+	if err := ls.captureInstanceOutput(ctx, entry, path); err != nil {
+		ls.inst.fail(err)
+		ls.stopAll()
 
-			return
-		}
+		return
 	}
 
 	// SRD-082 FR-2: one serial pass completed — advance the loop-owned
@@ -690,86 +856,82 @@ func (ls *loopState) completeScope(
 	// guard anything (SRD-052 FR-5).
 	ls.disarmScopeHandlers(path)
 
-	// a parallel Multi-Instance instance carries its ordinal on the entry, not on
-	// the shared host.loopCounter (SRD-056.A FR-11); a serial scope reads it via
-	// scopeLoopCounter as before.
-	ordinal := scopeLoopCounter(entry.node, entry.host)
-	if entry.group != nil {
-		ordinal = entry.ordinal
-	}
-
-	ls.reportScope(observability.PhaseCompleted, entry.node, path, ordinal)
+	ls.reportScope(
+		observability.PhaseCompleted, entry.node, path, scopeFactOrdinal(entry))
 	ls.reportAdHocSettled(entry, observability.PhaseCompleted)
 
-	// a parallel Multi-Instance instance drains into its group's N-of-N barrier
-	// (SRD-056.A): the off-loop decorator (runMIParallel) owns the counting and the
-	// completion policy, so the loop only removes the instance from the open set and
-	// delivers the drain to the parked runner — one at a time, queueing any that
-	// arrive while the runner is busy (the cap-1 handshake, §4.2).
-	if entry.group != nil {
-		grp := entry.group
-		delete(grp.open, path)
-
-		if _, waiting := ls.waiting[grp.host.ID()]; waiting {
-			ls.dispatchToParked(ctx, trackEvent{
-				kind:  evDeliver,
-				track: grp.host,
-				eDef:  newScopeDone(),
-			})
-		} else {
-			grp.pending++
-		}
-
-		return
-	}
-
-	ls.resumeScopeHost(ctx, path, entry)
+	// an executor's own scope drains to the executor (SRD-090.A M3b). The
+	// close is the signal — one scope drains exactly once, and a closed
+	// channel needs no reader to be present yet, so an instance still
+	// between its open and its wait cannot miss it.
+	ls.releaseScopeHost(ctx, path, entry)
 }
 
-// resumeScopeHost resumes a closed scope's parked host with the synthetic
-// completion and reopens the scope for a queued re-entry host (§4.4). Runs
-// on the loop goroutine.
-func (ls *loopState) resumeScopeHost(
-	ctx context.Context,
-	path scope.DataPath,
-	entry *scopeEntry,
+// releaseScopeHost wakes whatever was waiting on a scope that has just left
+// the table — drained, canceled or terminated — and hands the path to the
+// next host queued for it (§4.4).
+//
+// Every scope is opened by an activity instance's executor now (SRD-090.A
+// M3c), so the wake is its drain channel: closing it needs no reader to be
+// present yet, which is what lets an instance still between its open and
+// its wait not miss the signal. A restored entry carries no channel until
+// its runner re-attaches, and closing nothing is correct there — the
+// re-attach either finds the entry and adopts its drain, or finds the path
+// free and opens it afresh.
+func (ls *loopState) releaseScopeHost(
+	ctx context.Context, path scope.DataPath, entry *scopeEntry,
 ) {
-	// ADR-025 v.2 §2.12: a composite that drives its own iteration off the loop (a
-	// Standard-Loop or a sequential Multi-Instance composite) decides re-entry
-	// itself — the loop just delivers the drain to the parked decorator
-	// (runCompositeLoop / runMISequential), which tests its condition and requests
-	// the next pass. Only a parallel Multi-Instance still uses the loop-driven seam.
-	if drivesOwnIteration(entry.node) {
-		ls.dispatchToParked(ctx, trackEvent{
-			kind:  evDeliver,
-			track: entry.host,
-			eDef:  newScopeDone(),
-		})
+	if entry.drain != nil {
+		close(entry.drain)
+	}
+
+	ls.serveScopeQueue(ctx, path, entry)
+}
+
+// serveScopeQueue re-opens a just-closed path for the host that has been
+// waiting on it (§4.4). Runs on the loop goroutine, after the scope is
+// closed and its entry removed, so the open sees a free path.
+//
+// The remaining queue is carried onto the fresh entry rather than served
+// in a loop: only one of them can hold the path, and the next one waits
+// exactly as this one did.
+func (ls *loopState) serveScopeQueue(
+	ctx context.Context, path scope.DataPath, entry *scopeEntry,
+) {
+	// drop the requests whose host no longer exists to serve. A queued host
+	// waits inside its roundtrip, which honors its context — so a boundary
+	// fire or a terminate can take it away while it waits, leaving a request
+	// nobody is listening for. Opening its scope anyway would seed the
+	// sub-process body and run it DETACHED from any live token: real work,
+	// real side effects, no one to receive the result (SRD-090.A M4b).
+	//
+	// Its reply channel is buffered, so the unsent reply costs nothing.
+	for len(entry.queue) > 0 && !entry.queue[0].host.alive() {
+		entry.queue = entry.queue[1:]
+	}
+
+	if len(entry.queue) == 0 {
+		return
+	}
+
+	next, rest := entry.queue[0], entry.queue[1:]
+
+	ls.handleScopeOpen(ctx, next)
+
+	if len(rest) == 0 {
+		return
+	}
+
+	if fresh, ok := ls.scopes[path]; ok {
+		fresh.queue = append(fresh.queue, rest...)
 
 		return
 	}
 
-	// resume the parked host through the standard parked-dispatch contract.
-	ls.dispatchToParked(ctx, trackEvent{
-		kind:  evDeliver,
-		track: entry.host,
-		eDef:  newScopeDone(),
-	})
-
-	// a queued sibling host reopens the scope (sequential re-entry, §4.4).
-	if len(entry.queue) > 0 {
-		next := entry.queue[0]
-		entry.queue = entry.queue[1:]
-
-		ls.onScopeOpen(ctx, next, entry.node)
-
-		if len(entry.queue) > 0 {
-			// carry the remaining queue into the fresh entry.
-			if fresh, ok := ls.scopes[path]; ok {
-				fresh.queue = entry.queue
-			}
-		}
-	}
+	// the re-open failed and replied with the error, so nothing holds the
+	// path now. Serving the next one keeps the queue draining instead of
+	// stranding every host behind a single failure.
+	ls.serveScopeQueue(ctx, path, &scopeEntry{queue: rest})
 }
 
 // underScope reports whether p is path itself or a descendant of it.
@@ -838,15 +1000,7 @@ func (ls *loopState) cancelScope(path scope.DataPath, phase observability.Phase)
 				observability.AttrScopePath, string(p), observability.AttrError, err.Error())
 		}
 
-		// a parallel Multi-Instance instance reports its OWN ordinal (SRD-056.A
-		// FR-14), not the shared host.loopCounter that scopeLoopCounter surfaces
-		// now that a parallel MI self-drives.
-		ord := scopeLoopCounter(entry.node, entry.host)
-		if entry.group != nil {
-			ord = entry.ordinal
-		}
-
-		ls.reportScope(phase, entry.node, p, ord)
+		ls.reportScope(phase, entry.node, p, scopeFactOrdinal(entry))
 
 		// An ad-hoc container's routing ended here however the scope was cut
 		// short — a Terminate still leaves the routing canceled, so the terminal
@@ -868,7 +1022,7 @@ func (ls *loopState) terminateScope(ctx context.Context, path scope.DataPath) {
 	}
 
 	ls.cancelScope(path, observability.PhaseTerminated)
-	ls.resumeScopeHost(ctx, path, entry)
+	ls.releaseScopeHost(ctx, path, entry)
 }
 
 // reportScope emits one scope-lifecycle fact (SRD-049 FR-13).
@@ -910,4 +1064,23 @@ func scopeLoopCounter(node flow.Node, host *track) int {
 	}
 
 	return -1
+}
+
+// scopeFactOrdinal is the ordinal a scope's lifecycle fact carries.
+//
+// A FANNED-OUT instance reports its OWN (SRD-056.A FR-14), which is the one
+// on its entry: the host's loopCounter is shared by all N and stands still
+// for the whole fan-out, so it cannot name any of them. Every serial scope
+// reads the host's pass counter as before.
+//
+// The two facts a scope emits — Completed and Canceled — ask this one
+// question, and asked separately they drifted once already: the open side
+// learned the instance ordinal in this milestone while both close sides
+// still reported the host's.
+func scopeFactOrdinal(entry *scopeEntry) int {
+	if entry.instance {
+		return entry.ordinal
+	}
+
+	return scopeLoopCounter(entry.node, entry.host)
 }

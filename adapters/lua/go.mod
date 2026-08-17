@@ -2,7 +2,7 @@ module github.com/dr-dobermann/gobpm/adapters/lua
 
 go 1.25
 
-toolchain go1.25.12
+toolchain go1.25.13
 
 replace github.com/dr-dobermann/gobpm => ../..
 

@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 )
 
@@ -19,22 +20,53 @@ import (
 // scopeLoopCounter relies on). conditionMet arrives over the protocol
 // (scopeNote) when the runner's completionCondition fires.
 type iterMirror struct {
-	staging      *values.Array[any]
+	staging *values.Array[any]
+	// kind names the iteration shape for the record (SRD-090.A FR-6). It
+	// is derived from the NODE rather than posted, because every shape
+	// that reaches a mirror is decided by the node's own loop
+	// characteristics — a decorator posting it would be telling the loop
+	// something the loop can already read.
+	kind string
+	// instances describe the activity's executor set (FR-6), posted by the
+	// decorator (scopeIterPost). It is the decorator's to report for every
+	// fanned-out shape: a leaf opens no scope and spawns no track, so
+	// nothing else can see its instances at all, and a composite fan-out is
+	// invisible the same way in the window before its first scope opens.
+	// Empty for a SERIAL composite, whose one live pass is its open scope
+	// and whose position rides the drain protocol.
+	instances    []checkpoint.IterationInstance
 	n            int
 	completed    int
 	conditionMet bool
 }
 
+// The iteration shapes a record names. They describe the SHAPE, not the
+// node: a sequential Multi-Instance reads the same whether its instances
+// are executions of a leaf or child scopes of a composite, which is the
+// point of recording instances rather than tracks.
+const (
+	iterKindStdLoop      = "std_loop"
+	iterKindMISequential = "mi_sequential"
+	iterKindMIParallel   = "mi_parallel"
+)
+
 // ensureIterMirror registers (or returns) the mirror for a host whose
-// composite drives its own iteration. Runs on the loop goroutine, from
+// activity drives its own iteration. Runs on the loop goroutine, from
 // handleScopeOpen — the runner is parked awaiting the reply, so the
 // miState reads are fenced by the request channel.
-func (ls *loopState) ensureIterMirror(host *track) *iterMirror {
+//
+// The kind comes from the REQUEST rather than from the node: deriving it
+// here made the loop ask what kind of iteration a node drives, which is the
+// decorator's knowledge (SRD-090.A FR-11, the same shape `iterating` fixed
+// one call up).
+func (ls *loopState) ensureIterMirror(
+	host *track, kind string,
+) *iterMirror {
 	if m, ok := ls.iter[host.ID()]; ok {
 		return m
 	}
 
-	m := &iterMirror{}
+	m := &iterMirror{kind: kind}
 	if st := host.miState; st != nil {
 		m.n = st.numberOfInstances
 		m.staging = st.staging
@@ -47,8 +79,14 @@ func (ls *loopState) ensureIterMirror(host *track) *iterMirror {
 
 // markIterDrain records one completed serial pass (SRD-082 FR-2). Runs
 // on the loop goroutine from completeScope, before the runner resumes.
+//
+// A FANNED-OUT instance is not a serial pass and is skipped: the host's
+// loopCounter stands still for the whole fan-out, so it cannot say how many
+// instances are done, and the decorator posts that set itself
+// (postPosition). Deriving it here would overwrite the truth with a zero
+// (SRD-090.A M3b).
 func (ls *loopState) markIterDrain(entry *scopeEntry) {
-	if entry.group != nil || !drivesOwnIteration(entry.node) {
+	if entry.instance || !entry.iterating {
 		return
 	}
 

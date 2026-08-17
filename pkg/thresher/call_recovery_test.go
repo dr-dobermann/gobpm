@@ -535,9 +535,12 @@ func TestCompositeCallKillAndResume(t *testing.T) {
 			return false
 		}
 
-		// the recorded position: pass 1 in flight, pass 0 done.
+		// the recorded position: pass 1 in flight, pass 0 done. The
+		// composite's position is the executor set since its instances
+		// became executors (SRD-090.A FR-6, M3a) — the same count, under
+		// the name that replaced the MI mirror.
 		for _, tr := range doc.Tracks {
-			if tr.MI != nil && tr.MI.Completed == 1 {
+			if tr.Iteration != nil && tr.Iteration.Completed == 1 {
 				childID = doc.Calls[0].ChildID
 
 				return true

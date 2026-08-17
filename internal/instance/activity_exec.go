@@ -2,14 +2,19 @@ package instance
 
 import (
 	"context"
+	"strconv"
 
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // awaitKind classifies what an activity instance is currently waiting on.
-// The distinction is load-bearing twice over (ADR-025 v.3 §2.13): only an
+// The distinction is load-bearing twice over (ADR-025 §2.13): only an
 // awaitEvent instance holds a subscription the hub must know about, and only
 // an awaitEvent instance contributes to the instance's residency. An
 // instance awaiting a child scope's drain or a child instance is NOT doing
@@ -23,14 +28,16 @@ const (
 	awaitNothing awaitKind = iota
 	// awaitEvent — parked on an event subscription.
 	awaitEvent
-	// The two remaining kinds — awaiting a child scope's drain, and
-	// awaiting a child instance — arrive with the sub-process and call
-	// executors that can hold them (SRD-090.A M3). A leaf instance can
-	// hold neither: it opens no scope and owns no child.
+	// awaitScope — parked for the drain of a child scope this instance
+	// opened (scopeExec). The body's tokens are doing the work.
+	awaitScope
+	// The last kind — awaiting a child INSTANCE — arrives with the call
+	// executor that can hold it (SRD-090.A M3d). A leaf instance can hold
+	// none of the two: it opens no scope and owns no child.
 )
 
 // instanceState reports one activity instance in the iteration vocabulary
-// (ADR-025 v.3 §2.9.1): the ordinal identifies it, and the rest says what it
+// (ADR-025 §2.9.1): the ordinal identifies it, and the rest says what it
 // is doing. The same shape is what the durable record persists, what the
 // token view projects and what an incident carries — one vocabulary, so the
 // three surfaces cannot describe an instance differently (SRD-090.C).
@@ -44,7 +51,7 @@ type instanceState struct {
 }
 
 // activityExec executes ONE instance of an activity and owns whatever that
-// instance awaits (ADR-025 v.3 §2.13).
+// instance awaits (ADR-025 §2.13).
 //
 // It is deliberately NOT exec.NodeExecutor (pkg/exec), which is the
 // interface a NODE implements to execute itself: that answers "how does this
@@ -77,78 +84,173 @@ type activityExec interface {
 type nodeExec struct {
 	t    *track
 	step *stepInfo
-	ord  int
+
+	// capture takes this instance's declared output while it is still the
+	// instance's own — see activityInstance.capture.
+	capture func(f *scope.Frame) error
+
+	// local is this instance's own data, bound frame-local so a concurrent
+	// sibling cannot overwrite it (SRD-090.A FR-4). nil for the single
+	// instance of a plain activity, which has nothing to distinguish.
+	local []data.Data
+
+	ord int
 }
 
 // execFor builds the executor that runs this node: a decorator when the node
 // carries loop characteristics this slice has converted, a single instance
 // otherwise. The caller does not care which — both satisfy activityExec, so
 // a track drives one executor and cannot tell how many instances are behind
-// it (ADR-025 v.3 §2.13).
+// it (ADR-025 §2.13).
 //
-// The remaining iteration kinds are still routed by executeStep and move here
-// as they convert (SRD-090.A M2/M3).
+// Every kind routes through here now (SRD-090.A M3c): the leaf Standard
+// Loop was the last exception, and it is a decorator over node executors
+// like the rest.
 func execFor(t *track, step *stepInfo) activityExec {
-	if mi := multiInstanceOf(step.node); mi != nil && mi.IsSequential() {
-		if _, composite := step.node.(scopeHost); !composite {
-			return newLeafDecorator(t, step, mi)
-		}
+	_, composite := step.node.(scopeHost)
+
+	if sl := standardLoopOf(step.node); sl != nil {
+		return newLoopDecorator(t, step, sl, composite)
 	}
 
-	// A spawned parallel-leaf instance is ordinal 0 of nothing until it
-	// says otherwise: the track it runs on carries the pass ordinal the
-	// fan-out bound (setLoopCounter), and that IS this instance's
-	// identity. Reading it here keeps the ordinal meaningful before
-	// anything consumes it, rather than leaving a plausible zero for the
-	// milestone that starts keying records on it.
-	return newNodeExec(t, step, t.loopCounterSnap())
+	if mi := multiInstanceOf(step.node); mi != nil {
+		return newIterDecorator(t, step, mi, composite)
+	}
+
+	// A plain activity is instance zero of one — the common case kept
+	// uniform rather than special-cased, INCLUDING a plain composite
+	// (SRD-090.A M3c). It used to decide earlier and elsewhere: it parked
+	// on entry for a loop-driven scope re-entry, so its single instance
+	// was never executed from a step at all, and FR-2's "one decision"
+	// was two.
+	//
+	// Routing it here is also what makes FR-8 one rule: a plain composite
+	// host is not a wait, its token forked into a child scope, and asking
+	// the NODE whether its wait can be externalized was a category error
+	// that pinned every Sub-Process in memory.
+	if composite {
+		return newPlainScopeExec(t, step)
+	}
+
+	return newNodeExec(t, step, 0)
 }
 
-// leafDecorator drives the instances of an iterated LEAF activity, holding
-// one executor per instance (ADR-025 v.3 §2.13). It implements activityExec
+// iterDecorator drives the instances of a Multi-Instance activity, holding
+// one executor per instance (ADR-025 §2.13). It implements activityExec
 // itself, which is what closes the composition: to the track it is the thing
 // that runs the activity, exactly as a single instance would be.
 //
-// This slice drives the SEQUENTIAL kind, where instances run one at a time
-// and the decorator holds the live one. The record is unchanged by that: a
-// sequential leaf's position was never a per-instance track — it is the
-// iteration mirror on the host's own record — so nothing about persistence
-// moves until parallel instances stop being tracks (M2b).
-type leafDecorator struct {
+// It is indifferent to WHAT an instance is. A leaf activity's instance is an
+// execution of its node; a composite activity's instance is a child scope
+// (scopeExec). Everything the iteration itself decides — how many instances,
+// what each one is given, when the completionCondition stops the run, what
+// the assembled output is — is the same question in both cases, which is why
+// one decorator answers it and the two executors differ only in what they do
+// when run.
+//
+// composite records which realization this activity's instances take. It is
+// the one difference that leaks past the executor boundary, in three places
+// that are named where they occur: the step is re-armed per pass only for a
+// leaf, the declared output is taken by the decorator only for a leaf (the
+// loop takes a composite's before its scope closes, the last moment it
+// exists), and the exit follows the flows differently.
+type iterDecorator struct {
 	t    *track
 	step *stepInfo
 	mi   multiInstance
 
 	// live is the instance currently executing, or nil between passes and
 	// after the last one. A sequential decorator holds at most one.
-	live *nodeExec
+	live activityExec
+
+	// seed is the restored executor set this activity resumes from, taken
+	// from the track at the start of the run (SRD-090.A FR-7).
+	seed *checkpoint.IterationRecord
+
+	composite bool
 }
 
-// newLeafDecorator builds the decorator for an iterated leaf activity.
-func newLeafDecorator(
-	t *track, step *stepInfo, mi multiInstance,
-) *leafDecorator {
-	return &leafDecorator{t: t, step: step, mi: mi}
+// newIterDecorator builds the decorator for an iterated activity.
+func newIterDecorator(
+	t *track, step *stepInfo, mi multiInstance, composite bool,
+) *iterDecorator {
+	return &iterDecorator{t: t, step: step, mi: mi, composite: composite}
+}
+
+// buildInstance makes the executor for ordinal ord: a child scope for a
+// composite activity, an execution of the node for a leaf.
+func (d *iterDecorator) buildInstance(ord int) activityExec {
+	if d.composite {
+		e := newScopeExec(d.t, d.step, ord)
+		e.iterKind = d.iterKind()
+
+		return e
+	}
+
+	return newNodeExec(d.t, d.step, ord)
+}
+
+// iterKind names the shape this decorator drives, for the loop's position
+// mirror (FR-6). The decorator states it rather than the loop deriving it
+// from the node — see scopeRequest.iterKind.
+func (d *iterDecorator) iterKind() string {
+	if d.mi != nil && d.mi.IsSequential() {
+		return iterKindMISequential
+	}
+
+	return iterKindMIParallel
+}
+
+// exitFlows follows the activity's outgoing flow ONCE, on exit.
+//
+// A composite re-runs executeNode: its node execution is what selects the
+// flow, and the body already ran in the child scopes. A leaf must NOT —
+// executing the node IS the activity, and the instances already did that N
+// times (SRD-086 FR-3), so its declared outgoing flows are followed
+// directly.
+func (d *iterDecorator) exitFlows(
+	ctx context.Context,
+) ([]*flow.SequenceFlow, error) {
+	if d.composite {
+		return d.t.executeNode(ctx, d.step)
+	}
+
+	return d.step.node.Outgoing(), nil
 }
 
 // run drives every instance and follows the activity's outgoing flow ONCE,
 // on exit — the activity is one token's step regardless of how many times it
 // executed.
-func (d *leafDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
+func (d *iterDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	it := miIterator{mi: d.mi}
 
-	n, start, err := d.t.prepareSequential(ctx, it, d.mi, d.step)
+	d.seed = d.t.takeIterSeed()
+
+	n, start, err := d.t.prepareIteration(ctx, it, d.mi, d.step)
 	if err != nil {
 		return nil, err
 	}
 
 	// N <= 0 runs zero instances — the activity itself does not execute,
-	// and the token leaves via the declared outgoing flow.
+	// and the token leaves via the activity's outgoing flow.
 	if n <= 0 {
 		d.t.miState = nil
 
-		return d.step.node.Outgoing(), nil
+		return d.exitFlows(ctx)
 	}
+
+	if !d.mi.IsSequential() {
+		return d.runParallel(ctx, it, n)
+	}
+
+	// the activity is ONE step of its token, so it transitions and records
+	// once here; TrackIterating then puts the passes below the state
+	// machine's granularity (ADR-025 §2.13b.1e). Until M3f the sequential
+	// path did the opposite of the parallel one — every pass transitioned
+	// and recorded, so one activity reported N step executions.
+	d.t.updateState(TrackExecutingStep)
+	d.t.record(TrackExecutingStep)
+	d.t.updateState(TrackIterating)
 
 	var nextFlows []*flow.SequenceFlow
 
@@ -174,12 +276,27 @@ func (d *leafDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	d.live = nil
 
 	// a condition-stopped (or zero-flow) run still leaves via the
-	// activity's declared outgoing flow, exactly once.
-	if nextFlows == nil {
-		nextFlows = d.step.node.Outgoing()
+	// activity's outgoing flow, exactly once. A composite's instances
+	// return no flows at all — its node has not executed yet — so the exit
+	// is always the one that produces them.
+	//
+	// The exit runs while the track is STILL iterating, and leaving the
+	// state early is a real error rather than a tidiness question: a
+	// composite's exit executes its node, so it would record a SECOND step
+	// for an activity that is one step of its token.
+	exit := nextFlows
+	if nextFlows == nil || d.composite {
+		flows, ferr := d.exitFlows(ctx)
+		if ferr != nil {
+			return nil, ferr
+		}
+
+		exit = flows
 	}
 
-	return nextFlows, nil
+	d.t.updateState(TrackProcessStepResults)
+
+	return exit, nil
 }
 
 // runInstance executes instance i through its own executor, and refuses if
@@ -198,10 +315,10 @@ func (d *leafDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 // Its DECISION is tested (refuseIfParked); what stays untested is reaching
 // it, which requires building the construct the snapshot refuses. SRD-090.B
 // covers that end to end, in the slice that makes the construct buildable.
-func (d *leafDecorator) runInstance(
+func (d *iterDecorator) runInstance(
 	ctx context.Context, it miIterator, i, n int,
 ) ([]*flow.SequenceFlow, bool, error) {
-	d.live = newNodeExec(d.t, d.step, i)
+	d.live = d.buildInstance(i)
 
 	flows, stop, err := d.runPass(ctx, it, i, n)
 	if err != nil {
@@ -219,7 +336,7 @@ func (d *leafDecorator) runInstance(
 // can be tested: reaching it from runInstance requires building the construct
 // the snapshot refuses, but WHAT it decides — a waiting instance stops the
 // iteration, naming which one — is ordinary logic and is pinned as such.
-func (d *leafDecorator) refuseIfParked(i int) error {
+func (d *iterDecorator) refuseIfParked(i int) error {
 	if d.live == nil || d.live.awaits() == awaitNothing {
 		return nil
 	}
@@ -233,9 +350,9 @@ func (d *leafDecorator) refuseIfParked(i int) error {
 }
 
 // awaits reports what the decorator's live instance awaits — the conjunction
-// is trivial while at most one instance runs (ADR-025 v.3 §2.13's
+// is trivial while at most one instance runs (ADR-025 §2.13's
 // releasability rule takes its general form when parallel instances arrive).
-func (d *leafDecorator) awaits() awaitKind {
+func (d *iterDecorator) awaits() awaitKind {
 	if d.live == nil {
 		return awaitNothing
 	}
@@ -246,7 +363,7 @@ func (d *leafDecorator) awaits() awaitKind {
 // state reports the ACTIVITY's iteration state: the live instance's ordinal
 // and what it is doing. Its own ordinal is 0 — the activity is one instance
 // of itself from the track's point of view.
-func (d *leafDecorator) state() instanceState {
+func (d *iterDecorator) state() instanceState {
 	if d.live == nil {
 		return instanceState{ordinal: 0, await: awaitNothing}
 	}
@@ -254,14 +371,657 @@ func (d *leafDecorator) state() instanceState {
 	return d.live.state()
 }
 
+// runParallel drives every instance of a parallel leaf activity at once and
+// awaits them all (ADR-025 §2.13, SRD-090.A FR-5). The N-of-N barrier is
+// ordinary control flow on the decorator's own goroutine: no loop-owned
+// group, no per-instance scope, and nothing spawns a track to iterate.
+//
+// The instances are built BEFORE any of them starts, so a build failure —
+// a collection element that will not read — faults with nothing running.
+func (d *iterDecorator) runParallel(
+	ctx context.Context, it miIterator, n int,
+) ([]*flow.SequenceFlow, error) {
+	t, step := d.t, d.step
+
+	// the activity is ONE step of its token however many instances run it,
+	// so the transitions are made here, once. TrackIterating then puts the
+	// instances below the state machine's granularity, so none of them can
+	// report a step of its own (ADR-025 §2.13b.1e).
+	t.updateState(TrackExecutingStep)
+	t.record(TrackExecutingStep)
+	t.updateState(TrackIterating)
+
+	// a parallel instance completes out of order, so its slot is addressed
+	// by ordinal — SetAt replaces rather than appends, which needs the
+	// array pre-sized to N (§2.6); a canceled slot keeps its nil (§2.7).
+	if st := t.miState; st.staging != nil {
+		st.staging = presizedStaging(ctx, st.staging, n)
+	}
+
+	outs := newInstanceOutputs(n)
+
+	// a RESTORED position never re-runs a completed ordinal (FR-7). The
+	// count alone cannot say which those are — a parallel instance
+	// completes out of order — so the recorded set is what decides, and
+	// its outputs are already in the restored staging.
+	states := restoredStates(d.seed, n)
+
+	insts := make(map[int]activityExec, n)
+
+	// a COMPOSITE instance's output is read loop-side, into the cell the
+	// executor carries; the barrier collects it once the instance reports.
+	caps := make(map[int]*instanceCapture, n)
+
+	for ord, st := range states {
+		if st == instanceCompleted {
+			continue
+		}
+
+		e, icap, err := d.instanceFor(ctx, ord, outs)
+		if err != nil {
+			return nil, err
+		}
+
+		insts[ord] = e
+
+		if icap != nil {
+			caps[ord] = icap
+		}
+	}
+
+	// the set is posted BEFORE the first instance starts, and the roundtrip
+	// is what fences it. Until then nothing has told the capture which
+	// ordinals are live: a checkpoint landing in that window would record an
+	// EMPTY set, which restores as "all N still to run" — so an activity
+	// interrupted mid-fan-out would re-run the instances a restore had
+	// already found complete (SRD-090.A FR-6/FR-7).
+	if err := d.postPosition(ctx, n-len(insts), states); err != nil {
+		return nil, err
+	}
+
+	runCtx, cancelRest := context.WithCancel(ctx)
+	defer cancelRest()
+
+	done := make(chan instanceDone, n)
+
+	for ord, e := range insts {
+		go func(ord int, e activityExec) {
+			_, err := e.run(runCtx)
+			done <- instanceDone{ord: ord, err: err}
+		}(ord, e)
+	}
+
+	return d.awaitParallel(ctx, it, parallelRun{
+		n:          n,
+		done:       done,
+		outs:       outs,
+		caps:       caps,
+		cancelRest: cancelRest,
+		states:     states,
+		launched:   len(insts),
+	}, step)
+}
+
+// instanceDone is one parallel instance reporting its ordinal and verdict.
+type instanceDone struct {
+	err error
+	ord int
+}
+
+// parallelRun is the in-flight state of a parallel fan-out: the frozen
+// instance count, the completion channel, the per-ordinal captured outputs
+// and the handle that stops the instances still running.
+type parallelRun struct {
+	done chan instanceDone
+	outs *instanceOutputs
+	// caps holds a COMPOSITE instance's output cell, filled loop-side
+	// before its scope closed and read here once it reports. Empty for a
+	// leaf fan-out, whose instances capture through their own frames.
+	caps       map[int]*instanceCapture
+	cancelRest context.CancelFunc
+	states     []string
+	n          int
+	// launched counts the instances this run actually started — N on a
+	// fresh activation, fewer when a restore found some already complete.
+	// The barrier awaits THAT many reports; awaiting N would hang forever
+	// on a resumed activity.
+	launched int
+}
+
+// stopRemaining ends the instances still running when the
+// completionCondition fires (SRD-056.A §2.7): it cancels their shared
+// context, then tears down the scopes that context cannot close for them.
+func (d *iterDecorator) stopRemaining(
+	ctx context.Context, run parallelRun,
+) error {
+	run.cancelRest()
+
+	return d.cancelInstanceScopes(ctx)
+}
+
+// cancelInstanceScopes asks the loop to tear down the instance scopes of
+// the instances this decorator has just stopped.
+//
+// The instances cannot do it themselves: each wakes from awaitDrain on the
+// context stopRemaining just canceled, and a scope request honors ctx, so
+// the request would fail and leak the very scope it meant to close. The
+// teardown belongs to whoever canceled (SRD-090.A M3b).
+//
+// A no-op for a leaf, which opens no scopes, so the barrier can call it
+// unconditionally.
+func (d *iterDecorator) cancelInstanceScopes(ctx context.Context) error {
+	if !d.composite {
+		return nil
+	}
+
+	_, err := d.t.instance.scopeExchange(ctx, scopeRequest{
+		op: scopeCancelInstances, host: d.t, node: d.step.node,
+	})
+
+	return err
+}
+
+// collectOutput moves a COMPOSITE instance's output into its positional
+// slot. The value was read loop-side from a child scope that has since
+// closed; the instance's drain returning is what makes the cell safe to
+// read here (SRD-090.A M3b). A no-op for a leaf fan-out, whose instances
+// capture through their own frames, and for one that produced nothing.
+func (run *parallelRun) collectOutput(ord int) {
+	if c := run.caps[ord]; c != nil && c.filled {
+		run.outs.set(ord, c.value)
+	}
+}
+
+// restoredStates rebuilds the per-ordinal state of a parallel iteration
+// from its recorded set, defaulting to a fresh run of every instance when
+// there is nothing recorded (SRD-090.A FR-7).
+func restoredStates(seed *checkpoint.IterationRecord, n int) []string {
+	states := make([]string, n)
+	for i := range states {
+		states[i] = instanceRunning
+	}
+
+	if seed == nil {
+		return states
+	}
+
+	for _, inst := range seed.Instances {
+		if inst.Ordinal < 0 || inst.Ordinal >= n {
+			continue
+		}
+
+		states[inst.Ordinal] = inst.State
+	}
+
+	return states
+}
+
+// The states one instance of an iterated activity reports to the record
+// (SRD-090.A FR-6). A leaf instance is never `waiting` while an iterated
+// waiting activity is refused at build time (FR-10) — SRD-090.B adds it
+// with the registration ownership that makes it correct.
+const (
+	instanceRunning   = "running"
+	instanceCompleted = "completed"
+)
+
+// postPosition tells the loop's iteration mirror which instances are live.
+// A leaf opens no scope and spawns no track, so neither the drain protocol
+// nor the track table can show the capture anything — this post is the only
+// source, and its roundtrip is the fence that makes the read loop-safe.
+func (d *iterDecorator) postPosition(
+	ctx context.Context, completed int, states []string,
+) error {
+	insts := make([]checkpoint.IterationInstance, 0, len(states))
+
+	for ord, st := range states {
+		insts = append(insts,
+			checkpoint.IterationInstance{Ordinal: ord, State: st})
+	}
+
+	_, err := d.t.instance.scopeExchange(ctx, scopeRequest{
+		op:        scopeIterPost,
+		host:      d.t,
+		node:      d.step.node,
+		iterKind:  d.iterKind(),
+		completed: completed,
+		insts:     insts,
+	})
+
+	return err
+}
+
+// awaitParallel runs the N-of-N barrier: it takes each completion in
+// arrival order, advances the counts, throws the behavior event and tests
+// the completionCondition — canceling the instances still running when it
+// fires (§2.7). It drains ALL N reports whatever happens, so no instance
+// goroutine is left writing into a run nobody is reading.
+// parallelBarrier is the N-of-N barrier's running state: how many instances
+// have completed or been terminated, and the first failure if one happened.
+//
+// A struct rather than locals so the per-report handling can be its own
+// method — the loop that drives it decides only whether a report is a
+// failure, which keeps both readable.
+type parallelBarrier struct {
+	d   *iterDecorator
+	err error
+	run parallelRun
+
+	completed  int
+	terminated int
+	stopping   bool
+}
+
+// fail records a mid-barrier failure the way a fired completionCondition is
+// recorded, and for the reason the stop path already states: the barrier must
+// take all launched reports whatever happens. Returning early left the
+// still-running instances' scopes open — an instance cannot close its own
+// scope on the way out, since what wakes it IS the canceled context, so the
+// teardown belongs to whoever canceled (SRD-090.A M4c).
+//
+// The first failure wins; later ones are already downstream of it.
+func (b *parallelBarrier) fail(ctx context.Context, err error) {
+	if b.err != nil {
+		return
+	}
+
+	b.err = err
+	b.stopping = true
+
+	if terr := b.d.stopRemaining(ctx, b.run); terr != nil {
+		b.err = terr
+	}
+}
+
+// took applies ONE completed instance's report: its output is staged, the
+// position posted, and the completionCondition consulted. Any failure becomes
+// the run's, through fail, rather than abandoning the barrier.
+func (b *parallelBarrier) took(
+	ctx context.Context, it miIterator, ord int,
+) {
+	b.completed++
+	b.run.states[ord] = instanceCompleted
+
+	b.run.collectOutput(ord)
+
+	if err := b.run.outs.stage(ctx, b.d.t.miState, ord); err != nil {
+		b.fail(ctx, err)
+
+		return
+	}
+
+	// a completed instance IS the observable transition (ADR-033 §2.2): the
+	// whole N-instance run is one step execution emitting no track events, so
+	// without this post the position never persists (SRD-090.A FR-6).
+	if err := b.d.postPosition(ctx, b.completed, b.run.states); err != nil {
+		b.fail(ctx, err)
+
+		return
+	}
+
+	if b.err != nil || b.stopping {
+		return
+	}
+
+	stop, err := b.d.parallelStep(ctx, it, b.run.n, b.completed, b.terminated)
+	if err != nil {
+		b.fail(ctx, err)
+
+		return
+	}
+
+	if stop {
+		b.stopping = true
+
+		// a teardown failure becomes the RUN's error rather than an early
+		// return, for the same reason fail exists.
+		b.err = b.d.stopRemaining(ctx, b.run)
+	}
+}
+
+func (d *iterDecorator) awaitParallel(
+	ctx context.Context, it miIterator, run parallelRun, step *stepInfo,
+) ([]*flow.SequenceFlow, error) {
+	t := d.t
+
+	// the instances a restore found already complete count as completed
+	// from the start: their outputs are in the restored staging, and the
+	// §2.9 attributes must not report them as still to come.
+	b := &parallelBarrier{d: d, run: run, completed: run.n - run.launched}
+
+	for range run.launched {
+		res := <-run.done
+
+		if res.err != nil {
+			// an instance WE stopped is terminated, not failed: it reports
+			// the cancellation of the context this decorator closed. A
+			// cancellation from above is the caller's, and faults like any
+			// other error.
+			if b.stopping && ctx.Err() == nil {
+				b.terminated++
+
+				continue
+			}
+
+			b.fail(ctx, res.err)
+
+			continue
+		}
+
+		b.took(ctx, it, res.ord)
+	}
+
+	if b.err != nil {
+		return nil, b.err
+	}
+
+	// the terminated count is only whole once every instance has reported,
+	// so the §2.9 attributes settle here (the parallel counterpart of the
+	// post-cancel rebind the loop-owned barrier did).
+	// PARALLEL: every instance exists from activation, so outstanding IS
+	// running and the derivation satisfies both of Table 10.30's clauses.
+	if err := t.bindMICounters(
+		run.n, run.n-b.completed-b.terminated,
+		b.completed, b.terminated); err != nil {
+		return nil, err
+	}
+
+	if err := it.publishOutput(t); err != nil {
+		return nil, err
+	}
+
+	t.miState = nil
+	t.setLoopCounter(0)
+	t.updateState(TrackProcessStepResults)
+
+	// the activity's declared outgoing flow is followed once, on exit —
+	// executing the node IS the activity, and the instances already did.
+	return step.node.Outgoing(), nil
+}
+
+// sequentialStep publishes the post-drain counts, throws the behavior event
+// and evaluates the completionCondition — the sequential twin of
+// parallelStep, in the same order: bind, throw, evaluate.
+//
+// The ORDER is the point (SRD-090.A M3h). SRD-055 FR-11 and §4.3 both
+// prescribe the rebind BEFORE the evaluation, so the condition sees the
+// instance that just completed — "evaluated every time an instance
+// completes" (§13.3.7). This path evaluated first and read what bindInstance
+// published at the START of the pass, one completion behind, so
+// `numberOfCompletedInstances >= 2` stopped a five-instance activity after
+// THREE. The parallel path never had the defect; this is its order.
+//
+// active is 0 throughout: the pass has drained and the next one binds its
+// own 1 (ADR-025 §2.9 — a sequential activity honors the cap).
+func (d *iterDecorator) sequentialStep(
+	ctx context.Context, it miIterator, n int,
+) (bool, error) {
+	t, mi, step := d.t, d.mi, d.step
+
+	if err := t.bindMICounters(n, 0, t.miState.completed, 0); err != nil {
+		return false, err
+	}
+
+	if err := t.throwMIBehavior(
+		ctx, mi, step.node, t.miState.completed); err != nil {
+		return false, err
+	}
+
+	if t.miState.completed >= n || mi.CompletionCondition() == nil {
+		return false, nil
+	}
+
+	met, err := it.evalCompletion(ctx, t, step.node)
+	if err != nil || !met {
+		return false, err
+	}
+
+	// a fired completionCondition CANCELS the instances that will now never
+	// run, and the spec counts those as terminated; publishing 0 left a
+	// terminal state whose counts did not add up to n (SRD-090.A M3g).
+	if err := t.bindMICounters(
+		n, 0, t.miState.completed, n-t.miState.completed); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// parallelStep is the barrier's per-completion work: publish the running
+// §2.9 counts, throw this completion's behavior event, then test the
+// completionCondition. It reports whether the condition fired.
+func (d *iterDecorator) parallelStep(
+	ctx context.Context, it miIterator, n, completed, terminated int,
+) (bool, error) {
+	t, mi := d.t, d.mi
+
+	// PARALLEL, as above: outstanding is running.
+	if err := t.bindMICounters(
+		n, n-completed-terminated, completed, terminated); err != nil {
+		return false, err
+	}
+
+	if err := t.throwMIBehavior(ctx, mi, d.step.node, completed); err != nil {
+		return false, err
+	}
+
+	if completed >= n || mi.CompletionCondition() == nil {
+		return false, nil
+	}
+
+	return it.evalCompletion(ctx, t, d.step.node)
+}
+
+// instanceFor builds instance ord: its OWN step (siblings must not race on
+// one step's state), its own frame-local data (FR-4), and — when the
+// activity assembles output — the capture that takes its result before the
+// commit makes the output's name a shared one.
+//
+// A COMPOSITE instance's capture is returned alongside the executor rather
+// than read back off it: the fan-out has to collect those loop-side, and the
+// builder is the one place that knows whether this instance has one. Asking
+// the executor instead would mean asking what KIND of executor it is, which
+// is the one question the composition exists to make unanswerable (ADR-025
+// §2.13a). A leaf instance captures through its own frame and returns nil.
+func (d *iterDecorator) instanceFor(
+	ctx context.Context, ord int, outs *instanceOutputs,
+) (activityExec, *instanceCapture, error) {
+	st := d.t.miState
+
+	if d.composite {
+		return d.compositeInstanceFor(ctx, ord)
+	}
+
+	local, err := iterationLocals(ctx, st, ord)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	e := &nodeExec{
+		t:     d.t,
+		step:  &stepInfo{node: d.step.node, inFlow: d.step.inFlow},
+		ord:   ord,
+		local: local,
+	}
+
+	if st.staging != nil {
+		e.capture = func(f *scope.Frame) error {
+			outs.take(ctx, ord, f, st.outputItem)
+
+			return nil
+		}
+	}
+
+	return e, nil, nil
+}
+
+// compositeInstanceFor builds instance ord of a PARALLEL composite: its own
+// child scope, the per-instance data published there, and the cell its
+// output is read into before that scope closes.
+//
+// The three fields are what separate a fanned-out instance from a sequential
+// pass, which opens the node's own scope with none of them (SRD-090.A M3b).
+// The loop applies them; the executor only carries them, because deriving
+// the segment loop-side would move the sequential path's data paths.
+func (d *iterDecorator) compositeInstanceFor(
+	ctx context.Context, ord int,
+) (activityExec, *instanceCapture, error) {
+	st := d.t.miState
+
+	e := newScopeExec(d.t, &stepInfo{
+		node: d.step.node, inFlow: d.step.inFlow,
+	}, ord)
+
+	e.iterKind = d.iterKind()
+	e.segment = scopeSegment(d.step.node) + "-" + strconv.Itoa(ord)
+
+	// the 0-based loopCounter, and the split input item when the iteration
+	// is collection-driven — bound at the instance's own scope, which is
+	// what makes them concurrency-safe where the sequential slice's
+	// host-scope binds are not.
+	e.binds = []miBinding{{name: "loopCounter", value: ord}}
+
+	if st != nil && st.collection != nil {
+		elem, err := st.collection.GetAt(ctx, ord)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		e.binds = append(e.binds,
+			miBinding{name: st.inputItem, value: elem})
+	}
+
+	if st != nil && st.staging != nil {
+		e.capture = &instanceCapture{item: st.outputItem}
+	}
+
+	return e, e.capture, nil
+}
+
+// iterationLocals builds instance ord's own data: the 0-based loopCounter
+// and, for a collection-driven Multi-Instance, the element split off at
+// that ordinal. They are bound frame-local, so the instances of one
+// activity cannot overwrite each other's (SRD-090.A FR-4).
+func iterationLocals(
+	ctx context.Context, st *miState, ord int,
+) ([]data.Data, error) {
+	counter, err := data.ReadyValueParameter(
+		"loopCounter", values.NewVariable(ord))
+	if err != nil {
+		return nil, err
+	}
+
+	local := make([]data.Data, 0, 2)
+	local = append(local, counter)
+
+	if st.collection == nil {
+		return local, nil
+	}
+
+	elem, err := st.collection.GetAt(ctx, ord)
+	if err != nil {
+		return nil, err
+	}
+
+	item, err := data.ReadyValueParameter(
+		st.inputItem, values.NewVariable(elem))
+	if err != nil {
+		return nil, err
+	}
+
+	return append(local, item), nil
+}
+
+// instanceOutputs holds each parallel instance's captured output until the
+// decorator stages it. An instance writes ONLY its own slot, from its own
+// goroutine, and the decorator reads that slot only after the instance's
+// completion arrives over the channel — so the handoff is ordered without a
+// lock, and the staging collection (which is not safe for concurrent use)
+// is written on the decorator's goroutine alone.
+type instanceOutputs struct {
+	values []any
+	filled []bool
+}
+
+func newInstanceOutputs(n int) *instanceOutputs {
+	return &instanceOutputs{values: make([]any, n), filled: make([]bool, n)}
+}
+
+// take records instance ord's declared output, resolved through its own
+// frame. Frame-first resolution is the point: the value a node produced is
+// still the instance's own there, whereas the same name in the shared
+// container scope is whatever sibling committed last.
+func (o *instanceOutputs) take(
+	ctx context.Context, ord int, f *scope.Frame, name string,
+) {
+	d, err := f.GetData(name)
+	if err != nil {
+		// an instance that produced no output leaves its slot nil, as a
+		// canceled one does (§2.7) — an activity whose output is optional
+		// is not an error here.
+		return
+	}
+
+	o.set(ord, d.Value().Get(ctx))
+}
+
+// set records instance ord's output directly. It is how a COMPOSITE
+// instance reports: its value was read loop-side from a child scope that
+// has since closed, so there is no frame left to resolve it through.
+func (o *instanceOutputs) set(ord int, v any) {
+	o.values[ord] = v
+	o.filled[ord] = true
+}
+
+// stage writes instance ord's captured output into its positional slot. A
+// no-op when the activity assembles no output, or when the instance
+// produced none — that slot keeps its nil, as a canceled one does.
+func (o *instanceOutputs) stage(
+	ctx context.Context, st *miState, ord int,
+) error {
+	if st == nil || st.staging == nil || !o.filled[ord] {
+		return nil
+	}
+
+	return st.staging.SetAt(ctx, ord, o.values[ord])
+}
+
+// presizedStaging returns the staging collection pre-sized to n, carrying
+// over whatever a restored position had already staged. SetAt replaces
+// rather than appends, so an out-of-order parallel completion needs its
+// slot to exist before it writes.
+func presizedStaging(
+	ctx context.Context, staged *values.Array[any], n int,
+) *values.Array[any] {
+	sized := values.NewArray[any](make([]any, n)...)
+
+	for i, el := range staged.GetAll(ctx) {
+		if i >= n || el == nil {
+			continue
+		}
+
+		if err := sized.SetAt(ctx, i, el); err != nil {
+			// a slot that will not take a value it already held is not
+			// recoverable here; the pre-sized array stands and the slot
+			// keeps its nil, which the publish reports as a hole.
+			continue
+		}
+	}
+
+	return sized
+}
+
 // newNodeExec builds the executor for one instance of a leaf activity.
 func newNodeExec(t *track, step *stepInfo, ordinal int) *nodeExec {
 	return &nodeExec{t: t, step: step, ord: ordinal}
 }
 
-// run executes the node once.
+// run executes the node once, as this instance.
 func (e *nodeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
-	return e.t.executeNode(ctx, e.step)
+	return e.t.executeNodeAs(ctx, e.step, activityInstance{
+		local:   e.local,
+		capture: e.capture,
+	})
 }
 
 // awaits reports an event wait, which is the only kind a leaf can hold: a
@@ -289,21 +1049,23 @@ func (e *nodeExec) state() instanceState {
 	}
 }
 
-// runPass executes ONE instance of a sequential leaf activity through the
+// runPass executes ONE instance of a sequential activity through the
 // executor the decorator holds for it. It lives on the decorator because the
-// decorator OWNS the iteration (ADR-025 v.3 §2.13) — leaving it on the track
+// decorator OWNS the iteration (ADR-025 §2.13) — leaving it on the track
 // left the driver split across both types, so the decorator delegated back to
 // the thing it was replacing. Originally SRD-086 FR-1's pass: bind,
-// execute in a fresh frame, capture the output, post the pass to the
-// loop's iteration mirror (the checkpoint's position — a leaf opens no
-// scope, so the record rides this roundtrip instead of the drain),
-// evaluate the completionCondition with pass-start counts, and throw
-// the behavior event. stop reports a fired condition, posted to the
-// mirror the same way the composite's is (SRD-082 FR-2).
-func (d *leafDecorator) runPass(
+// run the instance, take its output, post the pass to the loop's iteration
+// mirror, evaluate the completionCondition with pass-start counts, and throw
+// the behavior event. stop reports a fired condition, posted to the mirror
+// over the protocol (SRD-082 FR-2).
+//
+// The pass is the same for a leaf and a composite except in what happens
+// AROUND the instance's run, and those three points are guarded here rather
+// than duplicated into a second driver — see each guard for why it exists.
+func (d *iterDecorator) runPass(
 	ctx context.Context, it miIterator, i, n int,
 ) ([]*flow.SequenceFlow, bool, error) {
-	t, step, mi := d.t, d.step, d.mi
+	t, step := d.t, d.step
 
 	t.setLoopCounter(i)
 
@@ -314,9 +1076,14 @@ func (d *leafDecorator) runPass(
 		return nil, false, err
 	}
 
-	// re-arm the step for another execution (the runStandardLoop
-	// idiom): finalizeNodeExecution ended the previous pass.
-	step.state = StepCreated
+	// re-arm the step for another execution (the same idiom a Standard Loop
+	// pass uses):
+	// finalizeNodeExecution ended the previous pass. A composite executes
+	// its node ONCE, on exit, so its step is never re-armed — its
+	// instances open scopes rather than re-running it.
+	if !d.composite {
+		step.state = StepCreated
+	}
 
 	flows, err := d.live.run(ctx)
 	if err != nil {
@@ -329,32 +1096,27 @@ func (d *leafDecorator) runPass(
 
 	t.miState.completed++
 
-	if _, err := t.instance.scopeExchange(ctx, scopeRequest{
-		op: scopeLeafPass, host: t, n: t.miState.completed,
-	}); err != nil {
-		return nil, false, err
-	}
-
-	stop := false
-
-	if t.miState.completed < n && mi.CompletionCondition() != nil {
-		met, cerr := it.evalCompletion(ctx, t, step.node)
-		if cerr != nil {
-			return nil, false, cerr
+	// a sequential decorator holds at most one instance, so its live set
+	// is the pass about to run — the completed count IS the position, and
+	// restore resumes at it (seedSequentialStart).
+	//
+	// A COMPOSITE does not post: the loop already advanced the mirror from
+	// the drain it delivered (markIterDrain), which is strictly earlier
+	// than this point. Posting here as well would be harmless but would
+	// widen the window in which a capture sees a drained instance still
+	// counted as running.
+	if !d.composite {
+		if err := d.postPosition(ctx, t.miState.completed, nil); err != nil {
+			return nil, false, err
 		}
-
-		stop = met
 	}
 
-	// the behavior event carries the CURRENT §2.9 counts (SRD-056.B):
-	// republish post-drain, then throw.
-	if err := t.bindMICounters(n, t.miState.completed, 0); err != nil {
-		return nil, false, err
-	}
-
-	if err := t.throwMIBehavior(
-		ctx, mi, step.node, t.miState.completed); err != nil {
-		return nil, false, err
+	// serr, not err: reusing the name would extend the run() error's live
+	// range to the end of the function and turn the two `if err :=` guards
+	// above into shadows.
+	stop, serr := d.sequentialStep(ctx, it, n)
+	if serr != nil {
+		return nil, false, serr
 	}
 
 	if stop {
@@ -371,7 +1133,16 @@ func (d *leafDecorator) runPass(
 // host scope — where the leaf's UploadData just committed it — into
 // the staging slot for ordinal i (SRD-086 FR-1); a no-op when the
 // activity assembles no output.
-func (d *leafDecorator) captureOutput(ctx context.Context, i int) error {
+//
+// A COMPOSITE instance's output is not here to be read: it lives in that
+// instance's child scope, which is already closed by the time this returns.
+// The loop takes it from there before closing (captureSequentialOutput,
+// §4.2) — the only moment it exists.
+func (d *iterDecorator) captureOutput(ctx context.Context, i int) error {
+	if d.composite {
+		return nil
+	}
+
 	t := d.t
 	st := t.miState
 	if st == nil || st.staging == nil {

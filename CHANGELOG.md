@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Registering an event processor the engine cannot compare is now
+  refused, not a panic** (SRD-090.A M2d). A waiter identifies its
+  processors by value, and Go panics rather than reporting false when
+  two interface values of one uncomparable dynamic type meet — so a host
+  implementing the public `eventproc.EventProcessor` on a struct with a
+  slice or map field crashed the hub on its **second** registration for
+  one event definition, inside the waiter, with the first having
+  succeeded. Registration now rejects such a processor at the boundary,
+  naming the type and saying to register a pointer to it instead.
+
 - **A message addressed to a parallel-MI iteration could be lost
   outright** (SRD-091 branch). A message waiter's broker subscription
   is built once, when the waiter starts, from the correlation keys of
@@ -148,32 +158,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **BPMN converter: the import parser is rebuilt, and six of its own
-  defects are fixed** (ADR-024 v.4, SRD-089.A). Element dispatch is now
-  a table keyed by parse context and local name rather than six
-  disagreeing `switch` statements, and forward references (a gateway's
-  `default` today; `attachedToRef`, `calledElement` and link pairing
-  next) resolve through one mechanism that names the referring element,
-  the attribute and the missing id — and distinguishes a target of the
-  **wrong kind** from one that does not exist, since a `default` naming
-  a start event is a modeling mistake, not a typo.
+- **Every activity now executes through one object, whatever its
+  iteration** (ADR-025 §2.13/§2.13a/§2.13b, SRD-090.A, part of #313).
+  `executeStep` used to route a node through five iteration branches —
+  a composite re-opened a child scope, a parallel leaf forked tracks, a
+  sequential leaf re-ran in place — and each mechanism carried its own
+  record shape, its own scope-open path and its own way of suppressing
+  the bookkeeping the others needed. There is now a single dispatch: the
+  step builds an executor for the node (a decorator when the node
+  iterates, a bare executor otherwise) and runs it. A decorator holds N
+  executors and implements the same interface they do, so nothing above
+  it — track, loop, instance, event hub — can tell how many instances
+  are behind the activity it is driving.
 
-  Six behaviours change. **Export is deterministic**: it walked Go's
-  randomized map iteration, so two exports of one process differed and
-  an exported file could not be diffed; nodes are now emitted from the
-  start events along outgoing flows in flow-id order, unreachable ones
-  by id. A **`<task>`/`<manualTask>`/`<userTask>` with no `name`**
-  imports instead of being refused (BPMN makes `name` optional; the id
-  is the fallback, as `<process>` and `<serviceTask>` already did).
-  **`<bpmn:documentation>`** is imported onto `Docs()` and written back
-  with `textFormat`, instead of being dropped in both directions.
-  **`serviceTask@implementation`** round-trips. A **`parallelGateway`**
-  is no longer exported with a `default` attribute BPMN §13.4.1 does
-  not define. And the **purely visual artifacts** (`<textAnnotation>`,
-  `<group>`, `<category>`, plus `<relationship>`/`<import>`) are
-  skipped rather than refused — a runnable file was being rejected for
-  carrying a comment. `<association>` is deliberately still refused:
-  it carries compensation semantics.
+  **Two behaviours are corrected as a consequence.** A Sub-Process host
+  reported as *executing* while its body ran, when what it is doing is
+  hosting a scope; and an iterated activity reported N executions of one
+  token's step, where a parallel Multi-Instance reported one and a
+  sequential one reported N — the same construct described two ways. A
+  token now has states for iterating and for hosting a scope, and an
+  activity is one step of its token however many instances run it.
+
+  **The checkpoint schema moves 5 → 7.** An iterated activity persists
+  as an executor set keyed by ordinal, replacing the per-instance track
+  records and the group record it used to be scattered across; a scope
+  record names the track that opened it and the ordinal it stands for,
+  so a restore resolves the owner by lookup rather than by derivation.
+  Documents written by the previous release still restore, including a
+  parallel leaf fan-out captured under schema 5.
+
+  Residency (an iterated Sub-Process holding parked User Tasks still
+  pins its instance in memory) and the iterated Call Activity are
+  specified in SRD-090.A and carried to #336.
+
+- **A parallel Multi-Instance leaf activity's instances are no longer
+  tracks, and no longer get a scope apiece** (ADR-025 §2.13,
+  SRD-090.A M2b, part of #313). Iterating a leaf three times used to
+  fork three tracks into three per-instance scopes, coordinated by a
+  loop-owned barrier; the activity's decorator now holds one executor
+  per instance, isolates each in its own execution frame, and runs the
+  N-of-N barrier as ordinary control flow. A track means a token
+  walking a path again.
+
+  **One behaviour changes, deliberately.** Each instance used to run in
+  a scope of its own, so anything it wrote beyond its declared
+  `outputDataItem` died when that scope closed. With no per-instance
+  scope, such a write reaches the **enclosing** scope, and for a
+  parallel activity the last writer wins — which is order-dependent.
+  The declared output collection is unaffected: it is still assembled
+  positionally by ordinal and published once, so a model that reads its
+  `loopDataOutputRef` sees exactly what it saw before. A model that
+  relied on undeclared writes vanishing now sees the last one.
+
+  The checkpoint schema moves 5 → 6 with it: an iterated leaf persists
+  as an executor set keyed by ordinal, replacing the per-instance track
+  records and the group record it used to be scattered across.
+  Documents written by the previous release still restore.
 
 ### Added
 

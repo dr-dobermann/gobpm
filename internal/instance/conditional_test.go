@@ -865,3 +865,50 @@ func TestConditionalSurvivesMove(t *testing.T) {
 	got := <-tr.evtCh
 	require.Equal(t, def.ID(), got.ID())
 }
+
+// TestAWaitArmedBeforeItIsAnnouncedLosesItsTrigger (T-19, SRD-090.A M3f,
+// ADR-025 §2.13b.1): the announce must precede the arm. A wait registered
+// before the loop knows a waiter exists fires into a loop with nothing to
+// route it to, and the delivery is DROPPED — silently, which is why the
+// ordering is pinned by a test rather than trusted to review.
+//
+// Today the two are consecutive statements in one function (`checkNodeType`
+// emits evWaiting, then calls armWaiters), so the constraint holds by
+// adjacency. The unit is what makes that fragile: once arm and announce can
+// be composed separately, splitting them without carrying the constraint
+// produces a lost trigger and not a compile error.
+//
+// Deterministic: the announce is WITHHELD, not raced — the loop's parked set
+// simply never learns about the track, which is the state an
+// arm-before-announce ordering leaves behind for exactly as long as the gap
+// between the two.
+func TestAWaitArmedBeforeItIsAnnouncedLosesItsTrigger(t *testing.T) {
+	val, evals := false, 0
+	_, tr, ls, _, sigDef := ebCondGateInstance(t, &val, &evals)
+
+	// the announce never reached the loop: the track is armed and parked,
+	// but the loop holds no waiter for it.
+	delete(ls.waiting, tr.ID())
+
+	ls.dispatchToParked(t.Context(),
+		trackEvent{kind: evDeliver, track: tr, eDef: sigDef})
+
+	require.Empty(t, tr.evtCh,
+		"the fire reached a loop with nothing to route it to — the trigger "+
+			"is lost, and nothing reports it")
+	require.True(t, tr.inState(TrackWaitForEvent),
+		"and the track is still parked, waiting for an event that already fired")
+
+	// the ANNOUNCE is what makes the track routable: the same delivery, after
+	// the loop has taken the evWaiting, lands. The two halves together are the
+	// ordering — the arm is useless until this has happened.
+	ls.onWaiting(t.Context(), trackEvent{
+		kind: evWaiting, track: tr, node: tr.currentStep().node,
+	})
+
+	ls.dispatchToParked(t.Context(),
+		trackEvent{kind: evDeliver, track: tr, eDef: sigDef})
+
+	got := <-tr.evtCh
+	require.Equal(t, sigDef.ID(), got.ID())
+}

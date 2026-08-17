@@ -187,9 +187,10 @@ func TestLeafMISequentialCompletionStops(t *testing.T) {
 
 			n, _ := d.Value().Get(ctx).(int)
 
-			// evaluated with PASS-START counts (the SRD-055 family
-			// semantics): true once at least one pass completed —
-			// which the evaluation after pass 2 sees.
+			// evaluated with POST-DRAIN counts, which is what
+			// SRD-055 FR-11 and §4.3 prescribe: the decorator
+			// rebinds before evalCompletion, so the condition sees
+			// the instance that just completed. True after pass 1.
 			return values.NewVariable(n >= 1), nil
 		})
 
@@ -198,8 +199,14 @@ func TestLeafMISequentialCompletionStops(t *testing.T) {
 	runLeafMI(t, s)
 
 	mu.Lock()
-	require.Equal(t, []string{"0:a", "1:b"}, log,
-		"a true condition after pass 2 must stop pass 3")
+	// **T-1 finding, SRD-090.A M3h.** This asserted `{"0:a", "1:b"}` and
+	// called the extra pass "the SRD-055 family semantics" — which is the
+	// opposite of what SRD-055 says. FR-11 and §4.3 both prescribe the
+	// rebind BEFORE the evaluation, so `>= 1` is true after pass 1 and pass
+	// 2 never launches. The code had drifted from its own accepted SRD and
+	// this test held the drift in place.
+	require.Equal(t, []string{"0:a"}, log,
+		"a condition true after pass 1 must stop pass 2")
 	mu.Unlock()
 }
 
@@ -745,14 +752,28 @@ func gatedLeafMISnapshot(
 // leafMIRec finds the recorded iteration position of the leaf node.
 func leafMIRec(
 	d *checkpoint.Document, nodeID string,
-) *checkpoint.MIRecord {
+) *checkpoint.IterationRecord {
 	for i := range d.Tracks {
 		if d.Tracks[i].NodeID == nodeID {
-			return d.Tracks[i].MI
+			return d.Tracks[i].Iteration
 		}
 	}
 
 	return nil
+}
+
+// liveOrdinals counts the instances an iteration record still shows as
+// running — the ordinals a restore has to relaunch (SRD-090.A FR-7).
+func liveOrdinals(rec *checkpoint.IterationRecord) int {
+	live := 0
+
+	for _, inst := range rec.Instances {
+		if inst.State != "completed" {
+			live++
+		}
+	}
+
+	return live
 }
 
 // leafOuts reads the assembled output collection of a finished run.
@@ -768,9 +789,10 @@ func leafOuts(t *testing.T, inst *Instance, path string) []any {
 	return col.GetAll(context.Background())
 }
 
-// TestLeafMISequentialKillAndResume is T-7 (SRD-086 FR-5): the
-// sequential leaf's position rides TrackRecord.MI via the pass-posted
-// mirror — the restored run resumes at pass 2, never re-running the
+// TestLeafMISequentialKillAndResume is T-7 (SRD-086 FR-5), now reading
+// the executor set TrackRecord.Iteration that replaced the MI mirror for
+// a leaf (SRD-090.A FR-6): the position still rides the pass-posted
+// mirror, and the restored run resumes at pass 2, never re-running the
 // completed pass.
 func TestLeafMISequentialKillAndResume(t *testing.T) {
 	var gate, count atomic.Int32
@@ -818,16 +840,23 @@ func normalized(elems []any) []any {
 	return out
 }
 
-// TestLeafMIParallelKillAndResume is T-6 (SRD-086 FR-5): the parallel
-// leaf restores over the EXISTING schema — the group record plus one
-// leaf track per open instance scope, re-marked for plain execution.
+// TestLeafMIParallelKillAndResume is T-6 (SRD-086 FR-5), rewritten onto
+// the executor set (SRD-090.A FR-6/FR-7). A parallel leaf no longer
+// persists as a group record plus one track per open instance scope,
+// because it no longer HAS instance scopes or per-instance tracks: it
+// records which ordinals are still running, and restore relaunches
+// exactly those. That a completed ordinal never re-runs is the property
+// the old shape and this one both exist to protect.
 func TestLeafMIParallelKillAndResume(t *testing.T) {
 	var gate, count atomic.Int32
 
 	s := gatedLeafMISnapshot(t, "lm-pkr", false, &gate, &count)
 
 	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
-		return len(d.MIGroups) == 1 && len(d.MIGroups[0].Open) == 2
+		rec := leafMIRec(d, "lm-pkr-work")
+
+		return rec != nil && rec.Kind == "mi_parallel" && rec.Completed == 1 &&
+			liveOrdinals(rec) == 2
 	})
 
 	require.Eventually(t, func() bool { return count.Load() == 3 },
@@ -926,4 +955,95 @@ func TestLeafMISequentialMissingOutput(t *testing.T) {
 
 	require.NotEqual(t, Completed, inst.State(),
 		"a declared-but-missing output item faults the pass loud")
+}
+
+// asSchemaFiveLeaf rewrites a captured parallel LEAF fan-out into the
+// SCHEMA-5 shape, which is how a document written before SRD-090.A carried
+// one: the position rides an MIGroupRecord, and every still-running instance
+// is its OWN TRACK standing on the iterated node.
+//
+// That last part is what distinguishes it from asSchemaFive, the composite
+// twin. A composite instance was a child scope, so the group carried Open
+// paths; a LEAF instance got no scope, so it was a spawned track — and the
+// engine kept those tracks out of the iteration routing with a `leafPlain`
+// marker that SRD-090.A M2b deleted along with the mechanism.
+func asSchemaFiveLeaf(
+	t *testing.T, d *checkpoint.Document, nodeID string,
+) *checkpoint.Document {
+	t.Helper()
+
+	rec := leafMIRec(d, nodeID)
+	require.NotNil(t, rec)
+
+	grp := checkpoint.MIGroupRecord{N: rec.N, Staging: rec.Staging}
+
+	var hostScope string
+
+	for i := range d.Tracks {
+		if d.Tracks[i].NodeID == nodeID && d.Tracks[i].Iteration != nil {
+			grp.HostTrack = d.Tracks[i].ID
+			hostScope = d.Tracks[i].ScopePath
+			d.Tracks[i].Iteration = nil // schema 5 carried it on the group
+		}
+	}
+
+	require.NotEmpty(t, grp.HostTrack, "the fan-out's host track")
+
+	// one track per still-running instance — no Open scopes, because a leaf
+	// instance never had one.
+	for _, ord := range runningOrdinals(rec) {
+		d.Tracks = append(d.Tracks, checkpoint.TrackRecord{
+			ID:    "legacy-inst-" + itoa(ord),
+			State: "TrackExecutingStep",
+			// the ordinal rode the instance track's own loop counter —
+			// the only place schema 5 recorded WHICH instance it was.
+			NodeID:      nodeID,
+			ScopePath:   hostScope,
+			LoopCounter: ord,
+		})
+	}
+
+	d.MIGroups = []checkpoint.MIGroupRecord{grp}
+
+	return d
+}
+
+// TestLeafMIRestoresFromASchemaFiveGroup (SRD-090.A FR-7): a Schema-5 document
+// whose parallel LEAF fan-out is carried as a group plus one track per
+// instance restores to the same live state — the host's decorator resumes the
+// unfinished ordinals, and the legacy instance tracks do NOT become live
+// tracks of their own.
+//
+// Without the translation discarding them they each reach execFor, build their
+// own decorator over the same node, and fan out again: the body runs N extra
+// times per stray track instead of once per unfinished ordinal.
+func TestLeafMIRestoresFromASchemaFiveGroup(t *testing.T) {
+	var gate, count atomic.Int32
+
+	s := gatedLeafMISnapshot(t, "lm-s5", false, &gate, &count)
+
+	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
+		rec := leafMIRec(d, "lm-s5-work")
+
+		return rec != nil && rec.Kind == "mi_parallel" && rec.Completed == 1 &&
+			liveOrdinals(rec) == 2
+	})
+
+	require.Eventually(t, func() bool { return count.Load() == 3 },
+		3*time.Second, 5*time.Millisecond,
+		"all three started; one completed, two blocked in flight")
+
+	doc = asSchemaFiveLeaf(t, doc, "lm-s5-work")
+
+	gate.Store(1)
+
+	restored := restoreToDone(t, doc, s)
+
+	// the SAME total the Schema-6 document restores to: the two unfinished
+	// ordinals re-run (at-least-once), the completed one never does.
+	require.Equal(t, int32(5), count.Load(),
+		"only the unfinished ordinals re-run — a legacy instance track must "+
+			"not resume as a fan-out of its own")
+
+	require.Equal(t, Completed, restored.State())
 }

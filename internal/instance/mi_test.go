@@ -631,3 +631,232 @@ func TestDrivesOwnIteration(t *testing.T) {
 	require.False(t, drivesOwnIteration(plainNode))
 	require.False(t, drivesOwnIteration(evNode))
 }
+
+// TestMICounterSumInvariant (T-16, SRD-090.A): BPMN Table 10.30 states an
+// invariant over the Multi-Instance runtime attributes —
+// numberOfTerminatedInstances + numberOfCompletedInstances +
+// numberOfActiveInstances always sums to numberOfInstances.
+//
+// gobpm satisfies it BY CONSTRUCTION: the active count is derived as
+// n − completed − terminated rather than tracked alongside the other two, so
+// the three cannot drift apart. That is exactly why it is worth a test —
+// a construction-satisfied invariant has no failing case to notice, and the
+// change that would break it (tracking `active` separately, which reads as a
+// harmless refactor) would break it silently.
+//
+// White-box over the binding, deliberately: the live progression is already
+// covered end to end by TestMultiInstanceRuntimeCounters and the parallel
+// attribute tests, but neither reaches a state with a NON-ZERO terminated
+// count — the instances a fired completionCondition cancels never run, so
+// nothing inside the activity is left to read the counters afterwards.
+func TestMICounterSumInvariant(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, _ := openInstance(t)
+
+	host := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		instance:    inst,
+		scopePath:   inst.sc.root,
+	}
+
+	read := func(t *testing.T, name string) int {
+		t.Helper()
+
+		d, err := inst.sc.plane.GetData(host.scopePath, name)
+		require.NoError(t, err)
+
+		n, ok := d.Value().Get(t.Context()).(int)
+		require.True(t, ok, "%s is an integer attribute", name)
+
+		return n
+	}
+
+	// active is STATED by the caller now (M3g), so the cases carry the value
+	// a PARALLEL publisher derives — n − completed − terminated — which is
+	// the shape that satisfies both of Table 10.30's clauses at once.
+	for name, c := range map[string]struct{ n, completed, terminated int }{
+		"nothing has happened yet":      {5, 0, 0},
+		"some completed":                {5, 2, 0},
+		"a completionCondition fired":   {5, 2, 3},
+		"every instance completed":      {5, 5, 0},
+		"every instance was terminated": {5, 0, 5},
+		"one instance, done":            {1, 1, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, host.bindMICounters(
+				c.n, c.n-c.completed-c.terminated, c.completed, c.terminated))
+
+			total := read(t, "numberOfInstances")
+			active := read(t, "numberOfActiveInstances")
+			completed := read(t, "numberOfCompletedInstances")
+			terminated := read(t, "numberOfTerminatedInstances")
+
+			require.Equal(t, c.n, total)
+			require.Equal(t, c.completed, completed)
+			require.Equal(t, c.terminated, terminated)
+
+			require.Equal(t, total, terminated+completed+active,
+				"Table 10.30: terminated + completed + active == total")
+			require.GreaterOrEqual(t, active, 0,
+				"a negative active count would satisfy the sum and mean nothing")
+		})
+	}
+}
+
+// TestSequentialMICountsTerminatedInstances (T-16, sequential half — the one
+// that fails before SRD-090.A M3g).
+//
+// A fired `completionCondition` CANCELS the instances that will now never run
+// (`multi-instance.md §Completion`), and Table 10.30 counts those as
+// terminated. The engine published a literal 0, so a sequential activity of
+// five stopping after two completions reported `2 + 0 + 0` where the table
+// requires `2 + 3`.
+//
+// The **terminal** state is where this is assertable at all. Mid-run the
+// table contradicts itself for a sequential activity — the `≤ 1` cap on
+// `numberOfActiveInstances` and the sum cannot both hold while instances are
+// still unstarted — and ADR-025 §2.9 records that the engine honours the cap.
+// Once nothing is running, every instance is completed or terminated and the
+// sum is exact.
+//
+// End-to-end rather than over the binder: the first version of this test
+// exercised `bindMICounters` directly with explicit triples, which is the one
+// publisher that was already correct, so it passed while the sequential path
+// was wrong.
+func TestSequentialMICountsTerminatedInstances(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	const total = 5
+
+	op, err := gooper.New("pass",
+		func(_ context.Context, _ service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	// stop as soon as two instances have completed — three are cancelled.
+	mi := mustSeqMI(t,
+		activities.WithCardinality(cardExpr(t, total)),
+		activities.WithCompletionCondition(
+			attrAtLeast(t, "numberOfCompletedInstances", 2)))
+
+	inst := miSubProcessInstanceOp(t, op, mi)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+
+	read := func(name string) int {
+		t.Helper()
+
+		d, rerr := inst.sc.plane.GetData(inst.sc.root, name)
+		require.NoError(t, rerr, "%s is published at the host scope", name)
+
+		n, ok := d.Value().Get(t.Context()).(int)
+		require.True(t, ok, "%s is an integer attribute", name)
+
+		return n
+	}
+
+	active := read("numberOfActiveInstances")
+	completed := read("numberOfCompletedInstances")
+	terminated := read("numberOfTerminatedInstances")
+
+	// TWO, which is what `>= 2` means. Until M3h the condition was evaluated
+	// against the count published at the START of the pass — one completion
+	// behind — so it stopped after THREE. This assertion was written to
+	// document that lag and now pins its absence.
+	require.Equal(t, 2, completed,
+		"the condition sees the instance that just completed (§13.3.7)")
+	require.Equal(t, 0, active, "nothing runs once the activity has stopped")
+	require.Equal(t, total-completed, terminated,
+		"the instances the fired condition cancelled are TERMINATED, not "+
+			"absent — this is the assertion that fails before M3g")
+
+	require.Equal(t, total, terminated+completed+active,
+		"Table 10.30's sum, at the terminal state where it is satisfiable")
+}
+
+// TestIteratedActivityIsOneStepOfItsToken (SRD-090.A M3f): an activity that
+// runs its node N times is ONE step of its token, so it appears once in the
+// token's path however many instances ran.
+//
+// Until M3f the two iteration kinds disagreed. A PARALLEL Multi-Instance
+// suppressed the per-instance transitions through an `inSet` flag threaded
+// from the decorator into the driver; a SEQUENTIAL one had no such flag, so
+// every pass transitioned and recorded, and a three-instance activity
+// reported three step executions of one node. Nothing in the suite asserted
+// either, which is why the disagreement survived.
+//
+// TrackIterating removes the flag by removing what it suppressed: while a
+// track iterates, an instance's execution is below the state machine's
+// granularity and cannot report a step of its own (ADR-025 §2.13b.1e).
+//
+// Asserted over BOTH kinds in one test — the property is that they agree,
+// and asserting them apart is how they drifted.
+func TestIteratedActivityIsOneStepOfItsToken(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	const total = 3
+
+	// count the EXECUTING entries this node contributed to its own track's
+	// history — one per reported step execution. The raw history carries an
+	// entry per state update, so filtering on the state is what makes this
+	// "how many steps did this node report" rather than "how many
+	// transitions did it make".
+	executings := func(t *testing.T, inst *Instance) int {
+		t.Helper()
+
+		n := 0
+
+		for _, tr := range inst.tracks {
+			h := tr.hist.Load()
+			if h == nil {
+				continue
+			}
+
+			for _, u := range *h {
+				if u.node != nil && multiInstanceOf(u.node) != nil &&
+					u.state == TrackExecutingStep {
+					n++
+				}
+			}
+		}
+
+		return n
+	}
+
+	for name, sequential := range map[string]bool{
+		"sequential": true,
+		"parallel":   false,
+	} {
+		t.Run(name, func(t *testing.T) {
+			op, err := gooper.New("pass",
+				func(_ context.Context, _ service.DataReader,
+					_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+					return nil, nil
+				})
+			require.NoError(t, err)
+
+			var mi *activities.MultiInstanceLoopCharacteristics
+			if sequential {
+				mi = mustSeqMI(t, activities.WithCardinality(cardExpr(t, total)))
+			} else {
+				mi = mustParallelMI(t,
+					activities.WithCardinality(cardExpr(t, total)))
+			}
+
+			inst := miSubProcessInstanceOp(t, op, mi)
+			runToDone(t, inst)
+
+			require.Equal(t, Completed, inst.State())
+
+			// searched over the HISTORY rather than the current step: by
+			// the time the activity completes its token has moved on, so
+			// the iterated node is no longer where the track stands.
+			require.Equal(t, 1, executings(t, inst),
+				"%d instances, ONE step of the token", total)
+		})
+	}
+}

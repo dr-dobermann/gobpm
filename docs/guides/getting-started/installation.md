@@ -20,7 +20,7 @@ flowchart LR
 ## Requirements
 
 - **Go 1.25 or newer.** The module declares `go 1.25` and pins `toolchain
-  go1.25.12`; an older toolchain will refuse to build it.
+  go1.25.13`; an older toolchain will refuse to build it.
 - **A module-enabled project** (a `go.mod`). Starting fresh:
 
   ```bash

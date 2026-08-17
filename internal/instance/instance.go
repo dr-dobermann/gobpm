@@ -105,6 +105,17 @@ type Instance struct {
 	// open sets the loop adopts at start (SRD-082 FR-4); nil for a fresh
 	// instance.
 	restoredGroups []checkpoint.MIGroupRecord
+	// restoredLeafOrdinals maps a Schema-5 MI group's host track to the
+	// ordinals its LEAF instances were still running (SRD-090.A FR-7).
+	// Those instances were recorded as tracks, which is where the ordinals
+	// come from; the group's Open list names scopes, which a leaf has none
+	// of. nil for a fresh instance and for a Schema-6+ document.
+	restoredLeafOrdinals map[string][]int
+	// restoredScopes are the checkpoint-recorded open scopes, carrying
+	// the track that opened each and the ordinal it stands for (Schema
+	// 7, SRD-090.A M3c); nil for a fresh instance, and carrying no host
+	// for a Schema ≤ 6 document, which the adoption derives instead.
+	restoredScopes []checkpoint.ScopeRecord
 	// restoredSweeps are the checkpoint-recorded resolving compensation
 	// sweeps the loop resumes at start (SRD-082 FR-6); nil for a fresh
 	// instance.

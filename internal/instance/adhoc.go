@@ -206,7 +206,7 @@ func (ls *loopState) routeAdHoc(
 			// so the host is resumed here — otherwise it would stay parked with
 			// nothing left to wake it.
 			ls.cancelScope(path, observability.PhaseCanceled)
-			ls.resumeScopeHost(ctx, path, entry)
+			ls.releaseScopeHost(ctx, path, entry)
 		}
 
 		return

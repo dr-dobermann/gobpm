@@ -51,8 +51,8 @@ func TestRunMISequentialRequestError(t *testing.T) {
 	inst, node, host := miSeqFixture(t)
 	close(inst.loopDone) // scopeRoundtrip returns the not-running error
 
-	_, err := host.runMISequential(
-		t.Context(), &stepInfo{node: node}, multiInstanceOf(node))
+	_, err := newIterDecorator(
+		host, &stepInfo{node: node}, multiInstanceOf(node), true).run(t.Context())
 	require.Error(t, err)
 }
 
@@ -76,31 +76,35 @@ func TestRunMISequentialBindError(t *testing.T) {
 	coll := getAtErrColl{values.NewArray[any](1, 2, 3)}
 	require.NoError(t, inst.sc.bindValueAt(host.scopePath, "items", coll))
 
-	_, err = host.runMISequential(
-		t.Context(), &stepInfo{node: node}, multiInstanceOf(node))
+	_, err = newIterDecorator(
+		host, &stepInfo{node: node}, multiInstanceOf(node), true).run(t.Context())
 	require.Error(t, err)
 }
 
-// TestRunMISequentialDrainError: a stand-in loop opens instance 0's scope then
-// closes evtCh (a mid-instance stop) — the decorator's drain wait unblocks with an
-// error rather than hanging.
+// TestRunMISequentialDrainError: a stand-in loop opens instance 0's scope and
+// then stops (a mid-instance shutdown) — the instance's drain wait unblocks
+// with an error rather than hanging on a scope that will never close.
+//
+// The stop is signaled by closing loopDone rather than the host's evtCh: an
+// instance now waits on its OWN drain channel (SRD-090.A M3b), so the host's
+// park is no longer what a shutdown has to interrupt.
 func TestRunMISequentialDrainError(t *testing.T) {
 	inst, node, host := miSeqFixture(t)
 
 	go func() {
 		req := <-inst.scopeReq
 		req.reply <- scopeReply{scopePath: host.scopePath}
-		close(host.evtCh) // the loop closes evtCh on stop
+		close(inst.loopDone) // the loop stops without ever draining the scope
 	}()
 
-	_, err := host.runMISequential(
-		t.Context(), &stepInfo{node: node}, multiInstanceOf(node))
+	_, err := newIterDecorator(
+		host, &stepInfo{node: node}, multiInstanceOf(node), true).run(t.Context())
 	require.Error(t, err)
 }
 
-// miParFixture builds a parallel-MI composite instance (cardinality 3) and returns
-// the host track positioned on the MI node — the white-box pieces the runMIParallel
-// error-path tests drive directly (the loop is NOT running).
+// miParFixture builds a parallel-MI composite instance (cardinality 3) and
+// returns the host track positioned on the MI node — the white-box pieces a
+// fan-out test drives directly (the loop is NOT running).
 func miParFixture(t *testing.T) (*Instance, flow.Node, *track) {
 	t.Helper()
 
@@ -115,33 +119,4 @@ func miParFixture(t *testing.T) (*Instance, flow.Node, *track) {
 	require.NoError(t, err)
 
 	return inst, node, host
-}
-
-// TestRunMIParallelRequestError: the fan-out request on a stopped instance faults
-// out of the decorator (the roundtrip's loopDone path) — after N is resolved, the
-// scopeFanOut roundtrip fails.
-func TestRunMIParallelRequestError(t *testing.T) {
-	inst, node, host := miParFixture(t)
-	close(inst.loopDone) // scopeRoundtrip returns the not-running error
-
-	_, err := host.runMIParallel(
-		t.Context(), &stepInfo{node: node}, multiInstanceOf(node))
-	require.Error(t, err)
-}
-
-// TestRunMIParallelDrainError: a stand-in loop accepts the fan-out then closes evtCh
-// (a mid-barrier stop) — the decorator's drain wait unblocks with an error rather
-// than hanging.
-func TestRunMIParallelDrainError(t *testing.T) {
-	inst, node, host := miParFixture(t)
-
-	go func() {
-		req := <-inst.scopeReq    // the scopeFanOut request
-		req.reply <- scopeReply{} // fan-out "succeeded"
-		close(host.evtCh)         // the loop closes evtCh on stop
-	}()
-
-	_, err := host.runMIParallel(
-		t.Context(), &stepInfo{node: node}, multiInstanceOf(node))
-	require.Error(t, err)
 }

@@ -198,6 +198,38 @@ func (f *Frame) LoadProperties(defs []*data.Property) error {
 	return nil
 }
 
+// BindLocal stores per-execution data in the frame. It resolves frame-first
+// like a property and is NEVER committed — Commit flushes outputs and puts
+// only — so what it binds dies with the execution.
+//
+// It is how ONE instance of an iterated activity carries its own data (the
+// 0-based loopCounter, the split input item) when the instances share a
+// container scope: binding those at the scope is safe only while one
+// instance runs at a time, and N concurrent instances would overwrite each
+// other's. The frame is the isolation (ADR-025 §2.2), and this is the
+// door into it.
+//
+// A repeated name overwrites, as Put does within one execution. The node's
+// own LoadProperties runs afterwards and shares the property namespace, so
+// a node declaring a property named for the iteration's own data shadows
+// it — the same collision a scope-level bind has always had.
+func (f *Frame) BindLocal(dd ...data.Data) error {
+	if err := f.checkOpen("BindLocal"); err != nil {
+		return err
+	}
+
+	names, err := batchNames("BindLocal", dd)
+	if err != nil {
+		return err
+	}
+
+	for i, d := range dd {
+		f.props[names[i]] = d
+	}
+
+	return nil
+}
+
 // Inputs returns the frame's input parameter instances.
 func (f *Frame) Inputs() []*data.Parameter {
 	return paramList(f.inputs)

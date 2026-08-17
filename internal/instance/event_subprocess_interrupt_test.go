@@ -273,12 +273,19 @@ func openInstance(t *testing.T) (*Instance, *loopState) {
 // guards fault the instance rather than proceed — an unopenable enclosing path,
 // a payload that cannot bind (its scope is not open), and a handler node that is
 // not a NodeExecutor.
-// TestOnScopeOpenAppendError (defensive): a host whose scope path cannot take a
-// child segment faults the instance rather than opening a corrupt scope.
-func TestOnScopeOpenAppendError(t *testing.T) {
+// TestScopeOpenAppendError (defensive): a host whose scope path cannot take a
+// child segment is refused rather than opening a corrupt scope.
+//
+// **T-1 finding, SRD-090.A M3c.** This asserted `ls.stopping` — the open used
+// to fault the whole instance, because the loop-driven path had no one to
+// answer. The open is a REQUEST now, so the error goes back to the activity
+// instance that asked for it and travels its own failure path. Every other
+// error in this function already answered that way; the seed and the append
+// were the two that did not.
+func TestScopeOpenAppendError(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	inst, ls := openInstance(t)
+	_, ls := openInstance(t)
 	sp, err := activities.NewSubProcess("comp")
 	require.NoError(t, err)
 
@@ -288,10 +295,11 @@ func TestOnScopeOpenAppendError(t *testing.T) {
 		scopePath:   scope.EmptyDataPath,
 	}
 
-	ls.onScopeOpen(t.Context(), host, sp)
+	reply, answered := openScopeFor(t.Context(), t, ls, host, sp)
 
-	require.True(t, ls.stopping)
-	require.Error(t, inst.LastErr())
+	require.True(t, answered, "a refusal is an answer, not a deferral")
+	require.Error(t, reply.err)
+	require.Empty(t, ls.scopes, "nothing opened")
 }
 
 func TestRunScopeHandlerErrorPaths(t *testing.T) {
