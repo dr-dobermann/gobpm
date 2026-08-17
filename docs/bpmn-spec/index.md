@@ -3,7 +3,7 @@
 Reference extracted from OMG BPMN 2.0 spec, scoped to **Process Execution Conformance** (the subclass `gobpm` targets).
 
 **Sources:**
-- Spec PDF: `../../docs/BPMN formal-13-12-09.pdf` (OMG formal/2013-12-09, v2.0.2 with errata) — semantics, normative claims
+- Spec PDF: `BPMN formal-13-12-09.pdf` (OMG formal/2013-12-09, v2.0.2 with errata) — semantics, normative claims. **Not vendored** (7 MB, OMG-licensed): keep a local copy and cite it by `§`/table/page, as the `semantics/` pages do.
 - bpmn-moddle: `github.com/bpmn-io/bpmn-moddle` `resources/bpmn/json/bpmn.json` — structural metamodel
 - OMG XSD: tiebreaker for compliance edge cases
 

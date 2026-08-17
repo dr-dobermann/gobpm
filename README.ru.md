@@ -234,7 +234,7 @@ make build        # build to ./bin/
 make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (run after `make test-all`)
 ```
 
-`make ci` — это контракт: зелёный локально ⇒ зелёный на CI. Go-toolchain запинен (`go.mod` → `go1.25.12`), так что локально и на CI сканируется идентичная стандартная библиотека.
+`make ci` — это контракт: зелёный локально ⇒ зелёный на CI. Go-toolchain запинен (`go.mod` → `go1.25.13`), так что локально и на CI сканируется идентичная стандартная библиотека.
 
 ### Как мы работаем
 
@@ -245,7 +245,7 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 
 ### Требования
 
-- Go (toolchain запинен на `go1.25.12` через `go.mod`; `GOTOOLCHAIN=auto` подтянет его автоматически)
+- Go (toolchain запинен на `go1.25.13` через `go.mod`; `GOTOOLCHAIN=auto` подтянет его автоматически)
 - Закреплённые Go dev-инструменты через `make tools`: [mockery v3](https://github.com/vektra/mockery), [golangci-lint v2](https://golangci-lint.run/), [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) и [covercheck](https://github.com/dr-dobermann/covercheck). Make-цели отклоняют отсутствующие и устаревшие версии до запуска несовместимых флагов или конфигурации.
 - GNU `timeout` для сквозного прогона примеров. В Linux команда называется
   `timeout`; в macOS один раз установите Homebrew coreutils:

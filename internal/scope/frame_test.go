@@ -343,6 +343,58 @@ func TestFrameDiscovery(t *testing.T) {
 	})
 }
 
+// TestFrameBindLocal covers the isolation vehicle an iterated activity's
+// instances use (SRD-090.A FR-4): data that resolves frame-first and never
+// reaches the container scope, so concurrent siblings sharing one scope
+// cannot overwrite each other's.
+func TestFrameBindLocal(t *testing.T) {
+	t.Run("resolves frame-first and never commits", func(t *testing.T) {
+		pl, f := newTestFrame(t)
+
+		require.NoError(t,
+			errOf(pl.Commit(pl.Root(), testData(t, "loopCounter", 9))))
+		require.NoError(t, f.BindLocal(testData(t, "loopCounter", 2)))
+
+		got, err := f.GetData("loopCounter")
+		require.NoError(t, err)
+		require.Equal(t, 2, got.Value().Get(t.Context()),
+			"this instance's own value shadows the container's")
+
+		require.NoError(t, errOf(f.Commit()))
+
+		outer, err := pl.GetData(pl.Root(), "loopCounter")
+		require.NoError(t, err)
+		require.Equal(t, 9, outer.Value().Get(t.Context()),
+			"Commit flushes outputs and puts only — the container is untouched")
+	})
+
+	t.Run("last bind of a name wins", func(t *testing.T) {
+		_, f := newTestFrame(t)
+
+		require.NoError(t, f.BindLocal(testData(t, "item", "a")))
+		require.NoError(t, f.BindLocal(testData(t, "item", "b")))
+
+		got, err := f.GetData("item")
+		require.NoError(t, err)
+		require.Equal(t, "b", got.Value().Get(t.Context()))
+	})
+
+	t.Run("validation", func(t *testing.T) {
+		_, f := newTestFrame(t)
+
+		require.Error(t, f.BindLocal(nil))
+		require.Error(t, f.BindLocal(unnamedData{Data: testData(t, "n", 1)}))
+		require.NoError(t, f.BindLocal())
+	})
+
+	t.Run("sealed frame refuses", func(t *testing.T) {
+		_, f := newTestFrame(t)
+
+		f.Discard()
+		require.Error(t, f.BindLocal(testData(t, "late", 1)))
+	})
+}
+
 func TestFrameCommitAndDiscard(t *testing.T) {
 	t.Run("commit flushes outputs and puts", func(t *testing.T) {
 		pl, f := newTestFrame(t)

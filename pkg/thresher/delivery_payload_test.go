@@ -437,6 +437,27 @@ func (b *cuttableBroker) cut() {
 	}
 }
 
+// liveIterations counts the instances a document records as still running,
+// across every iterated activity in it. The position lives on the host's
+// track record now (SRD-090.A FR-6), not in a group table of its own.
+func liveIterations(doc *checkpoint.Document) int {
+	live := 0
+
+	for _, tr := range doc.Tracks {
+		if tr.Iteration == nil {
+			continue
+		}
+
+		for _, inst := range tr.Iteration.Instances {
+			if inst.State == "running" {
+				live++
+			}
+		}
+	}
+
+	return live
+}
+
 // TestIterationRoutingKillAndResume is SRD-085 T-7: the worked trace
 // across a crash — one envelope served pre-kill, the engine abandoned,
 // and the RECOVERED iteration's key re-derives from its restored
@@ -487,17 +508,7 @@ func TestIterationRoutingKillAndResume(t *testing.T) {
 			return false
 		}
 
-		fmt.Printf("DBG doc: groups=%d open=%v tracks=%d\n",
-			len(doc.MIGroups),
-			func() any {
-				if len(doc.MIGroups) > 0 {
-					return doc.MIGroups[0].Open
-				}
-				return nil
-			}(),
-			len(doc.Tracks))
-
-		return len(doc.MIGroups) == 1 && len(doc.MIGroups[0].Open) == 1
+		return liveIterations(doc) == 1
 	}, 3*time.Second, 500*time.Millisecond,
 		"the checkpoint must freeze the one-open-iteration position")
 

@@ -48,7 +48,7 @@ func TestExecForRoutesByLoopCharacteristics(t *testing.T) {
 		"a node with no loop characteristics runs as one instance")
 
 	if seqMI != nil {
-		require.IsType(t, &leafDecorator{},
+		require.IsType(t, &iterDecorator{},
 			execFor(tr, &stepInfo{node: seqMI}),
 			"a sequentially iterated leaf runs through a decorator")
 	}
@@ -58,7 +58,7 @@ func TestExecForRoutesByLoopCharacteristics(t *testing.T) {
 // instance reports awaitEvent exactly while it is parked, and awaitNothing
 // otherwise. A leaf can hold no other kind — it opens no scope and owns no
 // child instance — and that is the whole reason a leaf contributes to
-// residency where a sub-process instance does not (ADR-025 v.3 §2.13).
+// residency where a sub-process instance does not (ADR-025 §2.13).
 func TestNodeExecAwaits(t *testing.T) {
 	tr := &track{}
 	e := newNodeExec(tr, &stepInfo{}, 0)
@@ -77,7 +77,7 @@ func TestNodeExecAwaits(t *testing.T) {
 
 // TestNodeExecStateOrdinal: a non-iterated activity is instance zero of one,
 // and the ordinal is the join key the record, the projection and an incident
-// all name (ADR-025 v.3 §2.9.1). Keeping the identity uniform here is what
+// all name (ADR-025 §2.9.1). Keeping the identity uniform here is what
 // lets M2 add instances without special-casing the single-instance path.
 func TestNodeExecStateOrdinal(t *testing.T) {
 	tr := &track{}
@@ -105,10 +105,10 @@ func TestNodeExecDoneNeedsAnEndedStep(t *testing.T) {
 // instance currently running, and reports nothing between instances. M3's
 // residency rule reads this — an activity whose instances are all finished
 // must not look like one that is waiting, or it would pin its process
-// instance resident forever (ADR-025 v.3 §2.13).
+// instance resident forever (ADR-025 §2.13).
 func TestLeafDecoratorAwaitsItsLiveInstance(t *testing.T) {
 	tr := &track{}
-	d := newLeafDecorator(tr, &stepInfo{}, nil)
+	d := newIterDecorator(tr, &stepInfo{}, nil, false)
 
 	require.Equal(t, awaitNothing, d.awaits(),
 		"a decorator with no live instance awaits nothing")
@@ -132,11 +132,11 @@ func TestLeafDecoratorAwaitsItsLiveInstance(t *testing.T) {
 func TestLeafDecoratorSatisfiesActivityExec(t *testing.T) {
 	var (
 		_ activityExec = (*nodeExec)(nil)
-		_ activityExec = (*leafDecorator)(nil)
+		_ activityExec = (*iterDecorator)(nil)
 	)
 
-	require.Implements(t, (*activityExec)(nil), newLeafDecorator(
-		&track{}, &stepInfo{}, nil))
+	require.Implements(t, (*activityExec)(nil), newIterDecorator(
+		&track{}, &stepInfo{}, nil, false))
 }
 
 // TestRefuseIfParked pins the guard's DECISION: an instance still waiting
@@ -168,7 +168,7 @@ func TestRefuseIfParked(t *testing.T) {
 	require.NotNil(t, host)
 
 	tr := &track{instance: inst}
-	d := newLeafDecorator(tr, &stepInfo{node: host}, nil)
+	d := newIterDecorator(tr, &stepInfo{node: host}, nil, false)
 
 	require.NoError(t, d.refuseIfParked(0),
 		"no live instance is not a parked one")

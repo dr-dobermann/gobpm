@@ -11,6 +11,7 @@ package eventhub
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -168,10 +169,8 @@ func (eh *EventHub) RegisterEvent(
 			errs.C(errorClass, errs.InvalidState))
 	}
 
-	if ep == nil {
-		return errs.New(
-			errs.M("empty event processor isn't allowed"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
+	if err := checkProcessor(ep, "RegisterEvent"); err != nil {
+		return err
 	}
 
 	if eDef == nil {
@@ -198,10 +197,8 @@ func (eh *EventHub) RegisterPersistentEvent(
 			errs.C(errorClass, errs.InvalidState))
 	}
 
-	if ep == nil {
-		return errs.New(
-			errs.M("empty event processor isn't allowed"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
+	if err := checkProcessor(ep, "RegisterPersistentEvent"); err != nil {
+		return err
 	}
 
 	if eDef == nil {
@@ -212,6 +209,42 @@ func (eh *EventHub) RegisterPersistentEvent(
 	}
 
 	return eh.registerWaiter(ep, eDef, waiters.CreatePersistentWaiter)
+}
+
+// checkProcessor validates the processor a registration offers, at the one
+// boundary a host reaches: EventProcessor is a PUBLIC contract (pkg/eventproc),
+// so anything can implement it.
+//
+// Beyond the nil check it requires the processor's dynamic type to be
+// COMPARABLE. A waiter identifies its processors by value — slices.Index over
+// the interface — which is what makes a repeated registration idempotent and
+// lets one processor unregister without disturbing another. Identity by ID()
+// could not replace it: a snapshot clone preserves element ids, so two
+// instances of one process registering the same catch node present two
+// distinct processors carrying the SAME id, and matching on it would let one
+// instance unregister the other's wait.
+//
+// Go does not report false when two interface values of one uncomparable
+// dynamic type meet — it panics. A host implementing EventProcessor on a
+// struct with a slice or map field would therefore crash the hub on its SECOND
+// registration for a definition, inside a waiter, far from the call that
+// caused it. Refusing it here names the type and says what to do instead.
+func checkProcessor(ep eventproc.EventProcessor, method string) error {
+	if ep == nil {
+		return errs.New(
+			errs.M("empty event processor isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if t := reflect.TypeOf(ep); !t.Comparable() {
+		return errs.New(
+			errs.M("EventHub.%s: an EventProcessor of the uncomparable type "+
+				"%s isn't allowed — a waiter identifies its processors by "+
+				"value; register a pointer to it instead", method, t),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	return nil
 }
 
 // waiterBuilder builds the waiter a registration installs — either the

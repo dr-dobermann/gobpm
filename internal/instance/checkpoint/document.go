@@ -35,7 +35,24 @@ import (
 // ad-hoc scope (the construct was never guarded), and such a document
 // refuses to restore rather than resuming with the routing state lost
 // (SRD-083 FR-6) — loud beats silently wrong.
-const CurrentSchema = 5
+//
+// 5 → 6 (SRD-090.A FR-6) moved an iterated LEAF activity's position into
+// the executor set (Iteration). Additive in the wire sense — a Schema-5
+// document carries no Iteration — but its READ path is the interesting
+// half: a leaf iteration used to persist as a TrackRecord.MI mirror
+// (sequential) or as an MIGroupRecord plus one TrackRecord per instance
+// (parallel), and neither describes an object that still exists. Both are
+// therefore translated on restore into the instances they meant, rather
+// than rebuilt as the tracks and scopes they named (FR-7).
+// 6 → 7 (SRD-090.A M3c) made the scope table self-describing: a
+// ScopeRecord now names the track that opened it and the instance
+// ordinal it stands for. Additive in the wire sense — a Schema ≤ 6
+// document carries neither — and its read path keeps the derivation
+// those documents need: an absent HostTrack falls back to searching the
+// restored track table, precedence rule included. New documents are read
+// by lookup, which is what lets the search retire once Schema 6 leaves
+// support.
+const CurrentSchema = 7
 
 // Document is one instance's durable state (SRD-070 FR-3): identity +
 // the version pin, status, the scope table, conversation keys, the
@@ -89,6 +106,12 @@ type Document struct {
 	// MIGroups are the parallel multi-instance open sets (Schema 4,
 	// SRD-082 FR-1): which per-instance scopes are still open, at which
 	// ordinals, with the outputs collected so far.
+	//
+	// READ ONLY from Schema 6 (SRD-090.A FR-6/FR-7). Nothing writes it:
+	// a fan-out's position is its host's Iteration record, and the open
+	// instances are their own scopes — whose ordinals are in their paths,
+	// so the set is derived rather than stored. It stays so a document
+	// written before that still restores; the restore translates it.
 	MIGroups []MIGroupRecord `json:"mi_groups,omitempty"`
 	// Sweeps are the resolving compensation throws (Schema 4, SRD-082
 	// FR-1): the remaining queue and the entry being undone — the
@@ -129,11 +152,28 @@ type IncidentRecord struct {
 	Attempts   int             `json:"attempts"`
 }
 
-// ScopeRecord is one open scope: its path and the codec-encoded data
-// committed there.
+// ScopeRecord is one open scope: its path, the codec-encoded data
+// committed there, and — from Schema 7 — WHO opened it.
+//
+// HostTrack and Ordinal make the scope table self-describing (SRD-090.A
+// M3c). Before them, restore reconstructed both by searching the track
+// table for a track whose composite node derives this path, and read the
+// instance ordinal out of the path's own segment. That search needs a
+// precedence rule, because `sp-a-1` is BOTH instance 1 of node `a` and the
+// own scope of a node named `a-1`, and a path built to be read by a human
+// cannot distinguish them. Recording the host resolves it by lookup
+// instead — a track id survives a restore unchanged, so the answer is
+// exact rather than inferred.
+//
+// Ordinal is meaningful only when HostTrack is set: -1 for a host's own
+// scope (a plain composite, or a sequential pass reusing one scope), and
+// the 0-based instance number for one of N fanned out. An empty HostTrack
+// marks a Schema ≤ 6 document, whose restore falls back to the search.
 type ScopeRecord struct {
-	Path string          `json:"path"`
-	Data json.RawMessage `json:"data,omitempty"`
+	Path      string          `json:"path"`
+	HostTrack string          `json:"host_track,omitempty"`
+	Data      json.RawMessage `json:"data,omitempty"`
+	Ordinal   int             `json:"ordinal,omitempty"`
 }
 
 // LedgerRecord is one compensation-ledger entry (ADR-026): the scope it
@@ -170,9 +210,20 @@ type TrackRecord struct {
 	// would otherwise restart — SRD-070 §4.2).
 	Timer *TimerDescriptor `json:"timer,omitempty"`
 	// MI is the sequential-iteration position (Schema 4, SRD-082 FR-1)
-	// of a host that drives its own passes — sequential MI or a
-	// Standard Loop. nil for every other track.
+	// of a COMPOSITE host that drives its own passes — sequential MI or
+	// a Standard Loop. nil for every other track. A leaf activity's
+	// iteration moved to Iteration in Schema 6; this stays for the
+	// composite kinds until they follow (SRD-090.A M3), and is still
+	// READ from a Schema-5 document whatever the kind.
 	MI *MIRecord `json:"mi,omitempty"`
+
+	// Iteration is an iterated LEAF activity's executor set (Schema 6,
+	// SRD-090.A FR-6): the instances that are live, keyed by ordinal.
+	// It replaces both halves of the old shape — the MI mirror a
+	// sequential leaf rode, and the MIGroupRecord plus per-instance
+	// TrackRecords a parallel leaf rode — because a leaf instance is no
+	// longer a track and opens no scope of its own.
+	Iteration *IterationRecord `json:"iteration,omitempty"`
 	// AdHocActivity names the inner activity this track was routed to
 	// inside an Ad-Hoc container (Schema 5, SRD-083 FR-2) — the
 	// track-table half of the AdHocRecord: restore rebuilds the
@@ -207,6 +258,39 @@ type MIRecord struct {
 	ConditionMet bool            `json:"condition_met,omitempty"`
 }
 
+// IterationInstance is ONE live instance of an iterated activity (Schema
+// 6, SRD-090.A FR-6): its 0-based ordinal — the join key across the
+// record, the token projection and an incident — and what it is doing.
+// ChildID names the callee a call executor owns, and is what lets a
+// recovered caller bind a completing child's output to the slot it
+// belongs in; empty for every other kind.
+//
+// Frames are deliberately absent: the split item is the collection
+// element at the ordinal and the counter IS the ordinal, both recomputed
+// (ADR-025 §2.4 fixes cardinality once, so the collection cannot
+// shift underneath).
+type IterationInstance struct {
+	State   string `json:"state"` // running | waiting | completed
+	ChildID string `json:"child_id,omitempty"`
+	Ordinal int    `json:"ordinal"`
+}
+
+// IterationRecord is an iterated activity's live instances (Schema 6,
+// SRD-090.A FR-6) — the executor set that replaces per-iteration
+// TrackRecords and the TrackRecord.MI mirror. Kind names the iteration
+// shape, N the count frozen at activation (0 for a Standard Loop, whose
+// bound is its condition), Completed the instances fully done, Staging
+// their assembled outputs, and ConditionMet whether the
+// completionCondition already fired.
+type IterationRecord struct {
+	Kind         string              `json:"kind"` // loop | mi_sequential | mi_parallel
+	Staging      json.RawMessage     `json:"staging,omitempty"`
+	Instances    []IterationInstance `json:"instances,omitempty"`
+	N            int                 `json:"n,omitempty"`
+	Completed    int                 `json:"completed"`
+	ConditionMet bool                `json:"condition_met,omitempty"`
+}
+
 // OpenScope is one still-open per-instance scope of a parallel MI
 // group: its path (the scope's data rides the Scopes table) and its
 // 0-based instance ordinal — the one position not derivable from the
@@ -221,6 +305,8 @@ type OpenScope struct {
 // the collected outputs. Completed instances stay completed — their
 // outputs are in Staging; terminated counts are computed at cancel
 // time and never stored.
+//
+// Written by Schema 4 and 5 only — see Document.MIGroups.
 type MIGroupRecord struct {
 	HostTrack string          `json:"host_track"`
 	Staging   json.RawMessage `json:"staging,omitempty"`

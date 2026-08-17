@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -260,10 +261,16 @@ func openScope(d *checkpoint.Document) bool {
 
 // hostMI returns the recorded iteration position of the body host, or
 // nil.
-func hostMI(d *checkpoint.Document, key string) *checkpoint.MIRecord {
+//
+// A composite's position is the executor set (SRD-090.A FR-6, M3a): it was
+// the `MI` mirror until its instances became executors, and nothing writes
+// that mirror any more. The fields these tests read — N, Completed,
+// ConditionMet, Staging — carry the same meanings under the new name, which
+// is why they assert unchanged.
+func hostMI(d *checkpoint.Document, key string) *checkpoint.IterationRecord {
 	for i := range d.Tracks {
 		if d.Tracks[i].NodeID == key+"-body" {
-			return d.Tracks[i].MI
+			return d.Tracks[i].Iteration
 		}
 	}
 
@@ -724,15 +731,16 @@ func TestRestoredScopeHostSegOverride(t *testing.T) {
 	child, err := host.scopePath.Append("fire-7")
 	require.NoError(t, err)
 
-	got, node := restoredScopeHost([]*track{host}, host.scopePath, child)
+	got, node, ord := restoredScopeHost([]*track{host}, host.scopePath, child)
 	require.Same(t, host, got)
 	require.Equal(t, "cr-seg-body", node.ID())
+	require.Equal(t, -1, ord, "the host's OWN scope, not an instance of it")
 
 	// the node-derived segment no longer matches under the override.
 	plain, err := host.scopePath.Append("sp-cr-seg-body")
 	require.NoError(t, err)
 
-	miss, _ := restoredScopeHost([]*track{host}, host.scopePath, plain)
+	miss, _, _ := restoredScopeHost([]*track{host}, host.scopePath, plain)
 	require.Nil(t, miss)
 }
 
@@ -974,10 +982,47 @@ func parallelCapturedDoc(
 	s := gatedBodyProcess(t, key, op, &gate, mi, items)
 
 	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
-		return len(d.MIGroups) == 1 && len(d.MIGroups[0].Open) == 2
+		rec := fanOutRecord(d, key+"-body")
+
+		return rec != nil && runningOrdinals(rec) != nil &&
+			len(runningOrdinals(rec)) == 2
 	})
 
 	return doc, s, &count, &gate
+}
+
+// fanOutRecord finds the executor set a fanned-out host recorded — the
+// document's whole account of a parallel Multi-Instance's position now that
+// the group record is gone (SRD-090.A FR-6). Its still-open instance scopes
+// are in the Scopes table, named by their ordinals.
+func fanOutRecord(
+	d *checkpoint.Document, nodeID string,
+) *checkpoint.IterationRecord {
+	for i := range d.Tracks {
+		rec := &d.Tracks[i]
+		if rec.NodeID == nodeID && rec.Iteration != nil &&
+			rec.Iteration.Kind == iterKindMIParallel {
+			return rec.Iteration
+		}
+	}
+
+	return nil
+}
+
+// runningOrdinals lists the instances the record says are still live, in
+// ordinal order.
+func runningOrdinals(rec *checkpoint.IterationRecord) []int {
+	var out []int
+
+	for _, inst := range rec.Instances {
+		if inst.State == instanceRunning {
+			out = append(out, inst.Ordinal)
+		}
+	}
+
+	sort.Ints(out)
+
+	return out
 }
 
 // TestParallelMIRestoresOpenSet is T-5: the restored group re-opens
@@ -990,14 +1035,26 @@ func TestParallelMIRestoresOpenSet(t *testing.T) {
 	require.Equal(t, int32(3), count.Load(),
 		"every instance ran its work before the crash (parallel)")
 
-	rec := doc.MIGroups[0]
+	rec := fanOutRecord(doc, "cr-par-body")
 	require.Equal(t, 3, rec.N)
 	require.NotEmpty(t, rec.Staging)
-	require.Equal(t,
-		[]checkpoint.OpenScope{
-			{Path: rec.Open[0].Path, Ordinal: 1},
-			{Path: rec.Open[1].Path, Ordinal: 2},
-		}, rec.Open, "the open set records ordinals 1 and 2, sorted")
+	require.Equal(t, []int{1, 2}, runningOrdinals(rec),
+		"instances 1 and 2 are still live; 0 completed before the crash")
+	require.Equal(t, 1, rec.Completed)
+
+	// their scopes are the open set — the record does not carry one, and
+	// does not need to: the ordinal is in the path (SRD-090.A M3b).
+	paths := make([]string, 0, len(doc.Scopes))
+	for _, sr := range doc.Scopes {
+		paths = append(paths, sr.Path)
+	}
+
+	require.ElementsMatch(t,
+		[]string{
+			"/cr-par",
+			"/cr-par/sp-cr-par-body-1",
+			"/cr-par/sp-cr-par-body-2",
+		}, paths, "exactly the live instances' scopes are still open")
 
 	gate.Store(3)
 	restored := restoreToDone(t, doc, s)
@@ -1014,12 +1071,12 @@ func TestParallelMIRestoresOpenSet(t *testing.T) {
 		"the assembled output: the restored slot uniform with live ones")
 }
 
-// TestParallelMIRestoresWithoutOutput: a no-output group (nil staging)
-// restores and completes the same way.
+// TestParallelMIRestoresWithoutOutput: a fan-out assembling no output (nil
+// staging) restores and completes the same way.
 func TestParallelMIRestoresWithoutOutput(t *testing.T) {
 	doc, s, count, gate := parallelCapturedDoc(t, "cr-parnoout", false)
 
-	require.Empty(t, doc.MIGroups[0].Staging)
+	require.Empty(t, fanOutRecord(doc, "cr-parnoout-body").Staging)
 
 	gate.Store(3)
 	restoreToDone(t, doc, s)
@@ -1027,11 +1084,73 @@ func TestParallelMIRestoresWithoutOutput(t *testing.T) {
 	require.Equal(t, int32(3), count.Load())
 }
 
-// TestParallelMIRestoreRefusals: a group record the document cannot
+// asSchemaFive rewrites a captured fan-out into the SCHEMA-5 shape: the
+// position moves off the host's executor set and onto an MIGroupRecord, which
+// is how a document written before SRD-090.A carried it.
+//
+// Nothing writes that record any more, so this is the only way left to
+// exercise the translation that restores such a document (FR-7) — and the
+// only way to keep testing its refusals, which are what stop a half-restore
+// of a document whose tables disagree.
+func asSchemaFive(
+	t *testing.T, d *checkpoint.Document, nodeID string,
+) *checkpoint.Document {
+	t.Helper()
+
+	rec := fanOutRecord(d, nodeID)
+	require.NotNil(t, rec)
+
+	grp := checkpoint.MIGroupRecord{N: rec.N, Staging: rec.Staging}
+
+	var hostScope string
+
+	for i := range d.Tracks {
+		if d.Tracks[i].NodeID == nodeID && d.Tracks[i].Iteration != nil {
+			grp.HostTrack = d.Tracks[i].ID
+			hostScope = d.Tracks[i].ScopePath
+			d.Tracks[i].Iteration = nil // schema 5 recorded neither half here
+		}
+	}
+
+	for _, ord := range runningOrdinals(rec) {
+		grp.Open = append(grp.Open, checkpoint.OpenScope{
+			Path:    hostScope + "/sp-" + nodeID + "-" + itoa(ord),
+			Ordinal: ord,
+		})
+	}
+
+	d.MIGroups = []checkpoint.MIGroupRecord{grp}
+
+	return d
+}
+
+// TestParallelMIRestoresFromASchemaFiveGroup: a document that carries the
+// retired group record still restores — its open set is translated into the
+// instance entries and executor set the decorator now expects (FR-7).
+func TestParallelMIRestoresFromASchemaFiveGroup(t *testing.T) {
+	doc, s, count, gate := parallelCapturedDoc(t, "cr-parold", true)
+	doc = asSchemaFive(t, doc, "cr-parold-body")
+
+	gate.Store(3)
+	restored := restoreToDone(t, doc, s)
+
+	require.Equal(t, int32(3), count.Load(),
+		"no instance body re-executes after the restore")
+
+	d, err := restored.sc.plane.GetData(restored.sc.root, "outs")
+	require.NoError(t, err)
+
+	col, _ := d.Value().(data.Collection)
+	require.Equal(t, []any{"R:a", "R:b", "R:c"},
+		col.GetAll(context.Background()))
+}
+
+// TestParallelMIRestoreRefusals: a schema-5 group record the document cannot
 // honor refuses loud (SRD-082 FR-4, NFR-2).
 func TestParallelMIRestoreRefusals(t *testing.T) {
 	t.Run("garbage group staging", func(t *testing.T) {
 		doc, s, _, gate := parallelCapturedDoc(t, "cr-parbadstage", true)
+		doc = asSchemaFive(t, doc, "cr-parbadstage-body")
 
 		doc.MIGroups[0].Staging = json.RawMessage(`{broken`)
 
@@ -1041,6 +1160,7 @@ func TestParallelMIRestoreRefusals(t *testing.T) {
 
 	t.Run("a host track the table does not carry", func(t *testing.T) {
 		doc, s, _, gate := parallelCapturedDoc(t, "cr-parnohost", true)
+		doc = asSchemaFive(t, doc, "cr-parnohost-body")
 
 		doc.MIGroups[0].HostTrack = "gone"
 
@@ -1051,6 +1171,7 @@ func TestParallelMIRestoreRefusals(t *testing.T) {
 
 	t.Run("an open scope missing from the scope table", func(t *testing.T) {
 		doc, s, _, gate := parallelCapturedDoc(t, "cr-parnoscope", true)
+		doc = asSchemaFive(t, doc, "cr-parnoscope-body")
 
 		doc.MIGroups[0].Open[0].Path += "-phantom"
 
@@ -1138,30 +1259,29 @@ func TestDrainBeforeReAttachSerial(t *testing.T) {
 	_ = restored
 }
 
-// TestDrainBeforeReAttachParallel: the parallel counterpart — held
-// instance drains complete on the group's scopeReAttach; a re-attach
-// without a restored group refuses loud.
+// TestDrainBeforeReAttachParallel: the fanned-out counterpart — a restored
+// instance scope that drains BEFORE its executor re-attaches holds the
+// completion, and the re-attaching open releases it.
+//
+// Each instance holds its own: the hold is per-entry, so one instance
+// draining early says nothing about its siblings, where the group's
+// re-attach released the whole set at once.
 func TestDrainBeforeReAttachParallel(t *testing.T) {
 	doc, s, _, _ := parallelCapturedDoc(t, "cr-parhold", true)
 
 	restored, ls, initial := restoredLoopState(t, doc, s)
 
-	grp := ls.miGroups[doc.MIGroups[0].HostTrack]
-	require.NotNil(t, grp)
+	host := trackByID(initial, hostTrackOf(t, doc, "cr-parhold-body"))
+	require.NotNil(t, host)
 
-	// pick one open instance scope and drain its parked catch track
-	// before the runner re-attaches.
-	var path scope.DataPath
+	open := ls.instanceScopesOf(host)
+	require.Len(t, open, 2, "two instances were live at the capture")
 
-	for p := range grp.open {
-		path = p
-
-		break
-	}
-
+	path, other := open[0], open[1]
 	entry := ls.scopes[path]
 	entry.active = 1
 
+	// the inner track of ONE instance drains before its executor re-attaches.
 	var inner *track
 
 	for _, tr := range initial {
@@ -1175,30 +1295,42 @@ func TestDrainBeforeReAttachParallel(t *testing.T) {
 	require.NotNil(t, inner)
 
 	ls.decScope(context.Background(), inner)
-	require.True(t, entry.drainPending)
+	require.True(t, entry.drainPending, "the drain must hold for the fence")
+	require.Contains(t, ls.scopes, path,
+		"the scope must not complete before the re-attach")
 
+	// its executor re-attaches — naming its OWN segment, since that is what
+	// distinguishes it from its siblings.
 	req := scopeRequest{
-		op: scopeReAttach, host: grp.host, node: grp.node,
+		op: scopeOpen, host: host, node: entry.node,
+		segment: scopeSegment(entry.node) + "-" + itoa(entry.ordinal),
+		ordinal: entry.ordinal, drain: make(chan struct{}),
 		reply: make(chan scopeReply, 1),
 	}
-	ls.handleReAttach(context.Background(), req)
+	ls.handleScopeOpen(context.Background(), req)
 
-	r := <-req.reply
-	require.NoError(t, r.err)
-
-	_, open := ls.scopes[path]
-	require.False(t, open, "the held instance drain completes on re-attach")
-
-	// a re-attach naming a host with no restored group refuses loud.
-	orphan := scopeRequest{
-		op: scopeReAttach, host: inner, node: grp.node,
-		reply: make(chan scopeReply, 1),
-	}
-	ls.handleReAttach(context.Background(), orphan)
-
-	require.Error(t, (<-orphan.reply).err)
+	require.NoError(t, (<-req.reply).err)
+	require.NotContains(t, ls.scopes, path,
+		"the held drain completes on re-attach")
+	require.Contains(t, ls.scopes, other,
+		"and its sibling still waits for its own executor")
 
 	_ = restored
+}
+
+// hostTrackOf names the track a document records the fan-out on.
+func hostTrackOf(t *testing.T, d *checkpoint.Document, nodeID string) string {
+	t.Helper()
+
+	for i := range d.Tracks {
+		if d.Tracks[i].NodeID == nodeID && d.Tracks[i].Iteration != nil {
+			return d.Tracks[i].ID
+		}
+	}
+
+	t.Fatalf("no fan-out host track for %q", nodeID)
+
+	return ""
 }
 
 // TestGroupRecordOnNonMIHost: a group record naming a host whose node
@@ -1751,4 +1883,110 @@ func TestChildLinkageAccessors(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "parent-1", child.ParentID())
 	require.Equal(t, "call-node-1", child.CallNodeID())
+}
+
+// TestRestoredPlainCompositeHoldsItsDrain (SRD-090.A M3c): a restored PLAIN
+// composite whose body drains before its host re-attaches must hold the
+// drain, not complete on it.
+//
+// The window is real and the failure is silent. adoptRestoredScopes rebuilds
+// the entry before the spawns, and a restored entry carries NO drain channel
+// — the channel belongs to the executor, which does not exist until the host
+// track reaches its step and asks to re-attach. If the body's tracks finish
+// first, completing the scope there closes nothing at all, and the re-attach
+// that follows finds the path free and opens a SECOND scope: the body runs
+// twice, which is the one outcome a restore exists to prevent.
+//
+// Only own-iteration scopes held their drain before M3c, and that was right
+// while a plain composite's host waited on its evtCh — a drain could be
+// delivered to it, parked or not. It stopped being right the moment every
+// scope became executor-driven.
+func TestRestoredPlainCompositeHoldsItsDrain(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, ls := openInstance(t)
+
+	sp, err := activities.NewSubProcess("held")
+	require.NoError(t, err)
+
+	host := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		instance:    inst,
+		scopePath:   inst.sc.root,
+		steps:       []*stepInfo{{node: sp}},
+	}
+
+	child, err := host.scopePath.Append(scopeSegment(sp))
+	require.NoError(t, err)
+	require.NoError(t, inst.sc.plane.OpenScope(child))
+
+	// the entry adoptRestoredScopes builds: no drain channel yet, because
+	// the executor that owns one has not asked to re-attach.
+	entry := &scopeEntry{
+		host: host, node: sp, parent: host.scopePath, awaitAttach: true,
+	}
+	ls.scopes[child] = entry
+	ls.waiting[host.ID()] = struct{}{}
+
+	// the body's last track leaves the scope: the drain arrives FIRST.
+	body := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		instance:    inst,
+		scopePath:   child,
+	}
+	entry.active = 1
+
+	ls.decScope(t.Context(), body)
+
+	require.True(t, entry.drainPending,
+		"the drain is held for the re-attach, not spent on nothing")
+	require.Contains(t, ls.scopes, child,
+		"and the scope stays open, so the re-attach finds it")
+
+	// now the host's executor arrives: it re-attaches to the SAME scope and
+	// the held drain is delivered to the channel it brought.
+	reply, answered := openScopeFor(t.Context(), t, ls, host, sp)
+
+	require.True(t, answered)
+	require.NoError(t, reply.err)
+	require.Equal(t, child, reply.scopePath,
+		"the restored scope, not a second one opened beside it")
+	require.NotContains(t, ls.scopes, child, "the held drain completed it")
+}
+
+// TestAdoptedPlainCompositeAwaitsItsReattach pins the line the test above
+// depends on: the ADOPTION is what marks a restored scope as awaiting its
+// re-attach, and before SRD-090.A M3c it marked only own-iteration ones.
+//
+// Split from that test deliberately. The one above builds its entry by hand
+// to force the drain-before-re-attach ordering, so it would keep passing
+// with the adoption unfixed — it proves decScope honours the flag, not that
+// anything sets it.
+func TestAdoptedPlainCompositeAwaitsItsReattach(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, ls := openInstance(t)
+
+	sp, err := activities.NewSubProcess("adopted")
+	require.NoError(t, err)
+
+	host := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		instance:    inst,
+		scopePath:   inst.sc.root,
+		steps:       []*stepInfo{{node: sp}},
+	}
+
+	child, err := host.scopePath.Append(scopeSegment(sp))
+	require.NoError(t, err)
+	require.NoError(t, inst.sc.plane.OpenScope(child))
+
+	require.NoError(t, ls.adoptRestoredScopes([]*track{host}))
+
+	entry, ok := ls.scopes[child]
+	require.True(t, ok, "the restored scope is adopted")
+	require.True(t, entry.awaitAttach,
+		"a PLAIN composite's restored scope holds its drain too — it has no "+
+			"channel until its executor re-attaches, so completing early "+
+			"would close nothing and let the re-attach open a second scope")
 }

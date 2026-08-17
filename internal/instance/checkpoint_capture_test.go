@@ -315,9 +315,9 @@ func TestCaptureArms(t *testing.T) {
 			inst, ls, _ := newArmedInstance(t)
 			host := inst.tracks[firstTrackID(inst)]
 
-			// every guard retired (SRD-082 FR-8): groups in M2, sweeps
-			// in M3, calls in M4 — all recorded now, never deferred.
-			ls.miGroups["g"] = &miGroup{host: host}
+			// every guard retired (SRD-082 FR-8): sweeps in M3, calls
+			// in M4 — recorded now, never deferred. The parallel-MI
+			// group guard retired with the group itself (SRD-090.A M3b).
 			ls.sweeps["s"] = &sweepRun{
 				sweep: &compSweep{path: inst.sc.root, thrower: host,
 					wait: true},
@@ -328,7 +328,6 @@ func TestCaptureArms(t *testing.T) {
 			}
 			doc, reason := ls.captureDocument(context.Background())
 			require.Empty(t, reason)
-			require.Len(t, doc.MIGroups, 1)
 			require.Len(t, doc.Sweeps, 1)
 			require.Equal(t, host.ID(), doc.Sweeps[0].ThrowerTrack)
 			require.NotNil(t, doc.Sweeps[0].Running)

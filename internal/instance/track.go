@@ -116,6 +116,33 @@ const (
 	// never a resumption. While the incident is open the node's token stays
 	// visible (SRD-079 FR-4) and the track's boundaries stay armed.
 	TrackIncident
+
+	// TrackIterating represents a track whose activity is running its node
+	// MORE THAN ONCE — a Multi-Instance or a Standard Loop (ADR-025
+	// §2.13b.1e). It is a live, working state, like TrackExecutingStep, and
+	// it exists because an activity is ONE step of its token however many
+	// instances run it: without it, each instance's execution reported a
+	// step of its own, and a decorator had to reach into every instance and
+	// suppress the transition.
+	//
+	// Per-instance executions fall BELOW this state's granularity — the
+	// machine simply does not accept a step transition while a track is
+	// iterating (see stepTransitionsVisible). What each instance is doing
+	// travels as attributes rather than as states (§2.13b.1f).
+	TrackIterating
+
+	// TrackHostingScope represents a track whose activity has forked its
+	// token into a child scope and is waiting for that scope to drain — an
+	// embedded Sub-Process (ADR-025 §2.13b.1e).
+	//
+	// It reads as EXECUTING today, which is the same defect ADR-025 §2.13
+	// named one level down and fixed only inside the runtime: "parked for a
+	// child's drain was, from outside the runner's own stack,
+	// indistinguishable from executing". The executor learned the
+	// difference; the token never did. It is NOT a wait in the
+	// TrackWaitForEvent sense — nothing external will wake it, its own body
+	// will — which is why it is a state of its own rather than a reuse.
+	TrackHostingScope
 )
 
 // String returns the human-readable name of the track state.
@@ -134,6 +161,8 @@ func (t trackState) String() string {
 		"TrackFailed",
 		"TrackDehydrated",
 		"TrackIncident",
+		"TrackIterating",
+		"TrackHostingScope",
 	}[t]
 }
 
@@ -236,10 +265,15 @@ type track struct {
 	// instead of iterating from zero. Set by restore before spawn,
 	// consumed once by the runner.
 	miSeed *checkpoint.MIRecord
-	// miParallelSeed is the parallel counterpart (SRD-082 FR-4): the
-	// runner re-attaches to its restored group instead of fanning out.
-	// Set by the loop's adoption BEFORE the spawns, consumed once.
-	miParallelSeed *miParallelSeed
+
+	// iterSeed is a RESTORED activity's executor set (SRD-090.A FR-7):
+	// which ordinals were still live when the capture was taken. A
+	// sequential decorator needs only the completed count (miSeed carries
+	// it), but a parallel one completes out of order — the count alone
+	// cannot say WHICH ordinals are done, and re-running a completed
+	// instance is exactly what FR-7 forbids. Consumed once, by the
+	// activity the track was restored on (takeIterSeed).
+	iterSeed *checkpoint.IterationRecord
 	// compScopeSeed, on a compensation event-sub handler host, is the snapshot
 	// committed into the handler's fresh child scope at open (shadowing
 	// reads). Set by the loop before spawn.
@@ -283,13 +317,7 @@ type track struct {
 	// dehydrated track's lineage without appending it (bounded across cycles,
 	// §4.1).
 	woken bool
-	// leafPlain marks a track spawned to execute a PARALLEL LEAF MI
-	// instance (SRD-086 FR-3): the group's fan-out drives the
-	// iteration, so this track's executeStep must run the node plainly
-	// instead of re-entering the MI decorator. Set pre-spawn on the
-	// loop goroutine, before the run goroutine exists.
-	leafPlain bool
-	state     trackState
+	state trackState
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -351,6 +379,13 @@ var trackPhase = map[trackState]observability.Phase{
 	TrackFailed:             observability.PhaseFailed,
 	TrackDehydrated:         observability.PhaseDehydrated,
 	TrackIncident:           observability.PhaseIncident,
+	// Both new states map onto the EXISTING executing phase (ADR-025
+	// §2.13b.1f): an iterating or scope-hosting token IS executing its
+	// activity, so no new value reaches a host and the added precision
+	// stays internal. A distinct phase is SRD-090.C's call, made with the
+	// token projection in hand.
+	TrackIterating:    observability.PhaseExecuting,
+	TrackHostingScope: observability.PhaseExecuting,
 }
 
 // nodePhaseFor returns the observable node phase for a track state. Every valid
@@ -508,13 +543,13 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		return nil
 	}
 
-	// a Multi-Instance HOST doesn't wait — its decorator drives the
-	// iteration, and only the per-instance leaf tracks (leafPlain) or
-	// the serial passes register (SRD-086 FR-4). Registering the host
-	// would evaluate iteration correlation at the HOST scope, where no
-	// split item exists.
-	if mi := multiInstanceOf(node); mi != nil &&
-		!mi.IsSequential() && !t.leafPlain {
+	// a PARALLEL Multi-Instance host doesn't wait — its decorator drives
+	// the iteration, and registering the host would evaluate iteration
+	// correlation at the HOST scope, where no split item exists. The
+	// instances themselves cannot wait either while an iterated waiting
+	// activity is refused at build time (SRD-090.A FR-10); SRD-090.B makes
+	// the decorator the registered processor and retires that refusal.
+	if mi := multiInstanceOf(node); mi != nil && !mi.IsSequential() {
 		return nil
 	}
 
@@ -834,22 +869,24 @@ func (t *track) stashTimerPlan(
 
 // checkActivityWaitKind classifies the non-event wait nodes (done=true when
 // the node was recognized and handled): a UserTask parks for a human Complete
-// (SRD-034); a composite enters through enterComposite (SRD-049 FR-8 park, or
-// the ADR-025 v.2 off-loop iteration); a Call Activity parks for its child
-// instance (SRD-050); a ServiceTask marked WithWorker parks for the worker's
-// report (SRD-036 — checked after the call capability, a CallActivity is not
-// an ExternalWorker). Each is recognized by capability, keeping the runtime
+// (SRD-034); a Call Activity parks for its child instance (SRD-050); a
+// ServiceTask marked WithWorker parks for the worker's report (SRD-036 —
+// checked after the call capability, a CallActivity is not an
+// ExternalWorker). Each is recognized by capability, keeping the runtime
 // model-agnostic.
+//
+// A COMPOSITE is deliberately absent (SRD-090.A M3c). It used to park here,
+// which made entering a Sub-Process a wait — and it is not one: the token
+// forks into a child scope and the body's own tracks do the waiting. Its
+// executor opens the scope from the step instead, like every other activity
+// instance, which is FR-2's one decision and FR-11's transparency in the
+// same move.
 func (t *track) checkActivityWaitKind(
 	node flow.Node,
 	atConstruction bool,
 ) (bool, error) {
 	if _, ok := node.(interactor.HumanTask); ok {
 		return true, t.parkHumanTask(node)
-	}
-
-	if _, ok := node.(scopeHost); ok {
-		return true, t.enterComposite(node, atConstruction)
 	}
 
 	if _, ok := node.(interface{ CalledKey() string }); ok {
@@ -886,45 +923,12 @@ func (t *track) checkThrowNode(
 	return true, nil
 }
 
-// enterComposite routes a composite host reached by a token: a composite that
-// drives its own iteration off the loop (a Standard-Loop or a sequential
-// Multi-Instance composite, ADR-025 v.2 §2.12) must NOT park — run() reaches it and
-// executeStep routes it to runCompositeLoop / runMISequential; every other
-// composite (plain Sub-Process, parallel Multi-Instance) parks for the loop-driven
-// scope re-entry.
-func (t *track) enterComposite(node flow.Node, atConstruction bool) error {
-	if drivesOwnIteration(node) {
-		return nil
-	}
-
-	return t.parkScopeHost(node, atConstruction)
-}
-
-// parkScopeHost parks the track on a composite node (SRD-049 FR-8): the
-// host waits on evtCh for the scope-drain completion. Mid-run the loop is
-// told via evScopeOpen; at construction (incl. a fork born ON a composite,
-// which runs on the loop goroutine — the SRD-048 deadlock rule) the spawn
-// path opens the scope via recordBornWaiter instead.
-func (t *track) parkScopeHost(node flow.Node, atConstruction bool) error {
-	t.updateState(TrackWaitForEvent)
-
-	if !atConstruction && t.instance.State() == Active {
-		t.instance.emit(trackEvent{
-			kind:  evScopeOpen,
-			track: t,
-			node:  node,
-		})
-	}
-
-	return nil
-}
-
 // parkCompensationThrow parks the track on a wait-for-completion Compensation
 // throw (SRD-059 FR-5): the thrower waits on evtCh until the loop's sweep
 // drains and delivers the completion sentinel. Mid-run the loop is told via
 // evCompensate; at construction (a fork born ON the throw, which runs on the
 // loop goroutine — the SRD-048 deadlock rule) the spawn path starts the sweep
-// via recordBornWaiter instead. Mirrors parkScopeHost.
+// via recordBornWaiter instead.
 func (t *track) parkCompensationThrow(
 	node flow.Node,
 	ref string,
@@ -954,7 +958,7 @@ func (t *track) parkCompensationThrow(
 // waits on evtCh for the child instance's completion. Mid-run the loop is told
 // via evCallWaiting; at construction (a fork born ON a Call Activity, which runs
 // on the loop goroutine — the SRD-048 deadlock rule) the spawn path launches the
-// call via recordBornWaiter instead. Mirrors parkScopeHost.
+// call via recordBornWaiter instead.
 func (t *track) parkCallActivity(node flow.Node, atConstruction bool) error {
 	t.updateState(TrackWaitForEvent)
 
@@ -1094,6 +1098,21 @@ func (t *track) currentStep() *stepInfo {
 	defer t.m.RUnlock()
 
 	return t.steps[len(t.steps)-1]
+}
+
+// alive reports whether this track can still act — it has not reached a
+// terminal state and has not been asked to stop.
+//
+// Read by the LOOP about another goroutine's track, which is safe because the
+// state is mutex-guarded and the answer is only ever used to decline work: a
+// track that dies immediately after this returns true simply gets work it
+// then abandons, exactly as it would have without the check.
+func (t *track) alive() bool {
+	if t.stopIt.Load() {
+		return false
+	}
+
+	return liveTrackStates[t.currentState()]
 }
 
 // stop terminates track execution.
@@ -1384,6 +1403,35 @@ func (t *track) executeNode(
 	ctx context.Context,
 	step *stepInfo,
 ) ([]*flow.SequenceFlow, error) {
+	// through a UNIT, not straight into the sequence (ADR-025 §2.13b). Its
+	// callers — a decorator's exit, a composite's exit — are running the
+	// node as the activity's single instance, which is precisely what a
+	// unit is, and routing them through it leaves ONE path from "execute
+	// this node" to the sequence that does it.
+	return newNodeExec(t, step, 0).run(ctx)
+}
+
+// executeNodeAs runs the node as ONE instance of its activity.
+//
+// **The whole sequence belongs to the unit** (ADR-025 §2.13b) — opening the
+// frame, seeding it, binding the instance's own data, loading the declared
+// inputs, running the node, the cancellation checkpoint, the commit — which
+// is why this reads as one function rather than as steps a caller strings
+// together. A decorator wraps THIS, not a sequence it has to reproduce.
+//
+// It remains a track method because every phase legitimately touches track
+// state (the compensation seed, the received item, the step, the history);
+// the unit owns the ORDER, which is what makes it wrappable.
+//
+// ai carries what distinguishes this instance from its siblings: the data
+// only it sees, and the capture that takes its result before the commit makes
+// the output's name a shared one. A plain node is the degenerate case — one
+// instance, no local data.
+func (t *track) executeNodeAs(
+	ctx context.Context,
+	step *stepInfo,
+	ai activityInstance,
+) ([]*flow.SequenceFlow, error) {
 	ne, ok := step.node.(exec.NodeExecutor)
 	if !ok {
 		return nil,
@@ -1416,6 +1464,17 @@ func (t *track) executeNode(
 		}
 	}
 
+	// ONE instance of an iterated activity carries its own data frame-local
+	// (ADR-025 §2.2, SRD-090.A FR-4): binding it at the shared container
+	// scope is safe only while a single instance runs at a time, and the
+	// instances of a parallel activity run at once. Bound before the node
+	// loads its inputs, which resolve frame-first through it.
+	if len(ai.local) > 0 {
+		if berr := f.BindLocal(ai.local...); berr != nil {
+			return nil, berr
+		}
+	}
+
 	if perr := t.prepareNodeExecution(ctx, step, f); perr != nil {
 		return nil, perr
 	}
@@ -1439,11 +1498,30 @@ func (t *track) executeNode(
 		return nil, err
 	}
 
-	if err := t.finalizeNodeExecution(ctx, step, f); err != nil {
+	if err := t.finalizeNodeExecution(ctx, step, f, ai); err != nil {
 		return nil, err
 	}
 
 	return nexts, nil
+}
+
+// activityInstance is what distinguishes ONE instance of an activity from its
+// siblings when a decorator drives several of them (ADR-025 §2.13).
+type activityInstance struct {
+	// capture, when set, is called with this execution's frame once the node
+	// has produced its outputs and BEFORE they commit to the shared
+	// container scope. It is how a decorator takes ONE instance's declared
+	// output for positional assembly (ADR-025 §2.6): with no
+	// per-instance scope to read it from, concurrent siblings overwrite the
+	// output's name in the container scope, so the value has to be taken
+	// while it is still this instance's own.
+	capture func(f *scope.Frame) error
+
+	// local is this instance's own data — the 0-based loopCounter and, for a
+	// collection-driven Multi-Instance, its split input item. Bound
+	// frame-local, so a sibling cannot overwrite it and it never reaches the
+	// shared container scope (SRD-090.A FR-4).
+	local []data.Data
 }
 
 // prepareNodeExecution marks the step started and runs the consumer role:
@@ -1453,11 +1531,33 @@ func (t *track) prepareNodeExecution(
 	step *stepInfo,
 	f *scope.Frame,
 ) error {
-	t.updateState(TrackExecutingStep)
+	if t.stepTransitionsVisible() {
+		t.updateState(TrackExecutingStep)
+		t.record(TrackExecutingStep) // record this node visit (path + timing)
+	}
+
 	step.state = StepStarted
-	t.record(TrackExecutingStep) // record this node visit (path + timing)
 
 	return t.loadIncomingData(ctx, step.node, f)
+}
+
+// stepTransitionsVisible reports whether THIS execution is a step of the
+// token, and so should move the track's state and add a history entry.
+//
+// It is false exactly while the track is ITERATING: an activity is one step
+// of its token however many instances run it, so the instances fall below
+// the state machine's granularity (ADR-025 §2.13b.1e). Reporting each one
+// would say a five-instance activity was five step executions, and the
+// history entry is a read-copy-store over an atomic pointer rather than a
+// CAS — so concurrent instances would drop entries rather than miscount
+// loudly.
+//
+// This replaced an `inSet` flag threaded from the decorator, through the
+// executor, into here: a piece of "I am one of N" traveling inward through
+// three layers to ask the driver to do less. The track knows its own state,
+// so nothing needs to be passed.
+func (t *track) stepTransitionsVisible() bool {
+	return !t.inState(TrackIterating)
 }
 
 // executeNodeCore runs the node's executor against the per-execution
@@ -1527,9 +1627,13 @@ func (t *track) finalizeNodeExecution(
 	ctx context.Context,
 	step *stepInfo,
 	f *scope.Frame,
+	ai activityInstance,
 ) error {
 	step.state = StepEnded
-	t.updateState(TrackProcessStepResults)
+
+	if t.stepTransitionsVisible() {
+		t.updateState(TrackProcessStepResults)
+	}
 
 	// stage the delivery's payload for the catch node's binding and
 	// consume it — the next execution must not see a stale item
@@ -1542,6 +1646,14 @@ func (t *track) finalizeNodeExecution(
 
 	if err := t.uploadOutgoingData(ctx, step.node, f); err != nil {
 		return err
+	}
+
+	// take this instance's own output before the commit makes the name a
+	// shared one (ADR-025 §2.6).
+	if ai.capture != nil {
+		if cerr := ai.capture(f); cerr != nil {
+			return cerr
+		}
 	}
 
 	// The changed-path set is the activity-boundary change signal — one
@@ -1893,4 +2005,26 @@ func (t *track) loopCounterSnap() int {
 	defer t.m.RUnlock()
 
 	return t.loopCounter
+}
+
+// takeIterSeed hands the restored executor set to the activity starting
+// now, and clears it (SRD-090.A FR-7).
+//
+// The clear is the point. A seed describes the instances of ONE activity —
+// the one the track was restored on — and a restored track does not stop
+// there: it finishes that activity and walks on through the graph. Left in
+// place, the seed would still be sitting on the track when the token reached
+// the NEXT iterated activity, whose decorator would read another activity's
+// ordinals as its own and skip every instance recorded completed. Those
+// instances would never run, and nothing would say so — the run would simply
+// produce a shorter result.
+//
+// Only a decorator calls this, which is exactly the set that can be handed
+// one: a seed reaches a track only when the capture wrote an IterationRecord
+// for it, and only an iterated activity has one.
+func (t *track) takeIterSeed() *checkpoint.IterationRecord {
+	seed := t.iterSeed
+	t.iterSeed = nil
+
+	return seed
 }

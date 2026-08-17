@@ -96,3 +96,6 @@ __pycache__/
 # machine-local timing baseline. Not source — and a baseline from a 24-core box
 # is false on a 2-core runner, so it is never shared.
 .ci/
+
+# macOS Finder metadata
+.DS_Store
