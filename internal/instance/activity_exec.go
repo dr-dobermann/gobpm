@@ -403,15 +403,15 @@ func (d *iterDecorator) runParallel(
 			continue
 		}
 
-		e, err := d.instanceFor(ctx, ord, outs)
+		e, icap, err := d.instanceFor(ctx, ord, outs)
 		if err != nil {
 			return nil, err
 		}
 
 		insts[ord] = e
 
-		if se, ok := e.(*scopeExec); ok {
-			caps[ord] = se.capture
+		if icap != nil {
+			caps[ord] = icap
 		}
 	}
 
@@ -566,11 +566,11 @@ func (d *iterDecorator) postPosition(
 	}
 
 	_, err := d.t.instance.scopeExchange(ctx, scopeRequest{
-		op:    scopeIterPost,
-		host:  d.t,
-		node:  d.step.node,
-		n:     completed,
-		insts: insts,
+		op:        scopeIterPost,
+		host:      d.t,
+		node:      d.step.node,
+		completed: completed,
+		insts:     insts,
 	})
 
 	return err
@@ -801,9 +801,16 @@ func (d *iterDecorator) parallelStep(
 // one step's state), its own frame-local data (FR-4), and — when the
 // activity assembles output — the capture that takes its result before the
 // commit makes the output's name a shared one.
+//
+// A COMPOSITE instance's capture is returned alongside the executor rather
+// than read back off it: the fan-out has to collect those loop-side, and the
+// builder is the one place that knows whether this instance has one. Asking
+// the executor instead would mean asking what KIND of executor it is, which
+// is the one question the composition exists to make unanswerable (ADR-025
+// §2.13a). A leaf instance captures through its own frame and returns nil.
 func (d *iterDecorator) instanceFor(
 	ctx context.Context, ord int, outs *instanceOutputs,
-) (activityExec, error) {
+) (activityExec, *instanceCapture, error) {
 	st := d.t.miState
 
 	if d.composite {
@@ -812,7 +819,7 @@ func (d *iterDecorator) instanceFor(
 
 	local, err := iterationLocals(ctx, st, ord)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	e := &nodeExec{
@@ -830,7 +837,7 @@ func (d *iterDecorator) instanceFor(
 		}
 	}
 
-	return e, nil
+	return e, nil, nil
 }
 
 // compositeInstanceFor builds instance ord of a PARALLEL composite: its own
@@ -843,7 +850,7 @@ func (d *iterDecorator) instanceFor(
 // the segment loop-side would move the sequential path's data paths.
 func (d *iterDecorator) compositeInstanceFor(
 	ctx context.Context, ord int,
-) (activityExec, error) {
+) (activityExec, *instanceCapture, error) {
 	st := d.t.miState
 
 	e := newScopeExec(d.t, &stepInfo{
@@ -861,7 +868,7 @@ func (d *iterDecorator) compositeInstanceFor(
 	if st != nil && st.collection != nil {
 		elem, err := st.collection.GetAt(ctx, ord)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		e.binds = append(e.binds,
@@ -872,7 +879,7 @@ func (d *iterDecorator) compositeInstanceFor(
 		e.capture = &instanceCapture{item: st.outputItem}
 	}
 
-	return e, nil
+	return e, e.capture, nil
 }
 
 // iterationLocals builds instance ord's own data: the 0-based loopCounter

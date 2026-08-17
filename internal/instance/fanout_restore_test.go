@@ -173,7 +173,7 @@ func TestFanOutPostsItsPositionBeforeItStarts(t *testing.T) {
 	req := <-got
 	require.Equal(t, scopeIterPost, req.op,
 		"the FIRST thing a fan-out asks of the loop is to record its set")
-	require.Equal(t, 0, req.n, "nothing has completed yet")
+	require.Equal(t, 0, req.completed, "nothing has completed yet")
 	require.Len(t, req.insts, 3, "and all three instances are named")
 }
 

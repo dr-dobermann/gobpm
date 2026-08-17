@@ -88,8 +88,8 @@ type scopeRequest struct {
 	// instance writes only its own scope.
 	binds []miBinding
 	op    scopeOp
-	// n is the completed-instance count a scopeIterPost carries.
-	n int
+	// completed is the completed-instance count a scopeIterPost carries.
+	completed int
 	// factOrdinal is the ordinal this scope's lifecycle facts carry, or -1
 	// to omit the attribute. A fanned-out instance reports its own; a
 	// serial pass reports the host's pass counter; a plain composite has
@@ -213,7 +213,7 @@ func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 		req.reply <- scopeReply{}
 	case scopeIterPost:
 		m := ls.ensureIterMirror(req.host, req.node)
-		m.completed = req.n
+		m.completed = req.completed
 		m.instances = req.insts
 
 		req.reply <- scopeReply{}

@@ -46,7 +46,7 @@ func TestCompositeInstanceCarriesItsOwnScope(t *testing.T) {
 	d := newIterDecorator(host, &stepInfo{node: node}, nil, true)
 	host.miState = &miState{}
 
-	e, err := d.compositeInstanceFor(t.Context(), 2)
+	e, _, err := d.compositeInstanceFor(t.Context(), 2)
 	require.NoError(t, err)
 
 	se, ok := e.(*scopeExec)
@@ -79,7 +79,7 @@ func TestCompositeInstanceSplitsItsInputItem(t *testing.T) {
 		inputItem:  "item",
 	}
 
-	e, err := d.compositeInstanceFor(t.Context(), 1)
+	e, _, err := d.compositeInstanceFor(t.Context(), 1)
 	require.NoError(t, err)
 
 	require.Equal(t,
@@ -101,7 +101,7 @@ func TestCompositeInstanceRefusesABrokenCollection(t *testing.T) {
 		inputItem:  "item",
 	}
 
-	_, err := d.compositeInstanceFor(t.Context(), 0)
+	_, _, err := d.compositeInstanceFor(t.Context(), 0)
 	require.Error(t, err)
 }
 
@@ -116,7 +116,7 @@ func TestCompositeInstanceAllocatesItsCapture(t *testing.T) {
 		outputItem: "result",
 	}
 
-	e, err := d.compositeInstanceFor(t.Context(), 0)
+	e, _, err := d.compositeInstanceFor(t.Context(), 0)
 	require.NoError(t, err)
 
 	require.Equal(t, &instanceCapture{item: "result"}, e.(*scopeExec).capture)
