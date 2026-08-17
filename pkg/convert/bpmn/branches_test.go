@@ -106,10 +106,10 @@ func TestImportInterfaceCatalogBranches(t *testing.T) {
 		"operation without name falls back to id": {
 			doc: iface(`<bpmn:operation id="o1"/>`),
 		},
-		"duplicate operation id": {
+		"duplicate id on an operation": {
 			doc: iface(`<bpmn:operation id="o1"/>` +
 				`<bpmn:operation id="o1"/>`),
-			want: "duplicate operation id",
+			want: "duplicate id",
 		},
 		"operation records outMessageRef": {
 			doc: op(`<bpmn:outMessageRef>msg-out</bpmn:outMessageRef>`),
@@ -140,8 +140,10 @@ func TestImportNodeBodyBranches(t *testing.T) {
 		"node skips foreign-namespace child": {
 			doc: wrapDefs(linearProcess(`<x:bounds w="10"/>`, "")),
 		},
+		// <ioSpecification> left this case when SRD-089.G claimed it; the
+		// unmapped sample is now a monitoring element no stage schedules.
 		"node rejects unmapped bpmn child": {
-			doc:  wrapDefs(linearProcess(`<bpmn:ioSpecification id="io"/>`, "")),
+			doc:  wrapDefs(linearProcess(`<bpmn:monitoring id="mon"/>`, "")),
 			want: "unsupported element",
 		},
 	})
@@ -153,15 +155,15 @@ func TestImportSequenceFlowChildBranches(t *testing.T) {
 	runImportCases(t, map[string]struct{ doc, want string }{
 		"blank condition is dropped": {
 			doc: wrapDefs(linearProcess("",
-				`<bpmn:conditionExpression>   </bpmn:conditionExpression>`)),
+				`<bpmn:conditionExpression language="gobpm:lite">   </bpmn:conditionExpression>`)),
 		},
 		"condition skips foreign-namespace child": {
 			doc: wrapDefs(linearProcess("",
-				`<bpmn:conditionExpression>ok<x:hint/></bpmn:conditionExpression>`)),
+				`<bpmn:conditionExpression language="gobpm:lite">ok<x:hint/></bpmn:conditionExpression>`)),
 		},
 		"condition rejects nested bpmn element": {
 			doc: wrapDefs(linearProcess("",
-				`<bpmn:conditionExpression><bpmn:script>x</bpmn:script></bpmn:conditionExpression>`)),
+				`<bpmn:conditionExpression language="gobpm:lite"><bpmn:script>x</bpmn:script></bpmn:conditionExpression>`)),
 			want: "unsupported element",
 		},
 		"flow skips foreign-namespace child": {
@@ -200,7 +202,7 @@ func TestImportTruncatedNestedStructures(t *testing.T) {
 			`<bpmn:process id="p"><bpmn:sequenceFlow id="f" sourceRef="s" targetRef="e">`,
 		"foreign condition child": definitionsOpen +
 			`<bpmn:process id="p"><bpmn:sequenceFlow id="f" sourceRef="s" targetRef="e">` +
-			`<bpmn:conditionExpression>ok<x:hint>`,
+			`<bpmn:conditionExpression language="gobpm:lite">ok<x:hint>`,
 	}
 
 	for name, doc := range tests {
@@ -254,42 +256,9 @@ func bpmnStartElement(local, id string) xml.StartElement {
 // contract verified without malformed global state.
 func TestImporterDefensiveConstructorBranches(t *testing.T) {
 	t.Run("process constructor error", func(t *testing.T) {
-		constructorErr := errors.New("process constructor failed")
-
-		// The process is constructed lazily now — on its first flow
-		// element, or at its end tag when it has none — so the parser
-		// needs a real token stream to reach the constructor at all.
-		dec := xml.NewDecoder(strings.NewReader(
-			`<bpmn:process xmlns:bpmn="` + nsBPMN + `" id="p"></bpmn:process>`))
-
-		p := &parser{
-			dec:        dec,
-			ctx:        context.Background(),
-			interfaces: map[string]string{},
-			ops:        map[string]opSpec{},
-			newProcess: func(
-				string,
-				...options.Option,
-			) (*process.Process, error) {
-				return nil, constructorErr
-			},
-		}
-
-		se, err := p.rootElement2()
-		if err != nil {
-			t.Fatalf("reading the process start element: %v", err)
-		}
-
-		proc, err := p.parseProcess(se)
-		if proc != nil || !errors.Is(err, constructorErr) {
-			t.Fatalf("parseProcess = %v, %v; want wrapped constructor error", proc, err)
-		}
-	})
-
-	t.Run("process constructor error on the first flow element", func(t *testing.T) {
-		// The empty-process case above reaches the constructor through
-		// finish(); a process WITH content reaches it through child(),
-		// which is the path every real document takes.
+		// The process is constructed in pass 2 now — after the items, so
+		// its properties can resolve them (SRD-089.F §4.6) — so the
+		// constructor error surfaces from build, not from the parse.
 		constructorErr := errors.New("process constructor failed")
 
 		dec := xml.NewDecoder(strings.NewReader(
@@ -301,6 +270,8 @@ func TestImporterDefensiveConstructorBranches(t *testing.T) {
 			ctx:        context.Background(),
 			interfaces: map[string]string{},
 			ops:        map[string]opSpec{},
+			ids:        map[string]string{},
+			items:      newItems(),
 			newProcess: func(
 				string,
 				...options.Option,
@@ -314,16 +285,22 @@ func TestImporterDefensiveConstructorBranches(t *testing.T) {
 			t.Fatalf("reading the process start element: %v", err)
 		}
 
-		proc, err := p.parseProcess(se)
+		asm, err := p.parseProcess(se)
+		if err != nil {
+			t.Fatalf("parseProcess: %v", err)
+		}
+
+		proc, err := build(p, asm)
 		if proc != nil || !errors.Is(err, constructorErr) {
-			t.Fatalf("parseProcess = %v, %v; want wrapped constructor error", proc, err)
+			t.Fatalf("build = %v, %v; want wrapped constructor error", proc, err)
 		}
 	})
 
 	t.Run("missing node mapping", func(t *testing.T) {
 		asm := &assembly{byID: make(map[string]flow.Node)}
 
-		err := (&parser{}).parseNode(asm, bpmnStartElement("unmappedNode", "n"))
+		err := (&parser{ids: map[string]string{}}).parseNode(
+			asm, bpmnStartElement("unmappedNode", "n"))
 		if err == nil || !strings.Contains(err.Error(), "no constructor mapping") {
 			t.Fatalf("parseNode error = %v, want missing-constructor error", err)
 		}
@@ -431,10 +408,14 @@ func TestImportSequenceFlowIdentityBranches(t *testing.T) {
 			doc:  graph(`<bpmn:sequenceFlow id="f3" sourceRef="t" targetRef="s"/>`),
 			want: "is not a sequence target",
 		},
+		// Before the id ledger this surfaced as a pass-2 link error —
+		// "couldn't link sequenceFlow" — after the second flow silently
+		// overwrote the first in the id→flow table. The ledger refuses it
+		// at declaration, where the file's line still identifies it.
 		"duplicate sequenceFlow id": {
 			doc: graph(
 				`<bpmn:sequenceFlow id="f1" sourceRef="s" targetRef="e"/>`),
-			want: "couldn't link sequenceFlow",
+			want: "duplicate id",
 		},
 	})
 }
@@ -457,6 +438,49 @@ func TestImportGatewayDefaultNotOutgoing(t *testing.T) {
 	})
 }
 
+// buildWithNode runs pass 2 over count specs whose constructor yields the
+// given node.
+//
+// The builder table is the seam because pass 2 constructs from specs, not
+// from ready nodes: a node cannot be handed to build() any more, since
+// construction is what pass 2 does (the catalog an event definition needs
+// may be declared after the process it is used in). What is under test
+// here is build's error handling, not how a node came to exist, so the
+// table stands in for a document that produces one.
+func buildWithNode(
+	t *testing.T, proc *process.Process, node flow.Node, count int,
+) (*process.Process, error) {
+	t.Helper()
+
+	saved := nodeBuilders[tagStartEvent]
+	nodeBuilders[tagStartEvent] = func(
+		_ *parser, _ *assembly, _ xml.StartElement, _, _ string, _ nodeBody,
+	) (flow.Node, error) {
+		return node, nil
+	}
+
+	t.Cleanup(func() { nodeBuilders[tagStartEvent] = saved })
+
+	specs := make([]nodeSpec, 0, count)
+	for i := 0; i < count; i++ {
+		specs = append(specs, nodeSpec{
+			se: xml.StartElement{
+				Name: xml.Name{Space: nsBPMN, Local: tagStartEvent},
+			},
+			id:   node.ID(),
+			name: node.Name(),
+		})
+	}
+
+	return build(
+		newParser(context.Background(), strings.NewReader("")),
+		&assembly{
+			spec:  procSpec{id: proc.ID(), name: proc.Name()},
+			byID:  map[string]flow.Node{},
+			specs: specs,
+		})
+}
+
 // TestBuildDefensiveBranches verifies pass-2 error propagation for a duplicate
 // node and for a process that fails its final model-level validation.
 func TestBuildDefensiveBranches(t *testing.T) {
@@ -471,10 +495,7 @@ func TestBuildDefensiveBranches(t *testing.T) {
 			t.Fatalf("NewStartEvent: %v", err)
 		}
 
-		got, err := build(&assembly{
-			proc:  proc,
-			nodes: []flow.Node{start, start},
-		})
+		got, err := buildWithNode(t, proc, start, 2)
 		if got != nil || err == nil || !strings.Contains(err.Error(), "couldn't add node") {
 			t.Fatalf("build = %v, %v; want node-add failure", got, err)
 		}
@@ -487,7 +508,7 @@ func TestBuildDefensiveBranches(t *testing.T) {
 		}
 
 		definition, err := events.NewConditionalEventDefinition(
-			newFormalExpression("condition", "", "true"),
+			liteCondition(t, "condition", "true"),
 		)
 		if err != nil {
 			t.Fatalf("NewConditionalEventDefinition: %v", err)
@@ -502,10 +523,7 @@ func TestBuildDefensiveBranches(t *testing.T) {
 			t.Fatalf("NewStartEvent: %v", err)
 		}
 
-		got, err := build(&assembly{
-			proc:  proc,
-			nodes: []flow.Node{start},
-		})
+		got, err := buildWithNode(t, proc, start, 1)
 		if got != nil || err == nil || !strings.Contains(err.Error(), "process \"invalid\" is invalid") {
 			t.Fatalf("build = %v, %v; want process-validation failure", got, err)
 		}

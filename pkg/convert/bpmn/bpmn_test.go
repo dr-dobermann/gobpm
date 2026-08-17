@@ -16,6 +16,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression/lite"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
@@ -60,7 +61,7 @@ const sample = `<?xml version="1.0" encoding="UTF-8"?>
     <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="t1"/>
     <bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="gw"/>
     <bpmn:sequenceFlow id="f3" name="big" sourceRef="gw" targetRef="t3">
-      <bpmn:conditionExpression id="c1" language="https://go.dev">total &gt; 100</bpmn:conditionExpression>
+      <bpmn:conditionExpression id="c1" language="gobpm:lite">total &gt; 100</bpmn:conditionExpression>
       <bpmn:extensionElements>
         <vendor:flowMeta xmlns:vendor="urn:example:vendor"/>
       </bpmn:extensionElements>
@@ -140,14 +141,14 @@ func TestImportSubset(t *testing.T) {
 		t.Errorf("f3 = %s → %s, want gw → t3", f3.Source().ID(), f3.Target().ID())
 	}
 
-	cond, ok := f3.Condition().(*formalExpression)
+	cond, ok := f3.Condition().(*data.TextExpression)
 	if !ok {
-		t.Fatalf("f3 condition is %T, want *formalExpression", f3.Condition())
+		t.Fatalf("f3 condition is %T, want *data.TextExpression", f3.Condition())
 	}
 
-	if cond.ID() != "c1" || cond.Language() != "https://go.dev" || cond.Body() != "total > 100" {
-		t.Errorf("condition = %q/%q/%q, want c1/https://go.dev/total > 100",
-			cond.ID(), cond.Language(), cond.Body())
+	if cond.ID() != "c1" || cond.Language() != lite.Language || cond.Body() != "total > 100" {
+		t.Errorf("condition = %q/%q/%q, want c1/%s/total > 100",
+			cond.ID(), cond.Language(), cond.Body(), lite.Language)
 	}
 }
 
@@ -166,11 +167,23 @@ func TestImportErrors(t *testing.T) {
 		{
 			name: "unsupported in-namespace element",
 			doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
-  <bpmn:process id="p"><bpmn:inclusiveGateway id="ig"/></bpmn:process>
+  <bpmn:process id="p"><bpmn:participant id="part"/></bpmn:process>
 </bpmn:definitions>`,
-			want:    `unsupported element "inclusiveGateway"`,
+			want:    `unsupported element "participant"`,
 			wantUee: true,
-			wantSec: "§13.4.3",
+			// No §: the extract keeps <participant> in scope but pins
+			// no section for it, and an invented one is worse feedback
+			// than none (SRD-089.F FR-8).
+			wantSec: "",
+		},
+		{
+			name: "unsupported element that DOES carry a section",
+			doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="p"><bpmn:ioSpecification id="ios"/></bpmn:process>
+</bpmn:definitions>`,
+			want:    `unsupported element "ioSpecification"`,
+			wantUee: true,
+			wantSec: "§10.4.1",
 		},
 		{
 			name: "unknown operationRef",
@@ -192,14 +205,14 @@ func TestImportErrors(t *testing.T) {
 			want: "has no id",
 		},
 		{
-			name: "duplicate flow-element id",
+			name: "duplicate id",
 			doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
   <bpmn:process id="p">
     <bpmn:startEvent id="s"/>
     <bpmn:task id="s"/>
   </bpmn:process>
 </bpmn:definitions>`,
-			want: `duplicate flow-element id "s"`,
+			want: `duplicate id "s"`,
 		},
 		{
 			name: "dangling sourceRef",
@@ -241,9 +254,20 @@ func TestImportErrors(t *testing.T) {
 				t.Errorf("errors.As(*UnsupportedElementError) = %v, want %v", got, tc.wantUee)
 			}
 
-			if tc.wantUee && tc.wantSec != "" && !strings.Contains(uee.Section, tc.wantSec) {
-				t.Errorf("UnsupportedElementError.Section = %q, want substring %q",
-					uee.Section, tc.wantSec)
+			// An empty wantSec asserts the refusal carries NO section,
+			// rather than skipping the check: "" is the answer for an
+			// element the extract pins nowhere, and a guess appearing
+			// there has to fail something (SRD-089.F FR-8).
+			if tc.wantUee {
+				ok := strings.Contains(uee.Section, tc.wantSec)
+				if tc.wantSec == "" {
+					ok = uee.Section == ""
+				}
+
+				if !ok {
+					t.Errorf("UnsupportedElementError.Section = %q, want %q",
+						uee.Section, tc.wantSec)
+				}
 			}
 
 			if tc.wantClass != "" {
@@ -329,14 +353,14 @@ func TestRoundTrip(t *testing.T) {
 
 	f3 := findFlow(t, p2.Flows(), "f3")
 
-	cond, ok := f3.Condition().(*formalExpression)
+	cond, ok := f3.Condition().(*data.TextExpression)
 	if !ok {
 		t.Fatalf("f3 condition after round-trip is %T", f3.Condition())
 	}
 
-	if cond.ID() != "c1" || cond.Language() != "https://go.dev" || cond.Body() != "total > 100" {
-		t.Errorf("condition after round-trip = %q/%q/%q",
-			cond.ID(), cond.Language(), cond.Body())
+	if cond.ID() != "c1" || cond.Language() != lite.Language || cond.Body() != "total > 100" {
+		t.Errorf("condition after round-trip = %q/%q/%q, want c1/%s/total > 100",
+			cond.ID(), cond.Language(), cond.Body(), lite.Language)
 	}
 }
 
@@ -352,7 +376,7 @@ const workedExample = `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPM
     <bpmn:sequenceFlow id="f_su" sourceRef="s1" targetRef="u1"/>
     <bpmn:sequenceFlow id="f_ug" sourceRef="u1" targetRef="g1"/>
     <bpmn:sequenceFlow id="f_ok" sourceRef="g1" targetRef="e_ok">
-      <bpmn:conditionExpression>approved == true</bpmn:conditionExpression>
+      <bpmn:conditionExpression language="gobpm:lite">approved == true</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
     <bpmn:sequenceFlow id="f_no" sourceRef="g1" targetRef="e_no"/>
   </bpmn:process>
@@ -382,9 +406,9 @@ func TestWorkedExample(t *testing.T) {
 		t.Fatal("f_ok carries no condition")
 	}
 
-	cond, ok := fOK.Condition().(*formalExpression)
+	cond, ok := fOK.Condition().(*data.TextExpression)
 	if !ok {
-		t.Fatalf("f_ok condition is %T, want *formalExpression", fOK.Condition())
+		t.Fatalf("f_ok condition is %T, want *data.TextExpression", fOK.Condition())
 	}
 
 	if cond.Body() != "approved == true" {
@@ -467,7 +491,7 @@ func TestExportMVP(t *testing.T) {
 
 	_, err = flow.Link(gw, endOK,
 		foundation.WithID("f_ok"),
-		flow.WithCondition(newFormalExpression("c1", "", "yes")))
+		flow.WithCondition(liteCondition(t, "c1", "yes")))
 	if err != nil {
 		t.Fatalf("link f_ok: %v", err)
 	}
@@ -902,26 +926,6 @@ func TestExportCanceledContext(t *testing.T) {
 	}
 }
 
-// TestFormalExpressionContract covers the inert condition carrier required by
-// SRD-051 §FR-5: imported text is inspectable but never evaluated here.
-func TestFormalExpressionContract(t *testing.T) {
-	e := newFormalExpression("condition-1", "urn:test", "approved")
-
-	if e.Body() != "approved" || e.ID() != "condition-1" || e.Language() != "urn:test" {
-		t.Errorf("expression identity = %q/%q/%q", e.ID(), e.Language(), e.Body())
-	}
-	if e.Docs() != nil || e.ResultType() != typeBool || e.IsEvaluated() {
-		t.Errorf("expression metadata = docs %v, type %q, evaluated %v",
-			e.Docs(), e.ResultType(), e.IsEvaluated())
-	}
-	if value, err := e.Evaluate(context.Background(), nil); err == nil || value != nil {
-		t.Errorf("Evaluate = %v, %v; want nil, error", value, err)
-	}
-	if value, err := e.Result(); err == nil || value != nil {
-		t.Errorf("Result = %v, %v; want nil, error", value, err)
-	}
-}
-
 // TestErrorHelpers covers the error-class preservation policy documented in
 // AGENTS.md and used by SRD-051 §FR-3 failures.
 func TestErrorHelpers(t *testing.T) {
@@ -1032,10 +1036,10 @@ func TestImportInvalidFixtures(t *testing.T) {
 		wantUEE bool
 	}{
 		{file: "missing-process-id.bpmn", want: "has no id"},
-		{file: "duplicate-element-id.bpmn", want: "duplicate flow-element id"},
+		{file: "duplicate-element-id.bpmn", want: "duplicate id"},
 		{file: "dangling-target.bpmn", want: "unknown targetRef"},
 		{file: "unknown-operation.bpmn", want: "unknown operationRef"},
-		{file: "unsupported-element.bpmn", want: `unsupported element "scriptTask"`, wantUEE: true},
+		{file: "unsupported-element.bpmn", want: `unsupported element "participant"`, wantUEE: true},
 	}
 
 	for _, tc := range tests {
@@ -1068,18 +1072,26 @@ func TestImportInvalidFixtures(t *testing.T) {
 func TestSectionFor(t *testing.T) {
 	tests := map[string]string{
 		"sendTask":                         "§13.3.3",
-		"subProcess":                       "§13.3.4",
-		"inclusiveGateway":                 "§13.4.3",
-		"eventBasedGateway":                "§13.4",
+		"adHocSubProcess":                  "§13.3.4",
 		"intermediateCatchEvent":           "§13.5",
 		"boundaryEvent":                    "§13.5.5",
 		"messageEventDefinition":           "§13.5",
-		"lane":                             "§10.5",
-		"dataObject":                       "§10.3",
-		"collaboration":                    "§10.1",
-		"dataInputAssociation":             "§10.3",
+		"itemDefinition":                   "§8.4.10",
+		"dataObject":                       "§10.4.1",
+		"dataInputAssociation":             "§10.4.1",
 		"multiInstanceLoopCharacteristics": "§13.3.5",
 		"unknown":                          "",
+
+		// Pinned as ABSENT, not as a number. The extract keeps these
+		// in scope and pins no § for any of them; they carried
+		// invented ones until SRD-089.F FR-8. A future pin has to
+		// come with the spec text that supplies it, and changing
+		// these lines is where that gets noticed.
+		"laneSet":       "",
+		"lane":          "",
+		"collaboration": "",
+		"participant":   "",
+		"messageFlow":   "",
 	}
 
 	for tag, want := range tests {
@@ -1129,4 +1141,20 @@ func findFlow(t *testing.T, flows []*flow.SequenceFlow, id string) *flow.Sequenc
 	t.Fatalf("flow %q missing", id)
 
 	return nil
+}
+
+// liteCondition builds the condition kind the converter now imports — the
+// model's text-expression carrying lite source — for tests that construct a
+// process programmatically rather than importing one.
+func liteCondition(t *testing.T, id, body string) *data.TextExpression {
+	t.Helper()
+
+	e, err := data.NewTextExpression(lite.Language, body,
+		foundation.WithID(id),
+		data.WithResultType(typeBool))
+	if err != nil {
+		t.Fatalf("NewTextExpression: %v", err)
+	}
+
+	return e
 }

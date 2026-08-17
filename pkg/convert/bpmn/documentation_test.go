@@ -27,7 +27,7 @@ const docDoc = `<?xml version="1.0"?>
 
 // TestDocumentationRoundTrips covers SRD-089.A §6 T-5 (FR-7). Before this,
 // <documentation> was skipped on import and never written on export, so a
-// modeller's notes did not survive a trip through the converter in either
+// modeler's notes did not survive a trip through the converter in either
 // direction — while foundation.Documentation existed the whole time.
 func TestDocumentationRoundTrips(t *testing.T) {
 	p, err := importer{}.Import(context.Background(), strings.NewReader(docDoc))
@@ -203,7 +203,7 @@ func TestDocumentationPrecedesTheCondition(t *testing.T) {
     <bpmn:sequenceFlow id="f0" sourceRef="s1" targetRef="g1"/>
     <bpmn:sequenceFlow id="f1" sourceRef="g1" targetRef="e1">
       <bpmn:documentation>note</bpmn:documentation>
-      <bpmn:conditionExpression>x &gt; 1</bpmn:conditionExpression>
+      <bpmn:conditionExpression language="gobpm:lite">x &gt; 1</bpmn:conditionExpression>
     </bpmn:sequenceFlow>
   </bpmn:process>
 </bpmn:definitions>`

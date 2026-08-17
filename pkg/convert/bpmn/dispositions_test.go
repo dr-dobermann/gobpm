@@ -15,7 +15,7 @@ import (
 // refused outright for carrying a comment: textAnnotation, group and
 // category are "pure visual" in the vendored extract, and near-universal
 // in modeler output. Dropping them leaves the definition meaning the same
-// thing, which is the test ADR-024 v.4 §2.9 sets for skipping.
+// thing, which is the test ADR-024 §2.9 sets for skipping.
 func TestVisualArtifactsAreSkipped(t *testing.T) {
 	doc := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
@@ -80,7 +80,7 @@ func TestAssociationIsNotAnAnnotation(t *testing.T) {
 // TestChoreographyAndConversationAreRefused covers SRD-089.A §6 T-7
 // (FR-8): they belong to separate conformance sub-classes, and a
 // Choreography is not a Process — skipping one would import a different
-// diagram than the modeller drew.
+// diagram than the modeler drew.
 func TestChoreographyAndConversationAreRefused(t *testing.T) {
 	tags := map[string]string{
 		"choreography":           "",

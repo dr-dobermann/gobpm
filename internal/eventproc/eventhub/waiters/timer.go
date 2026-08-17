@@ -118,7 +118,15 @@ func (tw *timeWaiter) parseEDef(
 	eDef *events.TimerEventDefinition,
 	ep eventproc.EventProcessor,
 ) error {
-	ds, _ := ep.(data.Source)
+	// An event processor is not required to be a data source, and a start
+	// event's is not one. The assertion's failure used to leave ds nil,
+	// and the expression engine refuses a nil Source before it ever reads
+	// the expression — so a timer carrying a perfectly literal date
+	// failed with an error naming neither the timer nor the date.
+	ds, ok := ep.(data.Source)
+	if !ok {
+		ds = noData{}
+	}
 
 	expressions := map[string]data.FormalExpression{
 		"Time":     eDef.Time(),
@@ -534,4 +542,24 @@ func TimerPlan(
 // evaluate normally" (every non-restored processor).
 type DeadlineHinter interface {
 	TimerDeadlineHint(eDefID string) (deadline time.Time, cyclesLeft int, ok bool)
+}
+
+// noData is the data.Source a timer expression is evaluated against when
+// its event processor is not one.
+//
+// It is an empty source rather than nil on purpose. A literal timer date
+// reads no variable and evaluates fine against it, while an expression
+// that does read one fails inside Find — naming the variable it wanted —
+// instead of failing at the engine's nil-Source guard, which can name
+// nothing at all.
+type noData struct{}
+
+// Find implements data.Source. It always fails, because there is nothing
+// to find.
+func (noData) Find(_ context.Context, name string) (data.Data, error) {
+	return nil, errs.New(
+		errs.M("the event processor is not a data source, so %q cannot be "+
+			"resolved; a timer expression reading process data needs a "+
+			"processor that carries the instance scope", name),
+		errs.C(TimerWaiterError, errs.ObjectNotFound))
 }

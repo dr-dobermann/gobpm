@@ -13,6 +13,13 @@ type UnsupportedElementError struct {
 	Tag     string // local element name, e.g. "inclusiveGateway"
 	ID      string // the element's id attr, if present
 	Section string // spec §, e.g. "§13.4.3"; empty when unknown
+	// Planned names the plan that schedules this element's support, for a
+	// STAGED element — mapped work not yet reached. It carries a document
+	// reference ("lands with SRD-089.G"), never a date and never "yet":
+	// the reader's question is whether waiting is sensible, and the
+	// honest answer is the plan they can go read. Empty for an element
+	// whose absence is not scheduled work.
+	Planned string
 }
 
 // Error returns a human-readable description of the unsupported element.
@@ -25,6 +32,10 @@ func (e *UnsupportedElementError) Error() string {
 
 	if e.Section != "" {
 		s += fmt.Sprintf(", spec %s", e.Section)
+	}
+
+	if e.Planned != "" {
+		s += "; " + e.Planned
 	}
 
 	return s

@@ -196,6 +196,40 @@ dependencies. It covers the common condition/value needs:
 `lite.Expr` yields whatever the body evaluates to. Use `Cond` on a flow, `Expr`
 where a value is consumed.
 
+### Coming from JUEL (a Camunda diagram)
+
+`gobpm:lite` is the engine's answer to JUEL, and the BPMN importer **rewrites**
+JUEL into it rather than interpreting it — so a Camunda-authored condition runs
+here without the engine growing a second expression semantics. A file that
+declares no `expressionLanguage` at all, which is what modelers emit, is
+recognized by its `${…}` delimiters.
+
+| JUEL | `gobpm:lite` |
+|---|---|
+| `${total > 100}` | `total > 100` |
+| `${total > 100 && tier == "gold"}` | `total > 100 and tier == "gold"` |
+| `${!approved \|\| blocked}` | `not approved or blocked` |
+| `${order.customer.tier == 'vip'}` | unchanged |
+| `${items[0] == "sku-1"}` | unchanged |
+| `${execution.getVariable("total") > 0}` | `total > 0` |
+
+**What has no counterpart, and is refused by name at import** rather than
+approximated — an approximated condition parses, evaluates, and routes the
+token the wrong way, somewhere far from the file that caused it:
+
+- the conditional (ternary) operator `a ? b : c`;
+- the `empty` operator;
+- the word forms `div`, `mod`, `eq`, `ne`, `lt`, `gt`, `le`, `ge`;
+- bitwise `&` and `|`;
+- **any call other than the three builtins** — a bean method, a `fn:`
+  namespace, anything whose behaviour lives in host code the document cannot
+  see;
+- implicit objects beyond `execution.getVariable("literal")`;
+- a composite `${a}${b}`, which is string interpolation, not an expression.
+
+Rewrite those by hand into the equivalent over process data, or keep the
+behaviour in a Go operation where it belongs.
+
 ## Routing & engine registry
 
 The runtime consumers never talk to a concrete engine — they talk to a

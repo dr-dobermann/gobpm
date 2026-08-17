@@ -170,12 +170,18 @@ The first distinction is the standard's own (§13 animates, §8/§10 supply). Th
 
 ## Boundary cases noted
 
-- **Lane / LaneSet** — **in scope, model-only.** "Non-operational" governs *execution*, not *representation*: §2.3.1 lets a conformant tool ignore lanes at run time (they carry no token semantics — activities in lanes execute exactly as if no lanes existed), but the model must still **hold** them. Two independent reasons: §2.3.2 obliges an importer to support Process diagrams, and dropping a modeller's lanes is not supporting them; and ADR-024 §2.8 guarantees a **semantic round-trip**, which export cannot deliver for a structure the model never stored. So: engine MUST parse and preserve, MUST NOT attach behaviour — the rule this document always stated, now with its clause grounding. The type does **not exist yet**, so this is a genuine model gap (#261), not a scope question.
+- **Lane / LaneSet** — **in scope, model-only.** "Non-operational" governs *execution*, not *representation*: §2.3.1 lets a conformant tool ignore lanes at run time (they carry no token semantics — activities in lanes execute exactly as if no lanes existed), but the model must still **hold** them. Two independent reasons: §2.3.2 obliges an importer to support Process diagrams, and dropping a modeller's lanes is not supporting them; and ADR-024 §2.8 guarantees a **semantic round-trip**, which export cannot deliver for a structure the model never stored. So: engine MUST parse and preserve, MUST NOT attach behaviour — the rule this document always stated, now with its clause grounding. The model **holds** them: `pkg/model/lanes` carries `Lane` and `LaneSet`, and a `Process` holds its lane sets. What remains is the import, which is a converter task rather than a model gap.
 - **Boundary events on CallActivity** — explicitly allowed by §10.5.4. In scope.
 - **Event Sub-Process** — modeled as `SubProcess` with `triggeredByEvent=true`. In scope.
 - **Compensation Association** — `Association` between an activity and its compensation handler. The element is visual elsewhere; here it carries normative semantics.
 
 ## Spec section index (for cross-reference)
+
+The chapter-10 rows below once read Activities §10.5, Events §10.4, Data §10.3 —
+a transposition that contradicted every detail file in this extract, and the
+boundary-event note above ("explicitly allowed by §10.5.4"). It had propagated
+into nine wrong `§` pins in the converter's modeler-facing refusals before it
+was caught. The order is Activities, Data, Events, Gateways.
 
 | Topic | Spec section |
 |---|---|
@@ -183,9 +189,9 @@ The first distinction is the standard's own (§13 animates, §8/§10 supply). Th
 | Process Execution Conformance (§2.3.1 semantics, §2.3.2 import) | §2.3 |
 | Process **Modeling** Conformance sub-classes (Descriptive / Analytic / Common Executable) — **not** this engine's target | §2.2.1 |
 | Process model | §10 |
-| Activities | §10.5 |
-| Events | §10.4 |
+| Activities | §10.3 |
+| Data (Items and Data) | §10.4 |
+| Events | §10.5 |
 | Gateways | §10.6 |
-| Data | §10.3 |
 | Execution semantics (state machines, token flow) | §13 |
 | Correlation | §8.4.2 |

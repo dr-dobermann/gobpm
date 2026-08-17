@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`make ci` wrote empty timestamps on macOS.** `scripts/ci-run.sh`
+  stamped `.ci/last-run.json` with GNU-only `date -Is`, which BSD date
+  rejects; the portable `date -u +%Y-%m-%dT%H:%M:%SZ` produces the
+  same UTC instant on both.
+
 - **Registering an event processor the engine cannot compare is now
   refused, not a panic** (SRD-090.A M2d). A waiter identifies its
   processors by value, and Go panics rather than reporting false when
@@ -215,7 +220,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records and the group record it used to be scattered across.
   Documents written by the previous release still restore.
 
+- **BPMN converter: the import parser is rebuilt, and six of its own
+  defects are fixed** (ADR-024 v.4, SRD-089.A). Element dispatch is now
+  a table keyed by parse context and local name rather than six
+  disagreeing `switch` statements, and forward references (a gateway's
+  `default` today; `attachedToRef`, `calledElement` and link pairing
+  next) resolve through one mechanism that names the referring element,
+  the attribute and the missing id — and distinguishes a target of the
+  **wrong kind** from one that does not exist, since a `default` naming
+  a start event is a modeling mistake, not a typo.
+
+  Six behaviours change. **Export is deterministic**: it walked Go's
+  randomized map iteration, so two exports of one process differed and
+  an exported file could not be diffed; nodes are now emitted from the
+  start events along outgoing flows in flow-id order, unreachable ones
+  by id. A **`<task>`/`<manualTask>`/`<userTask>` with no `name`**
+  imports instead of being refused (BPMN makes `name` optional; the id
+  is the fallback, as `<process>` and `<serviceTask>` already did).
+  **`<bpmn:documentation>`** is imported onto `Docs()` and written back
+  with `textFormat`, instead of being dropped in both directions.
+  **`serviceTask@implementation`** round-trips. A **`parallelGateway`**
+  is no longer exported with a `default` attribute BPMN §13.4.1 does
+  not define. And the **purely visual artifacts** (`<textAnnotation>`,
+  `<group>`, `<category>`, plus `<relationship>`) are skipped rather
+  than refused — a runnable file was being rejected for carrying a
+  comment. `<association>` is deliberately still refused: it carries
+  compensation semantics. (`<import>` was skipped here too, until the
+  data-family entry below made it meaningful.)
+
 ### Added
+
+- **BPMN import covers the executable element set** (SRD-089.B/.C/.D/.E,
+  part of #284). The languages: expression-language resolution with a
+  `gobpm:lite` passthrough and a JUEL→lite translator; the Camunda
+  dialect mapped where the model has a home and **reported** where it
+  does not (`convert.Dropped` — "not mapped" and "not present" no
+  longer look alike, ADR-024 §2.14). The flow nodes: script and
+  business-rule tasks, the inclusive and event-based gateways. The
+  typed events: the four catalogs, all ten event definitions, timers
+  through the model's ISO 8601 constructors, intermediate, boundary,
+  send and receive — with node construction deferred to pass 2, since
+  BPMN orders root elements freely. The containers: embedded
+  sub-processes, transactions, call activities, lanes with placement.
+  Refusals carry the BPMN § a modeler can read, and the three refusal
+  kinds — staged, capability-blocked, standing — no longer read alike
+  (ADR-038).
+
+- **BPMN import covers the data family and the data flow**
+  (SRD-089.F, SRD-089.G, ADR-038 v.2, part of #284, closes #333).
+  `<itemDefinition>` imports as a typed zero over an XSD table whose
+  every numeric is a `float64` — the one number the engine can write —
+  and an unresolvable `structureRef` becomes a fillable empty record
+  plus a report, never a nil structure that dies at registration; the
+  `<import>` it names now binds instead of being skipped.
+  `<dataObject>` lands on its container with its OWN item copy (a
+  shared pointer would make two objects one variable);
+  `<dataObjectReference>` collapses into its target per SAD-001 §14.1.
+  A `<dataStore>` is reported as the host obligation it is;
+  `<dataStoreReference>` imports carrying its ref verbatim.
+  `<property>` imports on all three owners BPMN allows — which moved
+  the process's construction to pass 2, where a leading property can
+  resolve an item declared after `</process>`. `<ioSpecification>`
+  becomes the activity's parameters with the single input/output set
+  as per-parameter `optional`/`whileExecuting` flags, and both data
+  association kinds wire through the model's own `Associate*`, so
+  scope routing (SRD-063) and store routing (SRD-068) arrive
+  untouched; an untyped parameter adopts its association partner's
+  item. What the model cannot carry refuses **naming its capability**:
+  transformation/assignment (#328), event data associations (#329),
+  process-level I/O (#330), a property end (#331). And the document's
+  ids became **one ledger** (SRD-089.F §4.11): cross-table duplicates,
+  sequence-flow, interface and association ids — previously unguarded,
+  silently mis-wiring references — now refuse at declaration.
 
 - **`activities.WithImplementation`** (SRD-089.A). BPMN carries
   `implementation` on the `ServiceTask` itself, while gobpm derived it

@@ -114,6 +114,30 @@ if errors.As(err, &uee) {
 }
 ```
 
+### Conditions, and the language they are written in
+
+An imported condition is **runnable**, not a carrier: it becomes the model's
+text-expression kind, which the routed engine evaluates. Which language it is
+written in is resolved from the expression's own `language`, else the
+document's `expressionLanguage`, else the expression's own shape.
+
+| The file says | The importer does |
+|---|---|
+| `language="gobpm:lite"` | passes it through |
+| nothing, and the body is `${…}` | rewrites the JUEL into `gobpm:lite` |
+| `expressionLanguage="…XPath"` but the body is `${…}` | rewrites it — the delimiters win, because that document is a Camunda file whose schema default nobody edited |
+| FEEL, XPath, or anything else | **refuses the import**, naming the language |
+
+Refusing may look harsh next to carrying the text along, but the alternative is
+worse than it sounds: a condition the engine cannot evaluate imports cleanly,
+registers cleanly, and faults at the first gateway that needs it — with nothing
+pointing back at the file. The refusal happens where the file, the flow and the
+language can all still be named.
+
+The same rule governs a JUEL construct with no counterpart — a bean method, a
+ternary, `empty`. See [Coming from JUEL](../data/expressions.md#coming-from-juel-a-camunda-diagram)
+for the full list and what to write instead.
+
 ### Round-trip is semantic, not byte-for-byte
 
 Import→export reproduces ids, node kinds, flows, conditions, gateway direction

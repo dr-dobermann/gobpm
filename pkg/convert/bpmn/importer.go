@@ -11,9 +11,11 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/convert"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
+	"github.com/dr-dobermann/gobpm/pkg/model/lanes"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
@@ -36,7 +38,7 @@ type importer struct{}
 // (SRD-051 §FR-7); nodes are built first (with foundation.WithID — ids are
 // never auto-generated, ADR-019), then flows are linked, exclusive-gateway
 // defaults re-resolved, and the graph validated before returning.
-func (importer) Import(ctx context.Context, r io.Reader) (*process.Process, error) {
+func (imp importer) Import(ctx context.Context, r io.Reader) (*process.Process, error) {
 	if ctx == nil {
 		return nil, errs.New(
 			errs.M("bpmn.Import: ctx is nil"),
@@ -49,15 +51,24 @@ func (importer) Import(ctx context.Context, r io.Reader) (*process.Process, erro
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	p := &parser{
-		dec:        xml.NewDecoder(r),
-		ctx:        ctx,
-		newProcess: process.New,
-		interfaces: make(map[string]string),
-		ops:        make(map[string]opSpec),
+	proc, _, err := imp.parse(ctx, r)
+
+	return proc, err
+}
+
+// parse is the one parse both entry points share. It returns the report
+// alongside the process; Import discards it, ImportDocument does not.
+func (importer) parse(
+	ctx context.Context, r io.Reader,
+) (*process.Process, []convert.Dropped, error) {
+	p := newParser(ctx, r)
+
+	proc, err := p.parse()
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return p.parse()
+	return proc, p.dropped, nil
 }
 
 // docSpec is one <bpmn:documentation>: its text and the mime type of that
@@ -89,13 +100,61 @@ func docOptions(docs []docSpec) []options.Option {
 // element stages fill it with the children that decide which node to build
 // at all — event definitions, loop characteristics, io specifications.
 type nodeBody struct {
-	docs []docSpec
+	// script is <bpmn:script> — the first child that decides WHAT is
+	// built rather than decorating it. A script task cannot be
+	// constructed without one.
+	script string
+	docs   []docSpec
+	// defs are the <*EventDefinition> children, which decide what KIND of
+	// event is built. They are specs rather than definitions because what
+	// they refer to may be declared later in the document (§4.7).
+	defs []defSpec
+	// laneSets are a container's <laneSet> children. They reach the model
+	// as a CONSTRUCTION option, which is why they are collected with the
+	// rest of the body and not added afterwards.
+	laneSets []laneSetSpec
+	// props are the node's <property> children, reaching their owner the
+	// same way a laneSet does — as a construction option (§4.6).
+	props []propSpec
+	// io is the node's <ioSpecification>, at most one (SRD-089.G FR-1).
+	io *ioSpec
+	// dataAssocs are the node's data associations, wired in the pass
+	// after the data elements exist (SRD-089.G §4.1).
+	dataAssocs []dataAssocSpec
+	// extra are options read from the element's own attributes by the one
+	// funnel every node passes through, rather than by each builder that
+	// remembers to. A builder that forgets is how a documented attribute
+	// goes missing (SRD-089.D §4.13).
+	extra []options.Option
 }
 
 // opts renders the body as construction options, with the element's id
 // always first.
 func (b nodeBody) opts(id string) []options.Option {
-	return append([]options.Option{foundation.WithID(id)}, docOptions(b.docs)...)
+	opts := append([]options.Option{foundation.WithID(id)}, docOptions(b.docs)...)
+
+	return append(opts, b.extra...)
+}
+
+// ImportDocument parses r and returns the process together with every
+// recognized construct the import deliberately did not map.
+//
+// It is the same parse as Import — the report is a by-product the parser
+// collects either way — so a host pays nothing for asking, and a host
+// that does not ask is not silently misled: Import's contract never
+// promised a report, while this one does.
+func (imp importer) ImportDocument(
+	ctx context.Context, r io.Reader,
+) (*convert.Result, error) {
+	p, dropped, err := imp.parse(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+
+	return &convert.Result{
+		Processes: []*process.Process{p},
+		Dropped:   dropped,
+	}, nil
 }
 
 // flowSpec is the pass-1 record of a <bpmn:sequenceFlow>.
@@ -106,6 +165,29 @@ type flowSpec struct {
 	condBody         string // set only when a non-empty conditionExpression was seen
 	docs             []docSpec
 	hasCond          bool
+}
+
+// nodeSpec is a flow node as pass 1 read it: its element, its id and
+// name, and what its children contributed — everything its constructor
+// will need.
+//
+// The node is not built yet, and the reason is the document's own
+// freedom of order. Definitions.rootElements is an unordered 0..*
+// collection and Process is itself a RootElement
+// (elements/foundation.md:23), so the <message> a message start event
+// refers to may be declared AFTER the <process> containing it. A
+// constructor that takes that message positionally cannot run until the
+// whole document has been read, and building only SOME nodes late would
+// mean two construction paths and two places for an element to be
+// wired differently.
+type nodeSpec struct {
+	se       xml.StartElement
+	id, name string
+	// container is the id of the container that holds this node, "" for
+	// the process. Read from the parser at parse time, because by pass 2
+	// the element's position in the file is gone (SRD-089.E §4.1).
+	container string
+	body      nodeBody
 }
 
 // opSpec is a definitions-level <bpmn:operation> collected before process
@@ -124,16 +206,54 @@ type opSpec struct {
 type assembly struct {
 	proc *process.Process
 	byID map[string]flow.Node
+	// dataElems are the built data elements by id, recorded by
+	// buildDataElements for the association pass that wires them
+	// (SRD-089.G §4.1). A collapsed reference contributes no entry — the
+	// pass retargets through the SPEC (rule 2), then looks the object up
+	// here.
+	dataElems map[string]flow.Element
+	// exprLanguage is the document's expressionLanguage, carried here so
+	// pass 2 can resolve a condition's language without the parser.
+	exprLanguage string
 	// interfaces is the definitions-level catalog (id → name) for export
 	// reconstruction when ServiceTask.Operation() is available.
 	interfaces map[string]string
 	// ops indexes every operation under those interfaces by operation id.
-	ops   map[string]opSpec
-	nodes []flow.Node // document order
-	flows []flowSpec
+	ops map[string]opSpec
+	// cat is the parser's catalog, shared by pointer rather than copied:
+	// <definitions> may declare a <message> AFTER the <process> that
+	// refers to it — rootElements is an unordered 0..* collection
+	// (elements/foundation.md:23) — so entries keep arriving while the
+	// assembly exists.
+	cat *catalog
+	// items are the document's item definitions, built by id at the start
+	// of pass 2 — after every <import> has been read, since one may
+	// follow the <itemDefinition> naming its namespace (§4.8).
+	items map[string]*data.ItemDefinition
+	// declared is the pass-1 id table: which element claimed each id.
+	// byID cannot serve, because the nodes it maps to do not exist until
+	// pass 2 (see nodeSpec).
+	declared map[string]string
+	specs    []nodeSpec // document order
+	flows    []flowSpec
 	// refs are the forward references pass 1 could not resolve because
 	// their target had not been parsed yet (SRD-089.A §FR-2).
 	refs []pendingRef
+	// assocs are the <association> elements read in pass 1, consumed in
+	// pass 2 by the compensation boundaries that name their handlers
+	// through them (SRD-089.E §4.7).
+	assocs []assocSpec
+	// places are the lane placements waiting on the id table: a lane is
+	// built with its container, and the nodes it names are built after
+	// (SRD-089.E §4.3).
+	places []placement
+	// datas are the item-aware flow elements read in pass 1 — a data
+	// object, or a reference to one — built after the nodes, since the
+	// container holding one IS a node (SRD-089.F §4.4).
+	datas []dataSpec
+	// spec is the buffered <process> itself, built first in pass 2 — see
+	// procSpec.
+	spec procSpec
 }
 
 // parser wraps the xml.Decoder token stream with import state.
@@ -145,6 +265,64 @@ type parser struct {
 	// before/while the process is parsed.
 	interfaces map[string]string
 	ops        map[string]opSpec
+	// cat holds the message/signal/error/escalation objects an event
+	// definition refers to (SRD-089.D §FR-1).
+	cat *catalog
+	// items holds the document's <itemDefinition> declarations, the
+	// <import>s they name and the xmlns prefixes that connect the two
+	// (SRD-089.F §4.1, §4.8).
+	items *items
+	// stores holds the document's <dataStore> declarations, kept only to
+	// be reported as host obligations (SRD-089.F §4.5).
+	stores []dataStoreSpec
+	// ids is the document's one id ledger: every element that declares an
+	// id claims it here, whatever per-kind table it lands in afterwards —
+	// see claimID.
+	ids map[string]string
+	// exprLanguage is <definitions expressionLanguage>, the default an
+	// expression that declares none inherits (ADR-024 §2.10).
+	exprLanguage string
+	// owner is the id of the element currently being parsed, so a report
+	// about its <extensionElements> — which carries no id of its own —
+	// names the element a reader can find in the file.
+	owner string
+	// container is the id of the FlowElementsContainer whose children are
+	// being parsed — "" for the process itself. A flow node records it, so
+	// pass 2 knows which container to add the node to (SRD-089.E §4.1).
+	//
+	// Sequence flows need no equivalent: flow.Link puts a new flow in its
+	// SOURCE node's container (`sequenceflow.go:139`), so an inner flow
+	// follows the node it leaves, and a flow drawn across a container edge
+	// is the model's rule to refuse rather than the converter's.
+	container string
+	// claimed collects the dialect attributes that the builder of the node
+	// currently under construction mapped onto model options. buildNode
+	// reports whatever nobody claimed, so a node kind whose builder never
+	// consults the dialect at all still reports what it cannot hold.
+	claimed map[string]bool
+	// dropped collects the recognized constructs the import did not map,
+	// so ImportDocument can hand them to the host instead of losing them
+	// (ADR-024 §2.14 rule 2).
+	dropped []convert.Dropped
+}
+
+// newParser wires a parser over r with its catalogs empty and its
+// process constructor bound.
+//
+// It is the one place the parser's state is initialized: a map left nil
+// here would only fail on the file that first writes to it, which is a
+// class of bug the import stages keep being in a position to introduce.
+func newParser(ctx context.Context, r io.Reader) *parser {
+	return &parser{
+		dec:        xml.NewDecoder(r),
+		ctx:        ctx,
+		newProcess: process.New,
+		interfaces: make(map[string]string),
+		ops:        make(map[string]opSpec),
+		cat:        newCatalog(),
+		items:      newItems(),
+		ids:        make(map[string]string),
+	}
 }
 
 // parse decodes <bpmn:definitions> and its (single) <bpmn:process>.
@@ -159,7 +337,7 @@ func (p *parser) parse() (*process.Process, error) {
 		return nil, err
 	}
 
-	return build(asm)
+	return build(p, asm)
 }
 
 // rootElement advances the stream to the root start element and checks it is
@@ -182,6 +360,18 @@ func (p *parser) rootElement() (xml.StartElement, error) {
 					se.Name.Space, se.Name.Local, nsBPMN, tagDefinitions),
 				errs.C(errorClass, errs.InvalidObject))
 		}
+
+		p.exprLanguage = strings.TrimSpace(attrValue(se, "expressionLanguage"))
+
+		// The root is where a document declares its namespaces, and an
+		// <itemDefinition>'s structureRef prefix is resolved against them
+		// (§4.8). The decoder resolves element and attribute NAMES; a
+		// prefix inside an attribute VALUE is ours to resolve.
+		p.items.declareNamespaces(se)
+
+		// <definitions> carries dialect attributes too (a modeler's own
+		// bookkeeping); they are reported against the document.
+		p.reportUnmappedAttrs(se, attrValue(se, "id"), nil)
 
 		return se, nil
 	}
@@ -233,7 +423,7 @@ func (p *parser) handleDefinitionsChild(
 ) (*assembly, error) {
 	if se.Name.Space != nsBPMN {
 		// Foreign namespace — diagram interchange, a vendor dialect — is
-		// out of execution scope and skipped whole (ADR-024 v.4 §2.7).
+		// out of execution scope and skipped whole (ADR-024 §2.7).
 		return nil, p.skipElement()
 	}
 
@@ -253,10 +443,24 @@ func (p *parser) parseProcess(se xml.StartElement) (*assembly, error) {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	// The process's own id joins the one ledger too: a node reusing it
+	// was as silent as any other cross-table duplicate (§4.11).
+	if err := p.claimID(id, tagProcess); err != nil {
+		return nil, err
+	}
+
 	// process.New demands a non-empty name; fall back to the id.
 	name := fallbackName(id, attrValue(se, "name"))
 
 	// The process is built LAZILY — see procBuild.
+	p.owner = id
+
+	// The process element carries dialect attributes of its own —
+	// versionTag, historyTimeToLive, the starter authorizations — and
+	// nothing else scans them, so they would vanish exactly as the
+	// coverage audit found them vanishing.
+	p.reportUnmappedAttrs(se, id, nil)
+
 	pb := &procBuild{p: p, id: id, name: name}
 
 	for {
@@ -293,6 +497,14 @@ type procBuild struct {
 	asm      *assembly
 	id, name string
 	docs     []docSpec
+	// laneSets are buffered for the same reason docs are: they reach the
+	// process as a construction option, and BPMN serializes a container's
+	// laneSets ahead of its flowElements.
+	laneSets []laneSetSpec
+	// props are buffered for the same reason again (§4.6): a property is
+	// a construction option, and BPMN serializes a process's properties
+	// ahead of its flowElements too.
+	props []propSpec
 }
 
 // child handles one child element of <bpmn:process>, constructing the
@@ -306,10 +518,16 @@ func (pb *procBuild) child(se xml.StartElement) error {
 		return pb.doc(se)
 	}
 
+	if se.Name.Local == tagLaneSet {
+		return pb.laneSet(se)
+	}
+
+	if se.Name.Local == tagProperty {
+		return pb.property(se)
+	}
+
 	if pb.asm == nil {
-		if err := pb.build(); err != nil {
-			return err
-		}
+		pb.build()
 	}
 
 	return pb.p.parseFlowElement(pb.asm, se)
@@ -336,47 +554,136 @@ func (pb *procBuild) doc(se xml.StartElement) error {
 	return nil
 }
 
-// build constructs the process and the pass-1 state around it.
-func (pb *procBuild) build() error {
-	asm, err := pb.p.newAssembly(pb.id, pb.name, pb.docs)
+// laneSet records a <laneSet>, or refuses one that arrives after the
+// process has been built. Both halves match doc(): the option cannot be
+// applied to a process that already exists, and dropping it silently is
+// what the feedback contract exists to prevent.
+func (pb *procBuild) laneSet(se xml.StartElement) error {
+	if pb.asm != nil {
+		return errs.New(
+			errs.M("bpmn: <process> %q carries <laneSet> after its flow "+
+				"elements; a container's laneSets precede its flowElements",
+				pb.id),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	ls, err := pb.p.parseLaneSet(se)
 	if err != nil {
 		return err
 	}
 
-	pb.asm = asm
+	pb.laneSets = append(pb.laneSets, ls)
 
 	return nil
+}
+
+// property records a <property>, or refuses one that arrives after the
+// process's flow elements — the same two halves as laneSet(), for the
+// same reasons (§4.6).
+func (pb *procBuild) property(se xml.StartElement) error {
+	if pb.asm != nil {
+		return errs.New(
+			errs.M("bpmn: <process> %q carries <property> after its flow "+
+				"elements; a process's properties precede its flowElements",
+				pb.id),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	spec, err := pb.p.parsePropertySpec(se)
+	if err != nil {
+		return err
+	}
+
+	pb.props = append(pb.props, spec)
+
+	return nil
+}
+
+// build creates the pass-1 state; the process itself is built in pass 2.
+func (pb *procBuild) build() {
+	pb.asm = pb.p.newAssembly(procSpec{
+		id:       pb.id,
+		name:     pb.name,
+		docs:     pb.docs,
+		laneSets: pb.laneSets,
+		props:    pb.props,
+	})
 }
 
 // finish returns the assembly, building an empty process when the element
 // carried no flow elements at all.
 func (pb *procBuild) finish() (*assembly, error) {
 	if pb.asm == nil {
-		if err := pb.build(); err != nil {
-			return nil, err
-		}
+		pb.build()
 	}
 
 	return pb.asm, nil
 }
 
-// newAssembly builds the process and the pass-1 state around it.
-func (p *parser) newAssembly(id, name string, docs []docSpec) (*assembly, error) {
-	proc, err := p.newProcess(name,
-		append([]options.Option{foundation.WithID(id)}, docOptions(docs)...)...)
+// procSpec is the <process> as pass 1 read it: everything its
+// construction options need. The process was built when its first flow
+// element arrived until properties landed; a property's itemSubjectRef
+// may name an <itemDefinition> declared AFTER the </process>, so the
+// construction moved to pass 2 with the nodes — the same document-order
+// freedom that defers them defers it (§4.6).
+type procSpec struct {
+	id, name string
+	docs     []docSpec
+	laneSets []laneSetSpec
+	props    []propSpec
+}
+
+// newAssembly builds the pass-1 state the flow elements are parsed into.
+func (p *parser) newAssembly(spec procSpec) *assembly {
+	return &assembly{
+		spec:         spec,
+		byID:         make(map[string]flow.Node),
+		declared:     make(map[string]string),
+		dataElems:    make(map[string]flow.Element),
+		interfaces:   p.interfaces,
+		ops:          p.ops,
+		cat:          p.cat,
+		exprLanguage: p.exprLanguage,
+	}
+}
+
+// constructProcess builds the process from its buffered spec. It runs
+// first in pass 2 — after buildItems, so a property can resolve its item,
+// and before buildNodes, which adds every node to it.
+func constructProcess(p *parser, asm *assembly) error {
+	spec := asm.spec
+
+	sets, err := buildLaneSets(&asm.places, spec.laneSets)
 	if err != nil {
-		return nil, errs.New(
-			errs.M("bpmn: couldn't create process %q", id),
+		return err
+	}
+
+	opts := append(
+		[]options.Option{foundation.WithID(spec.id)}, docOptions(spec.docs)...)
+	if len(sets) != 0 {
+		opts = append(opts, lanes.WithLaneSets(sets...))
+	}
+
+	if len(spec.props) != 0 {
+		props, propErr := buildProperties(p, asm, spec.props)
+		if propErr != nil {
+			return propErr
+		}
+
+		opts = append(opts, data.WithProperties(props...))
+	}
+
+	proc, err := p.newProcess(spec.name, opts...)
+	if err != nil {
+		return errs.New(
+			errs.M("bpmn: couldn't create process %q", spec.id),
 			errs.C(errorClass, errs.BulidingFailed),
 			errs.E(err))
 	}
 
-	return &assembly{
-		proc:       proc,
-		byID:       make(map[string]flow.Node),
-		interfaces: p.interfaces,
-		ops:        p.ops,
-	}, nil
+	asm.proc = proc
+
+	return nil
 }
 
 // parseFlowElement dispatches one child of <bpmn:process> through the
@@ -389,25 +696,21 @@ func (p *parser) parseFlowElement(asm *assembly, se xml.StartElement) error {
 	return p.settle(ctxProcess, se)
 }
 
-// parseNode parses a single flow node element (event, task or gateway),
-// builds the corresponding model node with its BPMN id and records it in the
-// assembly.
+// parseNode reads a single flow node element (event, task or gateway)
+// and records what its constructor will need. The node itself is built in
+// pass 2 — see nodeSpec.
 func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 	id, err := requiredID(se)
 	if err != nil {
 		return err
 	}
 
-	if _, dup := asm.byID[id]; dup {
-		return errs.New(
-			errs.M("bpmn: duplicate flow-element id %q on <%s>", id, se.Name.Local),
-			errs.C(errorClass, errs.DuplicateObject))
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return err
 	}
 
-	name := attrValue(se, "name")
-
-	build, ok := nodeBuilders[se.Name.Local]
-	if !ok {
+	if _, ok := nodeBuilders[se.Name.Local]; !ok {
 		// Unreachable through the process table, which only routes names
 		// this table also carries — a guard against the two drifting.
 		return errs.New(
@@ -416,28 +719,335 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 	}
 
 	// The body is read BEFORE the node is built: documentation can only
-	// reach an element through a construction option, and from the next
-	// stage on the children decide which node to construct at all.
+	// reach an element through a construction option, and the children
+	// decide which node to construct at all.
+	outer := p.owner
+	p.owner = id
+
 	body, err := p.parseNodeBody(se)
+
+	p.owner = outer
+
 	if err != nil {
 		return err
 	}
 
-	node, err := build(p, asm, se, id, name, body)
+	asm.specs = append(asm.specs, nodeSpec{
+		se:        se,
+		id:        id,
+		name:      attrValue(se, "name"),
+		container: p.container,
+		body:      body,
+	})
+	asm.declared[id] = se.Name.Local
+
+	return nil
+}
+
+// parseContainer reads a FlowElementsContainer element — a <subProcess>
+// and, from the next milestone, its variants — whose children are flow
+// elements of its own rather than a flow node's body.
+//
+// Its own spec is recorded in the container that holds IT (nesting is
+// just this function calling itself through the process table), and the
+// slot is reserved BEFORE the children are read, so the id is claimed
+// against duplicates and document order survives a container whose
+// children are parsed first.
+func (p *parser) parseContainer(asm *assembly, se xml.StartElement) error {
+	id, err := requiredID(se)
+	if err != nil {
+		return err
+	}
+
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return err
+	}
+
+	idx := len(asm.specs)
+
+	asm.specs = append(asm.specs, nodeSpec{
+		se:        se,
+		id:        id,
+		name:      attrValue(se, "name"),
+		container: p.container,
+	})
+	asm.declared[id] = se.Name.Local
+
+	outerOwner, outerContainer := p.owner, p.container
+	p.owner, p.container = id, id
+
+	body, err := p.parseContainerBody(asm, se)
+
+	p.owner, p.container = outerOwner, outerContainer
+
+	if err != nil {
+		return err
+	}
+
+	// Re-indexed rather than held as a pointer: parsing the children
+	// appends to the same slice, which may move it.
+	asm.specs[idx].body = body
+
+	return nil
+}
+
+// parseContainerBody reads the children of a container: its flow
+// elements through the SAME table <process> uses, and everything else as
+// an ordinary node body.
+//
+// One table for both containers is the point. A sub-process holds what a
+// process holds — BPMN says so through FlowElementsContainer — and a
+// second table would be a second answer to "which elements are flow
+// elements", diverging on the first element added to one of them.
+func (p *parser) parseContainerBody(
+	asm *assembly, se xml.StartElement,
+) (nodeBody, error) {
+	var body nodeBody
+
+	for {
+		tok, err := p.token()
+		if err != nil {
+			return nodeBody{}, err
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if err := p.parseContainerChild(asm, &body, t); err != nil {
+				return nodeBody{}, err
+			}
+
+		case xml.EndElement:
+			if t.Name == se.Name {
+				return body, nil
+			}
+		}
+	}
+}
+
+// parseContainerChild routes one child of a container.
+func (p *parser) parseContainerChild(
+	asm *assembly, body *nodeBody, se xml.StartElement,
+) error {
+	if se.Name.Space != nsBPMN {
+		return p.skipElement()
+	}
+
+	if se.Name.Local == tagLaneSet {
+		ls, err := p.parseLaneSet(se)
+		if err != nil {
+			return err
+		}
+
+		body.laneSets = append(body.laneSets, ls)
+
+		return nil
+	}
+
+	if parse, ok := processParsers[se.Name.Local]; ok {
+		return parse(p, asm, se)
+	}
+
+	return p.parseNodeChild(body, se)
+}
+
+// buildNodes is the first half of pass 2: every flow node the document
+// declared, constructed and added to the process in document order.
+//
+// It builds in two sweeps. A compensation event definition names the
+// activity it compensates, and BPMN does not order a process's flow
+// elements any more than it orders its root ones — so that activity may
+// be declared after the event naming it. The nodes that name another node
+// are therefore built last, once the rest are in the index.
+//
+// Two sweeps are enough, and a third could never fire: an activityRef
+// points at an Activity, and no Activity carries an event definition, so
+// nothing built in the second sweep is named by anything built there.
+func buildNodes(p *parser, asm *assembly) error {
+	built := make([]flow.Node, len(asm.specs))
+
+	for _, deferred := range []bool{false, true} {
+		// Indexed rather than ranged by value: a nodeSpec carries an
+		// element, a body and two names, and copying it per node buys
+		// nothing.
+		for i := range asm.specs {
+			s := &asm.specs[i]
+			if s.namesANode() != deferred {
+				continue
+			}
+
+			node, err := buildNode(p, asm, s)
+			if err != nil {
+				return err
+			}
+
+			built[i] = node
+			asm.byID[s.id] = node
+		}
+	}
+
+	// Added in DOCUMENT order regardless of which sweep built them: the
+	// order a process replays its nodes in is the file's, not the
+	// converter's scheduling.
+	//
+	// Every node exists by now, so a container is always available to the
+	// nodes it holds — which is why adding is a second pass over `built`
+	// rather than part of building.
+	for i, node := range built {
+		owner, err := containerFor(asm, asm.specs[i].container)
+		if err != nil {
+			return err
+		}
+
+		if err := owner.Add(node); err != nil {
+			return errs.New(
+				errs.M("bpmn: couldn't add node %q to %q",
+					node.ID(), owner.ID()),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+		}
+	}
+
+	return nil
+}
+
+// elementContainer is the half of a BPMN FlowElementsContainer this
+// converter needs: something a flow element can be added to, that can
+// name itself in an error. Both *process.Process and
+// *activities.SubProcess satisfy it.
+type elementContainer interface {
+	ID() string
+	Add(flow.Element) error
+}
+
+// containerFor resolves a nodeSpec's container id to the thing that holds
+// it, the process for "".
+func containerFor(asm *assembly, id string) (elementContainer, error) {
+	if id == "" {
+		return asm.proc, nil
+	}
+
+	// Both guards below are unreachable from any document, and say so in
+	// the form the coverage gate recognizes rather than in a comment it
+	// cannot read. A container id reaches here only from a nodeSpec whose
+	// container field parseContainer set, and parseContainer sets it only
+	// for <subProcess> and <transaction> — which the same pass builds,
+	// and builds into a *activities.SubProcess. Reaching either means the
+	// converter wired the container field to something else.
+	n, ok := asm.byID[id]
+	if !ok {
+		return nil, errs.Invariant(
+			"container %q holds nodes but was never built", id)
+	}
+
+	c, ok := n.(elementContainer)
+	if !ok {
+		return nil, errs.Invariant(
+			"container %q is a %T, which holds no flow elements", id, n)
+	}
+
+	return c, nil
+}
+
+// namesANode reports whether building this node needs another node to
+// exist first: a boundary event is attached to its host activity, and a
+// compensation definition names the activity it compensates.
+func (s nodeSpec) namesANode() bool {
+	if s.se.Name.Local == tagBoundaryEvent {
+		return true
+	}
+
+	for _, d := range s.body.defs {
+		if d.local == tagCompensateEventDef && d.ref != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// buildNode constructs one flow node from its spec.
+//
+// The owner is set around the construction so a report raised while
+// building — a dialect attribute the model cannot hold, say — names the
+// element that carried it rather than whatever was parsed last.
+//
+// The dialect report is raised HERE rather than inside the builders,
+// because only three of them consult the dialect at all: a Camunda
+// attribute on a <task>, a <manualTask>, a <scriptTask>, a gateway or an
+// event was neither mapped nor reported, which is the silent loss the
+// report contract exists to prevent. Reporting at the one funnel every
+// node passes through means a node kind added later cannot forget it.
+func buildNode(p *parser, asm *assembly, s *nodeSpec) (flow.Node, error) {
+	// Presence was checked in pass 1, when refusing still had the
+	// element's position in the file to point at.
+	build := nodeBuilders[s.se.Name.Local]
+
+	// isForCompensation is an Activity attribute, so it belongs to no
+	// single builder — reading it in each one is the shape that lost the
+	// dialect report until §4.13. An element that cannot take the option
+	// is refused by the model, which is the correct answer for a document
+	// carrying it on a gateway.
+	if attrBool(s.se, attrForCompensation, false) {
+		s.body.extra = append(s.body.extra, activities.WithCompensation())
+	}
+
+	// Properties ride the same funnel and the same rule: BPMN gives them
+	// to a process, an activity and an event, which are exactly the model
+	// types that take the option — anything else refuses it itself, with
+	// this node's id wrapped around the refusal (SRD-089.F FR-6).
+	if len(s.body.props) != 0 {
+		props, err := buildProperties(p, asm, s.body.props)
+		if err != nil {
+			return nil, err
+		}
+
+		s.body.extra = append(s.body.extra, data.WithProperties(props...))
+	}
+
+	// An ioSpecification is refused here, not at parse, for the node
+	// kinds that cannot hold one: the child table is deliberately
+	// uniform, and only the build knows the owner's kind (SRD-089.G
+	// §4.7/§4.7a).
+	if s.body.io != nil {
+		if !paramOwners[s.se.Name.Local] {
+			return nil, ioSpecMisplaced(s)
+		}
+
+		ioOpts, err := buildIOParams(p, asm, s)
+		if err != nil {
+			return nil, err
+		}
+
+		s.body.extra = append(s.body.extra, ioOpts...)
+	}
+
+	outer := p.owner
+	p.owner = s.id
+	p.claimed = map[string]bool{}
+
+	node, err := build(p, asm, s.se, s.id, s.name, s.body)
+
+	if err == nil {
+		// Only for a node that exists: a failed build aborts the import,
+		// and a report about an element the host never receives is noise.
+		p.reportUnmappedAttrs(s.se, s.id, p.claimed)
+	}
+
+	p.claimed = nil
+	p.owner = outer
+
 	if err != nil {
 		// Do not re-wrap already-classified converter errors (unknown
 		// operationRef, invalid gatewayDirection, …) — preserve class for
 		// errors.As / HasClass (k8s/docker-style root-cause visibility).
-		return wrapErr(
-			fmt.Sprintf("bpmn: couldn't create %s %q", se.Name.Local, id),
+		return nil, wrapErr(
+			fmt.Sprintf("bpmn: couldn't create %s %q", s.se.Name.Local, s.id),
 			errs.BulidingFailed,
 			err)
 	}
 
-	asm.nodes = append(asm.nodes, node)
-	asm.byID[id] = node
-
-	return nil
+	return node, nil
 }
 
 // parseInterface parses a definitions-level <bpmn:interface> and records its
@@ -445,6 +1055,11 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 // for a later slice; this slice only needs id/name for NewOperation.
 func (p *parser) parseInterface(se xml.StartElement) error {
 	id, err := requiredID(se)
+	if err != nil {
+		return err
+	}
+
+	err = p.claimID(id, se.Name.Local)
 	if err != nil {
 		return err
 	}
@@ -496,10 +1111,9 @@ func (p *parser) parseOperation(interfaceID string, se xml.StartElement) error {
 		return err
 	}
 
-	if _, dup := p.ops[id]; dup {
-		return errs.New(
-			errs.M("bpmn: duplicate operation id %q", id),
-			errs.C(errorClass, errs.DuplicateObject))
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return err
 	}
 
 	name := attrValue(se, "name")
@@ -566,6 +1180,7 @@ func (p *parser) parseServiceTask(
 	}
 
 	opts := append(body.opts(id), activities.WithoutParams())
+	opts = append(opts, p.camundaOptions(se, id)...)
 
 	// BPMN carries `implementation` on the serviceTask itself. Without the
 	// carrier the attribute had nowhere to land, so export wrote a value
@@ -642,11 +1257,7 @@ func parseGateway(
 		opts = append(opts, gateways.WithDirection(gd))
 	}
 
-	if se.Name.Local == tagParallelGateway {
-		return gateways.NewParallelGateway(opts...)
-	}
-
-	gw, err := gateways.NewExclusiveGateway(opts...)
+	gw, err := newGatewayOfKind(se.Name.Local, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -654,19 +1265,110 @@ func parseGateway(
 	// The default names a sequence flow that almost never exists yet —
 	// modelers emit gateways before the flows leaving them — so it is
 	// deferred to pass 2 like every other forward reference.
-	if def := attrValue(se, "default"); def != "" {
-		asm.refs = append(asm.refs, flowRef{
-			refSite: refSite{from: "exclusiveGateway " + id, attr: "default", target: def},
-			apply:   gw.UpdateDefaultFlow,
-		})
+	//
+	// Only the kinds the standard gives a default get one; the parallel
+	// and event-based gateways have none, so the attribute is not read
+	// for them at all (BPMN §13.4.1, §13.4.4).
+	def := attrValue(se, "default")
+	if def == "" || !gatewayTakesDefault(se.Name.Local) {
+		return gw, nil
+	}
+
+	if err := deferDefaultFlow(asm, se.Name.Local, id, def, gw); err != nil {
+		return nil, err
 	}
 
 	return gw, nil
 }
 
+// deferDefaultFlow records the gateway's default as a pass-2 reference.
+//
+// The type assertion is a guard rather than a formality: every gateway the
+// model has today embeds the shared Gateway and so can hold a default, but
+// nothing in the type system says a future one must — and a gateway that
+// silently kept no default would route tokens by a rule the file did not
+// describe.
+func deferDefaultFlow(
+	asm *assembly, local, id, def string, gw flow.Node,
+) error {
+	// Unreachable from any document: gatewayTakesDefault already limited
+	// the callers to the gateway kinds whose constructors return a type
+	// with this method. Reaching it means that table and the model
+	// disagree about which gateways carry a default.
+	defaulter, ok := gw.(interface {
+		UpdateDefaultFlow(*flow.SequenceFlow) error
+	})
+	if !ok {
+		return errs.Invariant(
+			"%s %q takes a default flow, but %T cannot hold one", local, id, gw)
+	}
+
+	asm.refs = append(asm.refs, flowRef{
+		refSite: refSite{from: local + " " + id, attr: "default", target: def},
+		apply:   defaulter.UpdateDefaultFlow,
+	})
+
+	return nil
+}
+
+// gatewayKinds maps a gateway element to its constructor. The complex
+// gateway is deliberately absent — see SRD-089.C §4.1.
+var gatewayKinds = map[string]func(...options.Option) (flow.Node, error){
+	tagExclusiveGateway: func(o ...options.Option) (flow.Node, error) {
+		return gateways.NewExclusiveGateway(o...)
+	},
+	tagParallelGateway: func(o ...options.Option) (flow.Node, error) {
+		return gateways.NewParallelGateway(o...)
+	},
+	tagInclusiveGateway: func(o ...options.Option) (flow.Node, error) {
+		return gateways.NewInclusiveGateway(o...)
+	},
+	tagEventBasedGtw: func(o ...options.Option) (flow.Node, error) {
+		return gateways.NewEventBasedGateway(o...)
+	},
+}
+
+// gatewaysWithDefault are the kinds BPMN gives a default sequence flow:
+// the ones that CHOOSE among their outgoing flows by condition. A parallel
+// gateway takes every outgoing flow and an event-based one is decided by
+// its events, so neither has a condition to fall through.
+var gatewaysWithDefault = map[string]bool{
+	tagExclusiveGateway: true,
+	tagInclusiveGateway: true,
+	tagComplexGateway:   true,
+}
+
+// gatewayTakesDefault reports whether the element kind has a default.
+func gatewayTakesDefault(local string) bool {
+	return gatewaysWithDefault[local]
+}
+
+// newGatewayOfKind builds the gateway the element names.
+func newGatewayOfKind(
+	local string, opts []options.Option,
+) (flow.Node, error) {
+	build, ok := gatewayKinds[local]
+	if !ok {
+		return nil, errs.New(
+			errs.M("bpmn: no gateway constructor for %q", local),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	return build(opts...)
+}
+
 // parseSequenceFlow parses a <bpmn:sequenceFlow> into a flowSpec for pass 2.
 func (p *parser) parseSequenceFlow(se xml.StartElement) (*flowSpec, error) {
 	id, err := requiredID(se)
+	if err != nil {
+		return nil, err
+	}
+
+	// A flow's id was unguarded before the ledger (SRD-089.F §4.11): two
+	// flows sharing one silently overwrote each other in pass 2's
+	// id→flow table, and a flow reusing a node's id poisoned every
+	// reference to that node.
+	err = p.claimID(id, se.Name.Local)
 	if err != nil {
 		return nil, err
 	}
@@ -796,17 +1498,79 @@ func fallbackName(id, name string) string {
 	return name
 }
 
-// build is pass 2: nodes are added to the process, flows are linked
-// through the complete id→node table, every deferred reference is
-// resolved against the finished index, and the graph is validated.
-func build(asm *assembly) (*process.Process, error) {
-	for _, n := range asm.nodes {
-		if err := asm.proc.Add(n); err != nil {
-			return nil, errs.New(
-				errs.M("bpmn: couldn't add node %q to process %q", n.ID(), asm.proc.ID()),
-				errs.C(errorClass, errs.BulidingFailed),
-				errs.E(err))
-		}
+// build is pass 2: nodes are constructed and added to the process, flows
+// are linked through the complete id→node table, every deferred
+// reference is resolved against the finished index, and the graph is
+// validated.
+func build(p *parser, asm *assembly) (*process.Process, error) {
+	// A message-typed event builds an ItemAwareElement over the message's
+	// payload, and that needs the model's default data states to exist
+	// (data/item.go:193-201). They are host setup — every example calls
+	// CreateDefaultStates before building a process — but an importer
+	// that refuses an ordinary message start event until the host has run
+	// an unrelated initializer is not a usable contract.
+	//
+	// The call is idempotent and guarded: it fills the three globals only
+	// when they are unset (data/state.go:86-91), so a host that
+	// configured its own states before importing keeps them.
+	// Unreachable from any document: it builds three SrcStates from three
+	// non-empty package constants, and NewSrcState refuses only an empty
+	// name (data/state.go:45-52). Said in the form the coverage gate
+	// reads, since no file can produce it.
+	if err := data.CreateDefaultStates(); err != nil {
+		return nil, errs.Invariant(
+			"the model's default data states could not be created: %w", err)
+	}
+
+	// Before anything that could refer to a type: the whole document has
+	// been read, so every <import> a structureRef resolves against is in
+	// hand (§4.8).
+	items, err := buildItems(p)
+	if err != nil {
+		return nil, err
+	}
+
+	asm.items = items
+
+	// The process first: everything else is added TO it, and its own
+	// properties resolve against the items built just above (§4.6).
+	if err := constructProcess(p, asm); err != nil {
+		return nil, err
+	}
+
+	if err := buildNodes(p, asm); err != nil {
+		return nil, err
+	}
+
+	// After the nodes, because a container IS a node: the sub-process
+	// holding a data object does not exist until the node pass built it
+	// (SRD-089.F §4.4).
+	if err := buildDataElements(p, asm); err != nil {
+		return nil, err
+	}
+
+	// A declared <dataStore> builds nothing; what it produces is the
+	// report telling the host which store ids the file expects the
+	// engine's registry to hold (§4.5).
+	p.reportDataStores()
+
+	// After both families exist: the data associations, wired through
+	// the elements' own Associate* (SRD-089.G §4.1).
+	if err := wireDataAssociations(p, asm); err != nil {
+		return nil, err
+	}
+
+	// After the nodes exist and before Validate: a lane names nodes, and
+	// the container's own validation checks that what a lane holds is what
+	// the container holds (§4.3).
+	if err := placeLaneNodes(asm); err != nil {
+		return nil, err
+	}
+
+	// Every association a compensation boundary did not consume is a
+	// plain one, and plain associations have no model home (§4.9).
+	if err := refusePlainAssociations(asm); err != nil {
+		return nil, err
 	}
 
 	flowByID := make(map[string]*flow.SequenceFlow, len(asm.flows))
@@ -860,13 +1624,12 @@ func linkFlow(asm *assembly, fs flowSpec) (*flow.SequenceFlow, error) {
 	}
 
 	if fs.hasCond {
-		condID := fs.condID
-		if condID == "" {
-			condID = fs.id + ":condition"
+		cond, err := newCondition(fs, asm.exprLanguage)
+		if err != nil {
+			return nil, err
 		}
 
-		opts = append(opts, flow.WithCondition(
-			newFormalExpression(condID, fs.condLang, fs.condBody)))
+		opts = append(opts, flow.WithCondition(cond))
 	}
 
 	ss, ok := src.(flow.SequenceSource)
@@ -955,6 +1718,40 @@ func (p *parser) skipElement() error {
 	return nil
 }
 
+// skipReporting swallows a subtree like skipElement, but reports every
+// element it passes that belongs to a recognized dialect.
+//
+// <extensionElements> is where a Camunda file keeps its listeners, its
+// form data and its I/O mapping, and swallowing it whole is exactly how
+// those went missing without a word. Reporting only the OUTERMOST
+// recognized element keeps one report per construct: a formData with six
+// formFields is one thing the converter did not map, not seven.
+func (p *parser) skipReporting(element string) error {
+	depth := 1
+
+	for depth > 0 {
+		tok, err := p.token()
+		if err != nil {
+			return err
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if depth == 1 && t.Name.Space == nsCamunda {
+				p.report(element, "camunda:"+t.Name.Local,
+					dialectReason(t.Name.Local))
+			}
+
+			depth++
+
+		case xml.EndElement:
+			depth--
+		}
+	}
+
+	return nil
+}
+
 // readText reads the character data of a simple text element (used for
 // <bpmn:conditionExpression>).
 func (p *parser) readText(se xml.StartElement) (string, error) {
@@ -990,13 +1787,49 @@ func (p *parser) readText(se xml.StartElement) (string, error) {
 }
 
 // unsupported builds the *convert.UnsupportedElementError for an unmapped
-// in-namespace element (SRD-051 §FR-3/§FR-7).
+// in-namespace element (SRD-051 §FR-3/§FR-7). An element whose refusal
+// has a record beyond itself — a capability row, or the right position —
+// additionally names it, per ADR-038 §2.2's rule that the record IS the
+// refusal's content.
 func unsupported(se xml.StartElement) error {
 	return &convert.UnsupportedElementError{
 		Tag:     se.Name.Local,
 		ID:      attrValue(se, "id"),
 		Section: sections[se.Name.Local],
+		Planned: plannedNotes[se.Name.Local],
 	}
+}
+
+// dataParamNote explains a bare parameter or set outside an
+// <ioSpecification>. It covers both positions one refusal can fire from:
+// on a task the element belongs inside the spec (the standard's
+// structure), and on an event the bare form is legal BPMN awaiting the
+// model's attachment capability (#329) — the settle path cannot tell the
+// two owners apart, so the note carries both truths.
+const dataParamNote = "on a task this element lives inside its " +
+	"<ioSpecification> (§10.4.1) — write it there; an event's bare I/O " +
+	"awaits the event data attachment capability, #329"
+
+// dataAssocNote explains an association outside an activity's body — its
+// only importable position since SRD-089.G.
+const dataAssocNote = "a data association lives on the activity whose " +
+	"parameter it wires (§10.4.1); write it inside that task"
+
+// plannedNotes names the record behind each refused data-family tag —
+// after SRD-089.G none of them is STAGED: a task's family imports, and
+// what remains is a capability row (ADR-038 §2.3) or a position the
+// standard reserves. A table rather than per-site wording so one family
+// reads as one answer.
+var plannedNotes = map[string]string{
+	tagIOSpecification: "a task's <ioSpecification> imports; the " +
+		"process-level I/O carrier is the missing capability, #330 " +
+		"(ADR-011 §2.5's planned work)",
+	tagDataInput:       dataParamNote,
+	tagDataOutput:      dataParamNote,
+	tagInputSet:        dataParamNote,
+	tagOutputSet:       dataParamNote,
+	tagDataInputAssoc:  dataAssocNote,
+	tagDataOutputAssoc: dataAssocNote,
 }
 
 // requiredID extracts the mandatory id attribute of a flow element
@@ -1011,6 +1844,31 @@ func requiredID(se xml.StartElement) (string, error) {
 	}
 
 	return id, nil
+}
+
+// claimID claims id in the document's one id ledger, or says who holds it.
+//
+// The parser keeps several per-kind tables — the flow elements, the
+// catalog objects, the item definitions, the stores, the operations — but
+// the ids they hold are one vocabulary: every reference attribute in a
+// document (a dataObjectRef, an itemSubjectRef, an operationRef, an
+// attachedToRef) resolves by id, and resolution probes those tables in a
+// fixed order. Two elements sharing an id would collide in no table and
+// would instead make every reference to that id silently ambiguous — the
+// resolver finding whichever of the two its probe order reaches first.
+// So uniqueness is enforced here, once, at declaration, whatever table
+// the element lands in afterwards.
+func (p *parser) claimID(id, local string) error {
+	if kind, dup := p.ids[id]; dup {
+		return errs.New(
+			errs.M("bpmn: duplicate id %q on <%s>; <%s> already declared it",
+				id, local, kind),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	p.ids[id] = local
+
+	return nil
 }
 
 // attrValue returns the value of the first unprefixed attribute with the
