@@ -158,8 +158,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Every activity now executes through one object, whatever its
+  iteration** (ADR-025 §2.13/§2.13a/§2.13b, SRD-090.A, part of #313).
+  `executeStep` used to route a node through five iteration branches —
+  a composite re-opened a child scope, a parallel leaf forked tracks, a
+  sequential leaf re-ran in place — and each mechanism carried its own
+  record shape, its own scope-open path and its own way of suppressing
+  the bookkeeping the others needed. There is now a single dispatch: the
+  step builds an executor for the node (a decorator when the node
+  iterates, a bare executor otherwise) and runs it. A decorator holds N
+  executors and implements the same interface they do, so nothing above
+  it — track, loop, instance, event hub — can tell how many instances
+  are behind the activity it is driving.
+
+  **Two behaviours are corrected as a consequence.** A Sub-Process host
+  reported as *executing* while its body ran, when what it is doing is
+  hosting a scope; and an iterated activity reported N executions of one
+  token's step, where a parallel Multi-Instance reported one and a
+  sequential one reported N — the same construct described two ways. A
+  token now has states for iterating and for hosting a scope, and an
+  activity is one step of its token however many instances run it.
+
+  **The checkpoint schema moves 5 → 7.** An iterated activity persists
+  as an executor set keyed by ordinal, replacing the per-instance track
+  records and the group record it used to be scattered across; a scope
+  record names the track that opened it and the ordinal it stands for,
+  so a restore resolves the owner by lookup rather than by derivation.
+  Documents written by the previous release still restore, including a
+  parallel leaf fan-out captured under schema 5.
+
+  Residency (an iterated Sub-Process holding parked User Tasks still
+  pins its instance in memory) and the iterated Call Activity are
+  specified in SRD-090.A and carried to #336.
+
 - **A parallel Multi-Instance leaf activity's instances are no longer
-  tracks, and no longer get a scope apiece** (ADR-025 v.3 §2.13,
+  tracks, and no longer get a scope apiece** (ADR-025 §2.13,
   SRD-090.A M2b, part of #313). Iterating a leaf three times used to
   fork three tracks into three per-instance scopes, coordinated by a
   loop-owned barrier; the activity's decorator now holds one executor
