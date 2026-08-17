@@ -1388,14 +1388,30 @@ func (t *track) executeNode(
 	ctx context.Context,
 	step *stepInfo,
 ) ([]*flow.SequenceFlow, error) {
-	return t.executeNodeAs(ctx, step, activityInstance{})
+	// through a UNIT, not straight into the sequence (ADR-025 §2.13b). Its
+	// callers — a decorator's exit, a composite's exit — are running the
+	// node as the activity's single instance, which is precisely what a
+	// unit is, and routing them through it leaves ONE path from "execute
+	// this node" to the sequence that does it.
+	return newNodeExec(t, step, 0).run(ctx)
 }
 
-// executeNodeAs runs the node as ONE instance of its activity (ADR-025
-// §2.13). ai carries what distinguishes this instance from its siblings: the
-// data only it sees, and whether it is a member of a set whose decorator owns
-// the track-wide bookkeeping. A plain node is the degenerate case — one
-// instance, no local data, driving the track itself.
+// executeNodeAs runs the node as ONE instance of its activity.
+//
+// **The whole sequence belongs to the unit** (ADR-025 §2.13b) — opening the
+// frame, seeding it, binding the instance's own data, loading the declared
+// inputs, running the node, the cancellation checkpoint, the commit — which
+// is why this reads as one function rather than as steps a caller strings
+// together. A decorator wraps THIS, not a sequence it has to reproduce.
+//
+// It remains a track method because every phase legitimately touches track
+// state (the compensation seed, the received item, the step, the history);
+// the unit owns the ORDER, which is what makes it wrappable.
+//
+// ai carries what distinguishes this instance from its siblings: the data
+// only it sees, and the capture that takes its result before the commit makes
+// the output's name a shared one. A plain node is the degenerate case — one
+// instance, no local data.
 func (t *track) executeNodeAs(
 	ctx context.Context,
 	step *stepInfo,
