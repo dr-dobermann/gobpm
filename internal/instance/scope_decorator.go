@@ -77,6 +77,12 @@ type scopeRequest struct {
 	// decides, because deriving it here would move the sequential path's
 	// data paths and observability facts.
 	segment string
+	// iterKind names the iteration shape, for the mirror the loop keeps
+	// (SRD-090.A FR-6). Declared by the REQUESTER for the same reason
+	// iterating is: the loop derived it from the node on the way in, which
+	// is a driver asking what kind of iteration a node drives. Empty when
+	// iterating is false.
+	iterKind string
 	// insts carries the decorator's executor set to the loop's iteration
 	// mirror on a scopeIterPost (SRD-090.A FR-6) — the per-ordinal states
 	// the record persists, from the one component that knows them all.
@@ -212,7 +218,7 @@ func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 
 		req.reply <- scopeReply{}
 	case scopeIterPost:
-		m := ls.ensureIterMirror(req.host, req.node)
+		m := ls.ensureIterMirror(req.host, req.iterKind)
 		m.completed = req.completed
 		m.instances = req.insts
 
@@ -256,7 +262,7 @@ func (ls *loopState) reattachScope(
 	ls.waiting[req.host.ID()] = struct{}{}
 
 	if req.iterating {
-		ls.ensureIterMirror(req.host, req.node)
+		ls.ensureIterMirror(req.host, req.iterKind)
 	}
 
 	entry.awaitAttach = false
@@ -418,7 +424,7 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 	// mirror the decorator's position for the capture (SRD-082 FR-2);
 	// the runner is parked in its roundtrip, so the reads are fenced.
 	if req.iterating {
-		ls.ensureIterMirror(req.host, req.node)
+		ls.ensureIterMirror(req.host, req.iterKind)
 	}
 
 	ls.reportScope(

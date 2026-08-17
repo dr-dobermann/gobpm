@@ -3,7 +3,6 @@ package instance
 import (
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
-	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
 // iterMirror is the loop-owned mirror of an off-loop iteration
@@ -41,26 +40,6 @@ type iterMirror struct {
 	conditionMet bool
 }
 
-// iterKindOf names the iteration shape a node drives, for the record
-// (SRD-090.A FR-6). The empty string for a node that iterates not at all —
-// which never reaches a mirror, since only an own-iteration host has one.
-func iterKindOf(node flow.Node) string {
-	if standardLoopOf(node) != nil {
-		return iterKindStdLoop
-	}
-
-	mi := multiInstanceOf(node)
-	if mi == nil {
-		return ""
-	}
-
-	if mi.IsSequential() {
-		return iterKindMISequential
-	}
-
-	return iterKindMIParallel
-}
-
 // The iteration shapes a record names. They describe the SHAPE, not the
 // node: a sequential Multi-Instance reads the same whether its instances
 // are executions of a leaf or child scopes of a composite, which is the
@@ -75,14 +54,19 @@ const (
 // activity drives its own iteration. Runs on the loop goroutine, from
 // handleScopeOpen — the runner is parked awaiting the reply, so the
 // miState reads are fenced by the request channel.
+//
+// The kind comes from the REQUEST rather than from the node: deriving it
+// here made the loop ask what kind of iteration a node drives, which is the
+// decorator's knowledge (SRD-090.A FR-11, the same shape `iterating` fixed
+// one call up).
 func (ls *loopState) ensureIterMirror(
-	host *track, node flow.Node,
+	host *track, kind string,
 ) *iterMirror {
 	if m, ok := ls.iter[host.ID()]; ok {
 		return m
 	}
 
-	m := &iterMirror{kind: iterKindOf(node)}
+	m := &iterMirror{kind: kind}
 	if st := host.miState; st != nil {
 		m.n = st.numberOfInstances
 		m.staging = st.staging

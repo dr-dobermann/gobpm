@@ -217,12 +217,14 @@ func TestTakeIterSeedIsConsumedOnce(t *testing.T) {
 	require.Nil(t, tr.iterSeed)
 }
 
-// TestIterKindOf pins the record's vocabulary against the node (SRD-090.A
-// FR-6). The kind describes the iteration SHAPE and not the node: a
-// sequential Multi-Instance reads the same whether its instances are
-// executions of a leaf or child scopes of a composite, which is the whole
-// point of recording instances rather than tracks.
-func TestIterKindOf(t *testing.T) {
+// TestDecoratorNamesItsIterationKind: the shape a position record carries
+// is stated by the decorator that drives it, and a plain composite — which
+// drives no iteration — names none.
+//
+// It used to be derived loop-side from the node (iterKindOf, called by
+// ensureIterMirror), which is a driver asking what kind of iteration a node
+// drives (SRD-090.A FR-11, M4f).
+func TestDecoratorNamesItsIterationKind(t *testing.T) {
 	sl, err := activities.NewStandardLoop(loopCondLt(t, 3))
 	require.NoError(t, err)
 
@@ -246,12 +248,25 @@ func TestIterKindOf(t *testing.T) {
 			activities.WithLoop(tc.lc))
 		require.NoError(t, terr)
 
-		require.Equal(t, tc.want, iterKindOf(task))
+		var got string
+
+		switch d := execFor(nil, &stepInfo{node: task}).(type) {
+		case *loopDecorator:
+			got = d.iterKind()
+
+		case *iterDecorator:
+			got = d.iterKind()
+
+		default:
+			t.Fatalf("%T drives no iteration", d)
+		}
+
+		require.Equal(t, tc.want, got)
 	}
 
 	plain, err := activities.NewSubProcess("plain")
 	require.NoError(t, err)
 
-	require.Empty(t, iterKindOf(plain),
+	require.Empty(t, newPlainScopeExec(nil, &stepInfo{node: plain}).iterKind,
 		"a node that does not iterate reaches no mirror and names no shape")
 }

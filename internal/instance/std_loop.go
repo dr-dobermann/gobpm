@@ -179,11 +179,20 @@ func (d *loopDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	return flows, nil
 }
 
+// iterKind names the shape this decorator drives, for the loop's position
+// mirror (SRD-090.A FR-6). A Standard Loop has exactly one — the decorator
+// states it rather than the loop deriving it from the node (FR-11).
+func (d *loopDecorator) iterKind() string {
+	return iterKindStdLoop
+}
+
 // runPass runs one pass as its own instance: the executor opens that pass's
 // child scope and parks for its drain.
 func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
 	if d.composite {
-		d.live = newScopeExec(d.t, d.step, pass)
+		e := newScopeExec(d.t, d.step, pass)
+		e.iterKind = d.iterKind()
+		d.live = e
 
 		_, err := d.live.run(ctx)
 

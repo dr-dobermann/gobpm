@@ -38,7 +38,16 @@ type scopeExec struct {
 	// own `sp-<id>` with nothing extra (SRD-090.A M3b).
 	capture *instanceCapture
 	segment string
-	binds   []miBinding
+	// iterKind names the iteration shape this instance belongs to, for the
+	// loop's position mirror (SRD-090.A FR-6). Empty for a plain composite,
+	// which iterates not at all.
+	//
+	// Supplied by the decorator, for the same reason as iterating: the loop
+	// used to derive it by asking the node (iterKindOf, on the way in),
+	// which is a driver testing what kind of iteration a node drives — the
+	// knowledge the decorator owns (FR-11).
+	iterKind string
+	binds    []miBinding
 
 	// parked is written by this instance's own goroutine and read by the
 	// LOOP goroutine, so it is atomic. A reader wants the CURRENT answer
@@ -97,6 +106,7 @@ func (e *scopeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 		// running once, does not. The executor knows which it is without
 		// asking anything about the node (SRD-090.A FR-11).
 		iterating:   !e.exits,
+		iterKind:    e.iterKind,
 		factOrdinal: e.factOrdinal(),
 	}); err != nil {
 		return nil, err

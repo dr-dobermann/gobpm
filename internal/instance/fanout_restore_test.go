@@ -302,7 +302,7 @@ func TestReAttachAdoptsTheInstancesCell(t *testing.T) {
 func TestMarkIterDrainSkipsAFannedOutInstance(t *testing.T) {
 	_, ls, node, host := fanOutFixture(t)
 
-	m := ls.ensureIterMirror(host, node)
+	m := ls.ensureIterMirror(host, iterKindMIParallel)
 	m.completed = 3
 
 	ls.markIterDrain(&scopeEntry{

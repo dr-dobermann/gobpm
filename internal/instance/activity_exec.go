@@ -181,10 +181,24 @@ func newIterDecorator(
 // composite activity, an execution of the node for a leaf.
 func (d *iterDecorator) buildInstance(ord int) activityExec {
 	if d.composite {
-		return newScopeExec(d.t, d.step, ord)
+		e := newScopeExec(d.t, d.step, ord)
+		e.iterKind = d.iterKind()
+
+		return e
 	}
 
 	return newNodeExec(d.t, d.step, ord)
+}
+
+// iterKind names the shape this decorator drives, for the loop's position
+// mirror (FR-6). The decorator states it rather than the loop deriving it
+// from the node — see scopeRequest.iterKind.
+func (d *iterDecorator) iterKind() string {
+	if d.mi != nil && d.mi.IsSequential() {
+		return iterKindMISequential
+	}
+
+	return iterKindMIParallel
 }
 
 // exitFlows follows the activity's outgoing flow ONCE, on exit.
@@ -569,6 +583,7 @@ func (d *iterDecorator) postPosition(
 		op:        scopeIterPost,
 		host:      d.t,
 		node:      d.step.node,
+		iterKind:  d.iterKind(),
 		completed: completed,
 		insts:     insts,
 	})
@@ -857,6 +872,7 @@ func (d *iterDecorator) compositeInstanceFor(
 		node: d.step.node, inFlow: d.step.inFlow,
 	}, ord)
 
+	e.iterKind = d.iterKind()
 	e.segment = scopeSegment(d.step.node) + "-" + strconv.Itoa(ord)
 
 	// the 0-based loopCounter, and the split input item when the iteration
