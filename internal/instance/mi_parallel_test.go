@@ -534,3 +534,48 @@ func TestParallelBarrierKeepsATeardownError(t *testing.T) {
 		"the teardown failure replaces the instance's — scopes stayed open")
 	require.True(t, b.stopping)
 }
+
+// TestRunMIParallelBindError is the parallel twin of
+// TestRunMISequentialBindError: the per-instance input split fails when the
+// input collection's GetAt errors, and the fan-out faults before any scope
+// opens.
+//
+// It asserts the fault arrives WITHIN a bound rather than merely arriving.
+// The unit-level guard test proves compositeInstanceFor returns an error; it
+// cannot prove the fan-out that calls it does not then sit waiting on
+// instances it never launched, which is the half a barrier can get wrong.
+func TestRunMIParallelBindError(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	var count atomic.Int32
+
+	mi := mustParallelMI(t, activities.WithInputCollection("items", "item"))
+	inst := miSubProcessInstance(t, &count, mi)
+	inst.tracks = map[string]*track{}
+	node := findNode(t, inst.s, "body")
+
+	host, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+
+	coll := getAtErrColl{values.NewArray[any](1, 2, 3)}
+	require.NoError(t, inst.sc.bindValueAt(host.scopePath, "items", coll))
+
+	errCh := make(chan error, 1)
+
+	go func() {
+		_, rerr := newIterDecorator(
+			host, &stepInfo{node: node}, multiInstanceOf(node), true,
+		).run(t.Context())
+
+		errCh <- rerr
+	}()
+
+	select {
+	case rerr := <-errCh:
+		require.Error(t, rerr)
+
+	case <-time.After(5 * time.Second):
+		t.Fatal("the fan-out never returned — it is waiting on instances " +
+			"the failed split never launched")
+	}
+}
