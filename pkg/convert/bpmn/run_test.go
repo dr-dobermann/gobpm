@@ -160,3 +160,92 @@ func TestSubProcessRunsOnAThresher(t *testing.T) {
 
 	t.Logf("instance completed: %s", state)
 }
+
+// TestDataFlowRunsOnAThresher covers SRD-089.G §6 T-26 and §9 DoD.
+//
+// Every other test in the stage asserts the imported SHAPE: which
+// parameter carries which item, which association bound. None of that
+// proves the runtime accepts what came out: LoadData walks the input
+// associations and reads the data object from the per-instance scope
+// (SRD-063 FR-5), UploadData walks the output ones, and the readiness
+// gates consult exactly the parameters this stage built — an import
+// that wired any of it wrongly would pass every construction test and
+// fault or hang here.
+//
+// Both parameters are OPTIONAL, the §4a shape: a manual task fills
+// nothing, so a required input would wait on data no one supplies and a
+// required output would gate completion on a value never produced. The
+// optional flag is this stage's own import (FR-2) — the run proves the
+// engine honors it end to end.
+func TestDataFlowRunsOnAThresher(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <bpmn:itemDefinition id="idOrder" structureRef="xsd:string"/>
+  <bpmn:process id="DataFlow" name="data flow" isExecutable="true">
+    <bpmn:property id="p1" name="retries" itemSubjectRef="idOrder"/>
+    <bpmn:dataObject id="do1" name="order" itemSubjectRef="idOrder"/>
+    <bpmn:startEvent id="s1"/>
+    <bpmn:task id="t1" name="work">
+      <bpmn:ioSpecification id="io1">
+        <bpmn:dataInput id="din1" name="in" itemSubjectRef="idOrder"/>
+        <bpmn:dataOutput id="dout1" name="out"/>
+        <bpmn:inputSet id="is1">
+          <bpmn:dataInputRefs>din1</bpmn:dataInputRefs>
+          <bpmn:optionalInputRefs>din1</bpmn:optionalInputRefs>
+        </bpmn:inputSet>
+        <bpmn:outputSet id="os1">
+          <bpmn:dataOutputRefs>dout1</bpmn:dataOutputRefs>
+          <bpmn:optionalOutputRefs>dout1</bpmn:optionalOutputRefs>
+        </bpmn:outputSet>
+      </bpmn:ioSpecification>
+      <bpmn:dataInputAssociation id="dia1">
+        <bpmn:sourceRef>do1</bpmn:sourceRef>
+        <bpmn:targetRef>din1</bpmn:targetRef>
+      </bpmn:dataInputAssociation>
+      <bpmn:dataOutputAssociation id="doa1">
+        <bpmn:sourceRef>dout1</bpmn:sourceRef>
+        <bpmn:targetRef>do1</bpmn:targetRef>
+      </bpmn:dataOutputAssociation>
+    </bpmn:task>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	p, err := importer{}.Import(ctx, strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	engine, err := thresher.New("data-flow-engine")
+	if err != nil {
+		t.Fatalf("thresher.New: %v", err)
+	}
+
+	if _, err = engine.RegisterProcess(p); err != nil {
+		t.Fatalf("RegisterProcess: %v — registration is what snapshots and "+
+			"clones the data objects this stage's associations read", err)
+	}
+
+	if err = engine.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	h, err := engine.StartLatest(p.ID())
+	if err != nil {
+		t.Fatalf("StartLatest: %v", err)
+	}
+
+	state, err := h.WaitCompletion(ctx)
+	if err != nil {
+		t.Fatalf("WaitCompletion: %v — a run that does not finish means the "+
+			"associations or the readiness gates were wired wrongly", err)
+	}
+
+	t.Logf("instance completed: %s", state)
+}
