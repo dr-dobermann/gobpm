@@ -1,0 +1,461 @@
+package bpmn
+
+import (
+	"encoding/xml"
+	"strings"
+
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+)
+
+// paramSpec is a <dataInput> or <dataOutput> as read from an
+// <ioSpecification>. Which direction it is comes from the tag, kept as
+// the data.Direction the model already names.
+type paramSpec struct {
+	id, name string
+	itemRef  string // itemSubjectRef
+	dir      data.Direction
+	docs     []docSpec
+	// optional and whileExecuting arrive from the SET's ref lists, not
+	// from the parameter's own attributes (SRD-089.G §4.4).
+	optional       bool
+	whileExecuting bool
+}
+
+// ioSpec is one activity's <ioSpecification> as read: its parameters and
+// the one set per direction the engine models. Sets beyond the first
+// refuse at parse (FR-2).
+type ioSpec struct {
+	// setSeen tracks that at most one set per direction was read.
+	setSeen map[data.Direction]bool
+	params  []paramSpec
+}
+
+// param returns the spec of the parameter declared under id, for the set
+// reader that flags it and the association pass that types it.
+func (io *ioSpec) param(id string) *paramSpec {
+	for i := range io.params {
+		if io.params[i].id == id {
+			return &io.params[i]
+		}
+	}
+
+	return nil
+}
+
+// dataAssocSpec is one data association as read from an activity's body:
+// its own id, the activity-side parameter reference, and the data-element
+// side. (The name avoids the .E assocSpec, which is the artifact
+// <association>.)
+type dataAssocSpec struct {
+	id string
+	// dir tells which tag it was: Input (dataInputAssociation) or
+	// Output (dataOutputAssociation).
+	dir data.Direction
+	// paramRef is targetRef on an input association, sourceRef on an
+	// output one — the end that names the activity's own parameter.
+	paramRef string
+	// elemRef is the other end: the data element in scope.
+	elemRef string
+	// extraSources are sourceRefs beyond the first on an input
+	// association — refused with the transformation rule (§4.6).
+	extraSources []string
+	docs         []docSpec
+	// hasTransformation records a <transformation> child — refused,
+	// never mapped (§4.6); the flag exists so the refusal can name the
+	// association that carries it.
+	hasTransformation bool
+	// hasAssignment records an <assignment> child, refused the same way
+	// with its own wording (§4.6).
+	hasAssignment bool
+}
+
+// paramTags maps the two parameter tags to their direction — the fixed
+// classification as data, not control flow.
+var paramTags = map[string]data.Direction{
+	tagDataInput:  data.Input,
+	tagDataOutput: data.Output,
+}
+
+// setTags maps the two set tags to the direction whose single set they
+// declare.
+var setTags = map[string]data.Direction{
+	tagInputSet:  data.Input,
+	tagOutputSet: data.Output,
+}
+
+// setRefTags maps a set's ref-list children to what membership in each
+// means for the named parameter. The plain membership list is not here —
+// it flags nothing — and is handled by name in parseSetChild.
+var setRefTags = map[string]func(*paramSpec){
+	"optionalInputRefs":        func(p *paramSpec) { p.optional = true },
+	"optionalOutputRefs":       func(p *paramSpec) { p.optional = true },
+	"whileExecutingInputRefs":  func(p *paramSpec) { p.whileExecuting = true },
+	"whileExecutingOutputRefs": func(p *paramSpec) { p.whileExecuting = true },
+}
+
+// memberRefTags are the plain membership lists per direction, consumed
+// for the §4.4 membership check and flagging nothing.
+var memberRefTags = map[string]bool{
+	"dataInputRefs":  true,
+	"dataOutputRefs": true,
+}
+
+// parseIOSpecification reads one <ioSpecification> into an ioSpec.
+//
+// It reads parameters and both sets in one walk: BPMN serializes the
+// parameters ahead of the sets, so a set's refs resolve against
+// already-read parameters, and a ref that does not is the §4.4 dangling
+// refusal either way.
+func (p *parser) parseIOSpecification(se xml.StartElement) (*ioSpec, error) {
+	id, err := requiredID(se)
+	if err != nil {
+		return nil, err
+	}
+
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return nil, err
+	}
+
+	io := &ioSpec{setSeen: map[data.Direction]bool{}}
+
+	outer := p.owner
+	p.owner = id
+
+	err = p.parseIOSpecBody(io, se)
+
+	p.owner = outer
+
+	if err != nil {
+		return nil, err
+	}
+
+	return io, nil
+}
+
+// parseIOSpecBody walks the children of <ioSpecification>.
+func (p *parser) parseIOSpecBody(io *ioSpec, se xml.StartElement) error {
+	for {
+		tok, err := p.token()
+		if err != nil {
+			return err
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if err := p.parseIOSpecChild(io, t); err != nil {
+				return err
+			}
+
+		case xml.EndElement:
+			if t.Name == se.Name {
+				return nil
+			}
+		}
+	}
+}
+
+// parseIOSpecChild handles one child of <ioSpecification>: a parameter,
+// a set, or a stranger settled through the disposition tables.
+func (p *parser) parseIOSpecChild(io *ioSpec, se xml.StartElement) error {
+	if se.Name.Space != nsBPMN {
+		return p.skipElement()
+	}
+
+	if dir, ok := paramTags[se.Name.Local]; ok {
+		return p.parseIOParam(io, dir, se)
+	}
+
+	if dir, ok := setTags[se.Name.Local]; ok {
+		return p.parseIOSet(io, dir, se)
+	}
+
+	return p.settle(ctxData, se)
+}
+
+// parseIOParam reads one <dataInput> or <dataOutput>.
+func (p *parser) parseIOParam(
+	io *ioSpec, dir data.Direction, se xml.StartElement,
+) error {
+	id, err := requiredID(se)
+	if err != nil {
+		return err
+	}
+
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return err
+	}
+
+	// A parameter's content model is a data element's: documentation and
+	// <dataState> — the same body reader serves it through a carrier.
+	carrier := dataSpec{
+		local:   se.Name.Local,
+		id:      id,
+		name:    strings.TrimSpace(attrValue(se, "name")),
+		itemRef: strings.TrimSpace(attrValue(se, attrItemSubjectRef)),
+	}
+
+	outer := p.owner
+	p.owner = id
+
+	err = p.parseDataBody(&carrier, se)
+
+	p.owner = outer
+
+	if err != nil {
+		return err
+	}
+
+	if carrier.state != "" {
+		p.report(id, tagDataState, dataStateLoss)
+	}
+
+	p.reportUnmappedAttrs(se, id, nil)
+
+	io.params = append(io.params, paramSpec{
+		id:      carrier.id,
+		name:    carrier.name,
+		itemRef: carrier.itemRef,
+		dir:     dir,
+		docs:    carrier.docs,
+	})
+
+	return nil
+}
+
+// parseIOSet reads one <inputSet> or <outputSet>: the single set the
+// engine models per direction (ADR-011 §2.2). A second one refuses as
+// the standing non-goal it is (§4.4).
+func (p *parser) parseIOSet(
+	io *ioSpec, dir data.Direction, se xml.StartElement,
+) error {
+	id, err := requiredID(se)
+	if err != nil {
+		return err
+	}
+
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return err
+	}
+
+	if io.setSeen[dir] {
+		return errs.New(
+			errs.M("bpmn: a second <%s> is more input/output modes than this "+
+				"engine models: an activity has ONE set per direction, its "+
+				"parameter list (ADR-011 §2.2) — model genuine alternative "+
+				"modes with gateways or boundary events", se.Name.Local),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	io.setSeen[dir] = true
+
+	outer := p.owner
+	p.owner = id
+
+	err = p.parseIOSetBody(io, se)
+
+	p.owner = outer
+
+	return err
+}
+
+// parseIOSetBody walks a set's ref lists, flagging the named parameters.
+func (p *parser) parseIOSetBody(io *ioSpec, se xml.StartElement) error {
+	for {
+		tok, err := p.token()
+		if err != nil {
+			return err
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if err := p.parseSetChild(io, t); err != nil {
+				return err
+			}
+
+		case xml.EndElement:
+			if t.Name == se.Name {
+				return nil
+			}
+		}
+	}
+}
+
+// parseSetChild handles one ref-list child of a set. Every ref names a
+// declared parameter or refuses — the extract's own membership rule
+// ("MUST NOT reference DataInputs not listed", semantics/data.md) is a
+// plain dangling-reference check here (§4.4).
+func (p *parser) parseSetChild(io *ioSpec, se xml.StartElement) error {
+	if se.Name.Space != nsBPMN {
+		return p.skipElement()
+	}
+
+	flag, flags := setRefTags[se.Name.Local]
+	if !flags && !memberRefTags[se.Name.Local] {
+		return p.settle(ctxData, se)
+	}
+
+	ref, err := p.readText(se)
+	if err != nil {
+		return err
+	}
+
+	ref = strings.TrimSpace(ref)
+
+	param := io.param(ref)
+	if param == nil {
+		site := refSite{from: p.owner, attr: se.Name.Local, target: ref}
+
+		return site.notFound("declared parameter")
+	}
+
+	if flags {
+		flag(param)
+	}
+
+	return nil
+}
+
+// parseDataAssociation reads one <dataInputAssociation> or
+// <dataOutputAssociation> into a spec for the pass-2 wiring (§4.1).
+func (p *parser) parseDataAssociation(
+	dir data.Direction, se xml.StartElement,
+) (dataAssocSpec, error) {
+	id, err := requiredID(se)
+	if err != nil {
+		return dataAssocSpec{}, err
+	}
+
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return dataAssocSpec{}, err
+	}
+
+	spec := dataAssocSpec{id: id, dir: dir}
+
+	outer := p.owner
+	p.owner = id
+
+	err = p.parseDataAssocBody(&spec, se)
+
+	p.owner = outer
+
+	if err != nil {
+		return dataAssocSpec{}, err
+	}
+
+	return spec, nil
+}
+
+// parseDataAssocBody walks an association's children: the two ref ends,
+// and the shapes this stage refuses but must still see to name (§4.6).
+func (p *parser) parseDataAssocBody(
+	spec *dataAssocSpec, se xml.StartElement,
+) error {
+	for {
+		tok, err := p.token()
+		if err != nil {
+			return err
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if err := p.parseDataAssocChild(spec, t); err != nil {
+				return err
+			}
+
+		case xml.EndElement:
+			if t.Name == se.Name {
+				return nil
+			}
+		}
+	}
+}
+
+// parseDataAssocChild handles one child of a data association.
+//
+// On an INPUT association the parameter end is targetRef and the element
+// end sourceRef; an output association mirrors them. The mapping below
+// keeps that fact in one place.
+func (p *parser) parseDataAssocChild(
+	spec *dataAssocSpec, se xml.StartElement,
+) error {
+	if se.Name.Space != nsBPMN {
+		return p.skipElement()
+	}
+
+	switch se.Name.Local {
+	case "sourceRef":
+		ref, err := p.readText(se)
+		if err != nil {
+			return err
+		}
+
+		spec.setEnd(data.Input, strings.TrimSpace(ref))
+
+		return nil
+
+	case "targetRef":
+		ref, err := p.readText(se)
+		if err != nil {
+			return err
+		}
+
+		spec.setEnd(data.Output, strings.TrimSpace(ref))
+
+		return nil
+
+	case "transformation":
+		spec.hasTransformation = true
+
+		return p.skipElement()
+
+	case "assignment":
+		spec.hasAssignment = true
+
+		return p.skipElement()
+
+	case tagDocumentation:
+		d, err := p.parseDoc(se)
+		if err != nil {
+			return err
+		}
+
+		spec.docs = append(spec.docs, d)
+
+		return nil
+	}
+
+	return p.settle(ctxData, se)
+}
+
+// setEnd records one ref end. from says which SIDE the ref arrived on:
+// data.Input for a <sourceRef>, data.Output for a <targetRef>. Crossing
+// it with the association's own direction decides whether the ref names
+// the activity's parameter or the data element in scope — and a second
+// element-side ref is a multi-source, kept for §4.6's refusal.
+func (s *dataAssocSpec) setEnd(from data.Direction, ref string) {
+	// On an input association the parameter is the target; on an output
+	// one it is the source. The element side is the other.
+	paramSide := data.Output
+	if s.dir == data.Output {
+		paramSide = data.Input
+	}
+
+	if from == paramSide {
+		s.paramRef = ref
+
+		return
+	}
+
+	if s.elemRef == "" {
+		s.elemRef = ref
+
+		return
+	}
+
+	s.extraSources = append(s.extraSources, ref)
+}

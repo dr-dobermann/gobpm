@@ -216,6 +216,8 @@ var sections = map[string]string{
 	"property":                         "§10.4.1",
 	"dataInput":                        "§10.4.1",
 	"dataOutput":                       "§10.4.1",
+	"inputSet":                         "§10.4.1",
+	"outputSet":                        "§10.4.1",
 	"dataInputAssociation":             "§10.4.1",
 	"dataOutputAssociation":            "§10.4.1",
 	"multiInstanceLoopCharacteristics": "§13.3.5",
