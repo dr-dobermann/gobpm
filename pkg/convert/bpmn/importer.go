@@ -1787,40 +1787,49 @@ func (p *parser) readText(se xml.StartElement) (string, error) {
 }
 
 // unsupported builds the *convert.UnsupportedElementError for an unmapped
-// in-namespace element (SRD-051 §FR-3/§FR-7). A STAGED element — one
-// whose support is scheduled work — additionally names its plan, per
-// ADR-038 §2.2's rule that the plan IS the staged class's record.
+// in-namespace element (SRD-051 §FR-3/§FR-7). An element whose refusal
+// has a record beyond itself — a capability row, or the right position —
+// additionally names it, per ADR-038 §2.2's rule that the record IS the
+// refusal's content.
 func unsupported(se xml.StartElement) error {
 	return &convert.UnsupportedElementError{
 		Tag:     se.Name.Local,
 		ID:      attrValue(se, "id"),
 		Section: sections[se.Name.Local],
-		Planned: stagedNotes[se.Name.Local],
+		Planned: plannedNotes[se.Name.Local],
 	}
 }
 
-// dataFlowStaged is the one staged note of the data-flow family: the
-// elements stage (this SRD) imports what data a definition declares; the
-// flow stage wires values between those declarations, and it has its own
-// document because the wiring reconciles item identity across two element
-// families (SRD-089.F §4.9). No "yet" — the reader's question is whether
-// waiting is sensible, and the plan is the honest answer.
-const dataFlowStaged = "the data-flow half of the data family lands with " +
-	"SRD-089.G — this converter imports the data declarations " +
-	"(itemDefinition, dataObject, dataStore, property), and the pass that " +
-	"wires values between them is that document's scope"
+// dataParamNote explains a bare parameter or set outside an
+// <ioSpecification>. It covers both positions one refusal can fire from:
+// on a task the element belongs inside the spec (the standard's
+// structure), and on an event the bare form is legal BPMN awaiting the
+// model's attachment capability (#329) — the settle path cannot tell the
+// two owners apart, so the note carries both truths.
+const dataParamNote = "on a task this element lives inside its " +
+	"<ioSpecification> (§10.4.1) — write it there; an event's bare I/O " +
+	"awaits the event data attachment capability, #329"
 
-// stagedNotes names the plan behind each staged element — ADR-038 §2.2's
-// class whose record is the plan that schedules it. A table rather than
-// per-site wording so one family reads as one answer.
-var stagedNotes = map[string]string{
-	tagIOSpecification: dataFlowStaged,
-	tagDataInput:       dataFlowStaged,
-	tagDataOutput:      dataFlowStaged,
-	tagInputSet:        dataFlowStaged,
-	tagOutputSet:       dataFlowStaged,
-	tagDataInputAssoc:  dataFlowStaged,
-	tagDataOutputAssoc: dataFlowStaged,
+// dataAssocNote explains an association outside an activity's body — its
+// only importable position since SRD-089.G.
+const dataAssocNote = "a data association lives on the activity whose " +
+	"parameter it wires (§10.4.1); write it inside that task"
+
+// plannedNotes names the record behind each refused data-family tag —
+// after SRD-089.G none of them is STAGED: a task's family imports, and
+// what remains is a capability row (ADR-038 §2.3) or a position the
+// standard reserves. A table rather than per-site wording so one family
+// reads as one answer.
+var plannedNotes = map[string]string{
+	tagIOSpecification: "a task's <ioSpecification> imports; the " +
+		"process-level I/O carrier is the missing capability, #330 " +
+		"(ADR-011 §2.5's planned work)",
+	tagDataInput:       dataParamNote,
+	tagDataOutput:      dataParamNote,
+	tagInputSet:        dataParamNote,
+	tagOutputSet:       dataParamNote,
+	tagDataInputAssoc:  dataAssocNote,
+	tagDataOutputAssoc: dataAssocNote,
 }
 
 // requiredID extracts the mandatory id attribute of a flow element

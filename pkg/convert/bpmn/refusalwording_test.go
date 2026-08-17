@@ -86,45 +86,78 @@ func TestRefusalsSayWhichKindTheyAre(t *testing.T) {
 	}
 }
 
-// TestStagedRefusalsNameTheirPlan is SRD-089.F T-24: the data-flow family
-// stays refused as ADR-038 §2.2's STAGED class, whose record is the plan
-// that schedules it — so each refusal names SRD-089.G and never says
-// "yet". The two positions swept are where a modeler actually writes
-// them: on an activity, and (for an ioSpecification) on the process.
-func TestStagedRefusalsNameTheirPlan(t *testing.T) {
+// TestDataFamilyRefusalWordings replaces the T-24 staged sweep: after
+// SRD-089.G nothing in the family is staged — a task's family imports,
+// and every remaining refusal names either a capability row (#329,
+// #330) or the position the standard reserves. Never "yet".
+func TestDataFamilyRefusalWordings(t *testing.T) {
 	onTask := func(child string) string {
 		return propDoc("", `    <bpmn:task id="t1" name="T">
       `+child+`
     </bpmn:task>`)
 	}
 
-	// "ioSpecification on a task" left this sweep at SRD-089.G M2, the
-	// two association rows at M3 — each now imports (or refuses through
-	// the wiring pass's own §4.6/§4.7 wordings). The remaining rows
-	// shrink until M4 rewords the family's last refusals.
-	tests := map[string]string{
-		"ioSpecification on a process": propDoc("", `    <bpmn:ioSpecification id="io1"/>`),
-		"dataInput":                    onTask(`<bpmn:dataInput id="di1"/>`),
-		"dataOutput":                   onTask(`<bpmn:dataOutput id="do1"/>`),
-		"inputSet":                     onTask(`<bpmn:inputSet id="is1"/>`),
-		"outputSet":                    onTask(`<bpmn:outputSet id="os1"/>`),
+	tests := map[string]struct {
+		doc   string
+		wants []string
+	}{
+		"ioSpecification on a process": {
+			doc:   propDoc("", `    <bpmn:ioSpecification id="io1"/>`),
+			wants: []string{"#330", "ADR-011 §2.5"},
+		},
+		// A bare parameter or set outside an ioSpecification: on a task
+		// the note points inside the spec; the same note carries the
+		// event capability, since one settle path serves both owners.
+		"dataInput": {
+			doc:   onTask(`<bpmn:dataInput id="di1"/>`),
+			wants: []string{"<ioSpecification>", "§10.4.1", "#329"},
+		},
+		"dataOutput": {
+			doc:   onTask(`<bpmn:dataOutput id="do1"/>`),
+			wants: []string{"<ioSpecification>", "#329"},
+		},
+		"inputSet": {
+			doc:   onTask(`<bpmn:inputSet id="is1"/>`),
+			wants: []string{"<ioSpecification>", "#329"},
+		},
+		"outputSet": {
+			doc:   onTask(`<bpmn:outputSet id="os1"/>`),
+			wants: []string{"<ioSpecification>", "#329"},
+		},
+		"dataInput on an event": {
+			doc: propDoc("", `    <bpmn:endEvent id="ev2">
+      <bpmn:dataInput id="di1"/>
+    </bpmn:endEvent>`),
+			wants: []string{"#329"},
+		},
+		"association under the process": {
+			doc:   propDoc("", `    <bpmn:dataInputAssociation id="dia1"/>`),
+			wants: []string{"lives on the activity"},
+		},
 	}
 
-	for name, doc := range tests {
+	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, err := importEventDoc(t, doc)
+			_, err := importEventDoc(t, tc.doc)
 			if err == nil {
 				t.Fatal("want a refusal, got a clean import")
 			}
 
 			msg := err.Error()
 
-			if !strings.Contains(msg, "SRD-089.G") {
-				t.Errorf("staged refusal does not name its plan:\n%s", msg)
+			for _, want := range tc.wants {
+				if !strings.Contains(msg, want) {
+					t.Errorf("refusal does not mention %q:\n%s", want, msg)
+				}
 			}
 
 			if strings.Contains(msg, " yet") {
 				t.Errorf("refusal says \"yet\", which reads as a schedule:\n%s",
+					msg)
+			}
+
+			if strings.Contains(msg, "SRD-089.G") {
+				t.Errorf("refusal still names the landed stage as a plan:\n%s",
 					msg)
 			}
 		})

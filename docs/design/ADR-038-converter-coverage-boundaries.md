@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Draft |
-| Version | v.1 |
-| Date | 2026-08-12 |
+| Version | v.2 |
+| Date | 2026-08-17 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-024 Process Interchange Converters](ADR-024-process-interchange-converters.md) |
 
@@ -138,6 +138,10 @@ is otherwise complete.
 |---|---|---|
 | An artifact collection on `Process`, and a constructor for `artifacts.Association` | the plain `<association>`, and with it the annotated diagrams whose annotation is already skipped but whose link is refused | [#323](https://github.com/dr-dobermann/gobpm/issues/323) |
 | A callable-resolution seam | `calledElement` beyond a literal key, and the whole GlobalTask family | [#325](https://github.com/dr-dobermann/gobpm/issues/325) |
+| Association-expression evaluation on the scope-routed copy path (the SRD-063 §10.3 follow-up) | `<transformation>`, `<assignment>`, and the multi-source data associations only a transformation makes legal | [#328](https://github.com/dr-dobermann/gobpm/issues/328) |
+| An attachment API for event data associations | data associations and bare data inputs/outputs on catch and throw events | [#329](https://github.com/dr-dobermann/gobpm/issues/329) |
+| A process-level I/O carrier (ADR-011 §2.5's planned work) | `<ioSpecification>` on a `<process>`, and the Start/End process data path | [#330](https://github.com/dr-dobermann/gobpm/issues/330) |
+| `Associate*` on `Property` | a `<property>` as a data-association end | [#331](https://github.com/dr-dobermann/gobpm/issues/331) |
 
 A transaction's `protocol` and `method` were on this table, tracked by
 [#324](https://github.com/dr-dobermann/gobpm/issues/324), until
@@ -262,4 +266,5 @@ left open.
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
+| v.2 | 2026-08-17 | Ruslan Gabitov | Four §2.3 register rows added with SRD-089.G (the data-flow import): association-expression evaluation on the scope-routed copy path — the SRD-063 §10.3 follow-up, unblocking `<transformation>`/`<assignment>`/multi-source ([#328](https://github.com/dr-dobermann/gobpm/issues/328)); an attachment API for event data associations ([#329](https://github.com/dr-dobermann/gobpm/issues/329)); a process-level I/O carrier, ADR-011 §2.5's planned work ([#330](https://github.com/dr-dobermann/gobpm/issues/330)); and `Associate*` on `Property` ([#331](https://github.com/dr-dobermann/gobpm/issues/331)). Each was admitted the way §2.3 demands — from what the model was read to lack, not from what the converter could not do — and each refusal in `pkg/convert/bpmn` names its row. |
 | v.1 | 2026-08-12 | Ruslan Gabitov | Initial decision. Three situations had collapsed into one refusal — work not yet reached, a **missing model capability**, and a **standing** property of the engine — and the last two read identically while meaning opposite things. The unit classified is the **construct, not the tag**: `<association>` holds a scheduled compensation link and a capability-blocked plain one. The converter **never compensates locally** for a missing capability (a private parser or type is the import-versus-runtime split in another costume, and the model layer would have to supersede it); it reports and refuses, **naming the capability**, so the refusal doubles as the specification of the work that removes it — and naming it forces the search for the model's existing way in, which is what a capability wrongly registered on the strength of one constructor costs. Standing boundaries — a complex gateway's token-count activation, an ad-hoc container's host-supplied Router, a transaction's `method="store"`/`"image"` — either take a Go value no document can carry or are a **decided non-goal**, and **never become extension points**. Capability-blocked ones are registered with what unblocks them: an artifact collection on `Process` plus a constructor for `artifacts.Association` ([#323](https://github.com/dr-dobermann/gobpm/issues/323)) and a callable-resolution seam ([#325](https://github.com/dr-dobermann/gobpm/issues/325)). Transaction coordination ([#324](https://github.com/dr-dobermann/gobpm/issues/324)) was registered and removed: ADR-028 §2.7 had already ruled it out, making it the register's second false row after the timer — both admitted from what the converter could not do, without reading what the model offers or what was already decided. A capability **lands before** the converter row consuming it. An external payload schema is deliberately unregistered — it needs a schema the converter cannot fetch and a Go value to bind, so it stays reported rather than scheduled. |
