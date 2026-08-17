@@ -243,6 +243,7 @@ func TestUnsupportedElementError(t *testing.T) {
 		{err: UnsupportedElementError{Tag: "custom"}, want: `unsupported element "custom"`},
 		{err: UnsupportedElementError{Tag: "task", ID: "t1"}, want: `(id "t1")`},
 		{err: UnsupportedElementError{Tag: "dataObject", Section: "§10.4.1"}, want: `spec §10.4.1`},
+		{err: UnsupportedElementError{Tag: "dataInput", Planned: "lands with SRD-089.G"}, want: `; lands with SRD-089.G`},
 	}
 
 	for _, tc := range tests {

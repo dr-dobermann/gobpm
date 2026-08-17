@@ -1752,13 +1752,40 @@ func (p *parser) readText(se xml.StartElement) (string, error) {
 }
 
 // unsupported builds the *convert.UnsupportedElementError for an unmapped
-// in-namespace element (SRD-051 §FR-3/§FR-7).
+// in-namespace element (SRD-051 §FR-3/§FR-7). A STAGED element — one
+// whose support is scheduled work — additionally names its plan, per
+// ADR-038 §2.2's rule that the plan IS the staged class's record.
 func unsupported(se xml.StartElement) error {
 	return &convert.UnsupportedElementError{
 		Tag:     se.Name.Local,
 		ID:      attrValue(se, "id"),
 		Section: sections[se.Name.Local],
+		Planned: stagedNotes[se.Name.Local],
 	}
+}
+
+// dataFlowStaged is the one staged note of the data-flow family: the
+// elements stage (this SRD) imports what data a definition declares; the
+// flow stage wires values between those declarations, and it has its own
+// document because the wiring reconciles item identity across two element
+// families (SRD-089.F §4.9). No "yet" — the reader's question is whether
+// waiting is sensible, and the plan is the honest answer.
+const dataFlowStaged = "the data-flow half of the data family lands with " +
+	"SRD-089.G — this converter imports the data declarations " +
+	"(itemDefinition, dataObject, dataStore, property), and the pass that " +
+	"wires values between them is that document's scope"
+
+// stagedNotes names the plan behind each staged element — ADR-038 §2.2's
+// class whose record is the plan that schedules it. A table rather than
+// per-site wording so one family reads as one answer.
+var stagedNotes = map[string]string{
+	tagIOSpecification: dataFlowStaged,
+	tagDataInput:       dataFlowStaged,
+	tagDataOutput:      dataFlowStaged,
+	tagInputSet:        dataFlowStaged,
+	tagOutputSet:       dataFlowStaged,
+	tagDataInputAssoc:  dataFlowStaged,
+	tagDataOutputAssoc: dataFlowStaged,
 }
 
 // requiredID extracts the mandatory id attribute of a flow element

@@ -123,6 +123,16 @@ const (
 	// PropertyOption takers (§10.4.1 Table 10.57, SRD-089.F FR-6).
 	tagProperty = "property"
 
+	// The data-flow family: staged with SRD-089.G (SRD-089.F §4.9). The
+	// tags exist here only so their refusals can name that plan.
+	tagIOSpecification = "ioSpecification"
+	tagDataInput       = "dataInput"
+	tagDataOutput      = "dataOutput"
+	tagInputSet        = "inputSet"
+	tagOutputSet       = "outputSet"
+	tagDataInputAssoc  = "dataInputAssociation"
+	tagDataOutputAssoc = "dataOutputAssociation"
+
 	// The lane partition, model-only in every container that carries it
 	// (conformance.md line 173).
 	tagLaneSet      = "laneSet"

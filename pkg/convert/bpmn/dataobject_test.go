@@ -241,6 +241,25 @@ func TestDataStateIsReported(t *testing.T) {
 	}
 }
 
+// TestDataStateOnADataObjectIsReported completes T-13's kinds: BPMN gives
+// the state to the reference, not the object (semantics/data.md:49), but
+// a file writing one on the object is told the same thing every
+// <dataState> is told — reported, never mapped, default state (§4.7).
+func TestDataStateOnADataObjectIsReported(t *testing.T) {
+	res, err := importEventDoc(t, dataDoc("",
+		`    <bpmn:dataObject id="do1" name="order">
+      <bpmn:dataState name="Draft"/>
+    </bpmn:dataObject>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	if len(res.Dropped) != 1 || res.Dropped[0].Element != "do1" ||
+		res.Dropped[0].Construct != tagDataState {
+		t.Fatalf("Dropped = %v, want do1's dataState", res.Dropped)
+	}
+}
+
 // TestItemRefOnAReferenceIsReported: BPMN says a reference takes its type
 // from the object it references (semantics/data.md:64), so a file typing
 // one is told rather than silently obeyed or silently ignored.

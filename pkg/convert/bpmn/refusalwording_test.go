@@ -85,3 +85,47 @@ func TestRefusalsSayWhichKindTheyAre(t *testing.T) {
 		})
 	}
 }
+
+// TestStagedRefusalsNameTheirPlan is SRD-089.F T-24: the data-flow family
+// stays refused as ADR-038 §2.2's STAGED class, whose record is the plan
+// that schedules it — so each refusal names SRD-089.G and never says
+// "yet". The two positions swept are where a modeler actually writes
+// them: on an activity, and (for an ioSpecification) on the process.
+func TestStagedRefusalsNameTheirPlan(t *testing.T) {
+	onTask := func(child string) string {
+		return propDoc("", `    <bpmn:task id="t1" name="T">
+      `+child+`
+    </bpmn:task>`)
+	}
+
+	tests := map[string]string{
+		"ioSpecification on a task":    onTask(`<bpmn:ioSpecification id="io1"/>`),
+		"ioSpecification on a process": propDoc("", `    <bpmn:ioSpecification id="io1"/>`),
+		"dataInput":                    onTask(`<bpmn:dataInput id="di1"/>`),
+		"dataOutput":                   onTask(`<bpmn:dataOutput id="do1"/>`),
+		"inputSet":                     onTask(`<bpmn:inputSet id="is1"/>`),
+		"outputSet":                    onTask(`<bpmn:outputSet id="os1"/>`),
+		"dataInputAssociation":         onTask(`<bpmn:dataInputAssociation id="dia1"/>`),
+		"dataOutputAssociation":        onTask(`<bpmn:dataOutputAssociation id="doa1"/>`),
+	}
+
+	for name, doc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, doc)
+			if err == nil {
+				t.Fatal("want a refusal, got a clean import")
+			}
+
+			msg := err.Error()
+
+			if !strings.Contains(msg, "SRD-089.G") {
+				t.Errorf("staged refusal does not name its plan:\n%s", msg)
+			}
+
+			if strings.Contains(msg, " yet") {
+				t.Errorf("refusal says \"yet\", which reads as a schedule:\n%s",
+					msg)
+			}
+		})
+	}
+}
