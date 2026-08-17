@@ -3,8 +3,18 @@ package instance
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/process"
 )
 
 // hostAwaitingScope makes tr read as a composite host parked for its body's
@@ -174,4 +184,184 @@ func TestAnInstanceCarryingAnOpenIncidentDoesNotRelease(t *testing.T) {
 		t.Fatal("released while an incident owned the park")
 	default:
 	}
+}
+
+// TestAnUnheldBoundaryOnTheHostKeepsTheInstanceResident (SRD-090.A FR-8, the
+// per-arm half): a host whose guarding boundary nothing holds keeps its
+// instance resident, exactly as an unheld boundary on a parked track does
+// (SRD-071 FR-9a).
+//
+// A boundary watch is not a track, so it never reaches waitReleasable — yet
+// an unheld one dies with the released instance, and "approve within 24h or
+// escalate" would simply never escalate. The composite is the guarded
+// activity here, and its body running inside does not change that.
+func TestAnUnheldBoundaryOnTheHostKeepsTheInstanceResident(t *testing.T) {
+	inst, body, ls := userTaskArmed(t)
+	inst.waitHeld = held
+
+	host, err := newTrack(body.currentStep().node, inst, nil)
+	require.NoError(t, err)
+
+	inst.tracks[host.ID()] = host
+	hostAwaitingScope(t, inst, host)
+
+	// a boundary guards the composite, and nothing took it.
+	ls.watchers[host.ID()] = []*boundaryWatch{{host: host, held: false}}
+
+	ls.maybeDehydrate(context.Background())
+
+	require.False(t, ls.dehydrating,
+		"an unheld boundary on the HOST disqualifies the instance, for the "+
+			"same reason it does on a parked track")
+
+	// and with a holder, the same instance releases — so the assertion above
+	// is about the boundary and not about some other disqualifier.
+	ls.watchers[host.ID()][0].held = true
+
+	ls.maybeDehydrate(context.Background())
+
+	require.True(t, ls.dehydrating, "a held boundary costs no residency")
+}
+
+// TestAReleasedHostUnwindsWithoutFailing (SRD-090.A FR-8, the release path):
+// the loop closes the host's dehydrateCh while it is parked for a drain that
+// will never arrive in this process. The executor reports errDehydrated —
+// neither a discard nor a failure — and the track ends TrackDehydrated, which
+// is what the checkpoint persists as the hydration source.
+func TestAReleasedHostUnwindsWithoutFailing(t *testing.T) {
+	inst, body, _ := userTaskArmed(t)
+
+	host, err := newTrack(body.currentStep().node, inst, nil)
+	require.NoError(t, err)
+
+	e := newPlainScopeExec(host, &stepInfo{node: host.currentStep().node})
+
+	// the loop released this host: the body is parked on a held wait, the
+	// whole instance is going away, and the scope stays open behind it.
+	close(host.dehydrateCh)
+
+	require.ErrorIs(t, e.awaitDrain(t.Context()), errDehydrated)
+	require.True(t, host.inState(TrackDehydrated),
+		"the released host persists as the record a restore re-enters from")
+}
+
+// TestADrainStillWinsOverAReleaseThatNeverCame: the release case is an added
+// arm, not a replacement — a scope that drains normally still returns nil and
+// leaves the host live.
+func TestADrainStillWinsOverAReleaseThatNeverCame(t *testing.T) {
+	inst, body, _ := userTaskArmed(t)
+
+	host, err := newTrack(body.currentStep().node, inst, nil)
+	require.NoError(t, err)
+
+	e := newPlainScopeExec(host, &stepInfo{node: host.currentStep().node})
+
+	close(e.drain)
+
+	require.NoError(t, e.awaitDrain(t.Context()))
+	require.False(t, host.inState(TrackDehydrated))
+	require.NotNil(t, inst)
+}
+
+// compositeHeldWaitSnapshot builds start → Sub-Process(start → signal catch →
+// end) → end: the host hosts a scope while the body's own token parks on a
+// wait a holder can take. A SIGNAL catch rather than a conditional one — a
+// conditional wait is loop-owned and never holdable (SRD-048 FR-15), so it
+// would keep the instance resident for a reason that has nothing to do with
+// the host.
+func compositeHeldWaitSnapshot(t *testing.T) *snapshot.Snapshot {
+	t.Helper()
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("resi-sp")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start", foundation.WithID("resi-start"))
+	require.NoError(t, err)
+
+	body, err := activities.NewSubProcess("body",
+		foundation.WithID("resi-body"))
+	require.NoError(t, err)
+
+	sig, err := events.NewSignal("resi-sig", nil)
+	require.NoError(t, err)
+
+	sdef, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+
+	bStart, err := events.NewStartEvent("b-start",
+		foundation.WithID("resi-b-start"))
+	require.NoError(t, err)
+
+	catch, err := events.NewIntermediateCatchEvent("b-catch", sdef,
+		foundation.WithID("resi-b-catch"))
+	require.NoError(t, err)
+
+	bEnd, err := events.NewEndEvent("b-end", foundation.WithID("resi-b-end"))
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{bStart, catch, bEnd} {
+		require.NoError(t, body.Add(e))
+	}
+
+	link(t, bStart, catch)
+	link(t, catch, bEnd)
+
+	end, err := events.NewEndEvent("end", foundation.WithID("resi-end"))
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, body, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, body)
+	link(t, body, end)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	return s
+}
+
+// TestAReleasedHostEndsDehydratedNotFailed (SRD-090.A FR-8, the runner's
+// unwind): a real host, released mid-activity by a real loop, ends
+// TrackDehydrated — not Failed and not Canceled.
+//
+// The distinction is the whole point of the sentinel. `executeStep` returning
+// an error normally means discard-or-fail, and a host released while holding
+// a scope open returns one; classified as either, the instance would tear
+// down the very activity dehydration exists to preserve. Driven through the
+// loop rather than by calling awaitDrain directly, because what is under test
+// is the classification the run loop makes.
+func TestAReleasedHostEndsDehydratedNotFailed(t *testing.T) {
+	s := compositeHeldWaitSnapshot(t)
+
+	inst, err := New(s, scope.EmptyDataPath, cpRuntime(t), laxEP(t), nil,
+		WithCheckpointing("engine-A", "engine-A", time.Minute))
+	require.NoError(t, err)
+
+	inst.waitHeld = held
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	require.NoError(t, inst.Run(ctx))
+
+	require.Eventually(t, func() bool {
+		return inst.State() == Dehydrated
+	}, 3*time.Second, 5*time.Millisecond,
+		"the body's held wait releases the instance, host included")
+
+	var host *track
+
+	for _, tr := range inst.tracks {
+		if tr.currentStep().node.ID() == "resi-body" {
+			host = tr
+		}
+	}
+
+	require.NotNil(t, host, "the composite host is a retained record")
+	require.True(t, host.inState(TrackDehydrated),
+		"a released host unwinds to Dehydrated — a discard or a failure "+
+			"here would tear down the activity dehydration exists to keep")
 }
