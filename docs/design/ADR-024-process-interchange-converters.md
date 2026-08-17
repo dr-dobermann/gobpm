@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Draft |
-| Version | v.4 |
-| Date | 2026-08-10 |
+| Version | v.5 |
+| Date | 2026-08-17 |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §4 N7 / §5 / §9 / §14, [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md), [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning.md), [ADR-003 Module Layout](ADR-003-module-layout.md) |
 
@@ -333,7 +333,8 @@ mapped" and "not present" must not look alike:
 | Visual artifacts — `textAnnotation`, `group`, `category` | **skip silently** | "pure visual" in the out-of-scope table; they carry no semantics, and erroring on them rejects ordinary modeler files for a comment |
 | `association` | **map** | kept in scope because it carries compensation semantics, not because it is drawn |
 | Diagram interchange (`bpmndi:` / `dc:` / `di:`) | skip silently (unchanged) | not part of execution conformance |
-| `relationship`, `import` | skip silently | not execution-related |
+| `relationship` | skip silently | not execution-related |
+| `import` | **map** — collected by namespace and bound to the `<itemDefinition>` whose `structureRef` prefix resolves to it; one nothing refers to is reported | the skip row's own code comment scheduled the revisit "when itemDefinition lands with the data stage" — SRD-089.F FR-7 was that revisit |
 | Choreography / Conversation families | **refuse** | separate conformance sub-classes — a Choreography is not a Process, and silently dropping one would import a different diagram than the modeller drew |
 | Collaboration family | **definitional only** — see §2.15 | §2.3.2 names the "definitional Collaboration" as part of the import obligation |
 
@@ -860,6 +861,7 @@ trigger, not questions awaiting an answer.
 
 | Version | Date | Change |
 |---|---|---|
+| v.5 | 2026-08-17 | **The `import` disposition row catches up with SRD-089.F FR-7.** §2.9's table said `<import>` is skipped silently — true when v.4 was written, and scheduled for revisit by the skip's own code comment ("when itemDefinition lands with the data stage, its typeRef makes the declaration meaningful"). The data stage landed: an `<import>` is collected by namespace and bound to the `<itemDefinition>` whose `structureRef` prefix resolves to it, and one nothing refers to is reported rather than dropped. The row is split (`relationship` keeps its skip) and re-stated as **map**. A table-row correction only; no decision changes. |
 | v.1 | 2026-07-17 | Initial draft — converter seam (`pkg/convert`), BPMN as the batteries-included separate-module converter, MVP element subset, semantic round-trip. |
 | v.2 | 2026-07-30 | Accepted on the SRD-051 slice-1 landing. §4-A reversed: the converter is the package `pkg/convert/bpmn`, not a top-level module — the stdlib parser costs core no dependency, and a module would have stayed invisible to the diff-coverage gate (§2.3). Q1 (module rename) withdrawn; the SAD-001 §9 `doc-source/` reservation retired. §2.6: `serviceTask` restored to the MVP set with the new `ServiceTask.Operation()` accessor, and the `documentation`/`extensionElements` silent-skip carve-out recorded. |
 | v.3 | 2026-08-02 | Accepted. **Correction only — no contract change.** This ADR defined the MVP fence by reference to *"the Common Executable Subclass (§2.1.3)"*, in §2.6, §3 and §8. That basis does not exist and never applied. There is no §2.1.3 — §2.1 is *General*, §2.2 is Process **Modeling** Conformance, Process **Execution** Conformance is **§2.3** — and the Common Executable Subclass is a **Modeling** sub-class (§2.2.1) for tools that *emit* executable models, mandating XML Schema, WSDL and XPath, none of which gobpm uses. The fence is re-based on the elements **Clause 13 animates**, which is what the engine's scope list enumerates; the MVP element set itself is **unchanged**, so §FR-8's mapping, §2.8's semantic-round-trip guarantee and every incoming pin to v.2 stand. The correction also **sharpens this ADR's standing**: §2.3.2 obliges a tool claiming Process Execution Conformance to "support import of BPMN Process diagram types", so the converter is not an interchange nicety beside conformance — it *is* the second of the two requirements, and it belongs to the `gobpm-server` product rather than the library ([SAD-001](SAD-001-vision-and-architecture.md) §14). One consequence worth carrying into future slices: `Lane`/`LaneSet` must round-trip, so the model has to hold them even though execution ignores them (conformance-status.md row 14). |
