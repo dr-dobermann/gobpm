@@ -124,6 +124,11 @@ func (d *loopDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 		t.miSeed = nil
 	}
 
+	// one step of the token, however many passes run (ADR-025 §2.13b.1e).
+	t.updateState(TrackExecutingStep)
+	t.record(TrackExecutingStep)
+	t.updateState(TrackIterating)
+
 	for pass := first; ; pass++ {
 		// the track-side counter is the COMPOSITE's position, read by the
 		// scope facts and the capture. A leaf loop has no scope and has
@@ -161,7 +166,17 @@ func (d *loopDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 
 	d.live = nil
 
-	return d.exitFlows(ctx)
+	// the exit runs while STILL iterating — a composite's exit executes its
+	// node, and leaving the state first would record a second step for an
+	// activity that is one step of its token.
+	flows, err := d.exitFlows(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	t.updateState(TrackProcessStepResults)
+
+	return flows, nil
 }
 
 // runPass runs one pass as its own instance: the executor opens that pass's

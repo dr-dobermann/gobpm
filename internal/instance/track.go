@@ -116,6 +116,33 @@ const (
 	// never a resumption. While the incident is open the node's token stays
 	// visible (SRD-079 FR-4) and the track's boundaries stay armed.
 	TrackIncident
+
+	// TrackIterating represents a track whose activity is running its node
+	// MORE THAN ONCE — a Multi-Instance or a Standard Loop (ADR-025
+	// §2.13b.1e). It is a live, working state, like TrackExecutingStep, and
+	// it exists because an activity is ONE step of its token however many
+	// instances run it: without it, each instance's execution reported a
+	// step of its own, and a decorator had to reach into every instance and
+	// suppress the transition.
+	//
+	// Per-instance executions fall BELOW this state's granularity — the
+	// machine simply does not accept a step transition while a track is
+	// iterating (see stepTransitionsVisible). What each instance is doing
+	// travels as attributes rather than as states (§2.13b.1f).
+	TrackIterating
+
+	// TrackHostingScope represents a track whose activity has forked its
+	// token into a child scope and is waiting for that scope to drain — an
+	// embedded Sub-Process (ADR-025 §2.13b.1e).
+	//
+	// It reads as EXECUTING today, which is the same defect ADR-025 §2.13
+	// named one level down and fixed only inside the runtime: "parked for a
+	// child's drain was, from outside the runner's own stack,
+	// indistinguishable from executing". The executor learned the
+	// difference; the token never did. It is NOT a wait in the
+	// TrackWaitForEvent sense — nothing external will wake it, its own body
+	// will — which is why it is a state of its own rather than a reuse.
+	TrackHostingScope
 )
 
 // String returns the human-readable name of the track state.
@@ -134,6 +161,8 @@ func (t trackState) String() string {
 		"TrackFailed",
 		"TrackDehydrated",
 		"TrackIncident",
+		"TrackIterating",
+		"TrackHostingScope",
 	}[t]
 }
 
@@ -350,6 +379,13 @@ var trackPhase = map[trackState]observability.Phase{
 	TrackFailed:             observability.PhaseFailed,
 	TrackDehydrated:         observability.PhaseDehydrated,
 	TrackIncident:           observability.PhaseIncident,
+	// Both new states map onto the EXISTING executing phase (ADR-025
+	// §2.13b.1f): an iterating or scope-hosting token IS executing its
+	// activity, so no new value reaches a host and the added precision
+	// stays internal. A distinct phase is SRD-090.C's call, made with the
+	// token projection in hand.
+	TrackIterating:    observability.PhaseExecuting,
+	TrackHostingScope: observability.PhaseExecuting,
 }
 
 // nodePhaseFor returns the observable node phase for a track state. Every valid
@@ -1408,7 +1444,7 @@ func (t *track) executeNodeAs(
 		}
 	}
 
-	if perr := t.prepareNodeExecution(ctx, step, f, ai); perr != nil {
+	if perr := t.prepareNodeExecution(ctx, step, f); perr != nil {
 		return nil, perr
 	}
 
@@ -1455,15 +1491,6 @@ type activityInstance struct {
 	// frame-local, so a sibling cannot overwrite it and it never reaches the
 	// shared container scope (SRD-090.A FR-4).
 	local []data.Data
-
-	// inSet reports that a decorator drives this execution as one of N.
-	// The track-wide transitions then belong to the decorator, which makes
-	// them ONCE for the activity: an activity is one token's step however
-	// many times it executes. Making them per instance would be wrong twice
-	// over — record is read-copy-store on an atomic pointer rather than a
-	// CAS, so concurrent instances silently lose history entries, and N
-	// updateState calls would report one activity as N step executions.
-	inSet bool
 }
 
 // prepareNodeExecution marks the step started and runs the consumer role:
@@ -1472,19 +1499,34 @@ func (t *track) prepareNodeExecution(
 	ctx context.Context,
 	step *stepInfo,
 	f *scope.Frame,
-	ai activityInstance,
 ) error {
-	if !ai.inSet {
+	if t.stepTransitionsVisible() {
 		t.updateState(TrackExecutingStep)
+		t.record(TrackExecutingStep) // record this node visit (path + timing)
 	}
 
 	step.state = StepStarted
 
-	if !ai.inSet {
-		t.record(TrackExecutingStep) // record this node visit (path + timing)
-	}
-
 	return t.loadIncomingData(ctx, step.node, f)
+}
+
+// stepTransitionsVisible reports whether THIS execution is a step of the
+// token, and so should move the track's state and add a history entry.
+//
+// It is false exactly while the track is ITERATING: an activity is one step
+// of its token however many instances run it, so the instances fall below
+// the state machine's granularity (ADR-025 §2.13b.1e). Reporting each one
+// would say a five-instance activity was five step executions, and the
+// history entry is a read-copy-store over an atomic pointer rather than a
+// CAS — so concurrent instances would drop entries rather than miscount
+// loudly.
+//
+// This replaced an `inSet` flag threaded from the decorator, through the
+// executor, into here: a piece of "I am one of N" traveling inward through
+// three layers to ask the driver to do less. The track knows its own state,
+// so nothing needs to be passed.
+func (t *track) stepTransitionsVisible() bool {
+	return !t.inState(TrackIterating)
 }
 
 // executeNodeCore runs the node's executor against the per-execution
@@ -1558,7 +1600,7 @@ func (t *track) finalizeNodeExecution(
 ) error {
 	step.state = StepEnded
 
-	if !ai.inSet {
+	if t.stepTransitionsVisible() {
 		t.updateState(TrackProcessStepResults)
 	}
 

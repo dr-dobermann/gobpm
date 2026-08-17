@@ -95,10 +95,6 @@ type nodeExec struct {
 	local []data.Data
 
 	ord int
-
-	// inSet marks membership of a decorator-driven set: the decorator, not
-	// this instance, owns the track-wide transitions.
-	inSet bool
 }
 
 // execFor builds the executor that runs this node: a decorator when the node
@@ -233,6 +229,15 @@ func (d *iterDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 		return d.runParallel(ctx, it, n)
 	}
 
+	// the activity is ONE step of its token, so it transitions and records
+	// once here; TrackIterating then puts the passes below the state
+	// machine's granularity (ADR-025 §2.13b.1e). Until M3f the sequential
+	// path did the opposite of the parallel one — every pass transitioned
+	// and recorded, so one activity reported N step executions.
+	d.t.updateState(TrackExecutingStep)
+	d.t.record(TrackExecutingStep)
+	d.t.updateState(TrackIterating)
+
 	var nextFlows []*flow.SequenceFlow
 
 	for i := start; i < n; i++ {
@@ -260,11 +265,24 @@ func (d *iterDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	// activity's outgoing flow, exactly once. A composite's instances
 	// return no flows at all — its node has not executed yet — so the exit
 	// is always the one that produces them.
+	//
+	// The exit runs while the track is STILL iterating, and leaving the
+	// state early is a real error rather than a tidiness question: a
+	// composite's exit executes its node, so it would record a SECOND step
+	// for an activity that is one step of its token.
+	exit := nextFlows
 	if nextFlows == nil || d.composite {
-		return d.exitFlows(ctx)
+		flows, ferr := d.exitFlows(ctx)
+		if ferr != nil {
+			return nil, ferr
+		}
+
+		exit = flows
 	}
 
-	return nextFlows, nil
+	d.t.updateState(TrackProcessStepResults)
+
+	return exit, nil
 }
 
 // runInstance executes instance i through its own executor, and refuses if
@@ -352,10 +370,12 @@ func (d *iterDecorator) runParallel(
 	t, step := d.t, d.step
 
 	// the activity is ONE step of its token however many instances run it,
-	// so the track-wide transitions are made here, once, and each instance
-	// runs inSet (see activityInstance.inSet).
+	// so the transitions are made here, once. TrackIterating then puts the
+	// instances below the state machine's granularity, so none of them can
+	// report a step of its own (ADR-025 §2.13b.1e).
 	t.updateState(TrackExecutingStep)
 	t.record(TrackExecutingStep)
+	t.updateState(TrackIterating)
 
 	// a parallel instance completes out of order, so its slot is addressed
 	// by ordinal — SetAt replaces rather than appends, which needs the
@@ -761,7 +781,6 @@ func (d *iterDecorator) instanceFor(
 		step:  &stepInfo{node: d.step.node, inFlow: d.step.inFlow},
 		ord:   ord,
 		local: local,
-		inSet: true,
 	}
 
 	if st.staging != nil {
@@ -940,7 +959,6 @@ func (e *nodeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	return e.t.executeNodeAs(ctx, e.step, activityInstance{
 		local:   e.local,
 		capture: e.capture,
-		inSet:   e.inSet,
 	})
 }
 

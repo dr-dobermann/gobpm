@@ -62,6 +62,11 @@ var liveTrackStates = map[trackState]bool{
 	TrackExecutingStep:      true,
 	TrackProcessStepResults: true,
 	TrackWaitForEvent:       true,
+	// An iterating or scope-hosting track is live and working (ADR-025
+	// §2.13b.1e): its activity is mid-flight, so the document must carry it
+	// or a restore would lose the token altogether.
+	TrackIterating:    true,
+	TrackHostingScope: true,
 	// AwaitingMerge restores too: the track already ARRIVED at its join,
 	// and the join's reachability math needs that arrival — re-entering
 	// the join node re-delivers it.

@@ -777,3 +777,86 @@ func TestSequentialMICountsTerminatedInstances(t *testing.T) {
 	require.Equal(t, total, terminated+completed+active,
 		"Table 10.30's sum, at the terminal state where it is satisfiable")
 }
+
+// TestIteratedActivityIsOneStepOfItsToken (SRD-090.A M3f): an activity that
+// runs its node N times is ONE step of its token, so it appears once in the
+// token's path however many instances ran.
+//
+// Until M3f the two iteration kinds disagreed. A PARALLEL Multi-Instance
+// suppressed the per-instance transitions through an `inSet` flag threaded
+// from the decorator into the driver; a SEQUENTIAL one had no such flag, so
+// every pass transitioned and recorded, and a three-instance activity
+// reported three step executions of one node. Nothing in the suite asserted
+// either, which is why the disagreement survived.
+//
+// TrackIterating removes the flag by removing what it suppressed: while a
+// track iterates, an instance's execution is below the state machine's
+// granularity and cannot report a step of its own (ADR-025 §2.13b.1e).
+//
+// Asserted over BOTH kinds in one test — the property is that they agree,
+// and asserting them apart is how they drifted.
+func TestIteratedActivityIsOneStepOfItsToken(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	const total = 3
+
+	// count the EXECUTING entries this node contributed to its own track's
+	// history — one per reported step execution. The raw history carries an
+	// entry per state update, so filtering on the state is what makes this
+	// "how many steps did this node report" rather than "how many
+	// transitions did it make".
+	executings := func(t *testing.T, inst *Instance) int {
+		t.Helper()
+
+		n := 0
+
+		for _, tr := range inst.tracks {
+			h := tr.hist.Load()
+			if h == nil {
+				continue
+			}
+
+			for _, u := range *h {
+				if u.node != nil && multiInstanceOf(u.node) != nil &&
+					u.state == TrackExecutingStep {
+					n++
+				}
+			}
+		}
+
+		return n
+	}
+
+	for name, sequential := range map[string]bool{
+		"sequential": true,
+		"parallel":   false,
+	} {
+		t.Run(name, func(t *testing.T) {
+			op, err := gooper.New("pass",
+				func(_ context.Context, _ service.DataReader,
+					_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+					return nil, nil
+				})
+			require.NoError(t, err)
+
+			var mi *activities.MultiInstanceLoopCharacteristics
+			if sequential {
+				mi = mustSeqMI(t, activities.WithCardinality(cardExpr(t, total)))
+			} else {
+				mi = mustParallelMI(t,
+					activities.WithCardinality(cardExpr(t, total)))
+			}
+
+			inst := miSubProcessInstanceOp(t, op, mi)
+			runToDone(t, inst)
+
+			require.Equal(t, Completed, inst.State())
+
+			// searched over the HISTORY rather than the current step: by
+			// the time the activity completes its token has moved on, so
+			// the iterated node is no longer where the track stands.
+			require.Equal(t, 1, executings(t, inst),
+				"%d instances, ONE step of the token", total)
+		})
+	}
+}
