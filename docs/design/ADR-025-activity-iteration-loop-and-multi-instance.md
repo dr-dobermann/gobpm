@@ -1520,6 +1520,80 @@ two adjacent statements in one function; once the arm moves into the unit it
 becomes a contract between two objects, and a contract that fails silently
 needs a test rather than a comment (T-19).
 
+#### 2.13b.1e A token's state is what its executor awaits (v.5)
+
+The three transitions a decorator currently has to SUPPRESS are the proof
+that the token's state machine is one notch too coarse. An activity is one
+token's step however many times it executes, so a decorator driving N
+instances must stop each one from reporting a step — a flag passed inward
+that says "do less than you would". Two consequences, both bad: the
+suppression travels the wrong way through the layers (§2.13b), and the
+history entry is a read-copy-store over an atomic pointer, so N concurrent
+instances silently lose entries rather than miscounting loudly.
+
+**The state machine gains the distinctions the executors already make.** The
+rule is one sentence:
+
+> **A track's state is what its executor awaits.**
+
+The vocabulary exists — an executor already reports *nothing* / *an event* /
+*a child scope* / *a child instance*. Surfacing it retires the suppression by
+removing what it suppressed: per-instance executions fall BELOW the
+granularity of the token's state machine, so there is nothing to switch off.
+
+| The token is… | Said today | Under the rule |
+|---|---|---|
+| running a leaf | executing | executing (unchanged) |
+| parked on an event | waiting for an event | waiting for an event (unchanged) |
+| hosting a child scope while its body runs | **executing** | hosting a scope |
+| awaiting a child instance | **waiting for an event** | awaiting a child |
+| iterating | **executing**, with three transitions suppressed | iterating |
+
+The two middle rows are corrections, not additions. A composite host is not
+executing — its token forked into a child scope — and this is the SAME defect
+§2.13 named one level down and fixed only inside the executor: *"parked for a
+child's drain was, from outside the runner's own stack, indistinguishable
+from executing."* The runtime learned the difference; the token never did.
+
+**FR-8 falls out rather than being implemented.** Residency asks what an
+executor awaits, and the token's state IS that answer — so the release
+decision becomes a case over states instead of a fall-through in a default
+arm, which is why it is not expressible today.
+
+#### 2.13b.1f Nature travels as attributes, not as states
+
+A state says what the token is DOING. It must not say what KIND of iteration
+is doing it. `iterating` is one state; there is no
+`iterating-parallel-multi-instance`.
+
+The line matters because states are switched on all over an engine, and
+encoding nature in them multiplies every switch by the product of the
+axes — while the same information is already carried better elsewhere:
+
+| Question | Answered by |
+|---|---|
+| what is this token doing? | its **state** (closed, small) |
+| what kind of iteration? | an **attribute**: `loop` / `mi_sequential` / `mi_parallel` — already the record's `kind` (§2.9.3) |
+| which instance, and how many? | **attributes**: the ordinal, and §2.9's counts |
+| what is each instance doing? | the token's **iteration section** (§2.9.1) |
+
+The same attributes ride the observability facts, where the ordinal and the
+loop counter already travel. So an operator asking "what is this activity
+doing" reads one state and one set of attributes, and nothing has to be
+inferred from a state's name.
+
+**Ownership.** The states are this document's and land with the execution
+unit. The token's iteration section and the fact attributes are the
+observable surfaces, decided in §2.9.1 and realized by their own slice — an
+implementation that grew the states and the projection together would be one
+change wearing two hats.
+
+**Phase mapping keeps this invisible to a host.** Each new state maps onto an
+EXISTING observable phase — a hosting or iterating token still reads as
+executing, which is true — so precision is gained internally without a new
+value appearing in anyone's switch. A distinct phase is a later decision, to
+be made with the token projection in hand rather than ahead of it.
+
 #### 2.13b.2 Only an Activity is decorable
 
 Loop characteristics attach to an **Activity** (§10.3.8; Tables 10.27 and
