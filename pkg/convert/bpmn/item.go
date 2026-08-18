@@ -150,7 +150,7 @@ func (it *items) declareNamespaces(se xml.StartElement) {
 }
 
 // parseImportElem parses one definitions-level <import>.
-func parseImportElem(p *parser, _ *assembly, se xml.StartElement) (*assembly, error) {
+func parseImportElem(p *parser, se xml.StartElement) (*assembly, error) {
 	return nil, p.parseImport(se)
 }
 
@@ -190,7 +190,7 @@ func (p *parser) parseImport(se xml.StartElement) error {
 }
 
 // parseItemDefElem parses one definitions-level <itemDefinition>.
-func parseItemDefElem(p *parser, _ *assembly, se xml.StartElement) (*assembly, error) {
+func parseItemDefElem(p *parser, se xml.StartElement) (*assembly, error) {
 	return nil, p.parseItemDefinition(se)
 }
 

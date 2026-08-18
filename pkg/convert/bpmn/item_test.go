@@ -43,7 +43,7 @@ func itemsOf(
 		t.Fatalf("rootElement: %v", err)
 	}
 
-	if _, err := p.parseDefinitions(root); err != nil {
+	if err := p.parseDefinitions(root); err != nil {
 		t.Fatalf("parseDefinitions: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func itemError(t *testing.T, doc string) error {
 		return err
 	}
 
-	if _, err := p.parseDefinitions(root); err != nil {
+	if err := p.parseDefinitions(root); err != nil {
 		return err
 	}
 

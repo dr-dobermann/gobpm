@@ -51,24 +51,56 @@ func (imp importer) Import(ctx context.Context, r io.Reader) (*process.Process, 
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	proc, _, err := imp.parse(ctx, r)
+	p, procs, err := imp.parse(ctx, r)
+	if err != nil {
+		return nil, err
+	}
 
-	return proc, err
+	// THE process of the document (ADR-024 §2.15, SRD-089.I §4.2): a
+	// single-process document returns it whatever isExecutable says —
+	// nothing existing breaks on a flag nobody sets — and a multi-process
+	// one returns the single process marked executable. Anything else is
+	// the ambiguity the document-level call exists for.
+	if len(procs) == 1 {
+		return procs[0], nil
+	}
+
+	var chosen *process.Process
+
+	executable := 0
+
+	for i, asm := range p.asms {
+		if asm.spec.executable {
+			executable++
+			chosen = procs[i]
+		}
+	}
+
+	if executable == 1 {
+		return chosen, nil
+	}
+
+	return nil, errs.New(
+		errs.M("bpmn: the document carries %d processes, %d marked "+
+			"isExecutable; Import returns THE process of a document — use "+
+			"ImportDocument for the set", len(procs), executable),
+		errs.C(errorClass, errs.InvalidObject))
 }
 
-// parse is the one parse both entry points share. It returns the report
-// alongside the process; Import discards it, ImportDocument does not.
+// parse is the one parse both entry points share. It returns the parser
+// alongside the processes so a caller can read the document facts —
+// Import the executable flags, ImportDocument the report.
 func (importer) parse(
 	ctx context.Context, r io.Reader,
-) (*process.Process, []convert.Dropped, error) {
+) (*parser, []*process.Process, error) {
 	p := newParser(ctx, r)
 
-	proc, err := p.parse()
+	procs, err := p.parse()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return proc, p.dropped, nil
+	return p, procs, nil
 }
 
 // docSpec is one <bpmn:documentation>: its text and the mime type of that
@@ -118,6 +150,9 @@ type nodeBody struct {
 	props []propSpec
 	// io is the node's <ioSpecification>, at most one (SRD-089.G FR-1).
 	io *ioSpec
+	// loop is the node's loop marker, at most one of either kind
+	// (SRD-089.H FR-5).
+	loop *loopSpec
 	// dataAssocs are the node's data associations, wired in the pass
 	// after the data elements exist (SRD-089.G §4.1).
 	dataAssocs []dataAssocSpec
@@ -146,14 +181,14 @@ func (b nodeBody) opts(id string) []options.Option {
 func (imp importer) ImportDocument(
 	ctx context.Context, r io.Reader,
 ) (*convert.Result, error) {
-	p, dropped, err := imp.parse(ctx, r)
+	p, procs, err := imp.parse(ctx, r)
 	if err != nil {
 		return nil, err
 	}
 
 	return &convert.Result{
-		Processes: []*process.Process{p},
-		Dropped:   dropped,
+		Processes: procs,
+		Dropped:   p.dropped,
 	}, nil
 }
 
@@ -275,6 +310,16 @@ type parser struct {
 	// stores holds the document's <dataStore> declarations, kept only to
 	// be reported as host obligations (SRD-089.F §4.5).
 	stores []dataStoreSpec
+	// rootDefs are the definitions-level event definitions, by id — the
+	// position a Multi-Instance behavior ref resolves against
+	// (SRD-089.H §4.7).
+	rootDefs map[string]defSpec
+	// asms are the document's processes, one assembly each, in document
+	// order (SRD-089.I §4.1).
+	asms []*assembly
+	// collabs are the document's collaborations, consumed definitionally
+	// once the whole document is read (SRD-089.I FR-3, FR-4).
+	collabs []collabSpec
 	// ids is the document's one id ledger: every element that declares an
 	// id claims it here, whatever per-kind table it lands in afterwards —
 	// see claimID.
@@ -322,22 +367,72 @@ func newParser(ctx context.Context, r io.Reader) *parser {
 		cat:        newCatalog(),
 		items:      newItems(),
 		ids:        make(map[string]string),
+		rootDefs:   make(map[string]defSpec),
 	}
 }
 
-// parse decodes <bpmn:definitions> and its (single) <bpmn:process>.
-func (p *parser) parse() (*process.Process, error) {
+// parse decodes <bpmn:definitions> and every <bpmn:process> it carries
+// (SRD-089.I FR-1), returning the processes in document order.
+func (p *parser) parse() ([]*process.Process, error) {
 	root, err := p.rootElement()
 	if err != nil {
 		return nil, err
 	}
 
-	asm, err := p.parseDefinitions(root)
+	err = p.parseDefinitions(root)
 	if err != nil {
 		return nil, err
 	}
 
-	return build(p, asm)
+	if len(p.asms) == 0 {
+		return nil, errs.New(
+			errs.M("bpmn: no <process> element found in <definitions>"),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	// The document-level work, once — not once per process (§4.3): the
+	// default states, the items every process's elements copy from, and
+	// (after the builds) the store obligations.
+	//
+	// CreateDefaultStates is unreachable-failing: it builds three
+	// SrcStates from three non-empty package constants, and is idempotent
+	// for a host that configured its own. Said in the form the coverage
+	// gate reads.
+	// The collaborations first: a participant's processRef and a
+	// message flow's messageRef resolve against the now-complete ledger,
+	// and the flows report (SRD-089.I §4.4).
+	err = resolveCollaborations(p)
+	if err != nil {
+		return nil, err
+	}
+
+	err = data.CreateDefaultStates()
+	if err != nil {
+		return nil, errs.Invariant(
+			"the model's default data states could not be created: %w", err)
+	}
+
+	items, err := buildItems(p)
+	if err != nil {
+		return nil, err
+	}
+
+	procs := make([]*process.Process, 0, len(p.asms))
+
+	for _, asm := range p.asms {
+		asm.items = items
+
+		proc, err := build(p, asm)
+		if err != nil {
+			return nil, err
+		}
+
+		procs = append(procs, proc)
+	}
+
+	p.reportDataStores()
+
+	return procs, nil
 }
 
 // rootElement advances the stream to the root start element and checks it is
@@ -377,49 +472,41 @@ func (p *parser) rootElement() (xml.StartElement, error) {
 	}
 }
 
-// parseDefinitions walks the children of <bpmn:definitions> and parses the
-// first <bpmn:process>; a second process and any other unmapped in-namespace
-// element are reported per SRD-051 §FR-7. Foreign-namespace subtrees and
-// non-executable annotations (documentation, extensionElements) are skipped.
-func (p *parser) parseDefinitions(root xml.StartElement) (*assembly, error) {
-	var asm *assembly
-
+// parseDefinitions walks the children of <bpmn:definitions>, collecting
+// every <bpmn:process> into p.asms in document order (SRD-089.I §4.1);
+// any other unmapped in-namespace element is reported per SRD-051 §FR-7.
+// Foreign-namespace subtrees and non-executable annotations
+// (documentation, extensionElements) are skipped.
+func (p *parser) parseDefinitions(root xml.StartElement) error {
 	for {
 		tok, err := p.token()
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		switch t := tok.(type) {
 		case xml.StartElement:
-			next, err := p.handleDefinitionsChild(t, asm)
+			next, err := p.handleDefinitionsChild(t)
 			if err != nil {
-				return nil, err
+				return err
 			}
 
 			if next != nil {
-				asm = next
+				p.asms = append(p.asms, next)
 			}
 
 		case xml.EndElement:
 			if t.Name == root.Name {
-				if asm == nil {
-					return nil, errs.New(
-						errs.M("bpmn: no <process> element found in <definitions>"),
-						errs.C(errorClass, errs.ObjectNotFound))
-				}
-
-				return asm, nil
+				return nil
 			}
 		}
 	}
 }
 
 // handleDefinitionsChild processes one start element under <definitions>.
-// Returns a non-nil assembly when the first <process> is parsed.
+// Returns a non-nil assembly when a <process> was parsed.
 func (p *parser) handleDefinitionsChild(
 	se xml.StartElement,
-	asm *assembly,
 ) (*assembly, error) {
 	if se.Name.Space != nsBPMN {
 		// Foreign namespace — diagram interchange, a vendor dialect — is
@@ -428,7 +515,7 @@ func (p *parser) handleDefinitionsChild(
 	}
 
 	if parse, ok := definitionsParsers[se.Name.Local]; ok {
-		return parse(p, asm, se)
+		return parse(p, se)
 	}
 
 	return nil, p.settle(ctxDefinitions, se)
@@ -452,6 +539,10 @@ func (p *parser) parseProcess(se xml.StartElement) (*assembly, error) {
 	// process.New demands a non-empty name; fall back to the id.
 	name := fallbackName(id, attrValue(se, "name"))
 
+	// isExecutable disambiguates Import on a multi-process document
+	// (SRD-089.I §4.2); the engine itself runs whatever it is handed.
+	executable := attrBool(se, "isExecutable", false)
+
 	// The process is built LAZILY — see procBuild.
 	p.owner = id
 
@@ -461,7 +552,7 @@ func (p *parser) parseProcess(se xml.StartElement) (*assembly, error) {
 	// coverage audit found them vanishing.
 	p.reportUnmappedAttrs(se, id, nil)
 
-	pb := &procBuild{p: p, id: id, name: name}
+	pb := &procBuild{p: p, id: id, name: name, executable: executable}
 
 	for {
 		tok, err := p.token()
@@ -505,6 +596,8 @@ type procBuild struct {
 	// a construction option, and BPMN serializes a process's properties
 	// ahead of its flowElements too.
 	props []propSpec
+	// executable rides through to procSpec — see there.
+	executable bool
 }
 
 // child handles one child element of <bpmn:process>, constructing the
@@ -602,11 +695,12 @@ func (pb *procBuild) property(se xml.StartElement) error {
 // build creates the pass-1 state; the process itself is built in pass 2.
 func (pb *procBuild) build() {
 	pb.asm = pb.p.newAssembly(procSpec{
-		id:       pb.id,
-		name:     pb.name,
-		docs:     pb.docs,
-		laneSets: pb.laneSets,
-		props:    pb.props,
+		id:         pb.id,
+		name:       pb.name,
+		docs:       pb.docs,
+		laneSets:   pb.laneSets,
+		props:      pb.props,
+		executable: pb.executable,
 	})
 }
 
@@ -631,6 +725,9 @@ type procSpec struct {
 	docs     []docSpec
 	laneSets []laneSetSpec
 	props    []propSpec
+	// executable is <process isExecutable>, read only by Import's
+	// selection rule (SRD-089.I §4.2).
+	executable bool
 }
 
 // newAssembly builds the pass-1 state the flow elements are parsed into.
@@ -1020,6 +1117,18 @@ func buildNode(p *parser, asm *assembly, s *nodeSpec) (flow.Node, error) {
 		}
 
 		s.body.extra = append(s.body.extra, ioOpts...)
+	}
+
+	// A loop marker rides the same funnel: every activity kind takes
+	// WithLoop, and anything else refuses the option itself with this
+	// node's id wrapped around the refusal (SRD-089.H §4.1).
+	if s.body.loop != nil {
+		loopOpt, err := buildLoopOption(p, asm, s)
+		if err != nil {
+			return nil, err
+		}
+
+		s.body.extra = append(s.body.extra, loopOpt)
 	}
 
 	outer := p.owner
@@ -1503,37 +1612,12 @@ func fallbackName(id, name string) string {
 // reference is resolved against the finished index, and the graph is
 // validated.
 func build(p *parser, asm *assembly) (*process.Process, error) {
-	// A message-typed event builds an ItemAwareElement over the message's
-	// payload, and that needs the model's default data states to exist
-	// (data/item.go:193-201). They are host setup — every example calls
-	// CreateDefaultStates before building a process — but an importer
-	// that refuses an ordinary message start event until the host has run
-	// an unrelated initializer is not a usable contract.
+	// The default states and the item map are the DOCUMENT's, prepared
+	// once by parse() before the per-process builds (SRD-089.I §4.3);
+	// asm.items arrives set. A direct caller (a test) sets it itself.
 	//
-	// The call is idempotent and guarded: it fills the three globals only
-	// when they are unset (data/state.go:86-91), so a host that
-	// configured its own states before importing keeps them.
-	// Unreachable from any document: it builds three SrcStates from three
-	// non-empty package constants, and NewSrcState refuses only an empty
-	// name (data/state.go:45-52). Said in the form the coverage gate
-	// reads, since no file can produce it.
-	if err := data.CreateDefaultStates(); err != nil {
-		return nil, errs.Invariant(
-			"the model's default data states could not be created: %w", err)
-	}
-
-	// Before anything that could refer to a type: the whole document has
-	// been read, so every <import> a structureRef resolves against is in
-	// hand (§4.8).
-	items, err := buildItems(p)
-	if err != nil {
-		return nil, err
-	}
-
-	asm.items = items
-
 	// The process first: everything else is added TO it, and its own
-	// properties resolve against the items built just above (§4.6).
+	// properties resolve against the document's items (§4.6).
 	if err := constructProcess(p, asm); err != nil {
 		return nil, err
 	}
@@ -1549,13 +1633,9 @@ func build(p *parser, asm *assembly) (*process.Process, error) {
 		return nil, err
 	}
 
-	// A declared <dataStore> builds nothing; what it produces is the
-	// report telling the host which store ids the file expects the
-	// engine's registry to hold (§4.5).
-	p.reportDataStores()
-
 	// After both families exist: the data associations, wired through
-	// the elements' own Associate* (SRD-089.G §4.1).
+	// the elements' own Associate* (SRD-089.G §4.1). The store report is
+	// the document's, fired once by parse() (SRD-089.I §4.3).
 	if err := wireDataAssociations(p, asm); err != nil {
 		return nil, err
 	}

@@ -358,13 +358,17 @@ func TestImportDefinitionsChildBranches(t *testing.T) {
 		`</bpmn:process>`
 
 	runImportCases(t, map[string]struct{ doc, want string }{
+		// <collaboration> imports (definitionally) since SRD-089.I; the
+		// unmapped sample is a choreography, refused by conformance class.
 		"definitions rejects unmapped child": {
-			doc:  wrapDefs(`<bpmn:collaboration id="c"/>` + proc),
+			doc:  wrapDefs(`<bpmn:choreography id="c"/>` + proc),
 			want: "unsupported element",
 		},
-		"definitions rejects a second process": {
+		// A second process imports since SRD-089.I; two IDENTICAL ones
+		// still refuse — on the ledger, where the duplication actually is.
+		"definitions rejects a duplicated process": {
 			doc:  wrapDefs(proc + proc),
-			want: "unsupported element",
+			want: "duplicate id",
 		},
 		"process skips foreign-namespace child": {
 			doc: wrapDefs(`<bpmn:process id="p" isExecutable="true">` +

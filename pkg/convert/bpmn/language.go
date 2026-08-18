@@ -150,6 +150,19 @@ func newBoolExpression(s exprSpec, docLang string) (data.FormalExpression, error
 	return lite.Cond(body, foundation.WithID(s.exprID()))
 }
 
+// newIntExpression mints an expression that must evaluate to an
+// integer — a Multi-Instance loopCardinality (SRD-089.H §1: the model's
+// guard demands the "int" result type, multiinstance.go:283-287).
+func newIntExpression(s exprSpec, docLang string) (data.FormalExpression, error) {
+	body, err := runnableBody(s, docLang)
+	if err != nil {
+		return nil, err
+	}
+
+	return lite.Expr(body,
+		data.WithResultType("int"), foundation.WithID(s.exprID()))
+}
+
 // newCondition builds a sequence flow's condition, or reports why it
 // cannot be built.
 func newCondition(fs flowSpec, docLang string) (data.FormalExpression, error) {

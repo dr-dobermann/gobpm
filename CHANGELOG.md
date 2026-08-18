@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **BPMN import covers the loop characteristics** (SRD-089.H, part of
+  #284). `<standardLoopCharacteristics>` maps onto `NewStandardLoop` —
+  condition, `testBefore`, `loopMaximum` — and
+  `<multiInstanceLoopCharacteristics>` onto `NewMultiInstance`:
+  sequential/parallel, exactly ONE instance-count source (cardinality
+  or the input collection pair, both present refuses), the output
+  pair, the completion condition, and all four behaviors — None and
+  One resolving their refs against a new definitions-level
+  event-definition registry, Complex building its
+  condition-plus-implicit-throw definitions. Collection IDREFs resolve
+  to the scope-datum NAMES the model wants, through references, and
+  only to data objects — the extract's own constraint. The two
+  elements' § pins move to the extract's real §13.3.6/§13.3.7. Both
+  kinds run end-to-end on a thresher, and an iterated waiting leaf
+  imports cleanly and hands the caller the ENGINE's #313 refusal —
+  import does not pre-empt the capability boundary.
+
+- **BPMN import reads the whole document** (SRD-089.I, part of #284).
+  Every `<process>` parses into its own assembly, in document order;
+  new `ImportDocument` returns the set, and `Import` gains ADR-024
+  §2.15's selection rule without breaking a caller: one process
+  returns it whatever `isExecutable` says, several return the single
+  one marked executable, anything else errors naming the counts and
+  pointing at `ImportDocument`. Document-level work — default states,
+  the item map, the once-only reports, the id ledger — runs once per
+  document, not once per process. `<collaboration>` is consumed
+  definitionally: participants validate their `processRef` (an absent
+  one is a legal black-box pool), each `<messageFlow>` becomes one
+  report naming the mechanism that replaces it — message events
+  matched by name and correlation key — and the two-pool e2e proves
+  that mechanism carries the exchange with the drawing entirely
+  consumed: the producer's message end event auto-instantiates the
+  consumer's message start on one engine.
+
 - **The SQLite Repository adapter** (SRD-091, ADR-037, closes #316).
   `adapters/sqlite` implements the durable Repository contract over
   a pure-Go driver (`modernc.org/sqlite`, no CGo): CAS saves,
@@ -36,6 +70,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serialization.
 
 ### Fixed
+
+- **A declared-int lite expression could never evaluate** (SRD-089.H
+  §4.8). The lite evaluator unifies every numeric to `float64`
+  (ADR-032 §2.3) while the Multi-Instance model guard REQUIRES the
+  `"int"` declaration on a cardinality — two landed contracts no
+  expression could satisfy together, exposed the first time a BPMN
+  `loopCardinality` reached a runtime. An integral `float64` now lands
+  as the declared int — bounds-checked, so ±Inf and out-of-int-range
+  values stay type mismatches instead of implementation-dependent
+  casts — and the MI count reader accepts what expression engines
+  actually return: an int or an integral `float64`.
 
 - **`make ci` wrote empty timestamps on macOS.** `scripts/ci-run.sh`
   stamped `.ci/last-run.json` with GNU-only `date -Is`, which BSD date

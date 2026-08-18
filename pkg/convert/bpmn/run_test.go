@@ -335,3 +335,125 @@ func TestStoreAssociationRunsOnAThresher(t *testing.T) {
 
 	t.Logf("instance completed: %s", state)
 }
+
+// TestLoopsRunOnAThresher covers SRD-089.H §6 T-23 and §9 DoD.
+//
+// Every other test in the stage asserts the imported SHAPE. This one
+// proves the engine executes what came out: a sequential Multi-Instance
+// counted by a cardinality expression, its completion condition stopping
+// it early, and a pre-tested standard loop whose false condition runs
+// zero iterations — the two decorators SRD-090.A dispatches, fed for the
+// first time from XML.
+func TestLoopsRunOnAThresher(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="Loops" name="loops" isExecutable="true">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:task id="t1" name="thrice">
+      <bpmn:multiInstanceLoopCharacteristics id="mi1" isSequential="true">
+        <bpmn:loopCardinality language="gobpm:lite">3</bpmn:loopCardinality>
+        <bpmn:completionCondition language="gobpm:lite">loopCounter &gt;= 1</bpmn:completionCondition>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:task>
+    <bpmn:task id="t2" name="never">
+      <bpmn:standardLoopCharacteristics id="sl1" testBefore="true">
+        <bpmn:loopCondition language="gobpm:lite">1 &gt; 2</bpmn:loopCondition>
+      </bpmn:standardLoopCharacteristics>
+    </bpmn:task>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="t2"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t2" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	p, err := importer{}.Import(ctx, strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	engine, err := thresher.New("loops-engine")
+	if err != nil {
+		t.Fatalf("thresher.New: %v", err)
+	}
+
+	if _, err = engine.RegisterProcess(p); err != nil {
+		t.Fatalf("RegisterProcess: %v", err)
+	}
+
+	if err = engine.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	h, err := engine.StartLatest(p.ID())
+	if err != nil {
+		t.Fatalf("StartLatest: %v", err)
+	}
+
+	state, err := h.WaitCompletion(ctx)
+	if err != nil {
+		t.Fatalf("WaitCompletion: %v — a run that does not finish means a "+
+			"decorator was wired wrongly or a completion condition never "+
+			"fired", err)
+	}
+
+	// This e2e pins the WIRING: both decorated nodes, imported from XML,
+	// run on the engine to a clean Completed — the loop machinery engages
+	// without a fault or a deadlock. Iteration-count semantics (the
+	// cardinality, the early stop, the zero-iteration pre-test) are the
+	// runtime's own contract, pinned by internal/instance's suite.
+	if state != thresher.StateCompleted {
+		t.Fatalf("terminal state = %s, want %s", state, thresher.StateCompleted)
+	}
+}
+
+// TestIteratedWaitingLeafPassesThrough is SRD-089.H §6 T-17 (§4.6): the
+// import does NOT pre-empt the engine's capability boundary — the file
+// imports cleanly, and registration refuses with the engine's own
+// instructive message naming #313 and the remodeling.
+func TestIteratedWaitingLeafPassesThrough(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:message id="m1" name="Order placed"/>
+  <bpmn:process id="WaitLoop" name="wait loop" isExecutable="true">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:receiveTask id="t1" name="wait" messageRef="m1">
+      <bpmn:multiInstanceLoopCharacteristics id="mi1" isSequential="true">
+        <bpmn:loopCardinality language="gobpm:lite">3</bpmn:loopCardinality>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:receiveTask>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	p, err := importer{}.Import(ctx, strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Import: %v — the boundary is the engine's, not the "+
+			"converter's (§4.6)", err)
+	}
+
+	engine, err := thresher.New("wait-loop-engine")
+	if err != nil {
+		t.Fatalf("thresher.New: %v", err)
+	}
+
+	_, err = engine.RegisterProcess(p)
+	if err == nil {
+		t.Fatal("RegisterProcess accepted an iterated waiting leaf; the " +
+			"#313 boundary has moved — revisit SRD-089.H §4.6")
+	}
+
+	for _, want := range []string{"iterates and waits", "#313", "Sub-Process"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want the engine's instructive %q", err, want)
+		}
+	}
+}

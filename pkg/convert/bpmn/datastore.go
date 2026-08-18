@@ -18,7 +18,7 @@ type dataStoreSpec struct {
 
 // parseDataStoreElem parses one definitions-level <dataStore>.
 func parseDataStoreElem(
-	p *parser, _ *assembly, se xml.StartElement,
+	p *parser, se xml.StartElement,
 ) (*assembly, error) {
 	return nil, p.parseDataStore(se)
 }

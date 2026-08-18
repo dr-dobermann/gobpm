@@ -123,6 +123,26 @@ const (
 	// PropertyOption takers (§10.4.1 Table 10.57, SRD-089.F FR-6).
 	tagProperty = "property"
 
+	// The two loop markers an activity may carry — at most one
+	// (elements/activities.md: loopCharacteristics is 0..1) — and their
+	// children (§13.3.6, §13.3.7; SRD-089.H).
+	tagStandardLoop    = "standardLoopCharacteristics"
+	tagMultiInstance   = "multiInstanceLoopCharacteristics"
+	tagLoopCondition   = "loopCondition"
+	tagLoopCardinality = "loopCardinality"
+	tagCompletionCond  = "completionCondition"
+	tagLoopDataInRef   = "loopDataInputRef"
+	tagLoopDataOutRef  = "loopDataOutputRef"
+	tagInputDataItem   = "inputDataItem"
+	tagOutputDataItem  = "outputDataItem"
+	tagComplexBehavior = "complexBehaviorDefinition"
+	attrTestBefore     = "testBefore"
+	attrLoopMaximum    = "loopMaximum"
+	attrIsSequential   = "isSequential"
+	attrBehavior       = "behavior"
+	attrNoneBehaviorEv = "noneBehaviorEventRef"
+	attrOneBehaviorEv  = "oneBehaviorEventRef"
+
 	// The data-flow family: staged with SRD-089.G (SRD-089.F §4.9). The
 	// tags exist here only so their refusals can name that plan.
 	tagIOSpecification = "ioSpecification"
