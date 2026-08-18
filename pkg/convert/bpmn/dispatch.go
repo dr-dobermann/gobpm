@@ -350,14 +350,10 @@ func parseInterfaceElem(p *parser, _ *assembly, se xml.StartElement) (*assembly,
 	return nil, p.parseInterface(se)
 }
 
-// parseProcessElem parses the document's process; a second one is
-// refused, since Import yields one definition (the document-level
-// capability arrives with the collaboration slice).
-func parseProcessElem(p *parser, asm *assembly, se xml.StartElement) (*assembly, error) {
-	if asm != nil {
-		return nil, unsupported(se)
-	}
-
+// parseProcessElem parses one of the document's processes — each gets
+// its own assembly over the shared document state, in document order
+// (SRD-089.I §4.1).
+func parseProcessElem(p *parser, _ *assembly, se xml.StartElement) (*assembly, error) {
 	return p.parseProcess(se)
 }
 

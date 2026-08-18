@@ -964,7 +964,9 @@ func TestImporterBoundaryErrors(t *testing.T) {
 		{name: "nil context", want: "ctx is nil"},
 		{name: "malformed XML", ctx: context.Background(), doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">`, want: "XML syntax error"},
 		{name: "process without id", ctx: context.Background(), doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"><bpmn:process/></bpmn:definitions>`, want: "has no id"},
-		{name: "second process", ctx: context.Background(), doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"><bpmn:process id="p"/><bpmn:process id="q"/></bpmn:definitions>`, want: "unsupported element"},
+		// Two processes IMPORT since SRD-089.I; Import (the singular
+		// entry) refuses the ambiguity, naming the document-level call.
+		{name: "second process, none executable", ctx: context.Background(), doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"><bpmn:process id="p"/><bpmn:process id="q"/></bpmn:definitions>`, want: "use ImportDocument"},
 	}
 
 	for _, tc := range tests {
