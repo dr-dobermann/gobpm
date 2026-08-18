@@ -118,6 +118,9 @@ type nodeBody struct {
 	props []propSpec
 	// io is the node's <ioSpecification>, at most one (SRD-089.G FR-1).
 	io *ioSpec
+	// loop is the node's loop marker, at most one of either kind
+	// (SRD-089.H FR-5).
+	loop *loopSpec
 	// dataAssocs are the node's data associations, wired in the pass
 	// after the data elements exist (SRD-089.G §4.1).
 	dataAssocs []dataAssocSpec
@@ -1020,6 +1023,18 @@ func buildNode(p *parser, asm *assembly, s *nodeSpec) (flow.Node, error) {
 		}
 
 		s.body.extra = append(s.body.extra, ioOpts...)
+	}
+
+	// A loop marker rides the same funnel: every activity kind takes
+	// WithLoop, and anything else refuses the option itself with this
+	// node's id wrapped around the refusal (SRD-089.H §4.1).
+	if s.body.loop != nil {
+		loopOpt, err := buildLoopOption(p, asm, s)
+		if err != nil {
+			return nil, err
+		}
+
+		s.body.extra = append(s.body.extra, loopOpt)
 	}
 
 	outer := p.owner

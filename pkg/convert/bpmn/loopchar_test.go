@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/convert"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 )
 
 // loopFrag parses one loop-marker fragment directly — the parser is not
@@ -408,6 +409,211 @@ func TestComplexBehaviorEdges(t *testing.T) {
 			t.Fatalf("error = %v, want the stranger refused", err)
 		}
 	})
+}
+
+// loopDoc wraps a task carrying marker around the smallest runnable
+// graph.
+func loopDoc(marker string) string {
+	return propDoc("",
+		`    <bpmn:task id="t1" name="Work">
+`+marker+`
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`)
+}
+
+// loopOf returns the imported t1's loop characteristics.
+func loopOf(t *testing.T, res *convert.Result) activities.LoopCharacteristics {
+	t.Helper()
+
+	mt, ok := nodeByID(t, res, "t1").(*activities.ManualTask)
+	if !ok {
+		t.Fatalf("t1 is not a *activities.ManualTask")
+	}
+
+	return mt.LoopCharacteristics()
+}
+
+// TestStandardLoopImports is T-1 (FR-1): the condition-driven kind lands
+// on its activity through WithLoop.
+func TestStandardLoopImports(t *testing.T) {
+	res, err := importEventDoc(t, loopDoc(
+		`      <bpmn:standardLoopCharacteristics id="lc1">
+        <bpmn:loopCondition language="gobpm:lite">1 &gt; 2</bpmn:loopCondition>
+      </bpmn:standardLoopCharacteristics>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	sl, ok := loopOf(t, res).(*activities.StandardLoopCharacteristics)
+	if !ok {
+		t.Fatalf("LoopCharacteristics() is %T, want the standard kind",
+			loopOf(t, res))
+	}
+
+	if sl.TestBefore() {
+		t.Error("TestBefore() = true; the §13.3.6 default is post-tested")
+	}
+
+	if _, bounded := sl.LoopMaximum(); bounded {
+		t.Error("LoopMaximum() bounded; absent must mean unbounded")
+	}
+
+	if sl.LoopCondition() == nil {
+		t.Error("LoopCondition() = nil, want the imported expression")
+	}
+}
+
+// TestStandardLoopAttributesSurvive is T-2's build half.
+func TestStandardLoopAttributesSurvive(t *testing.T) {
+	res, err := importEventDoc(t, loopDoc(
+		`      <bpmn:standardLoopCharacteristics id="lc1" testBefore="true"
+                                        loopMaximum="3">
+        <bpmn:loopCondition language="gobpm:lite">1 &gt; 2</bpmn:loopCondition>
+      </bpmn:standardLoopCharacteristics>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	sl := loopOf(t, res).(*activities.StandardLoopCharacteristics)
+
+	if !sl.TestBefore() {
+		t.Error("TestBefore() = false, want the attribute honored")
+	}
+
+	if n, ok := sl.LoopMaximum(); !ok || n != 3 {
+		t.Errorf("LoopMaximum() = %d/%v, want 3", n, ok)
+	}
+}
+
+// TestConditionlessStandardLoopRefused is T-3 (§4.2): the converter's
+// wording, with the § — not the model's constructor name.
+func TestConditionlessStandardLoopRefused(t *testing.T) {
+	_, err := importEventDoc(t, loopDoc(
+		`      <bpmn:standardLoopCharacteristics id="lc1"/>`))
+	if err == nil {
+		t.Fatal("a condition-less standard loop must be refused")
+	}
+
+	for _, want := range []string{"§13.3.6", "loopCondition", `"t1"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to carry %q", err, want)
+		}
+	}
+}
+
+// TestLoopMaximumRefusals is T-4: the converter refuses what the model
+// never sees (non-integer text), the model refuses its own (a
+// non-positive), each with the file's id attached.
+func TestLoopMaximumRefusals(t *testing.T) {
+	tests := map[string]struct {
+		max  string
+		want string
+	}{
+		"not an integer": {max: "abc", want: "not an integer"},
+		"non-positive":   {max: "0", want: "must be positive"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, loopDoc(
+				`      <bpmn:standardLoopCharacteristics id="lc1" loopMaximum="`+
+					tc.max+`">
+        <bpmn:loopCondition language="gobpm:lite">1 &gt; 2</bpmn:loopCondition>
+      </bpmn:standardLoopCharacteristics>`))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestJUELLoopCondition is T-5: the condition rides the same language
+// machinery a flow condition does — JUEL translated by its delimiters.
+func TestJUELLoopCondition(t *testing.T) {
+	res, err := importEventDoc(t, loopDoc(
+		`      <bpmn:standardLoopCharacteristics id="lc1">
+        <bpmn:loopCondition>${count &lt; 3}</bpmn:loopCondition>
+      </bpmn:standardLoopCharacteristics>`))
+	if err != nil {
+		t.Fatalf("import: %v — the JUEL translator must serve a loop "+
+			"condition as it serves a flow's", err)
+	}
+
+	if loopOf(t, res).(*activities.StandardLoopCharacteristics).LoopCondition() == nil {
+		t.Error("LoopCondition() = nil, want the translated expression")
+	}
+}
+
+// TestStandardLoopOnContainers is T-15's standard half: the extract
+// lists every activity kind as an owner.
+func TestStandardLoopOnContainers(t *testing.T) {
+	const marker = `<bpmn:standardLoopCharacteristics id="lc1">
+        <bpmn:loopCondition language="gobpm:lite">1 &gt; 2</bpmn:loopCondition>
+      </bpmn:standardLoopCharacteristics>`
+
+	res, err := importEventDoc(t, subProcessDoc(innerGraph+`
+      `+marker))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	sub := containerOf(t, nodeByID(t, res, "sub"))
+	if sub.LoopCharacteristics() == nil {
+		t.Error("the sub-process lost its loop marker")
+	}
+}
+
+// TestLoopOnAGateway: not an activity — the model refuses the option
+// itself, wrapped with the node's id.
+func TestLoopOnAGateway(t *testing.T) {
+	_, err := importEventDoc(t, propDoc("",
+		`    <bpmn:exclusiveGateway id="g1">
+      <bpmn:standardLoopCharacteristics id="lc1">
+        <bpmn:loopCondition language="gobpm:lite">1 &gt; 2</bpmn:loopCondition>
+      </bpmn:standardLoopCharacteristics>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="g1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="g1" targetRef="e1"/>`))
+	if err == nil || !strings.Contains(err.Error(), `"g1"`) {
+		t.Fatalf("error = %v, want the gateway's refusal under its id", err)
+	}
+}
+
+// TestBrokenLoopMarkerInsideATask: the parse error surfaces through the
+// node-child registration.
+func TestBrokenLoopMarkerInsideATask(t *testing.T) {
+	_, err := importEventDoc(t, loopDoc(
+		`      <bpmn:standardLoopCharacteristics id="s1"/>`))
+	if err == nil || !strings.Contains(err.Error(), "duplicate id") {
+		t.Fatalf("error = %v, want the ledger's refusal via registration", err)
+	}
+}
+
+// TestRefusedLanguageLoopCondition: the .B language policy reaches a
+// loop condition — an explicit XPath declaration refuses by name.
+func TestRefusedLanguageLoopCondition(t *testing.T) {
+	_, err := importEventDoc(t, loopDoc(
+		`      <bpmn:standardLoopCharacteristics id="lc1">
+        <bpmn:loopCondition language="http://www.w3.org/1999/XPath">x</bpmn:loopCondition>
+      </bpmn:standardLoopCharacteristics>`))
+	if err == nil || !strings.Contains(err.Error(), "cannot evaluate") {
+		t.Fatalf("error = %v, want the language refusal", err)
+	}
+}
+
+// TestSecondLoopMarkerRefused is T-14 (FR-5): 0..1 on Activity.
+func TestSecondLoopMarkerRefused(t *testing.T) {
+	_, err := importEventDoc(t, loopDoc(
+		`      <bpmn:standardLoopCharacteristics id="lc1">
+        <bpmn:loopCondition language="gobpm:lite">1 &gt; 2</bpmn:loopCondition>
+      </bpmn:standardLoopCharacteristics>
+      <bpmn:standardLoopCharacteristics id="lc2">
+        <bpmn:loopCondition language="gobpm:lite">1 &gt; 2</bpmn:loopCondition>
+      </bpmn:standardLoopCharacteristics>`))
+	if err == nil || !strings.Contains(err.Error(), "second loop marker") {
+		t.Fatalf("error = %v, want the 0..1 refusal", err)
+	}
 }
 
 // TestLoopSectionsRows is FR-6: the corrected § pins, on the extract's

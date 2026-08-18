@@ -539,6 +539,8 @@ var nodeChildParsers = func() map[string]nodeChildParser {
 		tagIOSpecification: parseIOSpecElem,
 		tagDataInputAssoc:  parseDataAssocElem,
 		tagDataOutputAssoc: parseDataAssocElem,
+		// tagMultiInstance joins with its build (SRD-089.H M3).
+		tagStandardLoop: parseLoopElem,
 	}
 
 	// Every event definition is a node child, derived from defBuilders

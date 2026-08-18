@@ -2,7 +2,12 @@ package bpmn
 
 import (
 	"encoding/xml"
+	"strconv"
 	"strings"
+
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // loopSpec is an activity's loop marker as read — one of the two kinds,
@@ -40,6 +45,111 @@ type complexSpec struct {
 	// through the .D defSpec shape.
 	eventDefs []defSpec
 	hasEvent  bool
+}
+
+// parseLoopElem records a node's loop marker into its body — at most
+// one of either kind (FR-5: loopCharacteristics is 0..1 on Activity,
+// elements/activities.md:29).
+func parseLoopElem(p *parser, body *nodeBody, se xml.StartElement) error {
+	if body.loop != nil {
+		return errs.New(
+			errs.M("bpmn: %q carries a second loop marker; an activity has "+
+				"at most one loopCharacteristics of either kind", p.owner),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	spec, err := p.parseLoopChar(se)
+	if err != nil {
+		return err
+	}
+
+	body.loop = spec
+
+	return nil
+}
+
+// buildLoopOption builds the model's loop characteristics from the
+// node's marker and returns the WithLoop option its constructor takes.
+func buildLoopOption(
+	p *parser, asm *assembly, s *nodeSpec,
+) (options.Option, error) {
+	spec := s.body.loop
+
+	lc, err := loopBuilders[spec.kind](p, asm, s, spec)
+	if err != nil {
+		return nil, err
+	}
+
+	return activities.WithLoop(lc), nil
+}
+
+// loopBuilder builds one marker kind's model object.
+type loopBuilder func(
+	*parser, *assembly, *nodeSpec, *loopSpec,
+) (activities.LoopCharacteristics, error)
+
+// loopBuilders maps a marker to what it becomes, keyed by tag as every
+// builder table is. tagMultiInstance joins with its build (M3).
+var loopBuilders = map[string]loopBuilder{
+	tagStandardLoop: buildStandardLoop,
+}
+
+// buildStandardLoop builds the condition-driven kind.
+//
+// The grammar makes loopCondition 0..1; the model refuses nil — and
+// passing the nil through would surface "NewStandardLoop: a nil
+// loopCondition isn't allowed", true and useless to a modeler who does
+// not know what gobpm's constructor is. The converter refuses first,
+// with the § and the fix (SRD-089.H §4.2).
+func buildStandardLoop(
+	_ *parser, asm *assembly, s *nodeSpec, spec *loopSpec,
+) (activities.LoopCharacteristics, error) {
+	owner := "<" + s.se.Name.Local + "> " + strconv.Quote(s.id)
+
+	if spec.condition == nil {
+		return nil, errs.New(
+			errs.M("bpmn: %s carries a standardLoopCharacteristics with no "+
+				"loopCondition; a loop with no condition never decides to "+
+				"stop, and this engine requires one (§13.3.6) — write a "+
+				"boolean loopCondition, or count iterations with a "+
+				"multiInstanceLoopCharacteristics", owner),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	cond, err := newBoolExpression(*spec.condition, asm.exprLanguage)
+	if err != nil {
+		return nil, err
+	}
+
+	var opts []activities.StandardLoopOption
+
+	if spec.testBefore {
+		opts = append(opts, activities.WithTestBefore())
+	}
+
+	if spec.loopMaximum != "" {
+		// The model never sees the raw text, so a non-integer is the
+		// converter's to refuse; the model's own positive-only guard
+		// stays the model's voice, wrapped below.
+		n, convErr := strconv.Atoi(spec.loopMaximum)
+		if convErr != nil {
+			return nil, errs.New(
+				errs.M("bpmn: %s declares loopMaximum=%q, which is not an "+
+					"integer (§13.3.6)", owner, spec.loopMaximum),
+				errs.C(errorClass, errs.InvalidParameter))
+		}
+
+		opts = append(opts, activities.WithLoopMaximum(n))
+	}
+
+	lc, err := activities.NewStandardLoop(cond, opts...)
+	if err != nil {
+		return nil, wrapErr(
+			"bpmn: couldn't build the standard loop of "+owner,
+			errs.BulidingFailed, err)
+	}
+
+	return lc, nil
 }
 
 // parseLoopChar reads one loop marker into a loopSpec.
