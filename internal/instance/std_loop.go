@@ -220,6 +220,13 @@ func (d *loopDecorator) iterKind() string {
 // runPass runs one pass as its own instance: the executor opens that pass's
 // child scope and parks for its drain.
 func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
+	// the field says "nil between passes" and now is: the loop asks what
+	// this activity awaits at any moment, and a finished pass is not what
+	// it is awaiting. Harmless today — a finished executor already reports
+	// awaitNothing — but the doc and the code disagreeing is how the next
+	// reader gets it wrong.
+	defer d.live.Store(nil)
+
 	if d.composite {
 		e := newScopeExec(d.t, d.step, pass)
 		e.iterKind = d.iterKind()

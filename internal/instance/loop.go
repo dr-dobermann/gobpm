@@ -1432,6 +1432,17 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 		case t.inState(TrackDehydrated):
 			// already released (a partial prior pass) — retained record.
 
+		case !liveTrackStates[t.currentState()]:
+			// terminal (Ended/Merged/Canceled/Failed) — a retained record.
+			//
+			// Asked BEFORE the executor question below, and the order is
+			// load-bearing: a track's terminal state is the last word on
+			// whether it is doing anything, while its executor answers
+			// from the other goroutine and can lag. A host canceled by an
+			// interrupting boundary still reports awaitScope until its own
+			// goroutine processes the cancel — and releasing it there would
+			// record it as dehydrated instead of canceled.
+
 		case t.awaits() == awaitScope:
 			// FR-8: a host parked for its body's drain is NOT doing work —
 			// the body's own tracks are, and they answer for themselves in
@@ -1455,9 +1466,6 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 			// arrive from inside. It rides along with the body's waits
 			// or it does not go at all.
 			hosts = append(hosts, t)
-
-		case !liveTrackStates[t.currentState()]:
-			// terminal (Ended/Merged/Canceled/Failed) — a retained record.
 
 		default:
 			// live but not a long wait (executing, or a join barrier) — the

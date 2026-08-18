@@ -245,22 +245,38 @@ func TestAReleasedHostUnwindsWithoutFailing(t *testing.T) {
 		"the released host persists as the record a restore re-enters from")
 }
 
-// TestADrainStillWinsOverAReleaseThatNeverCame: the release case is an added
-// arm, not a replacement — a scope that drains normally still returns nil and
-// leaves the host live.
-func TestADrainStillWinsOverAReleaseThatNeverCame(t *testing.T) {
-	inst, body, _ := userTaskArmed(t)
+// TestADrainThatAlreadyHappenedBeatsTheRelease (SRD-090.A M3d): when the
+// scope drains and the loop releases the host in the same breath, the DRAIN
+// wins — every time, not on average.
+//
+// Both channels are closed by the loop, and it closes them back to back:
+// completeScope closes the drain, then the loop tail runs maybeDehydrate
+// while this goroutine has not been scheduled yet, still reads it as parked,
+// and releases it too. A bare select over two ready channels picks at random,
+// and picking the release would discard a completion nothing signals again —
+// the restored host re-attaching to a scope the loop had already torn down.
+//
+// Looped, because the bug is a coin flip: one pass of a random select proves
+// nothing.
+func TestADrainThatAlreadyHappenedBeatsTheRelease(t *testing.T) {
+	for range 200 {
+		inst, body, _ := userTaskArmed(t)
 
-	host, err := newTrack(body.currentStep().node, inst, nil)
-	require.NoError(t, err)
+		host, err := newTrack(body.currentStep().node, inst, nil)
+		require.NoError(t, err)
 
-	e := newPlainScopeExec(host, &stepInfo{node: host.currentStep().node})
+		e := newPlainScopeExec(host, &stepInfo{node: host.currentStep().node})
 
-	close(e.drain)
+		// the loop completed the scope, then released the host before its
+		// goroutine woke — both channels ready at once.
+		close(e.drain)
+		close(host.dehydrateCh)
 
-	require.NoError(t, e.awaitDrain(t.Context()))
-	require.False(t, host.inState(TrackDehydrated))
-	require.NotNil(t, inst)
+		require.NoError(t, e.awaitDrain(t.Context()),
+			"a completed drain is not discarded by a release that raced it")
+		require.False(t, host.inState(TrackDehydrated),
+			"and the host is not recorded as released — its activity is done")
+	}
 }
 
 // compositeHeldWaitSnapshot builds start → Sub-Process(start → signal catch →
@@ -364,4 +380,39 @@ func TestAReleasedHostEndsDehydratedNotFailed(t *testing.T) {
 	require.True(t, host.inState(TrackDehydrated),
 		"a released host unwinds to Dehydrated — a discard or a failure "+
 			"here would tear down the activity dehydration exists to keep")
+}
+
+// TestAnInstanceCarryingADeadLetterDoesNotRelease (SRD-090.A M3d): the other
+// arm of the incident guard. A dead-lettered incident has exhausted its
+// retries and waits for an operator — the continuation lives in the incident
+// record, and the instance parks as itself rather than as Dehydrated.
+//
+// Its own test because a guard with two arms and one test is a guard with an
+// untested half: dropping `|| deadLetters() > 0` would leave every existing
+// test green.
+func TestAnInstanceCarryingADeadLetterDoesNotRelease(t *testing.T) {
+	inst, body, ls := userTaskArmed(t)
+	inst.waitHeld = held
+
+	host, err := newTrack(body.currentStep().node, inst, nil)
+	require.NoError(t, err)
+
+	inst.tracks[host.ID()] = host
+	hostAwaitingScope(t, inst, host)
+
+	failed, err := newTrack(body.currentStep().node, inst, nil)
+	require.NoError(t, err)
+
+	failed.updateState(TrackIncident)
+	inst.tracks[failed.ID()] = failed
+	inst.incidents = map[string]*incident{
+		"inc-dl": {
+			id: "inc-dl", state: incidentDeadLettered, trackID: failed.ID(),
+		},
+	}
+
+	ls.maybeDehydrate(context.Background())
+
+	require.False(t, ls.dehydrating,
+		"a dead letter owns the park as much as an open incident does")
 }

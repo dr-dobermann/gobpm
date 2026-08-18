@@ -61,16 +61,30 @@ type instanceState struct {
 // decorator holds N and implements the same interface, which closes the
 // composition and is why a track cannot tell how many instances are behind
 // the activity it is executing.
+// **Two goroutines call this interface, and an implementor has to know
+// which.** `run` executes on the TOKEN's goroutine and is the only method
+// that may mutate; `awaits` and `state` are called by the single-writer LOOP
+// while run is still in flight — that is the whole point of them — so they
+// must be safe to call concurrently with it and must not mutate. Anything
+// one writes and the others read is fenced by the implementor (an atomic
+// flag, an atomic pointer), never by luck of the call graph.
+//
+// `run`'s error is also a channel: a returned `errDehydrated` means the loop
+// released this executor mid-flight and the run loop must unwind WITHOUT
+// treating it as a discard or a failure. Any implementor or decorator that
+// wraps errors opaquely breaks that — return it as it came.
 type activityExec interface {
 	// run executes this instance and returns the flows to follow, or none
 	// when the instance parks or belongs to a set whose decorator follows
-	// the activity's flows once on its behalf.
+	// the activity's flows once on its behalf. TOKEN goroutine.
 	run(ctx context.Context) ([]*flow.SequenceFlow, error)
 
-	// awaits reports what this instance is waiting on right now.
+	// awaits reports what this instance is waiting on right now. Called
+	// from the LOOP goroutine, concurrently with run.
 	awaits() awaitKind
 
-	// state reports the instance in the iteration vocabulary.
+	// state reports the instance in the iteration vocabulary. Called from
+	// the LOOP goroutine, concurrently with run.
 	state() instanceState
 }
 
@@ -325,6 +339,10 @@ func (d *iterDecorator) runInstance(
 	ctx context.Context, it miIterator, i, n int,
 ) ([]*flow.SequenceFlow, bool, error) {
 	d.live.Store(&execHandle{e: d.buildInstance(i)})
+
+	// cleared when this instance is done, so the field means what it says:
+	// nil between instances (see loopDecorator.runPass).
+	defer d.live.Store(nil)
 
 	flows, stop, err := d.runPass(ctx, it, i, n)
 	if err != nil {

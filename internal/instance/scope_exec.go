@@ -192,6 +192,20 @@ func (e *scopeExec) awaitDrain(ctx context.Context) error {
 		return context.Canceled
 
 	case <-e.t.dehydrateCh:
+		// A DRAIN THAT ALREADY HAPPENED WINS. Both channels are closed by
+		// the loop, and it can close them back to back: completeScope
+		// closes the drain, and the loop tail then runs maybeDehydrate
+		// while this goroutine has not yet been scheduled — so it still
+		// reads as parked and gets released too. With both ready, select
+		// picks at random, and picking the release would discard a
+		// completion that will never be signaled again: the restored host
+		// would re-attach to a scope the loop had already torn down.
+		select {
+		case <-e.drain:
+			return nil
+		default:
+		}
+
 		// the loop released this host (SRD-090.A FR-8): every live track,
 		// this instance's body included, is parked on a held wait, so the
 		// whole instance is going away and the drain will not arrive in

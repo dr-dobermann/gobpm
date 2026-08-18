@@ -142,3 +142,128 @@ func TestDehydratedSubProcessHostResumes(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond,
 		"the woken instance must run to completion")
 }
+
+// iteratedLongWaitProc is compositeLongWaitProc with the Sub-Process made a
+// SEQUENTIAL Multi-Instance of three: every iteration opens its own pass of
+// the body and parks on the same held wait, so the host is released from
+// inside a decorator rather than as a single executor.
+func iteratedLongWaitProc(
+	t *testing.T, key string, wait time.Duration, hit *atomic.Bool,
+) *process.Process {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New(key, foundation.WithID(key))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start",
+		foundation.WithID(key+"-start"))
+	require.NoError(t, err)
+
+	mi, err := activities.NewMultiInstance(
+		activities.WithSequential(), activities.WithCardinality(mixCard(t, 3)))
+	require.NoError(t, err)
+
+	body, err := activities.NewSubProcess("body",
+		activities.WithLoop(mi), foundation.WithID(key+"-body"))
+	require.NoError(t, err)
+
+	// a DURATION rather than an absolute date: every iteration arms this
+	// node again, and a date already in the past is refused outright
+	// ("couldn't use past time as a timer"). Each pass computes its own
+	// deadline from the current clock, which is what a re-armed wait needs.
+	def, err := events.NewTimerEventDefinition(nil, nil,
+		durExpr(t, key+"-after", wait))
+	require.NoError(t, err)
+
+	bStart, err := events.NewStartEvent("b-start",
+		foundation.WithID(key+"-b-start"))
+	require.NoError(t, err)
+
+	catch, err := events.NewIntermediateCatchEvent("b-wait", def,
+		foundation.WithID(key+"-b-wait"))
+	require.NoError(t, err)
+
+	bEnd, err := events.NewEndEvent("b-end", foundation.WithID(key+"-b-end"))
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{bStart, catch, bEnd} {
+		require.NoError(t, body.Add(e))
+	}
+
+	link(t, bStart, catch)
+	link(t, catch, bEnd)
+
+	lane := pinnedLane(t, key+"-lane", hit)
+
+	end, err := events.NewEndEvent("end", foundation.WithID(key+"-end"))
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, body, lane, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, body)
+	link(t, body, lane)
+	link(t, lane, end)
+
+	return p
+}
+
+// TestDehydratedIteratedSubProcessResumes (SRD-090.A M3d, T-6 literally): a
+// SEQUENTIAL Multi-Instance Sub-Process whose every iteration parks on a held
+// wait releases its instance and comes back — three times over, finishing all
+// three iterations after the wake.
+//
+// The plain-composite round trip does not cover this. An iterated host is
+// released from inside a DECORATOR: `iterDecorator.awaits()` delegates to the
+// live instance, so the release unwinds through the decorator's pass loop
+// rather than through a single executor, and the restore has to re-enter that
+// decorator at the recorded ordinal rather than at a single open scope. That
+// is the case ADR-007 v.2.1 names — an iterated Sub-Process holding parked
+// work — so it is the one worth driving end to end.
+func TestDehydratedIteratedSubProcessResumes(t *testing.T) {
+	repo := memrepo.New()
+
+	var hit atomic.Bool
+
+	// > the 1h hold threshold, so every iteration's wait is externalized
+	p := iteratedLongWaitProc(t, "dehy-mi-sp", 2*time.Hour, &hit)
+
+	th, fw, clk, cancel := bootDehydrationEngine(t, "engine-MI", repo, p)
+	defer cancel()
+
+	h, err := th.StartLatest(p.ID())
+	require.NoError(t, err)
+
+	instID := h.ID()
+
+	require.Eventually(t, func() bool {
+		return fw.saw(observability.KindInstanceState,
+			observability.PhaseDehydrated)
+	}, 3*time.Second, 5*time.Millisecond,
+		"the first iteration's held wait releases the whole instance")
+
+	require.False(t, hit.Load(), "the flow must not have passed the activity")
+
+	// Each wake finishes ONE iteration and parks on the next one's wait, so
+	// the instance dehydrates and hydrates once per iteration — and each
+	// iteration's deadline is computed from the clock as it stands when
+	// that pass arms. Advancing three times up front would therefore fire
+	// only the first: the clock has to move again after each wake, which is
+	// what advancing inside the poll does.
+	require.Eventually(t, func() bool {
+		clk.Advance(3 * time.Hour)
+
+		return hit.Load()
+	}, 15*time.Second, 100*time.Millisecond,
+		"every iteration completes and the host follows the outgoing flow")
+
+	require.Eventually(t, func() bool {
+		r, found, _ := repo.Load(context.Background(), instID)
+
+		return found && r.Status == repository.StatusCompleted
+	}, 5*time.Second, 10*time.Millisecond,
+		"the woken instance runs to completion")
+}
