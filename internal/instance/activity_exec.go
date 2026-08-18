@@ -1142,6 +1142,17 @@ func (d *iterDecorator) runPass(
 	// instances open scopes rather than re-running it.
 	if !d.composite {
 		step.state = StepCreated
+
+		// re-classify the node for THIS pass (SRD-090.B FR-2). Arming and
+		// parking are keyed to a token arriving, and an in-place iteration
+		// arrives once — so without this the pass runs a waiting node
+		// without waiting, which is #313's defect. The decorator does it
+		// because the decorator is what re-runs the node; the subscription
+		// bookkeeping underneath is idempotent for an ordinal already
+		// recorded, so a node that does not wait pays nothing.
+		if err := d.t.checkNodeType(step.node, false); err != nil {
+			return nil, false, err
+		}
 	}
 
 	// runInstance stores the instance before calling this, and nothing else

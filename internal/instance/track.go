@@ -584,16 +584,6 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		return nil
 	}
 
-	// a PARALLEL Multi-Instance host doesn't wait — its decorator drives
-	// the iteration, and registering the host would evaluate iteration
-	// correlation at the HOST scope, where no split item exists. The
-	// instances themselves cannot wait either while an iterated waiting
-	// activity is refused at build time (SRD-090.A FR-10); SRD-090.B makes
-	// the decorator the registered processor and retires that refusal.
-	if mi := multiInstanceOf(node); mi != nil && !mi.IsSequential() {
-		return nil
-	}
-
 	// Record the Message catch-definition ids so the loop can index them → this track
 	// (SRD-027 FR-8): carried in the evWaiting emit below for a mid-run wait, and read by
 	// spawn for a track that starts parked before the loop drains events. Conditional
@@ -1213,6 +1203,41 @@ func (t *track) stop() {
 
 // run start execution loop of the track which ends by ctx's cancel or
 // when there is no outgoing flows from the processing nodes.
+// errStopped unwinds a unit whose track was taken away while it waited — a
+// cancellation, a terminate, or the loop closing its channel. awaitTrigger
+// has already set the terminal state; the goroutine's remaining job is to
+// stop existing, which is what the run loop does with this.
+var errStopped = errors.New("the track was stopped while it waited")
+
+// errRedispatch unwinds a unit whose step is no longer the track's current
+// one, which delivery can do: an Event-Based Gateway advances onto the arm
+// that fired (deliver → advanceToArm), so the gate's unit must yield rather
+// than execute a node the token has moved past.
+var errRedispatch = errors.New("the delivery moved this token")
+
+// parkForDelivery blocks until this pass's trigger arrives, when the track is
+// parked for one (SRD-090.B FR-2). A no-op for every node that does not wait,
+// which is nearly all of them.
+//
+// It replaces the run loop's pre-step gate. Same act, one level down: the
+// unit that runs a node is the thing that waits for it, so an activity
+// running its node N times waits N times rather than once.
+func (t *track) parkForDelivery(ctx context.Context, step *stepInfo) error {
+	if !t.inState(TrackWaitForEvent) {
+		return nil
+	}
+
+	if !t.awaitTrigger(ctx) {
+		return errStopped
+	}
+
+	if cur := t.currentStep(); cur != nil && cur.node != step.node {
+		return errRedispatch
+	}
+
+	return nil
+}
+
 // awaitTrigger parks the track on its event channel until a trigger arrives, the
 // loop releases it (dehydration, SRD-071), the loop closes evtCh on stop, or the
 // context is canceled. Zero CPU while parked (SRD-027 FR-1): the loop is the sole
@@ -1271,14 +1296,6 @@ func (t *track) run(
 			return
 		}
 
-		if t.inState(TrackWaitForEvent) {
-			if !t.awaitTrigger(ctx) {
-				return
-			}
-
-			continue
-		}
-
 		select {
 		case <-ctx.Done():
 			t.updateState(TrackCanceled)
@@ -1319,8 +1336,16 @@ func (t *track) run(
 			// activity is mid-flight and stays that way durably, the
 			// release already set TrackDehydrated, and the goroutine's
 			// only remaining job is to stop existing.
-			if errors.Is(err, errDehydrated) {
+			if errors.Is(err, errDehydrated) || errors.Is(err, errStopped) {
 				return
+			}
+
+			// the delivery moved this token — an Event-Based Gateway
+			// advances onto its winning arm inside deliver — so the unit
+			// yielded rather than executing a step that is no longer
+			// current. Re-dispatch on the step that IS.
+			if errors.Is(err, errRedispatch) {
+				continue
 			}
 
 			t.discardOrFail(ctx, err)
@@ -1532,6 +1557,19 @@ func (t *track) executeNodeAs(
 	step *stepInfo,
 	ai activityInstance,
 ) ([]*flow.SequenceFlow, error) {
+	// THE UNIT PARKS ITS OWN PASS (SRD-090.B FR-2). Before this, parking was
+	// the run loop's pre-step gate — once per STEP, above executeStep — so
+	// every pass of an iterated activity ran below it and, after the first
+	// delivery, executed its node without waiting at all. That was #313's
+	// defect surviving the ownership change.
+	//
+	// Ahead of the frame open, because the delivery's payload is captured
+	// INTO that frame (ADR-006 §2.9.1): the receiving execution binds its own
+	// item, so it must have received it by the time the frame exists.
+	if err := t.parkForDelivery(ctx, step); err != nil {
+		return nil, err
+	}
+
 	ne, ok := step.node.(exec.NodeExecutor)
 	if !ok {
 		return nil,

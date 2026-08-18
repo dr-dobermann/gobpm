@@ -474,28 +474,38 @@ func TestSnapshotHasConditionals(t *testing.T) {
 	require.True(t, clone.HasConditionals)
 }
 
-// TestIteratedWaitingLeafRefused pins the interim refusal (#313): a
-// leaf that both iterates and PARKS is rejected at snapshot build,
-// because its passes after the first would run without waiting. An
-// iterated COMPOSITE is unaffected — its body re-opens per iteration.
-func TestIteratedWaitingLeafRefused(t *testing.T) {
+// TestOnlyTheAmbiguousIteratedWaitIsRefused (SRD-090.B FR-4, closes #313):
+// the blanket refusal of any activity that both iterates and waits is gone.
+//
+// It existed because a wait was armed on ARRIVAL and an in-place iteration
+// never re-arrives, so passes after the first ran without waiting. The
+// decorator owning the subscription removes the arrival dependency entirely
+// (FR-1/FR-2), so those shapes are correct now and only one refusal is left:
+// a PARALLEL Multi-Instance over a Message catch with nothing to say which
+// envelope belongs to which instance.
+func TestOnlyTheAmbiguousIteratedWaitIsRefused(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	mi, err := activities.NewMultiInstance(
-		activities.WithInputCollection("items", "item"))
-	require.NoError(t, err)
+	msg := func(t *testing.T) *bpmncommon.Message {
+		t.Helper()
 
-	t.Run("a ReceiveTask under MI is refused", func(t *testing.T) {
-		p, err := process.New("wl-refuse")
+		return bpmncommon.MustMessage("m", data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID("m_in")))
+	}
+
+	type linkable interface {
+		flow.Element
+		flow.SequenceSource
+		flow.SequenceTarget
+	}
+
+	build := func(t *testing.T, key string, recv linkable) error {
+		t.Helper()
+
+		p, err := process.New(key)
 		require.NoError(t, err)
 
 		start, err := events.NewStartEvent("start")
-		require.NoError(t, err)
-
-		recv, err := activities.NewReceiveTask("await",
-			bpmncommon.MustMessage("m", data.MustItemDefinition(
-				values.NewVariable(""), foundation.WithID("m_in"))),
-			activities.WithoutParams(), activities.WithLoop(mi))
 		require.NoError(t, err)
 
 		end, err := events.NewEndEvent("end")
@@ -511,14 +521,44 @@ func TestIteratedWaitingLeafRefused(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = snapshot.New(p)
-		require.ErrorContains(t, err, "both iterates and waits")
-	})
 
-	t.Run("a non-waiting leaf under MI is fine", func(t *testing.T) {
-		p, err := process.New("wl-ok")
+		return err
+	}
+
+	t.Run("a SEQUENTIAL MI ReceiveTask builds", func(t *testing.T) {
+		mi, err := activities.NewMultiInstance(activities.WithSequential(),
+			activities.WithInputCollection("items", "item"))
 		require.NoError(t, err)
 
-		start, err := events.NewStartEvent("start")
+		recv, err := activities.NewReceiveTask("await", msg(t),
+			activities.WithoutParams(), activities.WithLoop(mi))
+		require.NoError(t, err)
+
+		require.NoError(t, build(t, "wl-seq", recv),
+			"one instance waits at a time, so each pass consumes one "+
+				"message — this is #313's own acceptance shape")
+	})
+
+	t.Run("a PARALLEL MI ReceiveTask without correlation is refused",
+		func(t *testing.T) {
+			mi, err := activities.NewMultiInstance(
+				activities.WithInputCollection("items", "item"))
+			require.NoError(t, err)
+
+			recv, err := activities.NewReceiveTask("await", msg(t),
+				activities.WithoutParams(), activities.WithLoop(mi))
+			require.NoError(t, err)
+
+			err = build(t, "wl-par", recv)
+			require.ErrorContains(t, err, "declares no iteration correlation")
+			require.ErrorContains(t, err, "WithIterationCorrelation",
+				"the refusal names what is missing, not just that "+
+					"something is")
+		})
+
+	t.Run("a non-waiting leaf under MI is fine", func(t *testing.T) {
+		mi, err := activities.NewMultiInstance(
+			activities.WithInputCollection("items", "item"))
 		require.NoError(t, err)
 
 		op, err := gooper.New("op",
@@ -532,19 +572,6 @@ func TestIteratedWaitingLeafRefused(t *testing.T) {
 			activities.WithoutParams(), activities.WithLoop(mi))
 		require.NoError(t, err)
 
-		end, err := events.NewEndEvent("end")
-		require.NoError(t, err)
-
-		for _, e := range []flow.Element{start, work, end} {
-			require.NoError(t, p.Add(e))
-		}
-
-		_, err = flow.Link(start, work)
-		require.NoError(t, err)
-		_, err = flow.Link(work, end)
-		require.NoError(t, err)
-
-		_, err = snapshot.New(p)
-		require.NoError(t, err)
+		require.NoError(t, build(t, "wl-ok", work))
 	})
 }

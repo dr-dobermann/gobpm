@@ -585,15 +585,22 @@ func TestIterationRoutingKillAndResume(t *testing.T) {
 		"the recovered instance must complete on engine-2")
 }
 
-// TestLeafReceiveTaskMIRefused pins the interim refusal (#313): a
-// ReceiveTask under parallel Multi-Instance is a WAITING leaf, whose
-// passes after the first would run without waiting, so the model is
-// refused at registration rather than run wrong.
+// TestLeafReceiveTaskMIRefused: a ReceiveTask under a PARALLEL
+// Multi-Instance that declares no iteration correlation is refused at
+// registration — several instances waiting on one point-to-point message
+// with nothing to say which envelope is whose (SRD-090.B FR-4).
 //
-// This test replaces one that asserted the pattern WORKED. That test
-// passed vacuously: the iteration tracks never armed their waits, so
-// the tasks completed without consuming the envelopes it published —
-// the published messages were irrelevant to its result.
+// The subject is unchanged by SRD-090.B; only the reason narrowed. The
+// refusal used to cover any activity that both iterated and waited,
+// because a wait was armed on ARRIVAL and an in-place iteration never
+// re-arrives. That is fixed — a SEQUENTIAL MI ReceiveTask over the same
+// message now builds and consumes one envelope per pass — so what is left
+// refused is the ambiguity rather than the mechanism.
+//
+// The test this one replaced asserted the pattern WORKED, and passed
+// vacuously: the iteration tracks never armed their waits, so the tasks
+// completed without consuming the envelopes it published — the published
+// messages were irrelevant to its result.
 func TestLeafReceiveTaskMIRefused(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -635,6 +642,7 @@ func TestLeafReceiveTaskMIRefused(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = th.RegisterProcess(p)
-	require.ErrorContains(t, err, "both iterates and waits")
-	require.ErrorContains(t, err, "#313")
+	require.ErrorContains(t, err, "declares no iteration correlation")
+	require.ErrorContains(t, err, "WithIterationCorrelation",
+		"the refusal names the declaration that would make it buildable")
 }
