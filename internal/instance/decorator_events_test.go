@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 )
 
@@ -135,4 +136,52 @@ func TestAnUnknownWithdrawalIsNotAnError(t *testing.T) {
 	require.Equal(t, []int{0}, es.waitingOn(def.ID()))
 
 	require.Nil(t, es.waitingOn("no-such-definition"))
+}
+
+// TestWhoOwnsAnActivitysWaits (SRD-090.B FR-1): the executor answers who
+// subscribes, and a driver never tests the node.
+//
+// A leaf and a composite instance own their own wait and answer nil, leaving
+// armWaiters' per-trigger rule exactly as it was — which is what NFR-1 turns
+// on. Both decorators answer themselves: one subscriber per iterated
+// activity, held across its passes.
+func TestWhoOwnsAnActivitysWaits(t *testing.T) {
+	_, _, node, host := decoratorFixture(t)
+	step := &stepInfo{node: node}
+
+	require.Nil(t, newNodeExec(host, step, 0).subscriber(),
+		"a leaf execution is its own subscriber")
+	require.Nil(t, newPlainScopeExec(host, step).subscriber(),
+		"a composite registers nothing — its body's tracks own their waits")
+
+	iter := newIterDecorator(host, step, nil, false)
+	require.Equal(t, activitySubscriber(iter), iter.subscriber(),
+		"an iterated activity subscribes as itself")
+
+	loop := newLoopDecorator(host, step, nil, false)
+	require.Equal(t, activitySubscriber(loop), loop.subscriber())
+}
+
+// TestTheExecutorIsResolvedOncePerStep (SRD-090.B FR-1): one object from
+// arrival until the step ends, and a NEW one when the token moves.
+//
+// Both halves are load-bearing. Reusing it within a step is what lets arming
+// and execution address the same subscription set — two objects would carry
+// one identity, and the set would live on whichever was not dispatching.
+// Rebuilding on a move is what the Ad-Hoc suites caught when the first
+// version of this cache was keyed to nothing: an advancing track was handed
+// the previous node's executor and re-ran it.
+func TestTheExecutorIsResolvedOncePerStep(t *testing.T) {
+	_, _, node, host := decoratorFixture(t)
+
+	first := host.resolveExec(&stepInfo{node: node})
+	require.Same(t, first, host.resolveExec(&stepInfo{node: node}),
+		"the same step resolves to the same executor")
+
+	other, err := activities.NewSubProcess("elsewhere")
+	require.NoError(t, err)
+
+	moved := host.resolveExec(&stepInfo{node: other})
+	require.NotSame(t, first, moved,
+		"a token that moved gets its NEW node's executor, never the old one")
 }

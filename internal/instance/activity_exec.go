@@ -86,6 +86,18 @@ type activityExec interface {
 	// state reports the instance in the iteration vocabulary. Called from
 	// the LOOP goroutine, concurrently with run.
 	state() instanceState
+
+	// subscriber reports who registers with the hub for this activity's
+	// waits, or nil to leave the existing per-trigger rule alone
+	// (SRD-090.B FR-1).
+	//
+	// The question is asked of the executor rather than answered by a test
+	// on the node, which is the whole shape of this slice: a driver never
+	// learns that an activity iterates, it learns who owns the wait. A leaf
+	// or a composite instance answers nil — it has one execution, which is
+	// its own subscriber (ADR-006 §2.9.5 Scope) — and a decorator answers
+	// itself, holding one subscription for the activity across every pass.
+	subscriber() activitySubscriber
 }
 
 // nodeExec is the leaf realization: it runs an activity that is not a scope
@@ -409,6 +421,10 @@ func (d *iterDecorator) state() instanceState {
 
 	return h.e.state()
 }
+
+// subscriber: the decorator holds ONE subscription per definition for the
+// whole activity, across every pass (ADR-006 §2.9.5, SRD-090.B FR-1/FR-2).
+func (d *iterDecorator) subscriber() activitySubscriber { return d }
 
 // runParallel drives every instance of a parallel leaf activity at once and
 // awaits them all (ADR-025 §2.13, SRD-090.A FR-5). The N-of-N barrier is
@@ -1076,6 +1092,10 @@ func (e *nodeExec) awaits() awaitKind {
 
 	return awaitNothing
 }
+
+// subscriber: a leaf execution is its own subscriber, so the per-trigger
+// rule in armWaiters stands unchanged (SRD-090.B FR-1).
+func (e *nodeExec) subscriber() activitySubscriber { return nil }
 
 // state reports this instance in the iteration vocabulary.
 func (e *nodeExec) state() instanceState {

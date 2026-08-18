@@ -30,7 +30,7 @@ func hostAwaitingScope(t *testing.T, inst *Instance, tr *track) {
 
 	e := newPlainScopeExec(tr, &stepInfo{node: tr.currentStep().node})
 	e.parked.Store(true)
-	tr.exec.Store(&execHandle{e: e})
+	tr.exec.Store(&execHandle{e: e, node: e.step.node})
 
 	// what a real host reads as while its body runs (ADR-025 §2.13b.1e) —
 	// the fixture has to say so, because newTrack on a UserTask node leaves

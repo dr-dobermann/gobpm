@@ -232,6 +232,10 @@ func (e *scopeExec) awaits() awaitKind {
 	return awaitNothing
 }
 
+// subscriber: a composite instance opens a scope and registers nothing —
+// the body's own tracks own their waits (SRD-090.B FR-1).
+func (e *scopeExec) subscriber() activitySubscriber { return nil }
+
 // instanceScopesOf returns the still-open INSTANCE scopes this host fanned
 // out, in ordinal order — never its own serial pass's scope, which is one
 // scope reused and answers to the host's own counter.

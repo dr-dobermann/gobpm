@@ -209,8 +209,15 @@ type stepInfo struct {
 
 // execHandle carries an activityExec through an atomic.Pointer — the
 // interface value needs a concrete box to live in.
+//
+// node is what the executor was built FOR. The handle outlives a single call
+// now (arrival resolves it, execution reuses it — SRD-090.B FR-1), so a
+// reader has to be able to tell whether the executor it finds belongs to the
+// step it is asking about: a track that advanced would otherwise be handed
+// the previous node's executor and re-run it.
 type execHandle struct {
-	e activityExec
+	e    activityExec
+	node flow.Node
 }
 
 // track processed single line of the process from start noed or
@@ -528,6 +535,25 @@ func newTrack(
 // on its own channel — the born-parked track is recorded by spawn's
 // recordBornWaiter instead (SRD-027 FR-5). Only the mid-run path (the
 // track's own goroutine) emits.
+// resolveExec returns the executor this track addresses for the given step,
+// building it on first use and retaining it (SRD-090.B FR-1).
+//
+// ONE object per step, from arrival until the step ends: classification,
+// arming, execution and unregistration all address it. Two constructions
+// would produce two objects with one identity — the hub compares subscribers
+// by ID — and the subscription set would live on whichever was not
+// dispatching.
+func (t *track) resolveExec(step *stepInfo) activityExec {
+	if h := t.exec.Load(); h != nil && h.node == step.node {
+		return h.e
+	}
+
+	e := execFor(t, step)
+	t.exec.Store(&execHandle{e: e, node: step.node})
+
+	return e
+}
+
 func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	// Non-event wait nodes (human task / composite / call / worker) park via
 	// their capability, dispatched in checkActivityWaitKind.
@@ -705,8 +731,26 @@ func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error
 			continue
 		}
 
+		// WHO registers is the executor's answer (SRD-090.B FR-1). A
+		// decorator subscribes for the whole ACTIVITY and holds one
+		// subscription across every pass, where a track's registration is
+		// keyed to an arrival an in-place iteration never repeats. A leaf
+		// owns its own wait and answers nil, leaving the per-trigger rule
+		// below exactly as it was: a Message registers the Instance, which
+		// owns correlation, anything else registers the track.
 		proc := eventproc.EventProcessor(t)
-		if d.Type() == flow.TriggerMessage {
+
+		if owner := t.activityOwner(); owner != nil {
+			// the hub is told once, by the first instance to wait
+			// (FR-2) — a later one joins a subscription that already
+			// exists, and telling the hub again would be a no-op it
+			// dedupes by identity anyway.
+			if !owner.awaiting(d, t.execOrdinal()) {
+				continue
+			}
+
+			proc = owner
+		} else if d.Type() == flow.TriggerMessage {
 			proc = t.instance
 		}
 
@@ -724,6 +768,38 @@ func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error
 	t.held.Store(allHeld && len(defs) > 0)
 
 	return nil
+}
+
+// activitySubscriber reports the executor that subscribes for this track's
+// current activity, or nil when the existing per-trigger rule stands.
+// execOrdinal is the ordinal of the instance parking right now — the join key
+// the subscription set records a waiter under (SRD-090.B FR-2/FR-3).
+//
+// Asked of the executor, which is the only thing that knows: a decorator's
+// live instance reports its own ordinal, and a plain activity is instance
+// zero of one.
+func (t *track) execOrdinal() int {
+	h := t.exec.Load()
+	if h == nil {
+		return 0
+	}
+
+	return h.e.state().ordinal
+}
+
+func (t *track) activityOwner() activitySubscriber {
+	step := t.currentStep()
+	if step == nil || step.node == nil {
+		return nil
+	}
+
+	// Resolved from the track's OWN step, not from a synthesized one: the
+	// executor built here is the object executeStep will reuse, so it must be
+	// built from the same step or it would lose what the step carries (the
+	// arrival flow, the pass state). Resolving lazily also keeps every plain
+	// node's path untouched — its executor answers nil, so nothing about
+	// arming changes for it (SRD-090.B FR-1/NFR-1).
+	return t.resolveExec(step).subscriber()
 }
 
 // holdWait offers a definition to the engine's durable holders (SRD-071 FR-3),
@@ -1830,7 +1906,24 @@ func (t *track) unregisterEvent(n flow.Node) error {
 			continue
 		}
 
-		if err := t.instance.UnregisterEvent(t, eDef.ID()); err != nil {
+		// Symmetric with arming (SRD-090.B FR-2): when the ACTIVITY owns the
+		// subscription, the withdrawal is due only once none of its
+		// instances waits on the definition any more. Withdrawing on the
+		// first instance to finish would take its siblings' wait with it —
+		// the failure ADR-006 §2.9.5 names, and the reason the entry's
+		// lifetime is stated as "while any instance awaits" rather than
+		// per-pass.
+		proc := eventproc.EventProcessor(t)
+
+		if owner := t.activityOwner(); owner != nil {
+			if !owner.stopped(eDef, t.execOrdinal()) {
+				continue
+			}
+
+			proc = owner
+		}
+
+		if err := t.instance.UnregisterEvent(proc, eDef.ID()); err != nil {
 			return errs.New(
 				errs.M("failed to unregister event"),
 				errs.C(errorClass, errs.OperationFailed),

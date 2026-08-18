@@ -5,6 +5,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
@@ -156,6 +157,21 @@ func (es *eventSubs) waitingOn(defID string) []int {
 	}
 
 	return append([]int(nil), s.waiting...)
+}
+
+// activitySubscriber is what an executor answers with when it, rather than
+// the track, owns the activity's waits (SRD-090.B FR-1).
+//
+// An EventProcessor the hub can register, plus the two bookkeeping questions
+// only the owner can answer: is this the FIRST instance to wait on the
+// definition — so the hub registration is due — and was that the LAST — so
+// the withdrawal is. That is FR-2's lifetime, expressed as the two moments it
+// turns on and off.
+type activitySubscriber interface {
+	eventproc.EventProcessor
+
+	awaiting(def flow.EventDefinition, ord int) bool
+	stopped(def flow.EventDefinition, ord int) bool
 }
 
 // ProcessEvent is the hub's doorbell (ADR-006 §2.9.5): it runs on the HUB's

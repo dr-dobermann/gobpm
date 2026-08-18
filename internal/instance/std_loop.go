@@ -55,13 +55,17 @@ func standardLoopOf(node flow.Node) standardLoop {
 func (t *track) executeStep(
 	ctx context.Context, step *stepInfo,
 ) ([]*flow.SequenceFlow, error) {
-	e := execFor(t, step)
+	// Arrival already resolved this node to its executor and stored it
+	// (SRD-090.B FR-1/FR-2), so REUSE it: building a second one here would
+	// give the activity two objects with one identity, and the subscription
+	// set would live on the object that is not dispatching. Resolve here
+	// only for a node arrival never classified — every non-waiting node.
+	e := t.resolveExec(step)
 
 	// the loop asks the executor what this activity awaits while it runs
 	// (SRD-090.A FR-8) — a composite parked for its body's drain is NOT
 	// doing work, and only the executor can say so. Cleared on the way out,
 	// including the error path: a track between steps awaits nothing.
-	t.exec.Store(&execHandle{e: e})
 	defer t.exec.Store(nil)
 
 	return e.run(ctx)
@@ -228,6 +232,10 @@ func (d *loopDecorator) iterKind() string {
 	return iterKindStdLoop
 }
 
+// subscriber: see iterDecorator.subscriber — one subscription for the
+// activity, held across its passes (SRD-090.B FR-1/FR-2).
+func (d *loopDecorator) subscriber() activitySubscriber { return d }
+
 // runPass runs one pass as its own instance: the executor opens that pass's
 // child scope and parks for its drain.
 func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
@@ -241,7 +249,7 @@ func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
 	if d.composite {
 		e := newScopeExec(d.t, d.step, pass)
 		e.iterKind = d.iterKind()
-		d.live.Store(&execHandle{e: e})
+		d.live.Store(&execHandle{e: e, node: e.step.node})
 
 		_, err := e.run(ctx)
 
@@ -255,7 +263,7 @@ func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
 	d.step.state = StepCreated
 
 	e := newNodeExec(d.t, d.step, pass)
-	d.live.Store(&execHandle{e: e})
+	d.live.Store(&execHandle{e: e, node: e.step.node})
 
 	flows, err := e.run(ctx)
 	if err != nil {
