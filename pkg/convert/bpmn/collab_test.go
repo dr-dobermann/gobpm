@@ -109,6 +109,15 @@ func TestProcessWorldsDoNotBleed(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "duplicate id") {
 		t.Fatalf("error = %v, want the document-wide ledger refusal", err)
 	}
+
+	// FR-5: a sequence flow reaching into ANOTHER process's assembly
+	// refuses — resolution is per-assembly, so P1's node is not there.
+	_, err = importEventDoc(t, strings.Replace(
+		twoProcDoc("", "", ""), `targetRef="b2"`, `targetRef="a2"`, 1))
+	if err == nil || !strings.Contains(err.Error(), "a2") {
+		t.Fatalf("error = %v, want the cross-process flow refused naming a2",
+			err)
+	}
 }
 
 // TestImportSelectionRule is T-3/T-4/T-5 (§4.2): the singular entry's
