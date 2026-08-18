@@ -1079,7 +1079,11 @@ func TestSectionFor(t *testing.T) {
 		"itemDefinition":                   "§8.4.10",
 		"dataObject":                       "§10.4.1",
 		"dataInputAssociation":             "§10.4.1",
-		"multiInstanceLoopCharacteristics": "§13.3.5",
+		// §13.3.6/§13.3.7 since SRD-089.H FR-6: the §13.3.5 both rows
+		// carried was supported by no extract line, while the extract's
+		// own heading pins these two (semantics/multi-instance.md:3).
+		"standardLoopCharacteristics":      "§13.3.6",
+		"multiInstanceLoopCharacteristics": "§13.3.7",
 		"unknown":                          "",
 
 		// Pinned as ABSENT, not as a number. The extract keeps these
