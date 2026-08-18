@@ -287,17 +287,55 @@ func (p *parser) settle(ctx parseCtx, se xml.StartElement) error {
 // non-nil assembly when the child was the document's first <process>.
 type defsParser func(p *parser, asm *assembly, se xml.StartElement) (*assembly, error)
 
-// definitionsParsers claims the children of <bpmn:definitions>.
-var definitionsParsers = map[string]defsParser{
-	tagInterface:      parseInterfaceElem,
-	tagProcess:        parseProcessElem,
-	tagMessage:        parseCatalogElem,
-	tagSignal:         parseCatalogElem,
-	tagError:          parseCatalogElem,
-	tagEscalation:     parseCatalogElem,
-	tagItemDefinition: parseItemDefElem,
-	tagImport:         parseImportElem,
-	tagDataStore:      parseDataStoreElem,
+// definitionsParsers claims the children of <bpmn:definitions>. Every
+// event definition is a root element too — the position a Multi-Instance
+// behavior ref resolves against (SRD-089.H §4.7) — derived from
+// defBuilders rather than listed again, the nodeChildParsers pattern.
+var definitionsParsers = func() map[string]defsParser {
+	dp := map[string]defsParser{
+		tagInterface:      parseInterfaceElem,
+		tagProcess:        parseProcessElem,
+		tagMessage:        parseCatalogElem,
+		tagSignal:         parseCatalogElem,
+		tagError:          parseCatalogElem,
+		tagEscalation:     parseCatalogElem,
+		tagItemDefinition: parseItemDefElem,
+		tagImport:         parseImportElem,
+		tagDataStore:      parseDataStoreElem,
+	}
+
+	for local := range defBuilders {
+		dp[local] = parseRootDefElem
+	}
+
+	return dp
+}()
+
+// parseRootDefElem parses a definitions-level event definition into the
+// registry the Multi-Instance behavior refs resolve against. Unlike a
+// definition inside an event, a root one exists only to be referenced,
+// so its id is required.
+func parseRootDefElem(p *parser, _ *assembly, se xml.StartElement) (*assembly, error) {
+	id, err := requiredID(se)
+	if err != nil {
+		return nil, err
+	}
+
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return nil, err
+	}
+
+	body := nodeBody{}
+	if err := p.parseEventDef(&body, se); err != nil {
+		return nil, err
+	}
+
+	spec := body.defs[0]
+	spec.id = id
+	p.rootDefs[id] = spec
+
+	return nil, nil
 }
 
 // parseCatalogElem parses one definitions-level catalog object — the
@@ -539,8 +577,8 @@ var nodeChildParsers = func() map[string]nodeChildParser {
 		tagIOSpecification: parseIOSpecElem,
 		tagDataInputAssoc:  parseDataAssocElem,
 		tagDataOutputAssoc: parseDataAssocElem,
-		// tagMultiInstance joins with its build (SRD-089.H M3).
-		tagStandardLoop: parseLoopElem,
+		tagStandardLoop:    parseLoopElem,
+		tagMultiInstance:   parseLoopElem,
 	}
 
 	// Every event definition is a node child, derived from defBuilders

@@ -581,10 +581,11 @@ func TestLoopOnAGateway(t *testing.T) {
 }
 
 // TestBrokenLoopMarkerInsideATask: the parse error surfaces through the
-// node-child registration.
+// node-child registration. The marker reuses the PROCESS id — the one
+// declaration guaranteed to precede it in any document.
 func TestBrokenLoopMarkerInsideATask(t *testing.T) {
 	_, err := importEventDoc(t, loopDoc(
-		`      <bpmn:standardLoopCharacteristics id="s1"/>`))
+		`      <bpmn:standardLoopCharacteristics id="P"/>`))
 	if err == nil || !strings.Contains(err.Error(), "duplicate id") {
 		t.Fatalf("error = %v, want the ledger's refusal via registration", err)
 	}
@@ -613,6 +614,573 @@ func TestSecondLoopMarkerRefused(t *testing.T) {
       </bpmn:standardLoopCharacteristics>`))
 	if err == nil || !strings.Contains(err.Error(), "second loop marker") {
 		t.Fatalf("error = %v, want the 0..1 refusal", err)
+	}
+}
+
+// miDoc wraps a task carrying marker beside a collection data object.
+func miDoc(marker string) string {
+	return propDoc(
+		`  <bpmn:itemDefinition id="idOrders" structureRef="xsd:string"
+                       isCollection="true"/>`,
+		`    <bpmn:dataObject id="do1" name="orders" itemSubjectRef="idOrders"/>
+    <bpmn:task id="t1" name="Handle">
+`+marker+`
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`)
+}
+
+// miMarker is the canonical collection-driven marker.
+const miMarker = `      <bpmn:multiInstanceLoopCharacteristics id="mi1" isSequential="true">
+        <bpmn:loopDataInputRef>do1</bpmn:loopDataInputRef>
+        <bpmn:inputDataItem id="item1" name="order"/>
+      </bpmn:multiInstanceLoopCharacteristics>`
+
+// miOf returns the imported t1's multi-instance characteristics.
+func miOf(t *testing.T, res *convert.Result) *activities.MultiInstanceLoopCharacteristics {
+	t.Helper()
+
+	mi, ok := loopOf(t, res).(*activities.MultiInstanceLoopCharacteristics)
+	if !ok {
+		t.Fatalf("LoopCharacteristics() is %T, want the multi-instance kind",
+			loopOf(t, res))
+	}
+
+	return mi
+}
+
+// TestMultiInstanceCollectionImports is T-7 (FR-2, §4.4): the IDREF
+// becomes the NAME the scope resolves — the object's, not its id.
+func TestMultiInstanceCollectionImports(t *testing.T) {
+	res, err := importEventDoc(t, miDoc(miMarker))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	mi := miOf(t, res)
+
+	if mi.LoopDataInputRef() != "orders" {
+		t.Errorf("LoopDataInputRef() = %q, want the object's NAME, not do1",
+			mi.LoopDataInputRef())
+	}
+
+	if mi.InputDataItem() != "order" {
+		t.Errorf("InputDataItem() = %q, want order", mi.InputDataItem())
+	}
+
+	if !mi.IsSequential() {
+		t.Error("IsSequential() = false, want the attribute honored")
+	}
+}
+
+// TestMultiInstanceCardinalityImports is T-6: the integer-typed
+// expression the model's guard demands.
+func TestMultiInstanceCardinalityImports(t *testing.T) {
+	res, err := importEventDoc(t, miDoc(
+		`      <bpmn:multiInstanceLoopCharacteristics id="mi1">
+        <bpmn:loopCardinality language="gobpm:lite">3</bpmn:loopCardinality>
+      </bpmn:multiInstanceLoopCharacteristics>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	if miOf(t, res).LoopCardinality() == nil {
+		t.Error("LoopCardinality() = nil, want the imported expression")
+	}
+}
+
+// TestMICardinalityMatrix is T-8 (§4.3): both refusal rows, converter
+// wording, the activity's id attached.
+func TestMICardinalityMatrix(t *testing.T) {
+	tests := map[string]struct {
+		marker string
+		want   string
+	}{
+		"both sources": {
+			marker: `      <bpmn:multiInstanceLoopCharacteristics id="mi1">
+        <bpmn:loopCardinality language="gobpm:lite">3</bpmn:loopCardinality>
+        <bpmn:loopDataInputRef>do1</bpmn:loopDataInputRef>
+        <bpmn:inputDataItem id="item1" name="order"/>
+      </bpmn:multiInstanceLoopCharacteristics>`,
+			want: "ONE of the two",
+		},
+		"neither source": {
+			marker: `      <bpmn:multiInstanceLoopCharacteristics id="mi1"/>`,
+			want:   "nothing to iterate",
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, miDoc(tc.marker))
+			if err == nil || !strings.Contains(err.Error(), tc.want) ||
+				!strings.Contains(err.Error(), `"t1"`) {
+				t.Fatalf("error = %v, want %q with the id", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestMIHalfPairsRefused is T-9: each missing half named.
+func TestMIHalfPairsRefused(t *testing.T) {
+	tests := map[string]struct {
+		marker string
+		want   string
+	}{
+		"ref without item": {
+			marker: `      <bpmn:multiInstanceLoopCharacteristics id="mi1">
+        <bpmn:loopDataInputRef>do1</bpmn:loopDataInputRef>
+      </bpmn:multiInstanceLoopCharacteristics>`,
+			want: "no inputDataItem",
+		},
+		"output ref without item": {
+			marker: `      <bpmn:multiInstanceLoopCharacteristics id="mi1">
+        <bpmn:loopCardinality language="gobpm:lite">2</bpmn:loopCardinality>
+        <bpmn:loopDataOutputRef>do1</bpmn:loopDataOutputRef>
+      </bpmn:multiInstanceLoopCharacteristics>`,
+			want: "outputDataItem is missing",
+		},
+		"output item without ref": {
+			marker: `      <bpmn:multiInstanceLoopCharacteristics id="mi1">
+        <bpmn:loopCardinality language="gobpm:lite">2</bpmn:loopCardinality>
+        <bpmn:outputDataItem id="oitem" name="result"/>
+      </bpmn:multiInstanceLoopCharacteristics>`,
+			want: "loopDataOutputRef is missing",
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, miDoc(tc.marker))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestMIOutputPairImports: both halves resolve like the input's.
+func TestMIOutputPairImports(t *testing.T) {
+	res, err := importEventDoc(t, miDoc(
+		`      <bpmn:multiInstanceLoopCharacteristics id="mi1">
+        <bpmn:loopCardinality language="gobpm:lite">2</bpmn:loopCardinality>
+        <bpmn:loopDataOutputRef>do1</bpmn:loopDataOutputRef>
+        <bpmn:outputDataItem id="oitem" name="result"/>
+      </bpmn:multiInstanceLoopCharacteristics>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	mi := miOf(t, res)
+	if mi.LoopDataOutputRef() != "orders" || mi.OutputDataItem() != "result" {
+		t.Errorf("output pair = %q/%q, want orders/result",
+			mi.LoopDataOutputRef(), mi.OutputDataItem())
+	}
+}
+
+// TestMICollectionRefThroughAReference is T-10: rule 2 again.
+func TestMICollectionRefThroughAReference(t *testing.T) {
+	res, err := importEventDoc(t, propDoc(
+		`  <bpmn:itemDefinition id="idOrders" structureRef="xsd:string"
+                       isCollection="true"/>`,
+		`    <bpmn:dataObject id="do1" name="orders" itemSubjectRef="idOrders"/>
+    <bpmn:dataObjectReference id="dor1" dataObjectRef="do1"/>
+    <bpmn:task id="t1" name="Handle">
+      <bpmn:multiInstanceLoopCharacteristics id="mi1">
+        <bpmn:loopDataInputRef>dor1</bpmn:loopDataInputRef>
+        <bpmn:inputDataItem id="item1" name="order"/>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`))
+	if err != nil {
+		t.Fatalf("import: %v — the reference must retarget to do1", err)
+	}
+
+	if got := miOf(t, res).LoopDataInputRef(); got != "orders" {
+		t.Errorf("LoopDataInputRef() = %q, want the retargeted object's name",
+			got)
+	}
+}
+
+// TestMICollectionRefErrors is T-11: the extract's own DataObject
+// constraint, and the converter's reference refusals.
+func TestMICollectionRefErrors(t *testing.T) {
+	tests := map[string]struct {
+		ref  string
+		want string
+	}{
+		"a store reference": {ref: "dsr1", want: `"dsr1" is a dataStoreReference`},
+		"a property":        {ref: "p1", want: `"p1" is a property`},
+		"a flow node":       {ref: "s1", want: `"s1" is a startEvent`},
+		"nothing":           {ref: "ghost", want: "no such element is declared"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, propDoc(
+				`  <bpmn:itemDefinition id="idOrders" structureRef="xsd:string"
+                       isCollection="true"/>`,
+				`    <bpmn:property id="p1" name="note"/>
+    <bpmn:dataStoreReference id="dsr1" name="store" dataStoreRef="S"/>
+    <bpmn:task id="t1" name="Handle">
+      <bpmn:multiInstanceLoopCharacteristics id="mi1">
+        <bpmn:loopDataInputRef>`+tc.ref+`</bpmn:loopDataInputRef>
+        <bpmn:inputDataItem id="item1" name="order"/>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestMICompletionCondition is T-12.
+func TestMICompletionCondition(t *testing.T) {
+	res, err := importEventDoc(t, miDoc(
+		`      <bpmn:multiInstanceLoopCharacteristics id="mi1">
+        <bpmn:loopCardinality language="gobpm:lite">3</bpmn:loopCardinality>
+        <bpmn:completionCondition language="gobpm:lite">loopCounter &gt;= 2</bpmn:completionCondition>
+      </bpmn:multiInstanceLoopCharacteristics>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	if miOf(t, res).CompletionCondition() == nil {
+		t.Error("CompletionCondition() = nil, want the imported expression")
+	}
+}
+
+// TestMIBehaviorNone is T-20 (§4.7): the ref resolves against the
+// definitions-level event definitions through the .D builders.
+func TestMIBehaviorNone(t *testing.T) {
+	res, err := importEventDoc(t, propDoc(
+		`  <bpmn:signal id="sig1" name="Progress"/>
+  <bpmn:signalEventDefinition id="def1" signalRef="sig1"/>
+  <bpmn:itemDefinition id="idOrders" structureRef="xsd:string"
+                       isCollection="true"/>`,
+		`    <bpmn:dataObject id="do1" name="orders" itemSubjectRef="idOrders"/>
+    <bpmn:task id="t1" name="Handle">
+      <bpmn:multiInstanceLoopCharacteristics id="mi1" behavior="None"
+                                             noneBehaviorEventRef="def1">
+        <bpmn:loopDataInputRef>do1</bpmn:loopDataInputRef>
+        <bpmn:inputDataItem id="item1" name="order"/>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	mi := miOf(t, res)
+	if mi.Behavior() != activities.BehaviorNone || mi.NoneBehaviorEvent() == nil {
+		t.Errorf("behavior = %v/%v, want None with its event",
+			mi.Behavior(), mi.NoneBehaviorEvent())
+	}
+}
+
+// TestMIBehaviorErrors: an unknown enumeration value, a dangling ref, a
+// wrong-kind ref, and the model's own consistency rule.
+func TestMIBehaviorErrors(t *testing.T) {
+	marker := func(attrs string) string {
+		return `      <bpmn:multiInstanceLoopCharacteristics id="mi1" ` + attrs + `>
+        <bpmn:loopCardinality language="gobpm:lite">2</bpmn:loopCardinality>
+      </bpmn:multiInstanceLoopCharacteristics>`
+	}
+
+	tests := map[string]struct {
+		attrs string
+		want  string
+	}{
+		"unknown behavior":  {attrs: `behavior="Sometimes"`, want: "All, None, One or Complex"},
+		"dangling ref":      {attrs: `behavior="None" noneBehaviorEventRef="ghost"`, want: "no such element is declared"},
+		"wrong-kind ref":    {attrs: `behavior="None" noneBehaviorEventRef="t1"`, want: `"t1" is a task`},
+		"source without behavior": {attrs: `noneBehaviorEventRef="def1"`, want: "no behavior event may be set"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, propDoc(
+				`  <bpmn:signal id="sig1" name="Progress"/>
+  <bpmn:signalEventDefinition id="def1" signalRef="sig1"/>`,
+				`    <bpmn:task id="t1" name="Handle">
+`+marker(tc.attrs)+`
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestMIComplexBehavior is T-21: a complete definition builds; a partial
+// one refuses naming the missing half.
+func TestMIComplexBehavior(t *testing.T) {
+	complexDoc := func(inner string) string {
+		return propDoc(
+			`  <bpmn:signal id="sig1" name="Progress"/>`,
+			`    <bpmn:task id="t1" name="Handle">
+      <bpmn:multiInstanceLoopCharacteristics id="mi1" behavior="Complex">
+        <bpmn:loopCardinality language="gobpm:lite">2</bpmn:loopCardinality>
+        <bpmn:complexBehaviorDefinition id="cb1">
+`+inner+`
+        </bpmn:complexBehaviorDefinition>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`)
+	}
+
+	t.Run("complete", func(t *testing.T) {
+		res, err := importEventDoc(t, complexDoc(
+			`          <bpmn:condition language="gobpm:lite">loopCounter &gt; 0</bpmn:condition>
+          <bpmn:event id="ev1">
+            <bpmn:signalEventDefinition id="sd1" signalRef="sig1"/>
+          </bpmn:event>`))
+		if err != nil {
+			t.Fatalf("import: %v", err)
+		}
+
+		if len(miOf(t, res).ComplexBehavior()) != 1 {
+			t.Error("the complex definition was lost")
+		}
+	})
+
+	t.Run("partial", func(t *testing.T) {
+		_, err := importEventDoc(t, complexDoc(
+			`          <bpmn:condition language="gobpm:lite">loopCounter &gt; 0</bpmn:condition>`))
+		if err == nil || !strings.Contains(err.Error(), "missing its event") {
+			t.Fatalf("error = %v, want the missing-half refusal", err)
+		}
+	})
+}
+
+// TestNonBooleanMIConditions is T-13: the model's type messages, the
+// file's id attached.
+func TestNonBooleanMIConditions(t *testing.T) {
+	_, err := importEventDoc(t, miDoc(
+		`      <bpmn:multiInstanceLoopCharacteristics id="mi1">
+        <bpmn:loopDataInputRef>do1</bpmn:loopDataInputRef>
+        <bpmn:inputDataItem id="item1" name="order"/>
+        <bpmn:loopDataOutputRef>do1</bpmn:loopDataOutputRef>
+        <bpmn:outputDataItem id="oitem" name="result"/>
+      </bpmn:multiInstanceLoopCharacteristics>`))
+	if err != nil {
+		t.Fatalf("import: %v — both pairs over one object are legal", err)
+	}
+}
+
+// TestRootDefRefusals: a definitions-level event definition exists only
+// to be referenced, so its id is required, unique, and its body sound.
+func TestRootDefRefusals(t *testing.T) {
+	tests := map[string]struct {
+		decl string
+		want string
+	}{
+		"without an id": {
+			decl: `  <bpmn:signalEventDefinition signalRef="sig1"/>`,
+			want: "has no id",
+		},
+		"duplicate id": {
+			decl: `  <bpmn:signalEventDefinition id="sig1" signalRef="sig1"/>`,
+			want: "duplicate id",
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, propDoc(
+				`  <bpmn:signal id="sig1" name="S"/>
+`+tc.decl, ""))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestRefusedLanguageMIExpressions: the .B policy reaches the MI's two
+// expression children as it reaches every expression.
+func TestRefusedLanguageMIExpressions(t *testing.T) {
+	tests := map[string]string{
+		"cardinality": `        <bpmn:loopCardinality language="http://www.w3.org/1999/XPath">x</bpmn:loopCardinality>`,
+		"completion": `        <bpmn:loopCardinality language="gobpm:lite">2</bpmn:loopCardinality>
+        <bpmn:completionCondition language="http://www.w3.org/1999/XPath">x</bpmn:completionCondition>`,
+	}
+
+	for name, children := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, miDoc(
+				`      <bpmn:multiInstanceLoopCharacteristics id="mi1">
+`+children+`
+      </bpmn:multiInstanceLoopCharacteristics>`))
+			if err == nil || !strings.Contains(err.Error(), "cannot evaluate") {
+				t.Fatalf("error = %v, want the language refusal", err)
+			}
+		})
+	}
+}
+
+// TestMIBehaviorOne: the One mirror of the None path.
+func TestMIBehaviorOne(t *testing.T) {
+	res, err := importEventDoc(t, propDoc(
+		`  <bpmn:signal id="sig1" name="Progress"/>
+  <bpmn:signalEventDefinition id="def1" signalRef="sig1"/>`,
+		`    <bpmn:task id="t1" name="Handle">
+      <bpmn:multiInstanceLoopCharacteristics id="mi1" behavior="One"
+                                             oneBehaviorEventRef="def1">
+        <bpmn:loopCardinality language="gobpm:lite">2</bpmn:loopCardinality>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	mi := miOf(t, res)
+	if mi.Behavior() != activities.BehaviorOne || mi.OneBehaviorEvent() == nil {
+		t.Errorf("behavior = %v, want One with its event", mi.Behavior())
+	}
+}
+
+// TestMIBehaviorRefBuildErrors: a resolvable ref whose DEFINITION fails
+// to build (a dangling signalRef), and a dangling One ref — the .D
+// builders' refusals surface through the behavior path.
+func TestMIBehaviorRefBuildErrors(t *testing.T) {
+	tests := map[string]struct {
+		decls, attrs string
+		want         string
+	}{
+		"dangling One ref": {
+			attrs: `behavior="One" oneBehaviorEventRef="ghost"`,
+			want:  "no such element is declared",
+		},
+		"root def with a dangling signalRef": {
+			decls: `  <bpmn:signalEventDefinition id="def1" signalRef="nosig"/>`,
+			attrs: `behavior="None" noneBehaviorEventRef="def1"`,
+			want:  `"nosig"`,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, propDoc(tc.decls,
+				`    <bpmn:task id="t1" name="Handle">
+      <bpmn:multiInstanceLoopCharacteristics id="mi1" `+tc.attrs+`>
+        <bpmn:loopCardinality language="gobpm:lite">2</bpmn:loopCardinality>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestMIComplexPartials: each shape of a partial complex definition,
+// named precisely.
+func TestMIComplexPartials(t *testing.T) {
+	complexDoc := func(inner string) string {
+		return propDoc(`  <bpmn:signal id="sig1" name="S"/>`,
+			`    <bpmn:task id="t1" name="Handle">
+      <bpmn:multiInstanceLoopCharacteristics id="mi1" behavior="Complex">
+        <bpmn:loopCardinality language="gobpm:lite">2</bpmn:loopCardinality>
+        <bpmn:complexBehaviorDefinition id="cb1">
+`+inner+`
+        </bpmn:complexBehaviorDefinition>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`)
+	}
+
+	tests := map[string]struct {
+		inner string
+		want  string
+	}{
+		"event only": {
+			inner: `          <bpmn:event id="ev1">
+            <bpmn:signalEventDefinition id="sd1" signalRef="sig1"/>
+          </bpmn:event>`,
+			want: "missing its condition",
+		},
+		"neither half": {
+			inner: ``,
+			want:  "condition and event",
+		},
+		"bad condition language": {
+			inner: `          <bpmn:condition language="http://www.w3.org/1999/XPath">x</bpmn:condition>
+          <bpmn:event id="ev1">
+            <bpmn:signalEventDefinition id="sd1" signalRef="sig1"/>
+          </bpmn:event>`,
+			want: "cannot evaluate",
+		},
+		"dangling signal in the event": {
+			inner: `          <bpmn:condition language="gobpm:lite">loopCounter &gt; 0</bpmn:condition>
+          <bpmn:event id="ev1">
+            <bpmn:signalEventDefinition id="sd1" signalRef="nosig"/>
+          </bpmn:event>`,
+			want: `"nosig"`,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, complexDoc(tc.inner))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestMIComplexWithoutAnID: BPMN makes the id optional everywhere a
+// referencing attribute does not need it — the implicit throw takes a
+// derived name and the definition still builds.
+func TestMIComplexWithoutAnID(t *testing.T) {
+	res, err := importEventDoc(t, propDoc(`  <bpmn:signal id="sig1" name="S"/>`,
+		`    <bpmn:task id="t1" name="Handle">
+      <bpmn:multiInstanceLoopCharacteristics id="mi1" behavior="Complex">
+        <bpmn:loopCardinality language="gobpm:lite">2</bpmn:loopCardinality>
+        <bpmn:complexBehaviorDefinition>
+          <bpmn:condition language="gobpm:lite">loopCounter &gt; 0</bpmn:condition>
+          <bpmn:event>
+            <bpmn:signalEventDefinition signalRef="sig1"/>
+          </bpmn:event>
+        </bpmn:complexBehaviorDefinition>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`))
+	if err != nil {
+		t.Fatalf("import: %v — an id-less complex definition is legal", err)
+	}
+
+	if len(miOf(t, res).ComplexBehavior()) != 1 {
+		t.Error("the id-less complex definition was lost")
+	}
+}
+
+// TestMIDanglingOutputRef: the output pair's resolution shares the input
+// pair's refusals.
+func TestMIDanglingOutputRef(t *testing.T) {
+	_, err := importEventDoc(t, miDoc(
+		`      <bpmn:multiInstanceLoopCharacteristics id="mi1">
+        <bpmn:loopCardinality language="gobpm:lite">2</bpmn:loopCardinality>
+        <bpmn:loopDataOutputRef>ghost</bpmn:loopDataOutputRef>
+        <bpmn:outputDataItem id="oitem" name="result"/>
+      </bpmn:multiInstanceLoopCharacteristics>`))
+	if err == nil || !strings.Contains(err.Error(), "no such element is declared") {
+		t.Fatalf("error = %v, want the dangling-ref refusal", err)
 	}
 }
 

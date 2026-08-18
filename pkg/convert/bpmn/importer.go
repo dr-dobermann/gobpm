@@ -278,6 +278,10 @@ type parser struct {
 	// stores holds the document's <dataStore> declarations, kept only to
 	// be reported as host obligations (SRD-089.F §4.5).
 	stores []dataStoreSpec
+	// rootDefs are the definitions-level event definitions, by id — the
+	// position a Multi-Instance behavior ref resolves against
+	// (SRD-089.H §4.7).
+	rootDefs map[string]defSpec
 	// ids is the document's one id ledger: every element that declares an
 	// id claims it here, whatever per-kind table it lands in afterwards —
 	// see claimID.
@@ -325,6 +329,7 @@ func newParser(ctx context.Context, r io.Reader) *parser {
 		cat:        newCatalog(),
 		items:      newItems(),
 		ids:        make(map[string]string),
+		rootDefs:   make(map[string]defSpec),
 	}
 }
 

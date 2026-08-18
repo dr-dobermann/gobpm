@@ -7,6 +7,8 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -89,9 +91,328 @@ type loopBuilder func(
 ) (activities.LoopCharacteristics, error)
 
 // loopBuilders maps a marker to what it becomes, keyed by tag as every
-// builder table is. tagMultiInstance joins with its build (M3).
+// builder table is.
 var loopBuilders = map[string]loopBuilder{
-	tagStandardLoop: buildStandardLoop,
+	tagStandardLoop:  buildStandardLoop,
+	tagMultiInstance: buildMultiInstance,
+}
+
+// miBehaviors maps the behavior attribute onto the model's enumeration —
+// the fixed classification as data. The empty key is the absent
+// attribute, whose default the extract sets to All.
+var miBehaviors = map[string]activities.MultiInstanceBehavior{
+	"":        activities.BehaviorAll,
+	"All":     activities.BehaviorAll,
+	"None":    activities.BehaviorNone,
+	"One":     activities.BehaviorOne,
+	"Complex": activities.BehaviorComplex,
+}
+
+// buildMultiInstance builds the count-driven kind (SRD-089.H §4.3-§4.7).
+func buildMultiInstance(
+	p *parser, asm *assembly, s *nodeSpec, spec *loopSpec,
+) (activities.LoopCharacteristics, error) {
+	owner := "<" + s.se.Name.Local + "> " + strconv.Quote(s.id)
+
+	opts, err := miCardinalityOpts(p, asm, s, spec, owner)
+	if err != nil {
+		return nil, err
+	}
+
+	if spec.isSequential {
+		opts = append(opts, activities.WithSequential())
+	}
+
+	outOpts, err := miOutputOpts(p, asm, spec, owner)
+	if err != nil {
+		return nil, err
+	}
+
+	opts = append(opts, outOpts...)
+
+	if spec.completion != nil {
+		cond, condErr := newBoolExpression(*spec.completion, asm.exprLanguage)
+		if condErr != nil {
+			return nil, condErr
+		}
+
+		opts = append(opts, activities.WithCompletionCondition(cond))
+	}
+
+	bOpts, err := miBehaviorOpts(p, asm, spec, owner)
+	if err != nil {
+		return nil, err
+	}
+
+	opts = append(opts, bOpts...)
+
+	mi, err := activities.NewMultiInstance(opts...)
+	if err != nil {
+		return nil, wrapErr(
+			"bpmn: couldn't build the multi-instance of "+owner,
+			errs.BulidingFailed, err)
+	}
+
+	return mi, nil
+}
+
+// miCardinalityOpts implements the §4.3 matrix: exactly one instance
+// count, in the converter's words — the model's message names Go
+// options, not the file's elements.
+func miCardinalityOpts(
+	p *parser, asm *assembly, _ *nodeSpec, spec *loopSpec, owner string,
+) ([]activities.MultiInstanceOption, error) {
+	hasCard, hasColl := spec.cardinality != nil, spec.inputRef != ""
+
+	switch {
+	case hasCard && hasColl:
+		return nil, errs.New(
+			errs.M("bpmn: %s declares both a loopCardinality and a "+
+				"loopDataInputRef; the instance count is determined by ONE "+
+				"of the two (§13.3.7) — drop one", owner),
+			errs.C(errorClass, errs.InvalidObject))
+
+	case !hasCard && !hasColl:
+		return nil, errs.New(
+			errs.M("bpmn: %s declares neither a loopCardinality nor a "+
+				"loopDataInputRef; a multi-instance with no instance count "+
+				"has nothing to iterate (§13.3.7) — declare one of the two",
+				owner),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+
+	case hasCard:
+		expr, err := newIntExpression(*spec.cardinality, asm.exprLanguage)
+		if err != nil {
+			return nil, err
+		}
+
+		return []activities.MultiInstanceOption{
+			activities.WithCardinality(expr)}, nil
+	}
+
+	if spec.inputItem == "" {
+		return nil, errs.New(
+			errs.M("bpmn: %s names a loopDataInputRef with no inputDataItem; "+
+				"the item is the name each instance reads its element under — "+
+				"declare an <inputDataItem> beside the ref", owner),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	name, err := loopCollectionName(p, asm, owner, tagLoopDataInRef, spec.inputRef)
+	if err != nil {
+		return nil, err
+	}
+
+	return []activities.MultiInstanceOption{
+		activities.WithInputCollection(name, spec.inputItem)}, nil
+}
+
+// miOutputOpts maps the output pair: both halves or neither (§4.3).
+func miOutputOpts(
+	p *parser, asm *assembly, spec *loopSpec, owner string,
+) ([]activities.MultiInstanceOption, error) {
+	if spec.outputRef == "" && spec.outputItem == "" {
+		return nil, nil
+	}
+
+	if spec.outputRef == "" || spec.outputItem == "" {
+		missing := "loopDataOutputRef"
+		if spec.outputRef != "" {
+			missing = "outputDataItem"
+		}
+
+		return nil, errs.New(
+			errs.M("bpmn: %s declares half an output collection pair; the "+
+				"%s is missing — results are assembled from the item into "+
+				"the collection, so both are needed", owner, missing),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	name, err := loopCollectionName(p, asm, owner, tagLoopDataOutRef, spec.outputRef)
+	if err != nil {
+		return nil, err
+	}
+
+	return []activities.MultiInstanceOption{
+		activities.WithOutputCollection(name, spec.outputItem)}, nil
+}
+
+// loopCollectionName resolves a collection IDREF to the scope-datum NAME
+// the model wants (§4.4): the id resolves through the data-element specs
+// — a reference retargeting to its object (SAD-001 §14.1 rule 2) — and
+// the target must be a data object, the extract's own constraint ("MUST
+// be linked to a process-scope DataObject",
+// semantics/multi-instance.md:108).
+func loopCollectionName(
+	p *parser, asm *assembly, owner, attr, ref string,
+) (string, error) {
+	site := refSite{from: owner, attr: attr, target: ref}
+
+	espec := dataSpecFor(asm, ref)
+	if espec == nil {
+		if kind, taken := p.ids[ref]; taken {
+			return "", site.wrongKind(tagDataObject, kind)
+		}
+
+		return "", site.notFound(tagDataObject)
+	}
+
+	if espec.local != tagDataObject {
+		return "", site.wrongKind(tagDataObject, espec.local)
+	}
+
+	return fallbackName(espec.id, espec.name), nil
+}
+
+// miBehaviorOpts maps the behavior attribute and its event sources
+// (§4.7): None/One resolve their refs against the definitions-level
+// event definitions; a complex definition needs both its halves. The
+// behavior/source consistency rules stay the model's voice.
+func miBehaviorOpts(
+	p *parser, asm *assembly, spec *loopSpec, owner string,
+) ([]activities.MultiInstanceOption, error) {
+	behavior, known := miBehaviors[spec.behavior]
+	if !known {
+		return nil, errs.New(
+			errs.M("bpmn: %s declares behavior=%q; the enumeration is All, "+
+				"None, One or Complex (§13.3.7)", owner, spec.behavior),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	var opts []activities.MultiInstanceOption
+
+	if spec.behavior != "" {
+		opts = append(opts, activities.WithBehavior(behavior))
+	}
+
+	if spec.noneRef != "" {
+		def, err := rootDef(p, asm, owner, attrNoneBehaviorEv, spec.noneRef)
+		if err != nil {
+			return nil, err
+		}
+
+		opts = append(opts, activities.WithNoneBehaviorEvent(def))
+	}
+
+	if spec.oneRef != "" {
+		def, err := rootDef(p, asm, owner, attrOneBehaviorEv, spec.oneRef)
+		if err != nil {
+			return nil, err
+		}
+
+		opts = append(opts, activities.WithOneBehaviorEvent(def))
+	}
+
+	if len(spec.complex) != 0 {
+		defs, err := buildComplexDefs(p, asm, spec, owner)
+		if err != nil {
+			return nil, err
+		}
+
+		opts = append(opts, activities.WithComplexBehavior(defs...))
+	}
+
+	return opts, nil
+}
+
+// rootDef resolves a behavior ref against the definitions-level event
+// definitions and builds the flow.EventDefinition the model options
+// take, through the same builders an event's own definition uses.
+func rootDef(
+	p *parser, asm *assembly, owner, attr, ref string,
+) (flow.EventDefinition, error) {
+	spec, declared := p.rootDefs[ref]
+	if !declared {
+		site := refSite{from: owner, attr: attr, target: ref}
+
+		if kind, taken := p.ids[ref]; taken {
+			return nil, site.wrongKind("event definition", kind)
+		}
+
+		return nil, site.notFound("event definition")
+	}
+
+	built, err := defBuilders[spec.local](asm, owner, spec)
+	if err != nil {
+		return nil, err
+	}
+
+	return built.def, nil
+}
+
+// buildComplexDefs builds each <complexBehaviorDefinition>: the model
+// requires both the condition and the implicit throw event
+// (multiinstance.go:41-53), so a partial one refuses naming the missing
+// half (§4.7).
+func buildComplexDefs(
+	_ *parser, asm *assembly, spec *loopSpec, owner string,
+) ([]*activities.ComplexBehaviorDefinition, error) {
+	out := make([]*activities.ComplexBehaviorDefinition, 0, len(spec.complex))
+
+	for i := range spec.complex {
+		cx := &spec.complex[i]
+		label := "complexBehaviorDefinition " + strconv.Quote(cx.id) + " of " + owner
+
+		if cx.condition == nil || !cx.hasEvent || len(cx.eventDefs) == 0 {
+			return nil, errs.New(
+				errs.M("bpmn: %s is missing its %s; the model requires a "+
+					"boolean condition AND an event to throw when it holds",
+					label, complexMissing(cx)),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		cond, err := newBoolExpression(*cx.condition, asm.exprLanguage)
+		if err != nil {
+			return nil, err
+		}
+
+		built, err := defBuilders[cx.eventDefs[0].local](asm, label, cx.eventDefs[0])
+		if err != nil {
+			return nil, err
+		}
+
+		// The event's name is model plumbing (the implicit throw is
+		// engine-emitted, never drawn) — the id when the file gave one,
+		// a derived label otherwise.
+		name := cx.id
+		if name == "" {
+			name = "behavior event"
+		}
+
+		// Unreachable for any document: the definition is non-nil (built
+		// above) and the name is non-empty by the fallback. Said in the
+		// form the coverage gate reads.
+		ev, err := events.NewImplicitThrowEvent(name, built.def)
+		if err != nil {
+			return nil, errs.Invariant(
+				"%s rejected its implicit throw: %w", label, err)
+		}
+
+		// Unreachable too: both halves are non-nil and the condition is
+		// boolean by lite.Cond's own declaration.
+		cbd, err := activities.NewComplexBehaviorDefinition(cond, ev)
+		if err != nil {
+			return nil, errs.Invariant(
+				"%s rejected its own halves: %w", label, err)
+		}
+
+		out = append(out, cbd)
+	}
+
+	return out, nil
+}
+
+// complexMissing names the absent half in a partial complex definition.
+func complexMissing(cx *complexSpec) string {
+	if cx.condition == nil && (!cx.hasEvent || len(cx.eventDefs) == 0) {
+		return "condition and event"
+	}
+
+	if cx.condition == nil {
+		return "condition"
+	}
+
+	return "event (with an event definition inside)"
 }
 
 // buildStandardLoop builds the condition-driven kind.
