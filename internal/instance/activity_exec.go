@@ -187,6 +187,12 @@ type iterDecorator struct {
 	// from the track at the start of the run (SRD-090.A FR-7).
 	seed *checkpoint.IterationRecord
 
+	// eventSubs makes the decorator the hub's subscriber for this activity's
+	// waits (ADR-006 §2.9.5, SRD-090.B FR-1): one identity per iterated
+	// activity, one subscription per definition, alive while any instance
+	// awaits it.
+	eventSubs
+
 	composite bool
 }
 
@@ -194,7 +200,13 @@ type iterDecorator struct {
 func newIterDecorator(
 	t *track, step *stepInfo, mi multiInstance, composite bool,
 ) *iterDecorator {
-	return &iterDecorator{t: t, step: step, mi: mi, composite: composite}
+	return &iterDecorator{
+		eventSubs: subsIDFor(t, step.node),
+		t:         t,
+		step:      step,
+		mi:        mi,
+		composite: composite,
+	}
 }
 
 // buildInstance makes the executor for ordinal ord: a child scope for a

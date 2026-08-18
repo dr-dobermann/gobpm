@@ -98,6 +98,11 @@ func (t *track) awaits() awaitKind {
 // scope, or an execution of the node — the same one difference iterDecorator
 // carries, leaking in the same three places and named where each occurs.
 type loopDecorator struct {
+	// eventSubs makes the decorator the hub's subscriber for this activity's
+	// waits — see iterDecorator (ADR-006 §2.9.5, SRD-090.B FR-1). A Standard
+	// Loop holds one pass at a time, so its waiting set never exceeds one.
+	eventSubs
+
 	t    *track
 	step *stepInfo
 	sl   standardLoop
@@ -125,7 +130,13 @@ type loopDecorator struct {
 func newLoopDecorator(
 	t *track, step *stepInfo, sl standardLoop, composite bool,
 ) *loopDecorator {
-	return &loopDecorator{t: t, step: step, sl: sl, composite: composite}
+	return &loopDecorator{
+		eventSubs: subsIDFor(t, step.node),
+		t:         t,
+		step:      step,
+		sl:        sl,
+		composite: composite,
+	}
 }
 
 // run drives the passes and follows the composite's outgoing flow once, on
