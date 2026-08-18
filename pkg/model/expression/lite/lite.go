@@ -9,8 +9,10 @@ package lite
 
 import (
 	"context"
-	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"math"
 	"time"
+
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -109,6 +111,20 @@ func packResult(
 		return checkedResult(values.NewVariable(x), "bool", expr)
 
 	case float64:
+		// A declared "int" is satisfiable, not a guaranteed mismatch: the
+		// evaluator unifies every numeric to float64 (ADR-032 §2.3), so
+		// the declaration asks for an integer VALUE — which an integral
+		// float64 is. Before this arm, any declared-int lite expression
+		// faulted at evaluation while the model's Multi-Instance guard
+		// REQUIRED the declaration (multiinstance.go:283-287): two landed
+		// contracts no expression could satisfy together, exposed the
+		// first time a BPMN loopCardinality reached a runtime
+		// (SRD-089.H M3a). A fractional value keeps the mismatch the
+		// check exists for.
+		if expr.ResultType() == "int" && x == math.Trunc(x) {
+			return checkedResult(values.NewVariable(int(x)), "int", expr)
+		}
+
 		return checkedResult(values.NewVariable(x), "float64", expr)
 
 	case string:

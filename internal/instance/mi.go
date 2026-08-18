@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"encoding/json"
+	"math"
 
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 
@@ -173,6 +174,26 @@ func (it miIterator) publishOutput(host *track) error {
 }
 
 // resolveActivation computes the instance count once (§13.3.7): the integer
+// cardinalityCount reads an instance count from what an expression
+// engine actually returns. A bare `.(int)` assertion served while every
+// caller minted a goexpr — but the lite evaluator, the language every
+// IMPORTED expression carries, unifies all numerics to float64
+// (ADR-032 §2.3), so a BPMN loopCardinality could never activate. An
+// integral float64 is a count; a fractional one is not.
+func cardinalityCount(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+
+	case float64:
+		if n == math.Trunc(n) {
+			return int(n), true
+		}
+	}
+
+	return 0, false
+}
+
 // loopCardinality expression when present, otherwise the size of the
 // loopDataInputRef collection. The collection is returned (nil for a
 // cardinality-driven Multi-Instance) so the per-instance item split reuses it
@@ -194,7 +215,7 @@ func (it miIterator) resolveActivation(
 			return 0, nil, err
 		}
 
-		n, ok := res.Get(ctx).(int)
+		n, ok := cardinalityCount(res.Get(ctx))
 		if !ok {
 			return 0, nil, errs.New(
 				errs.M("Multi-Instance cardinality evaluated to a "+
