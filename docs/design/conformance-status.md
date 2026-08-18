@@ -79,8 +79,10 @@ to "the tool", and gobpm ships as a library plus, built on it, the
 `gobpm-server` product ([SAD-001](SAD-001-vision-and-architecture.md) §2, §14).
 §2.3.1 (execution semantics) is the library's target and is what this tracker
 measures. **§2.3.2 is the server's**, delivered through the converter
-(`pkg/convert/bpmn`, ADR-024 / SRD-051), which today imports an MVP element
-subset — so the import-side coverage is tracked with that work.
+(`pkg/convert/bpmn`, ADR-024 / the SRD-089 series), which covers the
+executable element set — multi-process documents and the definitional
+Collaboration included — so the import-side coverage is tracked with that
+work (#335 holds what remains).
 
 These elements therefore matter to the **server's** conformance claim, not the
 library's:
