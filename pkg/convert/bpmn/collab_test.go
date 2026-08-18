@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
@@ -152,6 +153,260 @@ func TestImportSelectionRule(t *testing.T) {
 			t.Fatalf("error = %v, want the ambiguous-count refusal", err)
 		}
 	})
+}
+
+// collabDoc wraps a collaboration beside the two processes.
+func collabDoc(collab string) string {
+	return twoProcDoc(`  <bpmn:message id="m1" name="orderPlaced"/>
+  <bpmn:collaboration id="c1">
+`+collab+`
+  </bpmn:collaboration>`, ` isExecutable="true"`, "")
+}
+
+// TestCollaborationIsConsumed is T-7 (FR-3): participants validated and
+// consumed, nothing reported for them, nothing built.
+func TestCollaborationIsConsumed(t *testing.T) {
+	res, err := importEventDoc(t, collabDoc(
+		`    <bpmn:participant id="pa1" name="Sales" processRef="P1"/>
+    <bpmn:participant id="pa2" name="Fulfilment" processRef="P2"/>
+    <bpmn:participant id="pa3" name="Customer"/>`))
+	if err != nil {
+		t.Fatalf("ImportDocument: %v — a black-box pool (pa3) is legal", err)
+	}
+
+	if len(res.Processes) != 2 {
+		t.Fatalf("Processes = %d, want the two the participants name",
+			len(res.Processes))
+	}
+
+	if len(res.Dropped) != 0 {
+		t.Errorf("Dropped = %v, want nothing for a flow-less collaboration",
+			res.Dropped)
+	}
+}
+
+// TestParticipantRefErrors is T-8: a present processRef must resolve.
+func TestParticipantRefErrors(t *testing.T) {
+	tests := map[string]struct {
+		ref  string
+		want string
+	}{
+		"dangling":   {ref: "ghost", want: "no such element is declared"},
+		"wrong kind": {ref: "m1", want: `"m1" is a message`},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, collabDoc(
+				`    <bpmn:participant id="pa1" processRef="`+tc.ref+`"/>`))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestMessageFlowIsReported is T-9 (FR-4, §4.4): one Dropped entry, the
+// mechanism named, the graph untouched.
+func TestMessageFlowIsReported(t *testing.T) {
+	res, err := importEventDoc(t, collabDoc(
+		`    <bpmn:participant id="pa1" processRef="P1"/>
+    <bpmn:participant id="pa2" processRef="P2"/>
+    <bpmn:messageFlow id="mf1" sourceRef="a1" targetRef="b1"
+                      messageRef="m1"/>`))
+	if err != nil {
+		t.Fatalf("ImportDocument: %v", err)
+	}
+
+	if len(res.Dropped) != 1 {
+		t.Fatalf("Dropped = %v, want exactly the flow", res.Dropped)
+	}
+
+	d := res.Dropped[0]
+	if d.Element != "mf1" || d.Construct != tagMessageFlow {
+		t.Errorf("Dropped = %+v, want mf1's messageFlow entry", d)
+	}
+
+	for _, want := range []string{"message name", "correlation"} {
+		if !strings.Contains(d.Reason, want) {
+			t.Errorf("Reason = %q, want the mechanism named (%q)", d.Reason, want)
+		}
+	}
+}
+
+// TestMessageFlowRefErrors is T-10: a dangling messageRef refuses — the
+// report must not launder a broken reference.
+func TestMessageFlowRefErrors(t *testing.T) {
+	tests := map[string]struct {
+		ref  string
+		want string
+	}{
+		"dangling":   {ref: "ghost", want: "no such element is declared"},
+		"wrong kind": {ref: "P1", want: `"P1" is a process`},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := importEventDoc(t, collabDoc(
+				`    <bpmn:messageFlow id="mf1" sourceRef="a1" targetRef="b1"
+                      messageRef="`+tc.ref+`"/>`))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestCollabFamilyIDsJoinTheLedger is T-11.
+func TestCollabFamilyIDsJoinTheLedger(t *testing.T) {
+	_, err := importEventDoc(t, collabDoc(
+		`    <bpmn:participant id="P1" processRef="P1"/>`))
+	if err == nil || !strings.Contains(err.Error(), "duplicate id") {
+		t.Fatalf("error = %v, want the ledger's refusal", err)
+	}
+}
+
+// TestParticipantOutsideACollaboration is T-12 (§4.5): still refused,
+// still no § — the extract pins none (#334).
+func TestParticipantOutsideACollaboration(t *testing.T) {
+	_, err := importEventDoc(t, propDoc("",
+		`    <bpmn:participant id="pa1" processRef="P"/>`))
+	if err == nil || !strings.Contains(err.Error(), `unsupported element "participant"`) {
+		t.Fatalf("error = %v, want the plain refusal", err)
+	}
+
+	if strings.Contains(err.Error(), "§") {
+		t.Errorf("error = %v carries a §; the extract pins none (#334)", err)
+	}
+}
+
+// TestCollabStrangersAndTolerance is T-13: documentation skipped by
+// declaration, foreign namespaces skipped, in-namespace strangers
+// settled.
+func TestCollabStrangersAndTolerance(t *testing.T) {
+	t.Run("documentation and foreign child", func(t *testing.T) {
+		_, err := importEventDoc(t, collabDoc(
+			`    <bpmn:documentation>who talks to whom</bpmn:documentation>
+    <x:pool xmlns:x="http://x"/>
+    <bpmn:participant id="pa1" processRef="P1"/>`))
+		if err != nil {
+			t.Fatalf("import: %v", err)
+		}
+	})
+
+	t.Run("stranger inside", func(t *testing.T) {
+		_, err := importEventDoc(t, collabDoc(
+			`    <bpmn:task id="t9"/>`))
+		if err == nil || !strings.Contains(err.Error(), `unsupported element "task"`) {
+			t.Fatalf("error = %v, want the stranger refused", err)
+		}
+	})
+
+	t.Run("truncated", func(t *testing.T) {
+		_, err := importEventDoc(t, `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:collaboration id="c1"><bpmn:participant id="pa1"`)
+		if err == nil {
+			t.Fatal("a truncated collaboration must fail")
+		}
+	})
+}
+
+// TestTwoPoolsMessageOnAThresher is T-14, the stage's DoD run: one
+// document, two pools, the engine's own mechanism. The producer's end
+// event throws the message; the consumer's message start event — with
+// no incoming flow — is registered for auto-instantiation, so the
+// throw spawns it. The collaboration and its messageFlow are consumed
+// and reported; the exchange itself needs neither.
+func TestTwoPoolsMessageOnAThresher(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:message id="m1" name="orderPlaced"/>
+  <bpmn:collaboration id="c1">
+    <bpmn:participant id="pa1" name="Sales" processRef="P1"/>
+    <bpmn:participant id="pa2" name="Fulfilment" processRef="P2"/>
+    <bpmn:messageFlow id="mf1" sourceRef="send1" targetRef="start2"
+                      messageRef="m1"/>
+  </bpmn:collaboration>
+  <bpmn:process id="P1" name="sales" isExecutable="true">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:endEvent id="send1">
+      <bpmn:messageEventDefinition id="md1" messageRef="m1"/>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="send1"/>
+  </bpmn:process>
+  <bpmn:process id="P2" name="fulfilment">
+    <bpmn:startEvent id="start2">
+      <bpmn:messageEventDefinition id="md2" messageRef="m1"/>
+    </bpmn:startEvent>
+    <bpmn:endEvent id="e2"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="start2" targetRef="e2"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res, err := importer{}.ImportDocument(ctx, strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("ImportDocument: %v", err)
+	}
+
+	if len(res.Dropped) != 1 || res.Dropped[0].Element != "mf1" {
+		t.Fatalf("Dropped = %v, want the messageFlow report alone", res.Dropped)
+	}
+
+	engine, err := thresher.New("two-pools-engine")
+	if err != nil {
+		t.Fatalf("thresher.New: %v", err)
+	}
+
+	// The consumer first, so its instance-starter is armed before the
+	// producer throws.
+	if _, err := engine.RegisterProcess(res.Processes[1]); err != nil {
+		t.Fatalf("RegisterProcess(consumer): %v", err)
+	}
+
+	if _, err := engine.RegisterProcess(res.Processes[0]); err != nil {
+		t.Fatalf("RegisterProcess(producer): %v", err)
+	}
+
+	if err := engine.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	h, err := engine.StartLatest(res.Processes[0].ID())
+	if err != nil {
+		t.Fatalf("StartLatest(producer): %v", err)
+	}
+
+	if _, err := h.WaitCompletion(ctx); err != nil {
+		t.Fatalf("producer WaitCompletion: %v", err)
+	}
+
+	// The consumer's instance is spawned BY the message, so it is
+	// observed through discovery: poll until two instances have settled —
+	// the producer's and the one its throw instantiated.
+	for {
+		settled, err := engine.Instances(
+			thresher.InstanceQuery{Stage: thresher.StageSettled})
+		if err != nil {
+			t.Fatalf("Instances: %v", err)
+		}
+
+		if len(settled) >= 2 {
+			t.Logf("both pools settled: %d instances", len(settled))
+
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out with %d settled instances; the throw never "+
+				"instantiated the consumer", len(settled))
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // TestDocumentReportsFireOnce is T-6 (§4.3): the document-level reports

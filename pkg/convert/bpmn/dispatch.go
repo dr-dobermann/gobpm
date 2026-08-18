@@ -38,6 +38,9 @@ const (
 	// <dataState>, so an element met there is not the one the process
 	// context would have expected.
 	ctxData
+	// ctxCollab is inside a <collaboration> — the definitional-only
+	// container SRD-089.I consumes.
+	ctxCollab
 )
 
 // elementKey identifies one element in one parse context.
@@ -302,6 +305,7 @@ var definitionsParsers = func() map[string]defsParser {
 		tagItemDefinition: parseItemDefElem,
 		tagImport:         parseImportElem,
 		tagDataStore:      parseDataStoreElem,
+		tagCollaboration:  parseCollaborationElem,
 	}
 
 	for local := range defBuilders {

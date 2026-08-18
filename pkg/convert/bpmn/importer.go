@@ -317,6 +317,9 @@ type parser struct {
 	// asms are the document's processes, one assembly each, in document
 	// order (SRD-089.I §4.1).
 	asms []*assembly
+	// collabs are the document's collaborations, consumed definitionally
+	// once the whole document is read (SRD-089.I FR-3, FR-4).
+	collabs []collabSpec
 	// ids is the document's one id ledger: every element that declares an
 	// id claims it here, whatever per-kind table it lands in afterwards —
 	// see claimID.
@@ -395,6 +398,14 @@ func (p *parser) parse() ([]*process.Process, error) {
 	// SrcStates from three non-empty package constants, and is idempotent
 	// for a host that configured its own. Said in the form the coverage
 	// gate reads.
+	// The collaborations first: a participant's processRef and a
+	// message flow's messageRef resolve against the now-complete ledger,
+	// and the flows report (SRD-089.I §4.4).
+	err = resolveCollaborations(p)
+	if err != nil {
+		return nil, err
+	}
+
 	err = data.CreateDefaultStates()
 	if err != nil {
 		return nil, errs.Invariant(

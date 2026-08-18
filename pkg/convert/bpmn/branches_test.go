@@ -358,8 +358,10 @@ func TestImportDefinitionsChildBranches(t *testing.T) {
 		`</bpmn:process>`
 
 	runImportCases(t, map[string]struct{ doc, want string }{
+		// <collaboration> imports (definitionally) since SRD-089.I; the
+		// unmapped sample is a choreography, refused by conformance class.
 		"definitions rejects unmapped child": {
-			doc:  wrapDefs(`<bpmn:collaboration id="c"/>` + proc),
+			doc:  wrapDefs(`<bpmn:choreography id="c"/>` + proc),
 			want: "unsupported element",
 		},
 		// A second process imports since SRD-089.I; two IDENTICAL ones
