@@ -37,6 +37,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An iterated Sub-Process no longer pins its process instance in
+  memory** (SRD-090.A M3d, ADR-007 §2.4, part of #313). Residency now
+  asks what an activity instance is *awaiting*: a Sub-Process executor
+  parked for its body's drain contributes nothing, because it holds no
+  wait of its own — the body's own tokens decide, as they always did. A
+  host parked that way used to read as "live but not a long wait" and
+  disqualified its whole instance, so a Sub-Process iterating over three
+  approvals kept the engine holding it for as long as the approvals took.
+  It is released with the body now, and re-enters its decorator at the
+  recorded pass when a trigger wakes the instance.
+
+  A scope host is never the *reason* an instance releases — it rides
+  along with the body's held waits or it stays. Nothing external could
+  wake it: what it waits for arrives from inside.
+
+  An instance carrying an open incident or a dead letter still parks as
+  itself rather than as dehydrated; the incident record carries its
+  continuation, and it is waiting for an operator, not a trigger.
+
+- **A sequential Multi-Instance Sub-Process re-ran its first pass on
+  every restore** (SRD-090.A M3d). Restore rebuilds a scope entry from
+  the checkpoint's scope table, which records the path and its host but
+  not who drives it, so the rebuilt entry lost the flag saying it belongs
+  to an iteration — and the drain accounting ignores an entry without it.
+  The position record therefore stayed at zero, and each restore resumed
+  the activity at pass 0: with a wait long enough to dehydrate between
+  passes, the activity never finished at all. The re-attaching executor
+  now declares it, exactly as a fresh scope open does.
+
+  Predates the node execution model; it was invisible because nothing had
+  driven a composite Multi-Instance through more than one restore cycle.
+
 - **`make ci` wrote empty timestamps on macOS.** `scripts/ci-run.sh`
   stamped `.ci/last-run.json` with GNU-only `date -Is`, which BSD date
   rejects; the portable `date -u +%Y-%m-%dT%H:%M:%SZ` produces the
