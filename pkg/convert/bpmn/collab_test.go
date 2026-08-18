@@ -394,25 +394,31 @@ func TestTwoPoolsMessageOnAThresher(t *testing.T) {
 	}
 
 	// The consumer's instance is spawned BY the message, so it is
-	// observed through discovery: poll until two instances have settled —
-	// the producer's and the one its throw instantiated.
-	for {
-		settled, err := engine.Instances(
-			thresher.InstanceQuery{Stage: thresher.StageSettled})
+	// observed through discovery — and PER PROCESS: a raw settled count
+	// of 2 would also be satisfied by a producer that spawned twice with
+	// the consumer never instantiated.
+	settledOf := func(processID string) int {
+		ids, err := engine.Instances(thresher.InstanceQuery{
+			ProcessID: processID, Stage: thresher.StageSettled})
 		if err != nil {
-			t.Fatalf("Instances: %v", err)
+			t.Fatalf("Instances(%s): %v", processID, err)
 		}
 
-		if len(settled) >= 2 {
-			t.Logf("both pools settled: %d instances", len(settled))
+		return len(ids)
+	}
 
+	for {
+		p1, p2 := settledOf("P1"), settledOf("P2")
+
+		if p1 == 1 && p2 == 1 {
 			return
 		}
 
 		select {
 		case <-ctx.Done():
-			t.Fatalf("timed out with %d settled instances; the throw never "+
-				"instantiated the consumer", len(settled))
+			t.Fatalf("timed out with %d settled P1 and %d settled P2 "+
+				"instances, want exactly one of each; the throw never "+
+				"instantiated the consumer", p1, p2)
 		case <-time.After(50 * time.Millisecond):
 		}
 	}

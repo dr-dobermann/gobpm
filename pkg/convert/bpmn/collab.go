@@ -42,7 +42,7 @@ type collabSpec struct {
 // into the parser's collab list, validated once the whole document is
 // read — its processes may be declared after it.
 func parseCollaborationElem(
-	p *parser, _ *assembly, se xml.StartElement,
+	p *parser, se xml.StartElement,
 ) (*assembly, error) {
 	spec := collabSpec{
 		id:   strings.TrimSpace(attrValue(se, "id")),
@@ -68,7 +68,7 @@ func parseCollaborationElem(
 		return nil, err
 	}
 
-	p.reportUnmappedAttrs(se, p.owner, nil)
+	p.reportUnmappedAttrs(se, fallbackName(spec.id, spec.name), nil)
 	p.collabs = append(p.collabs, spec)
 
 	return nil, nil

@@ -400,7 +400,14 @@ func TestLoopsRunOnAThresher(t *testing.T) {
 			"fired", err)
 	}
 
-	t.Logf("instance completed: %s", state)
+	// This e2e pins the WIRING: both decorated nodes, imported from XML,
+	// run on the engine to a clean Completed — the loop machinery engages
+	// without a fault or a deadlock. Iteration-count semantics (the
+	// cardinality, the early stop, the zero-iteration pre-test) are the
+	// runtime's own contract, pinned by internal/instance's suite.
+	if state != thresher.StateCompleted {
+		t.Fatalf("terminal state = %s, want %s", state, thresher.StateCompleted)
+	}
 }
 
 // TestIteratedWaitingLeafPassesThrough is SRD-089.H §6 T-17 (§4.6): the

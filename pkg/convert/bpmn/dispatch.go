@@ -287,8 +287,9 @@ func (p *parser) settle(ctx parseCtx, se xml.StartElement) error {
 }
 
 // defsParser parses one child of <bpmn:definitions>. It returns a
-// non-nil assembly when the child was the document's first <process>.
-type defsParser func(p *parser, asm *assembly, se xml.StartElement) (*assembly, error)
+// non-nil assembly when the child was a <process>, appended to the
+// document's set in order.
+type defsParser func(p *parser, se xml.StartElement) (*assembly, error)
 
 // definitionsParsers claims the children of <bpmn:definitions>. Every
 // event definition is a root element too — the position a Multi-Instance
@@ -319,7 +320,7 @@ var definitionsParsers = func() map[string]defsParser {
 // registry the Multi-Instance behavior refs resolve against. Unlike a
 // definition inside an event, a root one exists only to be referenced,
 // so its id is required.
-func parseRootDefElem(p *parser, _ *assembly, se xml.StartElement) (*assembly, error) {
+func parseRootDefElem(p *parser, se xml.StartElement) (*assembly, error) {
 	id, err := requiredID(se)
 	if err != nil {
 		return nil, err
@@ -345,19 +346,19 @@ func parseRootDefElem(p *parser, _ *assembly, se xml.StartElement) (*assembly, e
 // parseCatalogElem parses one definitions-level catalog object — the
 // <message>, <signal>, <error> or <escalation> an event definition refers
 // to.
-func parseCatalogElem(p *parser, _ *assembly, se xml.StartElement) (*assembly, error) {
+func parseCatalogElem(p *parser, se xml.StartElement) (*assembly, error) {
 	return nil, p.parseCatalogElement(se)
 }
 
 // parseInterfaceElem parses a definitions-level service catalog entry.
-func parseInterfaceElem(p *parser, _ *assembly, se xml.StartElement) (*assembly, error) {
+func parseInterfaceElem(p *parser, se xml.StartElement) (*assembly, error) {
 	return nil, p.parseInterface(se)
 }
 
 // parseProcessElem parses one of the document's processes — each gets
 // its own assembly over the shared document state, in document order
 // (SRD-089.I §4.1).
-func parseProcessElem(p *parser, _ *assembly, se xml.StartElement) (*assembly, error) {
+func parseProcessElem(p *parser, se xml.StartElement) (*assembly, error) {
 	return p.parseProcess(se)
 }
 

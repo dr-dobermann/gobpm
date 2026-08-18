@@ -44,4 +44,13 @@ func TestDeclaredIntIsSatisfiable(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "doesn't match the declared")
 	})
+
+	t.Run("an out-of-range integral result is refused, not cast", func(t *testing.T) {
+		// 1e100 passes the Trunc identity, and Go leaves an out-of-range
+		// float→int conversion implementation-dependent — the bounds
+		// guard keeps it a type mismatch instead of a silently wrong int.
+		_, err := eval("10000000000.0 * 10000000000.0 * 10000000000.0")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "doesn't match the declared")
+	})
 }

@@ -120,8 +120,15 @@ func packResult(
 		// contracts no expression could satisfy together, exposed the
 		// first time a BPMN loopCardinality reached a runtime
 		// (SRD-089.H M3a). A fractional value keeps the mismatch the
-		// check exists for.
-		if expr.ResultType() == "int" && x == math.Trunc(x) {
+		// check exists for. The bounds guard matters: ±Inf and any
+		// float64 beyond the int range PASS the Trunc identity, and Go
+		// defines an out-of-range float→int conversion as
+		// implementation-dependent — a silently wrong number where the
+		// caller declared a precise type. Strict `<` on the upper bound:
+		// MaxInt is not float64-representable and the constant rounds UP
+		// to 2^63, which is itself out of range; MinInt (-2^63) is exact.
+		if expr.ResultType() == "int" && x == math.Trunc(x) &&
+			x >= math.MinInt && x < math.MaxInt {
 			return checkedResult(values.NewVariable(int(x)), "int", expr)
 		}
 

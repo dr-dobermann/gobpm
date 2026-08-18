@@ -486,7 +486,7 @@ func (p *parser) parseDefinitions(root xml.StartElement) error {
 
 		switch t := tok.(type) {
 		case xml.StartElement:
-			next, err := p.handleDefinitionsChild(t, nil)
+			next, err := p.handleDefinitionsChild(t)
 			if err != nil {
 				return err
 			}
@@ -507,7 +507,6 @@ func (p *parser) parseDefinitions(root xml.StartElement) error {
 // Returns a non-nil assembly when a <process> was parsed.
 func (p *parser) handleDefinitionsChild(
 	se xml.StartElement,
-	asm *assembly,
 ) (*assembly, error) {
 	if se.Name.Space != nsBPMN {
 		// Foreign namespace — diagram interchange, a vendor dialect — is
@@ -516,7 +515,7 @@ func (p *parser) handleDefinitionsChild(
 	}
 
 	if parse, ok := definitionsParsers[se.Name.Local]; ok {
-		return parse(p, asm, se)
+		return parse(p, se)
 	}
 
 	return nil, p.settle(ctxDefinitions, se)

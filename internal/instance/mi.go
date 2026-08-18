@@ -186,7 +186,12 @@ func cardinalityCount(v any) (int, bool) {
 		return n, true
 
 	case float64:
-		if n == math.Trunc(n) {
+		// Bounds before the cast: ±Inf and any float64 beyond the int
+		// range pass the Trunc identity, and Go leaves an out-of-range
+		// float→int conversion implementation-dependent. Strict `<` on
+		// the upper bound — the MaxInt constant rounds UP to 2^63 as a
+		// float64, itself out of range; MinInt (-2^63) is exact.
+		if n == math.Trunc(n) && n >= math.MinInt && n < math.MaxInt {
 			return int(n), true
 		}
 	}

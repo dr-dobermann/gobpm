@@ -33,8 +33,13 @@ type loopSpec struct {
 	behavior        string
 	noneRef, oneRef string
 	complex         []complexSpec
-	// testBefore, isSequential are the two boolean attributes.
-	testBefore, isSequential bool
+	// testBefore, isSequential are the two boolean attributes. The two
+	// has*Item flags record the item ELEMENTS' presence — an item with
+	// neither name nor id resolves to "", and "present but unnameable"
+	// must not be mistaken for "absent" when the refusal names what to
+	// fix.
+	testBefore, isSequential    bool
+	hasInputItem, hasOutputItem bool
 }
 
 // complexSpec is one <complexBehaviorDefinition> as read: its condition
@@ -181,6 +186,18 @@ func miCardinalityOpts(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 
 	case hasCard:
+		// An <inputDataItem> beside a cardinality is an orphan — the
+		// item names collection elements, and there is no collection.
+		// Refused like every other half-pair, not silently dropped.
+		if spec.hasInputItem {
+			return nil, errs.New(
+				errs.M("bpmn: %s declares a loopCardinality and an "+
+					"<inputDataItem> but no loopDataInputRef; the item names "+
+					"the elements of a collection — pair it with a "+
+					"loopDataInputRef or drop it", owner),
+				errs.C(errorClass, errs.InvalidObject))
+		}
+
 		expr, err := newIntExpression(*spec.cardinality, asm.exprLanguage)
 		if err != nil {
 			return nil, err
@@ -190,11 +207,19 @@ func miCardinalityOpts(
 			activities.WithCardinality(expr)}, nil
 	}
 
-	if spec.inputItem == "" {
+	if !spec.hasInputItem {
 		return nil, errs.New(
 			errs.M("bpmn: %s names a loopDataInputRef with no inputDataItem; "+
 				"the item is the name each instance reads its element under — "+
 				"declare an <inputDataItem> beside the ref", owner),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if spec.inputItem == "" {
+		return nil, errs.New(
+			errs.M("bpmn: %s carries an <inputDataItem> with neither a name "+
+				"nor an id; the item is the name each instance reads its "+
+				"element under — give it one", owner),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
@@ -211,11 +236,11 @@ func miCardinalityOpts(
 func miOutputOpts(
 	p *parser, asm *assembly, spec *loopSpec, owner string,
 ) ([]activities.MultiInstanceOption, error) {
-	if spec.outputRef == "" && spec.outputItem == "" {
+	if spec.outputRef == "" && !spec.hasOutputItem {
 		return nil, nil
 	}
 
-	if spec.outputRef == "" || spec.outputItem == "" {
+	if spec.outputRef == "" || !spec.hasOutputItem {
 		missing := "loopDataOutputRef"
 		if spec.outputRef != "" {
 			missing = "outputDataItem"
@@ -225,6 +250,14 @@ func miOutputOpts(
 			errs.M("bpmn: %s declares half an output collection pair; the "+
 				"%s is missing — results are assembled from the item into "+
 				"the collection, so both are needed", owner, missing),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if spec.outputItem == "" {
+		return nil, errs.New(
+			errs.M("bpmn: %s carries an <outputDataItem> with neither a name "+
+				"nor an id; the item is the name each instance writes its "+
+				"result under — give it one", owner),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
@@ -359,6 +392,17 @@ func buildComplexDefs(
 					"boolean condition AND an event to throw when it holds",
 					label, complexMissing(cx)),
 				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		// One definition, or a refusal — never a silent eventDefs[0]:
+		// the implicit throw carries exactly one trigger, and dropping
+		// the file's extras would mask its intent.
+		if len(cx.eventDefs) > 1 {
+			return nil, errs.New(
+				errs.M("bpmn: %s carries %d event definitions; the implicit "+
+					"throw event carries exactly one — keep the one to throw",
+					label, len(cx.eventDefs)),
+				errs.C(errorClass, errs.InvalidObject))
 		}
 
 		cond, err := newBoolExpression(*cx.condition, asm.exprLanguage)
@@ -558,9 +602,13 @@ func (p *parser) parseLoopChild(spec *loopSpec, se xml.StartElement) error {
 		return p.loopRef(&spec.outputRef, se)
 
 	case tagInputDataItem:
+		spec.hasInputItem = true
+
 		return p.loopItem(&spec.inputItem, se)
 
 	case tagOutputDataItem:
+		spec.hasOutputItem = true
+
 		return p.loopItem(&spec.outputItem, se)
 
 	case tagComplexBehavior:
