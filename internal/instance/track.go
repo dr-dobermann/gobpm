@@ -1238,20 +1238,35 @@ var errRedispatch = errors.New("the delivery moved this token")
 // It replaces the run loop's pre-step gate. Same act, one level down: the
 // unit that runs a node is the thing that waits for it, so an activity
 // running its node N times waits N times rather than once.
-func (t *track) parkForDelivery(ctx context.Context, step *stepInfo) error {
+func (t *track) parkForDelivery(
+	ctx context.Context, step *stepInfo,
+) (*data.ItemDefinition, error) {
 	if !t.inState(TrackWaitForEvent) {
-		return nil
+		return nil, nil
 	}
 
 	if !t.awaitTrigger(ctx) {
-		return errStopped
+		return nil, errStopped
 	}
 
 	if cur := t.currentStep(); cur != nil && cur.node != step.node {
-		return errRedispatch
+		return nil, errRedispatch
 	}
 
-	return nil
+	// THE PAYLOAD IS THIS INSTANCE'S, and leaves the track with the unit
+	// that received it (ADR-006 §2.9.1: the receiving execution captures the
+	// item into its own frame).
+	//
+	// `deliver` stages it on the track, which is a single slot — fine while
+	// one execution waits at a time, and wrong the moment N instances of one
+	// activity wait concurrently: each would overwrite the others' item
+	// before binding it, off its own goroutine, on a field whose own comment
+	// says it is track-goroutine owned. Taking it here puts it on the unit's
+	// stack, where it belongs to exactly one execution by construction.
+	item := t.receivedItem
+	t.receivedItem = nil
+
+	return item, nil
 }
 
 // awaitTrigger parks the track on its event channel until a trigger arrives, the
@@ -1582,9 +1597,12 @@ func (t *track) executeNodeAs(
 	// Ahead of the frame open, because the delivery's payload is captured
 	// INTO that frame (ADR-006 §2.9.1): the receiving execution binds its own
 	// item, so it must have received it by the time the frame exists.
-	if err := t.parkForDelivery(ctx, step); err != nil {
+	received, err := t.parkForDelivery(ctx, step)
+	if err != nil {
 		return nil, err
 	}
+
+	ai.received = received
 
 	ne, ok := step.node.(exec.NodeExecutor)
 	if !ok {
@@ -1606,6 +1624,15 @@ func (t *track) executeNodeAs(
 				errs.E(err))
 	}
 
+	// Stage this instance's payload as soon as its frame exists, not at
+	// finalize: the node's own Exec reads it through the execution
+	// environment (execEnv.ReceivedItem), which resolves from the FRAME —
+	// per execution — before falling back to the track's single slot. A
+	// ReceiveTask produces its output from it, so binding it later starved
+	// the node that needed it (SRD-090.B M5a).
+	if ai.received != nil {
+		f.SetReceived(ai.received)
+	}
 	defer f.Discard()
 
 	// A compensation-handler track reads the ledger entry's snapshot, not the
@@ -1675,6 +1702,11 @@ type activityInstance struct {
 	// collection-driven Multi-Instance, its split input item. Bound
 	// frame-local, so a sibling cannot overwrite it and it never reaches the
 	// shared container scope (SRD-090.A FR-4).
+	// received is the payload THIS execution's delivery carried, taken off
+	// the track by parkForDelivery and bound into this instance's own frame
+	// (ADR-006 §2.9.1, SRD-090.B M5a). nil for a node that did not wait.
+	received *data.ItemDefinition
+
 	local []data.Data
 }
 
@@ -1789,11 +1821,13 @@ func (t *track) finalizeNodeExecution(
 		t.updateState(TrackProcessStepResults)
 	}
 
-	// stage the delivery's payload for the catch node's binding and
-	// consume it — the next execution must not see a stale item
-	// (SRD-085 FR-1; for an Event-Based Gateway the item survives to
-	// the WINNING ARM's upload, which is this call on the arm's step).
-	if t.receivedItem != nil {
+	// stage the delivery's payload for the catch node's binding
+	// (SRD-085 FR-1). It arrives on the instance rather than the track now
+	// (parkForDelivery), so N concurrent instances of one activity each bind
+	// their own; the track field survives only for the paths that stage an
+	// item without parking — an Event-Based Gateway's winning arm, whose
+	// upload is this call on the ARM's step.
+	if ai.received == nil && t.receivedItem != nil {
 		f.SetReceived(t.receivedItem)
 		t.receivedItem = nil
 	}
