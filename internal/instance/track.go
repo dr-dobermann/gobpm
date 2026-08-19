@@ -710,7 +710,19 @@ func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error
 	// data), so an EBG carrying one always stays resident.
 	allHeld := true
 
+	owner := t.activityOwner()
+
 	for _, d := range defs {
+		// A SIBLING ALREADY ARMED THIS DEFINITION. Its hold and its hub
+		// subscription serve this instance too, because both belong to the
+		// activity rather than to one of its instances (SRD-090.B FR-2) —
+		// so recording the waiter is all this pass owes. Arming again would
+		// take a second hold under the same (instance, track) key, and the
+		// first delivery's ReleaseWaits would then withdraw the lot.
+		if owner != nil && !owner.awaiting(d, t.execOrdinal()) {
+			continue
+		}
+
 		if t.holdWait(d) {
 			continue
 		}
@@ -730,17 +742,11 @@ func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error
 		// owns correlation, anything else registers the track.
 		proc := eventproc.EventProcessor(t)
 
-		if owner := t.activityOwner(); owner != nil {
-			// the hub is told once, by the first instance to wait
-			// (FR-2) — a later one joins a subscription that already
-			// exists, and telling the hub again would be a no-op it
-			// dedupes by identity anyway.
-			if !owner.awaiting(d, t.execOrdinal()) {
-				continue
-			}
-
+		switch {
+		case owner != nil:
 			proc = owner
-		} else if d.Type() == flow.TriggerMessage {
+
+		case d.Type() == flow.TriggerMessage:
 			proc = t.instance
 		}
 
@@ -887,6 +893,16 @@ func (t *track) holdTask(flow.Node) bool {
 // no-op. A hold that outlives its wait is never benign: a stale deadline or
 // subscription wakes a later cycle for a wait that no longer exists.
 func (t *track) releaseHolds() {
+	// The hold belongs to the ACTIVITY, not to the instance that just
+	// delivered (SRD-090.B FR-2). ReleaseWaits withdraws every hold taken
+	// for this track, so releasing while a sibling still waits would leave
+	// that sibling with nothing able to wake a released instance — the
+	// sibling-teardown failure ADR-006 §2.9.5 names, one layer below the
+	// hub.
+	if owner := t.activityOwner(); owner != nil && owner.anyWaiting() {
+		return
+	}
+
 	if t.held.Swap(false) && t.instance.waitHolders != nil {
 		t.instance.waitHolders.ReleaseWaits(t.instance.ID(), t.ID())
 	}

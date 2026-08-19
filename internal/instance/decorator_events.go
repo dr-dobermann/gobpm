@@ -139,6 +139,21 @@ func (es *eventSubs) stopped(def flow.EventDefinition, ord int) bool {
 	return true
 }
 
+// anyWaiting reports whether ANY instance of this activity is parked on any
+// of its definitions — which is what decides the engine hold's lifetime
+// (SRD-090.B FR-2).
+//
+// A hold is keyed (instanceID, trackID) and `ReleaseWaits` withdraws every
+// hold taken for a track, so an activity whose instances share a host track
+// must not release while a sibling still waits: the sibling would be left
+// with nothing able to wake a released instance.
+func (es *eventSubs) anyWaiting() bool {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	return len(es.subs) > 0
+}
+
 // waitingOn returns the ordinals parked on def, ascending — the dispatch
 // order FR-3 specifies. A copy, because the caller reads it off the hub's
 // goroutine while the decorator may still be arming.
@@ -172,6 +187,10 @@ type activitySubscriber interface {
 
 	awaiting(def flow.EventDefinition, ord int) bool
 	stopped(def flow.EventDefinition, ord int) bool
+
+	// anyWaiting gates the engine HOLD, whose lifetime is the whole
+	// activity's rather than one instance's.
+	anyWaiting() bool
 }
 
 // ProcessEvent is the hub's doorbell (ADR-006 §2.9.5): it runs on the HUB's

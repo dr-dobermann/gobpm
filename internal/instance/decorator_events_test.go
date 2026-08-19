@@ -185,3 +185,60 @@ func TestTheExecutorIsResolvedOncePerStep(t *testing.T) {
 	require.NotSame(t, first, moved,
 		"a token that moved gets its NEW node's executor, never the old one")
 }
+
+// TestTheHoldOutlivesEveryInstanceButTheLast (SRD-090.B FR-2, M4): the engine
+// hold belongs to the ACTIVITY, so one instance finishing must not withdraw
+// what its siblings are waiting on.
+//
+// A hold is keyed (instanceID, trackID) and `ReleaseWaits` withdraws EVERY
+// hold taken for a track — there is no room in that key for an ordinal. With
+// several instances of one activity waiting against one host track, releasing
+// on the first delivery would leave the rest waiting with nothing able to
+// wake a released instance: the sibling-teardown failure ADR-006 §2.9.5
+// names, one layer below the hub, where the subscription bookkeeping does not
+// reach.
+//
+// anyWaiting is what the release consults, so this pins the predicate rather
+// than the plumbing that reads it.
+func TestTheHoldOutlivesEveryInstanceButTheLast(t *testing.T) {
+	es := newEventSubs("inst", "node")
+	def := sigDefN(t, "sig")
+
+	require.False(t, es.anyWaiting(),
+		"an activity that has not parked holds nothing")
+
+	for _, ord := range []int{0, 1, 2} {
+		es.awaiting(def, ord)
+	}
+
+	require.True(t, es.anyWaiting())
+
+	es.stopped(def, 0)
+	require.True(t, es.anyWaiting(),
+		"instance 0 delivered — its siblings still need the hold")
+
+	es.stopped(def, 1)
+	require.True(t, es.anyWaiting())
+
+	es.stopped(def, 2)
+	require.False(t, es.anyWaiting(),
+		"the last instance out releases the activity's hold")
+}
+
+// TestTheHoldSpansDefinitions: an activity waiting on two definitions holds
+// until BOTH are done, because ReleaseWaits does not name one.
+func TestTheHoldSpansDefinitions(t *testing.T) {
+	es := newEventSubs("inst", "node")
+	a, b := sigDefN(t, "sig-a"), sigDefN(t, "sig-b")
+
+	es.awaiting(a, 0)
+	es.awaiting(b, 0)
+
+	require.True(t, es.stopped(a, 0), "a's own subscription is done")
+	require.True(t, es.anyWaiting(),
+		"but the activity still waits on b, and one ReleaseWaits would take "+
+			"both")
+
+	require.True(t, es.stopped(b, 0))
+	require.False(t, es.anyWaiting())
+}
