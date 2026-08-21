@@ -1245,7 +1245,19 @@ func (t *track) parkForDelivery(
 		return nil, nil
 	}
 
-	if !t.awaitTrigger(ctx) {
+	// An instance of an iterated activity blocks on ITS OWN box, not on the
+	// track's shared channel (SRD-090.B M5b): N of them can wait at once,
+	// and one channel can neither reach them all for a broadcast nor say
+	// which of them a point-to-point envelope was meant for.
+	box := t.evtCh
+
+	if owner := t.activityOwner(); owner != nil {
+		if b := owner.boxFor(t.execOrdinal()); b != nil {
+			box = b
+		}
+	}
+
+	if !t.awaitTrigger(ctx, box) {
 		return nil, errStopped
 	}
 
@@ -1276,7 +1288,9 @@ func (t *track) parkForDelivery(
 // returns true to continue the run loop (event delivered), false when the
 // goroutine must return — setting the terminal state (Canceled / Dehydrated /
 // Failed) accordingly.
-func (t *track) awaitTrigger(ctx context.Context) (proceed bool) {
+func (t *track) awaitTrigger(
+	ctx context.Context, box chan flow.EventDefinition,
+) (proceed bool) {
 	select {
 	case <-ctx.Done():
 		t.updateState(TrackCanceled)
@@ -1292,7 +1306,7 @@ func (t *track) awaitTrigger(ctx context.Context) (proceed bool) {
 
 		return false
 
-	case eDef, ok := <-t.evtCh:
+	case eDef, ok := <-box:
 		if !ok {
 			// the loop closed evtCh on stop — terminate like a cancellation.
 			t.updateState(TrackCanceled)
@@ -1300,15 +1314,43 @@ func (t *track) awaitTrigger(ctx context.Context) (proceed bool) {
 			return false
 		}
 
-		if err := t.deliver(ctx, eDef); err != nil {
-			t.lastErr = err
-			t.updateState(TrackFailed)
+		return t.applyTrigger(ctx, eDef)
+
+	// THE TRACK'S OWN CHANNEL STAYS LIVE alongside the instance's box.
+	// Only a delivery the DECORATOR routed lands in the box (SRD-090.B
+	// FR-3); everything else still arrives here — a wait the engine HELD
+	// rather than registered with the hub, a task completion, a call or
+	// job outcome. An instance takes whichever comes.
+	//
+	// For a sequential activity that is exact: one instance waits, so both
+	// channels mean the same waiter. A PARALLEL one sharing this channel
+	// would hand a holder-delivered trigger to an arbitrary instance —
+	// which is M6's, with the restore and residency work that owns the
+	// holder seam.
+	case eDef, ok := <-t.evtCh:
+		if !ok {
+			t.updateState(TrackCanceled)
 
 			return false
 		}
 
-		return true
+		return t.applyTrigger(ctx, eDef)
 	}
+}
+
+// applyTrigger delivers a fired definition on the track's own goroutine,
+// reporting whether the run loop continues.
+func (t *track) applyTrigger(
+	ctx context.Context, eDef flow.EventDefinition,
+) (proceed bool) {
+	if err := t.deliver(ctx, eDef); err != nil {
+		t.lastErr = err
+		t.updateState(TrackFailed)
+
+		return false
+	}
+
+	return true
 }
 
 func (t *track) run(

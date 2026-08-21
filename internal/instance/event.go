@@ -40,6 +40,8 @@ type trackEvent struct {
 // kind (SRD-090.A FR-11).
 type iterProcessor interface {
 	waitingOn(defID string) []int
+	deliverTo(ord int, eDef flow.EventDefinition) bool
+	anyWaiting() bool
 }
 
 // successor is one next step for a track: the node to run and, when the token

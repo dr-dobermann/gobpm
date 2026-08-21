@@ -42,6 +42,18 @@ type iterSubscription struct {
 type eventSubs struct {
 	subs map[string]*iterSubscription
 
+	// boxes is each waiting instance's own delivery channel, keyed by
+	// ordinal (SRD-090.B M5b).
+	//
+	// Per INSTANCE rather than per definition: an instance waits on one node
+	// at a time, however many arms that node carries. And per instance
+	// rather than per track, for the reason M3b gave the composite drain —
+	// "the host track's evtCh could only ever serve one waiter, so a second
+	// instance of the same activity would have consumed the first one's".
+	// A broadcast has to reach N of them, and an ordinal-ordered dispatch
+	// has to choose WHICH, neither of which one shared channel can express.
+	boxes map[int]chan flow.EventDefinition
+
 	// id is "<instance>/<node>": stable across the activity's passes and
 	// across a restore, distinct per process instance.
 	id string
@@ -54,8 +66,9 @@ type eventSubs struct {
 // newEventSubs builds the subscription set for one iterated activity.
 func newEventSubs(instanceID, nodeID string) eventSubs {
 	return eventSubs{
-		id:   instanceID + "/" + nodeID,
-		subs: map[string]*iterSubscription{},
+		id:    instanceID + "/" + nodeID,
+		subs:  map[string]*iterSubscription{},
+		boxes: map[int]chan flow.EventDefinition{},
 	}
 }
 
@@ -95,6 +108,10 @@ func (es *eventSubs) awaiting(def flow.EventDefinition, ord int) bool {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
+	if _, open := es.boxes[ord]; !open {
+		es.boxes[ord] = make(chan flow.EventDefinition, eventBufferDepth)
+	}
+
 	s, ok := es.subs[def.ID()]
 	if !ok {
 		es.subs[def.ID()] = &iterSubscription{def: def, waiting: []int{ord}}
@@ -130,6 +147,10 @@ func (es *eventSubs) stopped(def flow.EventDefinition, ord int) bool {
 		s.waiting = append(s.waiting[:idx], s.waiting[idx+1:]...)
 	}
 
+	if !es.waitsAnywhereLocked(ord) {
+		delete(es.boxes, ord)
+	}
+
 	if len(s.waiting) > 0 {
 		return false
 	}
@@ -137,6 +158,52 @@ func (es *eventSubs) stopped(def flow.EventDefinition, ord int) bool {
 	delete(es.subs, def.ID())
 
 	return true
+}
+
+// waitsAnywhereLocked reports whether ord is still parked on ANY definition —
+// the condition for keeping its delivery box open. Caller holds mu.
+func (es *eventSubs) waitsAnywhereLocked(ord int) bool {
+	for _, s := range es.subs {
+		if idx := sort.SearchInts(s.waiting, ord); idx < len(s.waiting) &&
+			s.waiting[idx] == ord {
+			return true
+		}
+	}
+
+	return false
+}
+
+// boxFor returns instance ord's delivery channel — what its unit blocks on
+// instead of the track's shared one.
+func (es *eventSubs) boxFor(ord int) chan flow.EventDefinition {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	return es.boxes[ord]
+}
+
+// deliverTo hands eDef to instance ord, reporting whether it landed. False
+// means the instance is no longer waiting — a losing arm, or a sibling that
+// completed while the delivery was in flight — which is a drop, not an error
+// (SRD-027 FR-4's rule at iteration granularity).
+//
+// Non-blocking: the box is buffered exactly as the track's channel is, and
+// the LOOP is the sender, so a full box must never stall the single writer.
+func (es *eventSubs) deliverTo(ord int, eDef flow.EventDefinition) bool {
+	es.mu.Lock()
+	box, ok := es.boxes[ord]
+	es.mu.Unlock()
+
+	if !ok {
+		return false
+	}
+
+	select {
+	case box <- eDef:
+		return true
+	default:
+		return false
+	}
 }
 
 // anyWaiting reports whether ANY instance of this activity is parked on any
@@ -191,6 +258,10 @@ type activitySubscriber interface {
 	// anyWaiting gates the engine HOLD, whose lifetime is the whole
 	// activity's rather than one instance's.
 	anyWaiting() bool
+
+	// boxFor is the channel instance ord's unit blocks on for its own
+	// delivery.
+	boxFor(ord int) chan flow.EventDefinition
 }
 
 // ProcessEvent is the hub's doorbell (ADR-006 §2.9.5): it runs on the HUB's

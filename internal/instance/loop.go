@@ -823,8 +823,66 @@ func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 		return // correlation mismatch — drop, keep the track parked
 	}
 
+	// AN ITERATED ACTIVITY'S DELIVERY GOES TO ITS INSTANCES, not to the
+	// track they share (SRD-090.B FR-3). The decorator says which are
+	// waiting; the rule for how many receive it is the trigger's own.
+	if ev.iterProc != nil {
+		ls.dispatchToInstances(tr, ev)
+
+		return
+	}
+
 	ls.flipNotParked(tr)
 	tr.evtCh <- ev.eDef
+}
+
+// dispatchToInstances routes one occurrence to the instances of an iterated
+// activity waiting for it (SRD-090.B FR-3, ADR-006 §2.9.2).
+//
+// The multiplicity is the KIND's, stated as contract rather than left to
+// mechanism: a Signal reaches every waiting instance (publication fan-out),
+// a Timer and a Conditional likewise since each instance's trigger is its
+// own, and a Message reaches exactly ONE — it is point-to-point, so serving
+// N would let N instances consume one envelope and all complete.
+//
+// Ordinal order is normative where the instances are otherwise
+// indistinguishable: nothing else can decide which receives an envelope, and
+// two runs of one model must not disagree about it.
+func (ls *loopState) dispatchToInstances(tr *track, ev trackEvent) {
+	ords := ev.iterProc.waitingOn(ev.eDef.ID())
+	if len(ords) == 0 {
+		return // nobody waits on it any more — drop, as a losing arm does
+	}
+
+	// EXACTLY ONE INSTANCE, the first still waiting in ordinal order.
+	//
+	// A Message is point-to-point (ADR-006 §2.9.2), and a Message is the
+	// only trigger an iterated leaf can carry: `ReceiveTask` is the sole
+	// iterable activity that is a `flow.EventNode`, and its one definition
+	// is a message. A UserTask and an external-worker ServiceTask park
+	// through capabilities and never reach this path, and an event catch
+	// cannot iterate at all — loop characteristics belong to activities.
+	//
+	// So the broadcast half of the rule — a Signal or Timer serving EVERY
+	// waiting instance — has no expressible case today. It stays decided in
+	// ADR-006 §2.9.2 rather than written here as code nothing can exercise;
+	// the slice that makes such a wait expressible implements it against a
+	// test that can fail.
+	//
+	// Ordinal order is what makes "the first" reproducible: with nothing to
+	// tell the instances apart, two runs of one model must not disagree
+	// about which received an envelope. Telling them APART is the
+	// correlated case, and it needs the key per instance rather than per
+	// track (SRD-090.B M5c).
+	ev.iterProc.deliverTo(ords[0], ev.eDef)
+
+	// the TRACK leaves the parked set only once no instance of its activity
+	// waits: it is one entry standing for N waiters, so flipping it on the
+	// first delivery would drop every later occurrence at the gate above
+	// (the same reason the activity's hold outlives all but the last).
+	if !ev.iterProc.anyWaiting() {
+		ls.flipNotParked(tr)
+	}
 }
 
 // flipNotParked removes tr from the parked set and clears its message-index and
