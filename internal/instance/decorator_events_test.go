@@ -2,11 +2,21 @@ package instance
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/process"
 )
 
 // sigDefN builds a distinct signal definition, for a subscription set that
@@ -241,4 +251,341 @@ func TestTheHoldSpansDefinitions(t *testing.T) {
 
 	require.True(t, es.stopped(b, 0))
 	require.False(t, es.anyWaiting())
+}
+
+// TestAnInstanceTakesDeliveryOnItsOwnBox (SRD-090.B M5b): a waiting instance
+// has its own delivery channel, opened when it parks and closed when it stops.
+//
+// Per instance rather than per track, for the reason M3b recorded for the
+// composite drain: one shared channel can neither say which instance an
+// envelope was meant for nor reach more than one of them.
+func TestAnInstanceTakesDeliveryOnItsOwnBox(t *testing.T) {
+	es := newEventSubs("inst", "node")
+	def := sigDefN(t, "sig")
+
+	require.Nil(t, es.boxFor(0), "an instance that has not parked has no box")
+
+	es.awaiting(def, 0)
+	es.awaiting(def, 1)
+
+	box0, box1 := es.boxFor(0), es.boxFor(1)
+	require.NotNil(t, box0)
+	require.NotNil(t, box1)
+	require.NotEqual(t, box0, box1, "one box per instance, never shared")
+
+	require.True(t, es.deliverTo(1, def))
+	require.Same(t, def, <-box1)
+	require.Empty(t, box0, "instance 0's box is untouched by 1's delivery")
+
+	es.stopped(def, 1)
+	require.Nil(t, es.boxFor(1), "the box closes with the wait")
+	require.False(t, es.deliverTo(1, def),
+		"a delivery to an instance that stopped waiting is dropped, not an "+
+			"error — a losing arm, or a sibling that completed in flight")
+}
+
+// TestABoxSurvivesWhileTheInstanceWaitsOnAnyDefinition: an instance parked on
+// two definitions keeps its box until it has stopped waiting on both.
+func TestABoxSurvivesWhileTheInstanceWaitsOnAnyDefinition(t *testing.T) {
+	es := newEventSubs("inst", "node")
+	a, b := sigDefN(t, "sig-a"), sigDefN(t, "sig-b")
+
+	es.awaiting(a, 0)
+	es.awaiting(b, 0)
+
+	es.stopped(a, 0)
+	require.NotNil(t, es.boxFor(0),
+		"still parked on b — an Event-Based Gateway races its arms this way")
+
+	es.stopped(b, 0)
+	require.Nil(t, es.boxFor(0))
+}
+
+// TestAFullBoxDropsRatherThanStalls: the LOOP is the sender, so a box that
+// cannot take another occurrence must never block the single writer.
+func TestAFullBoxDropsRatherThanStalls(t *testing.T) {
+	es := newEventSubs("inst", "node")
+	def := sigDefN(t, "sig")
+
+	es.awaiting(def, 0)
+
+	delivered := 0
+	for range eventBufferDepth + 2 {
+		if es.deliverTo(0, def) {
+			delivered++
+		}
+	}
+
+	require.Equal(t, eventBufferDepth, delivered,
+		"the box takes what it can hold and the rest drop — the loop never "+
+			"stalls on a runner that is not reading")
+}
+
+// TestTheDecoratorsDoorbellEmitsToTheLoop (ADR-006 §2.9.5): ProcessEvent runs
+// on the HUB's goroutine and delivers nothing itself — it hands the
+// occurrence to the loop, which owns routing. Same contract
+// track.ProcessEvent already has, which is the point: the decorator
+// substitutes into a chain that exists.
+func TestTheDecoratorsDoorbellEmitsToTheLoop(t *testing.T) {
+	_, _, node, host := decoratorFixture(t)
+	step := &stepInfo{node: node}
+	def := sigDefN(t, "sig")
+
+	for name, proc := range map[string]eventproc.EventProcessor{
+		"multi-instance": newIterDecorator(host, step, nil, false),
+		"standard loop":  newLoopDecorator(host, step, nil, false),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := make(chan trackEvent, 1)
+
+			go func() { got <- <-host.instance.events }()
+
+			require.NoError(t, proc.ProcessEvent(t.Context(), def))
+
+			ev := <-got
+			require.Equal(t, evDeliver, ev.kind)
+			require.Same(t, def, ev.eDef)
+			require.NotNil(t, ev.iterProc,
+				"the delivery names the decorator, so the loop can ask it "+
+					"which instances wait")
+		})
+	}
+}
+
+// fakeIterProc is a stand-in decorator for the LOOP's routing decision: it
+// answers the three questions the loop asks and records what it was handed.
+type fakeIterProc struct {
+	ords      []int
+	delivered []int
+	waiting   bool
+}
+
+func (f *fakeIterProc) waitingOn(string) []int { return f.ords }
+func (f *fakeIterProc) anyWaiting() bool       { return f.waiting }
+
+func (f *fakeIterProc) deliverTo(ord int, _ flow.EventDefinition) bool {
+	f.delivered = append(f.delivered, ord)
+
+	return true
+}
+
+// TestOneOccurrenceReachesOneInstance (SRD-090.B FR-3): the loop serves the
+// FIRST instance still waiting, in ordinal order.
+//
+// A Message is point-to-point, and a Message is the only trigger an iterated
+// leaf can carry — so "exactly one" is the whole rule, and ordinal order is
+// what makes the choice reproducible when nothing distinguishes the
+// instances.
+func TestOneOccurrenceReachesOneInstance(t *testing.T) {
+	inst, tr, ls := userTaskArmed(t)
+	def := sigDefN(t, "sig")
+
+	proc := &fakeIterProc{ords: []int{1, 2, 4}, waiting: true}
+
+	ls.dispatchToInstances(tr, trackEvent{
+		kind: evDeliver, track: tr, eDef: def, iterProc: proc,
+	})
+
+	require.Equal(t, []int{1}, proc.delivered,
+		"the lowest ordinal still waiting, not an arbitrary one")
+	require.Contains(t, ls.waiting, tr.ID(),
+		"its siblings still wait, so the track stays parked")
+	require.NotNil(t, inst)
+}
+
+// TestTheTrackLeavesTheParkedSetWithItsLastWaiter: the track is ONE entry
+// standing for N waiters, so flipping it out on the first delivery would drop
+// every later occurrence at the dispatch gate.
+func TestTheTrackLeavesTheParkedSetWithItsLastWaiter(t *testing.T) {
+	_, tr, ls := userTaskArmed(t)
+	def := sigDefN(t, "sig")
+
+	proc := &fakeIterProc{ords: []int{0}, waiting: false}
+
+	ls.dispatchToInstances(tr, trackEvent{
+		kind: evDeliver, track: tr, eDef: def, iterProc: proc,
+	})
+
+	require.Equal(t, []int{0}, proc.delivered)
+	require.NotContains(t, ls.waiting, tr.ID(),
+		"nobody waits any more — the track leaves the parked set")
+}
+
+// TestADeliveryNobodyAwaitsIsDropped: an occurrence for an activity whose
+// instances have all moved on is a drop, exactly as a losing arm's is.
+func TestADeliveryNobodyAwaitsIsDropped(t *testing.T) {
+	_, tr, ls := userTaskArmed(t)
+
+	proc := &fakeIterProc{waiting: false}
+
+	ls.dispatchToInstances(tr, trackEvent{
+		kind: evDeliver, track: tr, eDef: sigDefN(t, "sig"), iterProc: proc,
+	})
+
+	require.Empty(t, proc.delivered)
+	require.Contains(t, ls.waiting, tr.ID(),
+		"a drop changes nothing — the track's parked state is not the "+
+			"delivery's to decide")
+}
+
+// TestTheOrdinalComesFromTheExecutor (SRD-090.B FR-2): the ordinal a waiter
+// is recorded under is asked of the executor, which is the only thing that
+// knows — a decorator's live instance reports its own, and a plain activity
+// is instance zero of one.
+func TestTheOrdinalComesFromTheExecutor(t *testing.T) {
+	_, _, node, host := decoratorFixture(t)
+	step := &stepInfo{node: node}
+
+	require.Zero(t, host.execOrdinal(),
+		"a track between steps executes nothing, so it reports zero")
+
+	host.exec.Store(&execHandle{e: newNodeExec(host, step, 3), node: node})
+	require.Equal(t, 3, host.execOrdinal())
+}
+
+// decoratedWaiter puts a track at a ReceiveTask under a sequential
+// Multi-Instance, with the decorator installed as its executor — the state a
+// pass is in when it arms, parks and withdraws.
+func decoratedWaiter(
+	t *testing.T, ord int,
+) (*Instance, *track, *iterDecorator, flow.EventDefinition) {
+	t.Helper()
+	require.NoError(t, data.CreateDefaultStates())
+
+	mi, err := activities.NewMultiInstance(activities.WithSequential(),
+		activities.WithCardinality(cardExpr(t, 2)))
+	require.NoError(t, err)
+
+	recv, err := activities.NewReceiveTask("await",
+		bpmncommon.MustMessage("confirm", data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID("arm-confirm"))),
+		activities.WithoutParams(), activities.WithLoop(mi))
+	require.NoError(t, err)
+
+	p, err := process.New("arm-proc")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, recv, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, recv)
+	link(t, recv, end)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	inst, err := New(s, scope.EmptyDataPath, cpRuntime(t), laxEP(t), nil)
+	require.NoError(t, err)
+	inst.tracks = map[string]*track{}
+
+	node := findNode(t, inst.s, "await")
+
+	tr, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+
+	d := newIterDecorator(tr, &stepInfo{node: node}, multiInstanceOf(node), false)
+	d.live.Store(&execHandle{e: newNodeExec(tr, &stepInfo{node: node}, ord)})
+	tr.exec.Store(&execHandle{e: d, node: node})
+
+	return inst, tr, d, node.(flow.EventNode).Definitions()[0]
+}
+
+// TestArmingRegistersTheDecoratorOncePerActivity (SRD-090.B FR-1/FR-2): the
+// first instance to wait registers the DECORATOR with the hub; a sibling
+// joins the subscription that already exists and registers nothing.
+func TestArmingRegistersTheDecoratorOncePerActivity(t *testing.T) {
+	_, tr, d, def := decoratedWaiter(t, 0)
+
+	en, ok := tr.currentStep().node.(flow.EventNode)
+	require.True(t, ok)
+
+	require.NoError(t, tr.armWaiters(en, en.Definitions()))
+	require.Equal(t, []int{0}, d.waitingOn(def.ID()),
+		"the pass that armed is recorded under its own ordinal")
+	require.True(t, d.anyWaiting(),
+		"and the activity's engine hold is due")
+
+	// a second instance of the SAME activity arms while the first waits.
+	d.live.Store(&execHandle{
+		e: newNodeExec(tr, &stepInfo{node: tr.currentStep().node}, 1),
+	})
+
+	require.NoError(t, tr.armWaiters(en, en.Definitions()))
+	require.Equal(t, []int{0, 1}, d.waitingOn(def.ID()),
+		"the sibling joins — one subscription, two waiters")
+}
+
+// TestAPassParksOnItsOwnBox (SRD-090.B M5b): a pass of an iterated activity
+// blocks on the box its ordinal owns, not on the track's shared channel.
+func TestAPassParksOnItsOwnBox(t *testing.T) {
+	_, tr, d, def := decoratedWaiter(t, 1)
+
+	en, ok := tr.currentStep().node.(flow.EventNode)
+	require.True(t, ok)
+	require.NoError(t, tr.armWaiters(en, en.Definitions()))
+
+	tr.updateState(TrackWaitForEvent)
+
+	done := make(chan error, 1)
+
+	go func() {
+		_, err := tr.parkForDelivery(t.Context(), tr.currentStep())
+		done <- err
+	}()
+
+	// delivered to ordinal 1's box — the track's own channel is untouched.
+	require.Eventually(t, func() bool { return d.deliverTo(1, def) },
+		2*time.Second, 5*time.Millisecond)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the pass never took the delivery from its own box")
+	}
+
+	require.Empty(t, tr.evtCh,
+		"nothing was routed through the track's shared channel")
+}
+
+// TestTheWithdrawalNamesTheOrdinal (SRD-090.B FR-2): a pass finishing
+// withdraws ITS wait; the activity's subscription and hold go only when the
+// last instance stops.
+func TestTheWithdrawalNamesTheOrdinal(t *testing.T) {
+	_, tr, d, def := decoratedWaiter(t, 0)
+
+	en, ok := tr.currentStep().node.(flow.EventNode)
+	require.True(t, ok)
+
+	require.NoError(t, tr.armWaiters(en, en.Definitions()))
+
+	d.live.Store(&execHandle{
+		e: newNodeExec(tr, &stepInfo{node: tr.currentStep().node}, 1),
+	})
+	require.NoError(t, tr.armWaiters(en, en.Definitions()))
+
+	// instance 1 delivers and withdraws.
+	require.NoError(t, tr.unregisterEvent(en))
+	require.Equal(t, []int{0}, d.waitingOn(def.ID()),
+		"instance 0 still waits — its wait is not 1's to withdraw")
+	require.True(t, d.anyWaiting())
+
+	tr.releaseHolds()
+	require.True(t, d.anyWaiting(),
+		"and the engine hold stands while it does")
+
+	// instance 0 follows.
+	d.live.Store(&execHandle{
+		e: newNodeExec(tr, &stepInfo{node: tr.currentStep().node}, 0),
+	})
+	require.NoError(t, tr.unregisterEvent(en))
+	require.False(t, d.anyWaiting(),
+		"the last one out releases the activity's subscription and hold")
 }
