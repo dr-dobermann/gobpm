@@ -9,7 +9,7 @@ replace github.com/dr-dobermann/gobpm => ../..
 require (
 	github.com/dr-dobermann/gobpm v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1
-	modernc.org/sqlite v1.56.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
