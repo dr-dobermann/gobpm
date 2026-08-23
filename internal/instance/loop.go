@@ -721,6 +721,14 @@ type msgSub struct {
 	track   *track
 	keyName string
 	value   string
+
+	// ord is the INSTANCE this subscription belongs to (SRD-090.B M5c).
+	//
+	// An iterated activity's instances share a host track, so the track no
+	// longer identifies a waiter: N of them subscribe with N different
+	// correlation values, and an envelope has to reach the one whose value
+	// it matches. Zero for a plain activity, which is instance zero of one.
+	ord int
 }
 
 // addMsgSub records a parked track's message subscription (SRD-085
@@ -729,10 +737,43 @@ type msgSub struct {
 // to pick by — a modeling error the instance faults on rather than an
 // arbitrary pick (ADR-006 v.5 §2.9.3). Runs on the loop goroutine.
 func (ls *loopState) addMsgSub(id string, t *track) {
+	ord := t.execOrdinal()
+
+	// PRUNE THE INSTANCES THAT HAVE STOPPED WAITING. An iterated activity's
+	// passes subscribe one after another on one track, and a pass that has
+	// delivered is not a concurrent waiter — leaving its entry indexed would
+	// make the next pass look like an ambiguous second waiter and fault a
+	// well-formed model (SRD-090.B M5c).
+	//
+	// The decorator is asked which of its instances are parked, rather than
+	// the loop tracking it: the same set that decides the subscription's and
+	// the hold's lifetime decides this one.
+	if owner := t.ownerIfResolved(); owner != nil {
+		live := map[int]bool{}
+		for _, o := range owner.waitingOn(id) {
+			live[o] = true
+		}
+
+		kept := ls.msgIdx[id][:0]
+
+		for _, sub := range ls.msgIdx[id] {
+			if sub.track != t || live[sub.ord] {
+				kept = append(kept, sub)
+			}
+		}
+
+		ls.msgIdx[id] = kept
+	}
+
 	subs := ls.msgIdx[id]
 
 	for _, sub := range subs {
-		if sub.track == t {
+		// (track, ordinal), not track alone: a SIBLING INSTANCE of the same
+		// activity is a distinct waiter on the same track, and skipping it
+		// as "already indexed" would leave its correlation value unrecorded
+		// — every envelope would then resolve to whichever instance
+		// subscribed first (SRD-090.B M5c).
+		if sub.track == t && sub.ord == ord {
 			return // re-parked — already indexed
 		}
 	}
@@ -758,8 +799,12 @@ func (ls *loopState) addMsgSub(id string, t *track) {
 		return
 	}
 
+	// the VALUE is captured here rather than read at delivery: the track
+	// carries one slot for it, so a later pass overwrites what an earlier
+	// one evaluated. Held on the subscription, each instance's value
+	// survives as long as its wait does.
 	ls.msgIdx[id] = append(subs, msgSub{
-		track: t, keyName: keyName, value: value,
+		track: t, keyName: keyName, value: value, ord: ord,
 	})
 }
 
@@ -771,23 +816,23 @@ func (ls *loopState) addMsgSub(id string, t *track) {
 // message. Runs on the loop goroutine.
 func (ls *loopState) resolveMsgSub(
 	ctx context.Context, subs []msgSub, eDef flow.EventDefinition,
-) *track {
+) (*msgSub, bool) {
 	if len(subs) == 0 {
-		return nil
+		return nil, false
 	}
 
 	if len(subs) == 1 && subs[0].keyName == "" {
-		return subs[0].track
+		return &subs[0], true
 	}
 
-	for _, sub := range subs {
-		derived, ok := ls.inst.corr.deriveNamed(ctx, eDef, sub.keyName)
-		if ok && derived == sub.value {
-			return sub.track
+	for i := range subs {
+		derived, ok := ls.inst.corr.deriveNamed(ctx, eDef, subs[i].keyName)
+		if ok && derived == subs[i].value {
+			return &subs[i], true
 		}
 	}
 
-	return nil
+	return nil, false
 }
 
 // dispatchToParked sends a fired event to its parked-and-undelivered track. The target is
@@ -803,14 +848,23 @@ func (ls *loopState) resolveMsgSub(
 // the loop-owned maps without a lock.
 func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 	tr := ev.track
-	// Message (FR-8): a track-less evDeliver resolves the parked track from the
-	// fired def's id — by the iteration-correlation match when several wait
-	// (SRD-085 FR-2).
+
+	// ord is the INSTANCE a correlated message resolved to, or -1 when the
+	// delivery names no particular one (SRD-090.B M5c).
+	ord := -1
+
+	// Message (FR-8): a track-less evDeliver resolves the parked waiter from
+	// the fired def's id — by the iteration-correlation match when several
+	// wait (SRD-085 FR-2). With an iterated activity those several can be
+	// instances of ONE activity on one track, so the match names an ordinal
+	// as well as a track.
 	if tr == nil {
-		tr = ls.resolveMsgSub(ctx, ls.msgIdx[ev.eDef.ID()], ev.eDef)
-		if tr == nil {
-			return // no (matching) parked track for this message → drop
+		sub, ok := ls.resolveMsgSub(ctx, ls.msgIdx[ev.eDef.ID()], ev.eDef)
+		if !ok {
+			return // no (matching) parked waiter for this message → drop
 		}
+
+		tr, ord = sub.track, sub.ord
 	}
 
 	if _, parked := ls.waiting[tr.ID()]; !parked {
@@ -827,7 +881,7 @@ func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 	// track they share (SRD-090.B FR-3). The decorator says which are
 	// waiting; the rule for how many receive it is the trigger's own.
 	if ev.iterProc != nil {
-		ls.dispatchToInstances(tr, ev)
+		ls.dispatchToInstances(tr, ev, ord)
 
 		return
 	}
@@ -848,10 +902,25 @@ func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 // Ordinal order is normative where the instances are otherwise
 // indistinguishable: nothing else can decide which receives an envelope, and
 // two runs of one model must not disagree about it.
-func (ls *loopState) dispatchToInstances(tr *track, ev trackEvent) {
+func (ls *loopState) dispatchToInstances(tr *track, ev trackEvent, ord int) {
 	ords := ev.iterProc.waitingOn(ev.eDef.ID())
 	if len(ords) == 0 {
 		return // nobody waits on it any more — drop, as a losing arm does
+	}
+
+	// A CORRELATED MESSAGE NAMES ITS INSTANCE. The model declared how a
+	// concurrently-waiting iteration is addressed (SRD-085 FR-3), the match
+	// happened above, and the ordinal it produced is the answer — ordinal
+	// order is the fallback for instances nothing distinguishes, not a
+	// substitute for a declaration that does.
+	if ord >= 0 {
+		ev.iterProc.deliverTo(ord, ev.eDef)
+
+		if !ev.iterProc.anyWaiting() {
+			ls.flipNotParked(tr)
+		}
+
+		return
 	}
 
 	// EXACTLY ONE INSTANCE, the first still waiting in ordinal order.

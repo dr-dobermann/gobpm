@@ -784,6 +784,18 @@ func (t *track) execOrdinal() int {
 }
 
 func (t *track) activityOwner() activitySubscriber {
+	// A track with no step owns nothing, and asking is not free: currentStep
+	// indexes the last step and panics on an empty list. Reachable from the
+	// LOOP — addMsgSub asks on a track that has not taken a step yet — so
+	// the guard is real rather than defensive.
+	t.m.RLock()
+	stepless := len(t.steps) == 0
+	t.m.RUnlock()
+
+	if stepless {
+		return nil
+	}
+
 	step := t.currentStep()
 	if step == nil || step.node == nil {
 		return nil
@@ -796,6 +808,22 @@ func (t *track) activityOwner() activitySubscriber {
 	// node's path untouched — its executor answers nil, so nothing about
 	// arming changes for it (SRD-090.B FR-1/NFR-1).
 	return t.resolveExec(step).subscriber()
+}
+
+// ownerIfResolved is activityOwner for a reader that must not BUILD one —
+// the loop, which asks about a track it does not own.
+//
+// activityOwner resolves, which stores the executor in the track's handle;
+// that is right on the track's own goroutine, where the executor is about to
+// run, and wrong from the loop, where it would hand a track an executor built
+// by someone else. This asks only what is already there.
+func (t *track) ownerIfResolved() activitySubscriber {
+	h := t.exec.Load()
+	if h == nil {
+		return nil
+	}
+
+	return h.e.subscriber()
 }
 
 // holdWait offers a definition to the engine's durable holders (SRD-071 FR-3),

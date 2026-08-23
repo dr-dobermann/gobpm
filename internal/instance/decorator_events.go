@@ -262,6 +262,10 @@ type activitySubscriber interface {
 	// boxFor is the channel instance ord's unit blocks on for its own
 	// delivery.
 	boxFor(ord int) chan flow.EventDefinition
+
+	// waitingOn reports which instances are parked on a definition — the
+	// set the loop prunes its subscription index against.
+	waitingOn(defID string) []int
 }
 
 // ProcessEvent is the hub's doorbell (ADR-006 §2.9.5): it runs on the HUB's

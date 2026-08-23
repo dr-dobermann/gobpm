@@ -384,7 +384,7 @@ func TestOneOccurrenceReachesOneInstance(t *testing.T) {
 
 	ls.dispatchToInstances(tr, trackEvent{
 		kind: evDeliver, track: tr, eDef: def, iterProc: proc,
-	})
+	}, -1)
 
 	require.Equal(t, []int{1}, proc.delivered,
 		"the lowest ordinal still waiting, not an arbitrary one")
@@ -404,7 +404,7 @@ func TestTheTrackLeavesTheParkedSetWithItsLastWaiter(t *testing.T) {
 
 	ls.dispatchToInstances(tr, trackEvent{
 		kind: evDeliver, track: tr, eDef: def, iterProc: proc,
-	})
+	}, -1)
 
 	require.Equal(t, []int{0}, proc.delivered)
 	require.NotContains(t, ls.waiting, tr.ID(),
@@ -420,7 +420,7 @@ func TestADeliveryNobodyAwaitsIsDropped(t *testing.T) {
 
 	ls.dispatchToInstances(tr, trackEvent{
 		kind: evDeliver, track: tr, eDef: sigDefN(t, "sig"), iterProc: proc,
-	})
+	}, -1)
 
 	require.Empty(t, proc.delivered)
 	require.Contains(t, ls.waiting, tr.ID(),
