@@ -3,6 +3,7 @@ package snapshot
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -12,6 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 const errorClass = "SNAPSHOT_ERRORS"
@@ -358,6 +360,33 @@ func checkUncorrelatedParallelMessage(n flow.Node) error {
 		return nil
 	}
 
+	// A CAPABILITY-PARKED ACTIVITY cannot fan out at all yet. A human task
+	// and an external-worker Service Task park through their own capability
+	// rather than an event subscription, and the identity that addresses the
+	// parked work — `track.taskID` — is one slot on the host track. N
+	// instances parking at once therefore announce ONE task between them:
+	// measured, a three-item parallel Multi-Instance over a User Task
+	// announces a single task and the process runs to completion without
+	// anyone completing it. Three approvals modeled, none performed.
+	//
+	// That is the silent wrong answer the blanket refusal used to prevent,
+	// and it was reachable between SRD-090.B M3 (which deleted that refusal)
+	// and this guard. A SEQUENTIAL iteration is unaffected — one instance
+	// parks at a time, each pass registers its own entry, and each requires
+	// its own completion.
+	if parksOnCapability(n) {
+		return errs.New(
+			errs.M("activity %q is a PARALLEL Multi-Instance over work that "+
+				"parks outside the event system (a User Task or an "+
+				"external-worker Service Task): its instances would share "+
+				"one task identity, so only one is addressable and the rest "+
+				"complete without being done. Make the Multi-Instance "+
+				"sequential — one instance parks at a time there, and each "+
+				"pass is completed on its own", n.Name()),
+			errs.C(errorClass, errs.InvalidObject),
+			errs.D(observability.AttrNodeID, n.ID()))
+	}
+
 	en, isEvent := n.(flow.EventNode)
 	if !isEvent {
 		return nil
@@ -377,6 +406,25 @@ func checkUncorrelatedParallelMessage(n flow.Node) error {
 			"there, so each pass consumes one message", n.Name()),
 		errs.C(errorClass, errs.InvalidObject),
 		errs.D(observability.AttrNodeID, n.ID()))
+}
+
+// parksOnCapability reports whether executing this node parks through a
+// capability rather than an event subscription — a human task, or a Service
+// Task dispatched to an external worker. Both are addressed by a task
+// identity the host track holds one of.
+func parksOnCapability(n flow.Node) bool {
+	if _, human := n.(interactor.HumanTask); human {
+		return true
+	}
+
+	ew, ok := n.(tasks.ExternalWorker)
+	if !ok {
+		return false
+	}
+
+	_, isWorker := ew.WorkerTopic()
+
+	return isWorker
 }
 
 // parallelMultiInstance reports the node's Multi-Instance characteristics

@@ -556,6 +556,39 @@ func TestOnlyTheAmbiguousIteratedWaitIsRefused(t *testing.T) {
 					"something is")
 		})
 
+	t.Run("a PARALLEL MI over a User Task is refused", func(t *testing.T) {
+		mi, err := activities.NewMultiInstance(
+			activities.WithInputCollection("items", "item"))
+		require.NoError(t, err)
+
+		ut, err := activities.NewUserTask("approve",
+			activities.WithCandidateUsers("alice"),
+			activities.WithOutput("result", "string", true),
+			activities.WithoutParams(), activities.WithLoop(mi))
+		require.NoError(t, err)
+
+		err = build(t, "wl-ut-par", ut)
+		require.ErrorContains(t, err, "parks outside the event system")
+		require.ErrorContains(t, err, "sequential",
+			"the refusal names the shape that does work")
+	})
+
+	t.Run("a SEQUENTIAL MI over a User Task builds", func(t *testing.T) {
+		mi, err := activities.NewMultiInstance(activities.WithSequential(),
+			activities.WithInputCollection("items", "item"))
+		require.NoError(t, err)
+
+		ut, err := activities.NewUserTask("approve",
+			activities.WithCandidateUsers("alice"),
+			activities.WithOutput("result", "string", true),
+			activities.WithoutParams(), activities.WithLoop(mi))
+		require.NoError(t, err)
+
+		require.NoError(t, build(t, "wl-ut-seq", ut),
+			"one instance parks at a time, and each pass is completed on "+
+				"its own")
+	})
+
 	t.Run("a non-waiting leaf under MI is fine", func(t *testing.T) {
 		mi, err := activities.NewMultiInstance(
 			activities.WithInputCollection("items", "item"))
