@@ -28,11 +28,7 @@ type trackEvent struct {
 	// (SRD-090.B FR-3), because routing is the single writer's and stays
 	// there.
 	iterProc iterProcessor
-	// ord is the INSTANCE an event belongs to, for an activity whose
-	// instances share a host track (SRD-090.B M5d). Zero for everything
-	// else, which is instance zero of one.
 	changes  []data.Change
-	ord      int
 	compWait bool
 	kind     trackEventKind
 }

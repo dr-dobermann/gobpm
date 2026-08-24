@@ -384,7 +384,7 @@ func TestOneOccurrenceReachesOneInstance(t *testing.T) {
 
 	ls.dispatchToInstances(tr, trackEvent{
 		kind: evDeliver, track: tr, eDef: def, iterProc: proc,
-	}, -1)
+	})
 
 	require.Equal(t, []int{1}, proc.delivered,
 		"the lowest ordinal still waiting, not an arbitrary one")
@@ -404,7 +404,7 @@ func TestTheTrackLeavesTheParkedSetWithItsLastWaiter(t *testing.T) {
 
 	ls.dispatchToInstances(tr, trackEvent{
 		kind: evDeliver, track: tr, eDef: def, iterProc: proc,
-	}, -1)
+	})
 
 	require.Equal(t, []int{0}, proc.delivered)
 	require.NotContains(t, ls.waiting, tr.ID(),
@@ -420,7 +420,7 @@ func TestADeliveryNobodyAwaitsIsDropped(t *testing.T) {
 
 	ls.dispatchToInstances(tr, trackEvent{
 		kind: evDeliver, track: tr, eDef: sigDefN(t, "sig"), iterProc: proc,
-	}, -1)
+	})
 
 	require.Empty(t, proc.delivered)
 	require.Contains(t, ls.waiting, tr.ID(),
@@ -506,7 +506,7 @@ func TestArmingRegistersTheDecoratorOncePerActivity(t *testing.T) {
 	en, ok := tr.currentStep().node.(flow.EventNode)
 	require.True(t, ok)
 
-	require.NoError(t, tr.armWaiters(en, en.Definitions(), tr.execOrdinal()))
+	require.NoError(t, tr.armWaiters(en, en.Definitions()))
 	require.Equal(t, []int{0}, d.waitingOn(def.ID()),
 		"the pass that armed is recorded under its own ordinal")
 	require.True(t, d.anyWaiting(),
@@ -517,7 +517,7 @@ func TestArmingRegistersTheDecoratorOncePerActivity(t *testing.T) {
 		e: newNodeExec(tr, &stepInfo{node: tr.currentStep().node}, 1),
 	})
 
-	require.NoError(t, tr.armWaiters(en, en.Definitions(), tr.execOrdinal()))
+	require.NoError(t, tr.armWaiters(en, en.Definitions()))
 	require.Equal(t, []int{0, 1}, d.waitingOn(def.ID()),
 		"the sibling joins — one subscription, two waiters")
 }
@@ -529,14 +529,14 @@ func TestAPassParksOnItsOwnBox(t *testing.T) {
 
 	en, ok := tr.currentStep().node.(flow.EventNode)
 	require.True(t, ok)
-	require.NoError(t, tr.armWaiters(en, en.Definitions(), tr.execOrdinal()))
+	require.NoError(t, tr.armWaiters(en, en.Definitions()))
 
 	tr.updateState(TrackWaitForEvent)
 
 	done := make(chan error, 1)
 
 	go func() {
-		_, err := tr.parkForDelivery(t.Context(), tr.currentStep(), activityInstance{})
+		_, err := tr.parkForDelivery(t.Context(), tr.currentStep())
 		done <- err
 	}()
 
@@ -564,12 +564,12 @@ func TestTheWithdrawalNamesTheOrdinal(t *testing.T) {
 	en, ok := tr.currentStep().node.(flow.EventNode)
 	require.True(t, ok)
 
-	require.NoError(t, tr.armWaiters(en, en.Definitions(), tr.execOrdinal()))
+	require.NoError(t, tr.armWaiters(en, en.Definitions()))
 
 	d.live.Store(&execHandle{
 		e: newNodeExec(tr, &stepInfo{node: tr.currentStep().node}, 1),
 	})
-	require.NoError(t, tr.armWaiters(en, en.Definitions(), tr.execOrdinal()))
+	require.NoError(t, tr.armWaiters(en, en.Definitions()))
 
 	// instance 1 delivers and withdraws.
 	require.NoError(t, tr.unregisterEvent(en))

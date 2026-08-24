@@ -121,21 +121,6 @@ type nodeExec struct {
 	// instance of a plain activity, which has nothing to distinguish.
 	local []data.Data
 
-	// iterated marks this instance as one of an iterated activity's, which
-	// is what makes its wait its own to classify and to hold.
-	iterated bool
-
-	// parked is this instance's OWN wait, written by its goroutine and read
-	// by the LOOP, so it is atomic — the same shape scopeExec uses for the
-	// drain it holds (SRD-090.B M6).
-	//
-	// The track's TrackWaitForEvent cannot serve N instances: it is one
-	// state, so a sibling's delivery clears it for all of them and an
-	// instance that had not yet entered its wait skips parking altogether.
-	// The track's state remains what an OBSERVER sees — the token's phase,
-	// the checkpoint's liveness — projected from "any instance parked".
-	parked atomic.Bool
-
 	ord int
 }
 
@@ -246,10 +231,7 @@ func (d *iterDecorator) buildInstance(ord int) activityExec {
 		return e
 	}
 
-	e := newNodeExec(d.t, d.step, ord)
-	e.iterated = true
-
-	return e
+	return newNodeExec(d.t, d.step, ord)
 }
 
 // iterKind names the shape this decorator drives, for the loop's position
@@ -911,11 +893,10 @@ func (d *iterDecorator) instanceFor(
 	}
 
 	e := &nodeExec{
-		t:        d.t,
-		step:     &stepInfo{node: d.step.node, inFlow: d.step.inFlow},
-		ord:      ord,
-		local:    local,
-		iterated: true,
+		t:     d.t,
+		step:  &stepInfo{node: d.step.node, inFlow: d.step.inFlow},
+		ord:   ord,
+		local: local,
 	}
 
 	if st.staging != nil {
@@ -1095,26 +1076,7 @@ func (e *nodeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	return e.t.executeNodeAs(ctx, e.step, activityInstance{
 		local:   e.local,
 		capture: e.capture,
-		// an instance of an iterated activity classifies its own wait: the
-		// arrival that would have done it happened once, for all of them
-		// (SRD-090.B M6). e.parked is what its wait then sets.
-		//
-		// A PLAIN activity passes neither: arrival classified it, and the
-		// track's state is the truth because nothing else parks that track.
-		classify: e.iterated,
-		parked:   e.ownWait(),
-		ord:      e.ord,
 	})
-}
-
-// ownWait is this instance's own wait flag, or nil when the track's state is
-// the truth — which it is for every activity with one execution.
-func (e *nodeExec) ownWait() *atomic.Bool {
-	if !e.iterated {
-		return nil
-	}
-
-	return &e.parked
 }
 
 // awaits reports an event wait, which is the only kind a leaf can hold: a
@@ -1124,14 +1086,6 @@ func (e *nodeExec) ownWait() *atomic.Bool {
 // to one. A decorator's instances report their own (M2), and the reading
 // here does not change: a parked leaf awaits an event.
 func (e *nodeExec) awaits() awaitKind {
-	// this instance's own wait, not the track's state: N instances of one
-	// activity share the latter (SRD-090.B M6).
-	if e.parked.Load() {
-		return awaitEvent
-	}
-
-	// a plain activity is instance zero of one, and its track's state is
-	// still the truth — nothing else parks it.
 	if e.t.inState(TrackWaitForEvent) {
 		return awaitEvent
 	}
