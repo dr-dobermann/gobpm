@@ -71,6 +71,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Lane and Collaboration § pins are restored, verified**
+  (closes #334). SRD-089.F FR-8 removed the invented section numbers
+  `laneSet`/`lane` and `collaboration`/`participant`/`messageFlow`
+  carried, because the vendored extract pins neither family. The
+  numbers now come from the BPMN 2.0 spec text itself
+  (formal/2011-01-03), the grounding order's second authority: Lanes
+  §10.7, Collaboration §9.1, Participant §9.2.1, Message Flow §9.3 —
+  so a refused element from either family points its modeler at the
+  right chapter again.
+
 - **A declared-int lite expression could never evaluate** (SRD-089.H
   §4.8). The lite evaluator unifies every numeric to `float64`
   (ADR-032 §2.3) while the Multi-Instance model guard REQUIRES the
