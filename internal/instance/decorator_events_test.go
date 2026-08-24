@@ -506,7 +506,7 @@ func TestArmingRegistersTheDecoratorOncePerActivity(t *testing.T) {
 	en, ok := tr.currentStep().node.(flow.EventNode)
 	require.True(t, ok)
 
-	require.NoError(t, tr.armWaiters(en, en.Definitions()))
+	require.NoError(t, tr.armWaiters(en, en.Definitions(), tr.execOrdinal()))
 	require.Equal(t, []int{0}, d.waitingOn(def.ID()),
 		"the pass that armed is recorded under its own ordinal")
 	require.True(t, d.anyWaiting(),
@@ -517,7 +517,7 @@ func TestArmingRegistersTheDecoratorOncePerActivity(t *testing.T) {
 		e: newNodeExec(tr, &stepInfo{node: tr.currentStep().node}, 1),
 	})
 
-	require.NoError(t, tr.armWaiters(en, en.Definitions()))
+	require.NoError(t, tr.armWaiters(en, en.Definitions(), tr.execOrdinal()))
 	require.Equal(t, []int{0, 1}, d.waitingOn(def.ID()),
 		"the sibling joins — one subscription, two waiters")
 }
@@ -529,14 +529,14 @@ func TestAPassParksOnItsOwnBox(t *testing.T) {
 
 	en, ok := tr.currentStep().node.(flow.EventNode)
 	require.True(t, ok)
-	require.NoError(t, tr.armWaiters(en, en.Definitions()))
+	require.NoError(t, tr.armWaiters(en, en.Definitions(), tr.execOrdinal()))
 
 	tr.updateState(TrackWaitForEvent)
 
 	done := make(chan error, 1)
 
 	go func() {
-		_, err := tr.parkForDelivery(t.Context(), tr.currentStep())
+		_, err := tr.parkForDelivery(t.Context(), tr.currentStep(), activityInstance{})
 		done <- err
 	}()
 
@@ -564,12 +564,12 @@ func TestTheWithdrawalNamesTheOrdinal(t *testing.T) {
 	en, ok := tr.currentStep().node.(flow.EventNode)
 	require.True(t, ok)
 
-	require.NoError(t, tr.armWaiters(en, en.Definitions()))
+	require.NoError(t, tr.armWaiters(en, en.Definitions(), tr.execOrdinal()))
 
 	d.live.Store(&execHandle{
 		e: newNodeExec(tr, &stepInfo{node: tr.currentStep().node}, 1),
 	})
-	require.NoError(t, tr.armWaiters(en, en.Definitions()))
+	require.NoError(t, tr.armWaiters(en, en.Definitions(), tr.execOrdinal()))
 
 	// instance 1 delivers and withdraws.
 	require.NoError(t, tr.unregisterEvent(en))
