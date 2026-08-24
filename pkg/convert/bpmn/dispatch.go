@@ -235,13 +235,21 @@ var sections = map[string]string{
 	// too, but carries no § here — the extract does not pin one, and a
 	// section asserted from memory is worse feedback than none.
 	//
-	// Three more families are absent for that same reason, having once
-	// been present with invented numbers: <laneSet>/<lane>, and the
-	// Collaboration group <collaboration>/<participant>/<messageFlow>.
-	// conformance.md line 32 and lines 165-176 keep all of them in
-	// scope but pin no § for any, and a modeler sent to the wrong
-	// chapter stops trusting the rest of the message. They are pinned
-	// when the spec text supplies a number, not before.
+	// The Lane and Collaboration families are pinned from the SPEC TEXT
+	// (formal/2011-01-03), the grounding order's second authority — the
+	// extract keeps them in scope and pins no § (conformance.md:32,
+	// 165-176), and both once carried invented numbers until SRD-089.F
+	// FR-8 removed them (#334 restores them verified): Lanes are §10.7
+	// (spec p.305-307 — "a Lane is contained within a LaneSet, which is
+	// contained within a Process"); the Collaboration concept is §9.1
+	// (p.111), a Participant §9.2.1 (p.114), a Message Flow §9.3
+	// (p.120).
+	"laneSet":       "§10.7",
+	"lane":          "§10.7",
+	"collaboration": "§9.1",
+	"participant":   "§9.2.1",
+	"messageFlow":   "§9.3",
+
 	"conversation":            "§9.5.1",
 	"subConversation":         "§9.5.1",
 	"callConversation":        "§9.5.1",
