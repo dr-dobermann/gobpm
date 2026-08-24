@@ -275,17 +275,18 @@ func TestCollabFamilyIDsJoinTheLedger(t *testing.T) {
 	}
 }
 
-// TestParticipantOutsideACollaboration is T-12 (§4.5): still refused,
-// still no § — the extract pins none (#334).
+// TestParticipantOutsideACollaboration is T-12 (§4.5): still refused —
+// and since #334 the refusal carries the spec text's own §9.2.1, the
+// pin the extract could not supply.
 func TestParticipantOutsideACollaboration(t *testing.T) {
 	_, err := importEventDoc(t, propDoc("",
 		`    <bpmn:participant id="pa1" processRef="P"/>`))
 	if err == nil || !strings.Contains(err.Error(), `unsupported element "participant"`) {
-		t.Fatalf("error = %v, want the plain refusal", err)
+		t.Fatalf("error = %v, want the refusal", err)
 	}
 
-	if strings.Contains(err.Error(), "§") {
-		t.Errorf("error = %v carries a §; the extract pins none (#334)", err)
+	if !strings.Contains(err.Error(), "§9.2.1") {
+		t.Errorf("error = %v, want the spec text's §9.2.1 (#334)", err)
 	}
 }
 

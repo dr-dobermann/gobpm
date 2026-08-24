@@ -167,13 +167,15 @@ func TestImportErrors(t *testing.T) {
 		{
 			name: "unsupported in-namespace element",
 			doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
-  <bpmn:process id="p"><bpmn:participant id="part"/></bpmn:process>
+  <bpmn:process id="p"><bpmn:choreographyTask id="ct"/></bpmn:process>
 </bpmn:definitions>`,
-			want:    `unsupported element "participant"`,
+			want:    `unsupported element "choreographyTask"`,
 			wantUee: true,
-			// No §: the extract keeps <participant> in scope but pins
-			// no section for it, and an invented one is worse feedback
-			// than none (SRD-089.F FR-8).
+			// No §: neither the extract nor a spec-text verification
+			// pins the Choreography family, and an invented section is
+			// worse feedback than none (SRD-089.F FR-8). <participant>
+			// stopped being this test's sample when #334 pinned it at
+			// the spec text's §9.2.1.
 			wantSec: "",
 		},
 		{
@@ -1088,16 +1090,16 @@ func TestSectionFor(t *testing.T) {
 		"multiInstanceLoopCharacteristics": "§13.3.7",
 		"unknown":                          "",
 
-		// Pinned as ABSENT, not as a number. The extract keeps these
-		// in scope and pins no § for any of them; they carried
-		// invented ones until SRD-089.F FR-8. A future pin has to
-		// come with the spec text that supplies it, and changing
-		// these lines is where that gets noticed.
-		"laneSet":       "",
-		"lane":          "",
-		"collaboration": "",
-		"participant":   "",
-		"messageFlow":   "",
+		// Restored by #334 from the spec text (formal/2011-01-03),
+		// after SRD-089.F FR-8 removed the invented numbers they
+		// carried: Lanes §10.7 (spec p.305-307), Collaboration §9.1
+		// (p.111), Participant §9.2.1 (p.114), Message Flow §9.3
+		// (p.120).
+		"laneSet":       "§10.7",
+		"lane":          "§10.7",
+		"collaboration": "§9.1",
+		"participant":   "§9.2.1",
+		"messageFlow":   "§9.3",
 	}
 
 	for tag, want := range tests {
