@@ -1106,16 +1106,29 @@ func (t *track) parkCallActivity(node flow.Node, atConstruction bool) error {
 // path). The UserTask registers NO hub waiter — completion arrives via Complete,
 // delivered to evtCh as a synthetic event, not fired through the hub.
 func (t *track) parkHumanTask(node flow.Node) error {
-	t.m.Lock()
-	// A RESTORED track carries its recorded task id (SRD-071 FR-8): the task
-	// outlives the instance's residency in the distributor's inbox, so the id a
-	// human (or a UI) is holding must survive rehydration — minting a fresh one
-	// would silently invalidate the reference they are about to act on. A fresh
-	// park mints.
-	if t.taskID == "" {
-		t.taskID = foundation.GenerateID()
+	// AN ITERATED ACTIVITY MINTS PER INSTANCE (SRD-090.B M5d). The track holds
+	// one id, which is right for an activity with one execution and wrong for
+	// N: they would announce a single task between them, and only one would be
+	// addressable — measured before this, a three-item parallel fan-out
+	// announced one task and completed with nobody completing it.
+	taskID := ""
+
+	if owner := t.activityOwner(); owner != nil {
+		taskID = owner.taskIDFor(t.execOrdinal())
+	} else {
+		t.m.Lock()
+		// A RESTORED track carries its recorded task id (SRD-071 FR-8): the
+		// task outlives the instance's residency in the distributor's inbox,
+		// so the id a human (or a UI) is holding must survive rehydration —
+		// minting a fresh one would silently invalidate the reference they
+		// are about to act on. A fresh park mints.
+		if t.taskID == "" {
+			t.taskID = foundation.GenerateID()
+		}
+
+		taskID = t.taskID
+		t.m.Unlock()
 	}
-	t.m.Unlock()
 
 	t.updateState(TrackWaitForEvent)
 
@@ -1129,7 +1142,8 @@ func (t *track) parkHumanTask(node flow.Node) error {
 			kind:   evTaskWaiting,
 			track:  t,
 			node:   node,
-			taskID: t.taskID,
+			taskID: taskID,
+			ord:    t.execOrdinal(),
 		})
 	}
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
 // iterSubscription is one definition an iterated activity waits on, and the
@@ -42,6 +43,18 @@ type iterSubscription struct {
 type eventSubs struct {
 	subs map[string]*iterSubscription
 
+	// taskIDs is each instance's parked-work identity, keyed by ordinal
+	// (SRD-090.B M5d).
+	//
+	// A User Task and an external-worker Service Task park outside the event
+	// system, and what addresses the parked work is an id. The track holds
+	// ONE — minted once and never cleared, so it survives rehydration — which
+	// is right for an activity with one execution and wrong for N: they would
+	// announce a single task between them, and only one would be
+	// addressable. Measured before this existed: a three-item parallel
+	// fan-out announced one task and completed with nobody completing it.
+	taskIDs map[int]string
+
 	// boxes is each waiting instance's own delivery channel, keyed by
 	// ordinal (SRD-090.B M5b).
 	//
@@ -66,9 +79,10 @@ type eventSubs struct {
 // newEventSubs builds the subscription set for one iterated activity.
 func newEventSubs(instanceID, nodeID string) eventSubs {
 	return eventSubs{
-		id:    instanceID + "/" + nodeID,
-		subs:  map[string]*iterSubscription{},
-		boxes: map[int]chan flow.EventDefinition{},
+		id:      instanceID + "/" + nodeID,
+		subs:    map[string]*iterSubscription{},
+		boxes:   map[int]chan flow.EventDefinition{},
+		taskIDs: map[int]string{},
 	}
 }
 
@@ -182,6 +196,36 @@ func (es *eventSubs) boxFor(ord int) chan flow.EventDefinition {
 	return es.boxes[ord]
 }
 
+// taskIDFor returns instance ord's parked-work identity, minting one on
+// first use (SRD-090.B M5d).
+//
+// Stable for as long as the instance is parked, because that is the id a
+// human or a UI is holding: re-minting it would silently invalidate the
+// reference they are about to act on, which is why the track's own id is
+// never cleared either.
+func (es *eventSubs) taskIDFor(ord int) string {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	if id, ok := es.taskIDs[ord]; ok {
+		return id
+	}
+
+	id := foundation.GenerateID()
+	es.taskIDs[ord] = id
+
+	return id
+}
+
+// dropTaskID forgets instance ord's parked-work identity, once its work is
+// done and the id names nothing.
+func (es *eventSubs) dropTaskID(ord int) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	delete(es.taskIDs, ord)
+}
+
 // deliverTo hands eDef to instance ord, reporting whether it landed. False
 // means the instance is no longer waiting — a losing arm, or a sibling that
 // completed while the delivery was in flight — which is a drop, not an error
@@ -255,10 +299,6 @@ type activitySubscriber interface {
 	awaiting(def flow.EventDefinition, ord int) bool
 	stopped(def flow.EventDefinition, ord int) bool
 
-	// anyWaiting gates the engine HOLD, whose lifetime is the whole
-	// activity's rather than one instance's.
-	anyWaiting() bool
-
 	// boxFor is the channel instance ord's unit blocks on for its own
 	// delivery.
 	boxFor(ord int) chan flow.EventDefinition
@@ -266,6 +306,15 @@ type activitySubscriber interface {
 	// waitingOn reports which instances are parked on a definition — the
 	// set the loop prunes its subscription index against.
 	waitingOn(defID string) []int
+
+	// taskIDFor is instance ord's parked-work identity, for work that parks
+	// outside the event system.
+	taskIDFor(ord int) string
+	dropTaskID(ord int)
+
+	// deliverTo hands an occurrence to instance ord's own box.
+	deliverTo(ord int, eDef flow.EventDefinition) bool
+	anyWaiting() bool
 }
 
 // ProcessEvent is the hub's doorbell (ADR-006 §2.9.5): it runs on the HUB's
