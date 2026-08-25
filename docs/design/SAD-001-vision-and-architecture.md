@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Draft |
-| Version | v.1.1 |
-| Date | 2026-07-30 |
+| Version | v.1.2 |
+| Date | 2026-08-25 |
 | Owner | Ruslan Gabitov |
 | Supersedes | — |
 | Conformance scope | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) |
@@ -344,6 +344,8 @@ When goBpm runs in cluster mode, certain extension configurations are fundamenta
 
 **Scope basis: §13 operational semantics, not a modeling sub-class.** The in-scope element set is derived from the families Clause 13 gives operational semantics to — process instantiation and termination (§13.2), activities including Sub-Process, Call Activity, Ad-Hoc, Loop and Multi-Instance (§13.3), all five gateways (§13.4), and all event positions including boundary, event sub-process and compensation (§13.5) — together with the **supporting classes** required to express them (data, foundation, correlation, operations, human interaction), which Clause 13 consumes but does not separately animate. That two-tier structure is the standard's own, and it is what [conformance.md](../bpmn-spec/conformance.md) enumerates as the authoritative in/out list.
 
+**Model-only carriers: held for BPMN loading, invisible to execution.** A third tier sits between the executed set and the out-of-scope list: elements the standard makes non-operational but a diagram states — `Lane`/`LaneSet`, and the §8.4.1 artifacts `Association`, `TextAnnotation` and `Group`. The model **carries** them because the §2.3.2 loading obligation and the converters' semantic round-trip can only re-emit what the model holds; **execution ignores them entirely**, as §2.3.1 permits — no runtime type reads one, no engine decision consults one, and none of their state exists on an instance. They are part of the engine's BPMN *loading* fidelity, not of its execution semantics.
+
 **What `goBpm` claims today.** §2.1 is strict about the middle ground: an implementation only partially matching the compliance points "can claim only that the software was **based on** this International Standard, but cannot claim compliance or conformance." So the honest present-tense claim is: *the library implements §13 execution semantics for the element set in `conformance.md`, with the deviations registered in §14.1.* Conformance itself is a claim for the server to make once §2.3.2 is met across the element set.
 
 > **Two citation errors corrected here (2026-08-02).** Earlier revisions cited "§2.1.2" for Process Execution Conformance and "§2.1.3" for the element basis. **Neither clause exists**: §2.1 is *General*, §2.2 is Process **Modeling** Conformance, and Process **Execution** Conformance is **§2.3**. The error is traceable to the specification itself — §2.1's cross-reference paragraph is off by one against its own headings ("the Process Execution Conformance type SHALL comply with … sub clause 2.2"), a second erratum of the same family as §10.3.4.1's Table 8.49 misreference. The **Common Executable Subclass** was also the wrong basis: §2.2.1 defines it as an alternative to full Process **Modeling** Conformance — a sub-class for *modeling tools that emit executable models* — and it mandates that the data-type language "MUST be XML Schema", the service-interface language "MUST be WSDL" and the data-access language "MUST be XPath". `goBpm` uses Go types, Go operations and `goexpr`/Lua by design, so that sub-class was never the applicable target. A consequence: **ComplexGateway stops being an "extension"** — §13.4.5 gives it full operational semantics, so §2.3.1 always required it.
@@ -495,5 +497,6 @@ instance-termination story in the runtime ([ADR-001 v.6](ADR-001-execution-model
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1.2 | 2026-08-25 | Ruslan Gabitov | §14 names the **model-only carrier tier** explicitly: `Lane`/`LaneSet` and the §8.4.1 artifacts (`Association`, `TextAnnotation`, `Group`) are carried by the model for **BPMN loading** (§2.3.2 + the converters' semantic round-trip) and are **invisible to execution** (§2.3.1) — no runtime type reads them, no instance state holds them. No change to vision, module boundaries, or any other scope row. |
 | v.1.1 | 2026-07-30 | — | Down-ref update from the [ADR-024 v.2](ADR-024-process-interchange-converters.md) / [SRD-051 v.2](../srd/SRD-051-bpmn-converter.md) landing: §9 module tree — the `doc-source/` reservation is **retired**, since the BPMN converter shipped as the package `pkg/convert/bpmn` inside the root module rather than as its own module; N7 annotated with what actually landed and why a package satisfies it. Also dropped the §References link to `docs/analytics/Analysis of the gobpm project.md`, deleted as obsolete in `8159359`. No change to vision, scope, principles, or any other module boundary. |
 | v.1 | 2026-05-29 | Ruslan Gabitov | Initial draft, incorporating first review round: §1.1 document-class taxonomy; observability default = **visible** (`slog.Default()`) with explicit opt-out for low-noise environments; §9.2 scaffold modules upfront, not incrementally; §10 emphasize save/restore + recovery as P0; §11 add `WorkerDispatcher` extension; §13 new "Distribution & Scale" section flagged **preliminary, subject to refinement** (deferred for deeper discussion before SAD acceptance); N8 clustering reframed from non-goal to additive overlay; `thresher` name retained for the engine façade. |
