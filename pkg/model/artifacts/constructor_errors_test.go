@@ -38,4 +38,24 @@ func TestConstructorsRejectInvalidOptions(t *testing.T) {
 				artifacts.MustCategoryValue("v", foundation.WithID(""))
 			})
 		})
+
+	t.Run("NewAssociation",
+		func(t *testing.T) {
+			src := foundation.MustBaseElement(foundation.WithID("src"))
+			trg := foundation.MustBaseElement(foundation.WithID("trg"))
+			require.NotPanics(t, func() {
+				_, err := artifacts.NewAssociation(src, trg, artifacts.None,
+					foundation.WithID(""))
+				require.Error(t, err)
+			})
+		})
+
+	t.Run("NewTextAnnotation",
+		func(t *testing.T) {
+			require.NotPanics(t, func() {
+				_, err := artifacts.NewTextAnnotation("t", "",
+					foundation.WithID(""))
+				require.Error(t, err)
+			})
+		})
 }

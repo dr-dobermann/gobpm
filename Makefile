@@ -77,7 +77,7 @@ COVER_BASE ?= origin/master
 # three red gates before it was named. It cannot hide logic: the enclosing
 # statement's own line is still measured, and a matching line is always an
 # argument or a map entry, never a condition or a unit of work.
-COVER_EXCLUDE ?= ^\s*observability\.Attr,\.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\},func \(.*\) isLoopCharacteristics\(\) \{\},^\s*return .*[a-z]Err\(.*err\)$$,^\s*return (nil. |\"\". |false. )*err$$,^\s*\}$$,errs\.Invariant\(,failInvariant\(,^\s*return$$,^\s*t\.Fatal
+COVER_EXCLUDE ?= ^\s*observability\.Attr,\.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\},func \(.*\) isLoopCharacteristics\(\) \{\},func \(.*\) artifact\(\) \{\},^\s*return .*[a-z]Err\(.*err\)$$,^\s*return (nil. |\"\". |false. )*err$$,^\s*\}$$,errs\.Invariant\(,failInvariant\(,^\s*return$$,^\s*t\.Fatal
 
 # All Go modules in the monorepo (each with its own go.mod).
 # Discovered dynamically so adding a new module needs no Makefile edit.

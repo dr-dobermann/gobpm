@@ -7,7 +7,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// const errorClass = "ARTIFACT_ERROR"
+const errorClass = "ARTIFACT_ERRORS"
 
 // BPMN provides modelers with the capability of showing additional information
 // about a Process that is not directly related to the Sequence Flows or Message
@@ -22,32 +22,17 @@ import (
 
 // *****************************************************************************
 
-// Artifact represents a BPMN artifact element.
-type Artifact struct {
-	foundation.BaseElement
-}
+// Artifact is one of the standard's three artifacts a container carries: an
+// Association, a TextAnnotation, or a Group (ADR-039 §2.2). Artifacts are
+// model-only (SAD-001 §14): parsed and preserved for BPMN loading, never
+// executed — no engine decision reads one. The unexported marker keeps the
+// set closed to this package's kinds: the engine cannot re-emit an artifact
+// kind it does not know, so an open set would admit inert values that die at
+// the first export.
+type Artifact interface {
+	foundation.BaseObject
 
-// NewArtifact creates a new Artifact and returns its pointer.
-func NewArtifact(baseOpts ...options.Option) (*Artifact, error) {
-	be, err := foundation.NewBaseElement(baseOpts...)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Artifact{
-		BaseElement: *be,
-	}, nil
-}
-
-// MustArtifact tries to create a new Artifact and returns its pointer on success.
-// If error occurred then panic fired.
-func MustArtifact(baseOpts ...options.Option) *Artifact {
-	ar, err := NewArtifact(baseOpts...)
-	if err != nil {
-		errs.Panic(err)
-	}
-
-	return ar
+	artifact()
 }
 
 // *****************************************************************************
@@ -99,3 +84,6 @@ func MustGroup(
 
 	return g
 }
+
+// artifact marks Group as one of the package's carried artifact kinds.
+func (g *Group) artifact() {}

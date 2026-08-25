@@ -8,49 +8,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestArtifact(t *testing.T) {
-	t.Run("new artifact success", func(t *testing.T) {
-		art, err := artifacts.NewArtifact()
-		require.NoError(t, err)
-		require.NotNil(t, art)
-		require.NotEmpty(t, art.ID())
-	})
+// The compile-time half of SRD-092 T-4: the three carried kinds satisfy the
+// closed Artifact interface.
+var (
+	_ artifacts.Artifact = (*artifacts.Association)(nil)
+	_ artifacts.Artifact = (*artifacts.TextAnnotation)(nil)
+	_ artifacts.Artifact = (*artifacts.Group)(nil)
+)
 
-	t.Run("new artifact with custom id", func(t *testing.T) {
-		customID := "custom-artifact-id"
-		art, err := artifacts.NewArtifact(foundation.WithID(customID))
-		require.NoError(t, err)
-		require.NotNil(t, art)
-		require.Equal(t, customID, art.ID())
-	})
+// TestArtifactInterface keeps T-4's claim visible in the test run: every
+// carried kind is usable through the interface.
+func TestArtifactInterface(t *testing.T) {
+	src := foundation.MustBaseElement(foundation.WithID("src"))
+	trg := foundation.MustBaseElement(foundation.WithID("trg"))
 
-	t.Run("must artifact success", func(t *testing.T) {
-		art := artifacts.MustArtifact()
-		require.NotNil(t, art)
-		require.NotEmpty(t, art.ID())
-	})
+	arts := []artifacts.Artifact{
+		artifacts.MustAssociation(src, trg, artifacts.None),
+		artifacts.MustTextAnnotation("Careful", ""),
+		artifacts.MustGroup("critical"),
+	}
 
-	t.Run("must artifact with custom id", func(t *testing.T) {
-		customID := "must-artifact-id"
-		art := artifacts.MustArtifact(foundation.WithID(customID))
-		require.NotNil(t, art)
-		require.Equal(t, customID, art.ID())
-	})
-
-	t.Run("new artifact with invalid option", func(t *testing.T) {
-		// Test error path: empty ID is not allowed
-		art, err := artifacts.NewArtifact(foundation.WithID(""))
-		require.Error(t, err)
-		require.Nil(t, art)
-		require.Contains(t, err.Error(), "empty id isn't allowed")
-	})
-
-	t.Run("must artifact panics on error", func(t *testing.T) {
-		// Test panic path in MustArtifact
-		require.Panics(t, func() {
-			artifacts.MustArtifact(foundation.WithID(""))
-		})
-	})
+	for _, a := range arts {
+		require.NotEmpty(t, a.ID())
+	}
 }
 
 func TestGroup(t *testing.T) {

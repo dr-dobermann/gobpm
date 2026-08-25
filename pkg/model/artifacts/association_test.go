@@ -16,60 +16,72 @@ func TestAssociationDirection(t *testing.T) {
 	})
 }
 
-func TestAssociation(t *testing.T) {
-	t.Run("association struct", func(t *testing.T) {
-		// Create source and target elements
-		source := foundation.MustBaseElement(foundation.WithID("source-id"))
-		target := foundation.MustBaseElement(foundation.WithID("target-id"))
+// TestNewAssociation covers SRD-092 T-1: the constructor validates every
+// parameter with a self-identifying error.
+func TestNewAssociation(t *testing.T) {
+	src := foundation.MustBaseElement(foundation.WithID("src"))
+	trg := foundation.MustBaseElement(foundation.WithID("trg"))
 
-		// Test Association struct creation
-		assoc := artifacts.Association{
-			BaseElement: *foundation.MustBaseElement(foundation.WithID("assoc-id")),
-			Direction:   artifacts.One,
-			Source:      source,
-			Target:      target,
-		}
-
-		require.Equal(t, "assoc-id", assoc.ID())
-		require.Equal(t, artifacts.One, assoc.Direction)
-		require.Equal(t, source, assoc.Source)
-		require.Equal(t, target, assoc.Target)
+	t.Run("valid ends and direction are accepted", func(t *testing.T) {
+		a, err := artifacts.NewAssociation(src, trg, artifacts.One,
+			foundation.WithID("a1"))
+		require.NoError(t, err)
+		require.Equal(t, "a1", a.ID())
+		require.Same(t, src, a.Source())
+		require.Same(t, trg, a.Target())
+		require.Equal(t, artifacts.One, a.Direction())
 	})
 
-	t.Run("different directions", func(t *testing.T) {
-		source := foundation.MustBaseElement()
-		target := foundation.MustBaseElement()
-
-		// Test None direction
-		assocNone := artifacts.Association{
-			BaseElement: *foundation.MustBaseElement(),
-			Direction:   artifacts.None,
-			Source:      source,
-			Target:      target,
-		}
-		require.Equal(t, artifacts.None, assocNone.Direction)
-
-		// Test Both direction
-		assocBoth := artifacts.Association{
-			BaseElement: *foundation.MustBaseElement(),
-			Direction:   artifacts.Both,
-			Source:      source,
-			Target:      target,
-		}
-		require.Equal(t, artifacts.Both, assocBoth.Direction)
+	t.Run("an empty direction defaults to None", func(t *testing.T) {
+		a, err := artifacts.NewAssociation(src, trg, "")
+		require.NoError(t, err)
+		require.Equal(t, artifacts.None, a.Direction())
 	})
 
-	t.Run("nil source and target", func(t *testing.T) {
-		// Test with nil source and target
-		assoc := artifacts.Association{
-			BaseElement: *foundation.MustBaseElement(),
-			Direction:   artifacts.One,
-			Source:      nil,
-			Target:      nil,
-		}
+	t.Run("a nil source is refused", func(t *testing.T) {
+		a, err := artifacts.NewAssociation(nil, trg, artifacts.None)
+		require.Error(t, err)
+		require.Nil(t, a)
+		require.Contains(t, err.Error(), "nil source")
+	})
 
-		require.Nil(t, assoc.Source)
-		require.Nil(t, assoc.Target)
-		require.Equal(t, artifacts.One, assoc.Direction)
+	t.Run("a nil target is refused", func(t *testing.T) {
+		a, err := artifacts.NewAssociation(src, nil, artifacts.None)
+		require.Error(t, err)
+		require.Nil(t, a)
+		require.Contains(t, err.Error(), "nil target")
+	})
+
+	t.Run("an unknown direction is refused", func(t *testing.T) {
+		a, err := artifacts.NewAssociation(src, trg, "Sideways")
+		require.Error(t, err)
+		require.Nil(t, a)
+		require.Contains(t, err.Error(), "Sideways")
+	})
+
+	t.Run("an invalid base option is propagated", func(t *testing.T) {
+		a, err := artifacts.NewAssociation(src, trg, artifacts.None,
+			foundation.WithID(""))
+		require.Error(t, err)
+		require.Nil(t, a)
+		require.Contains(t, err.Error(), "empty id isn't allowed")
+	})
+}
+
+// TestMustAssociation covers the Must* twin's both branches (SRD-092 T-3).
+func TestMustAssociation(t *testing.T) {
+	src := foundation.MustBaseElement(foundation.WithID("src"))
+	trg := foundation.MustBaseElement(foundation.WithID("trg"))
+
+	t.Run("returns on success", func(t *testing.T) {
+		a := artifacts.MustAssociation(src, trg, artifacts.Both)
+		require.NotNil(t, a)
+		require.Equal(t, artifacts.Both, a.Direction())
+	})
+
+	t.Run("panics on error", func(t *testing.T) {
+		require.Panics(t, func() {
+			artifacts.MustAssociation(nil, trg, artifacts.None)
+		})
 	})
 }
