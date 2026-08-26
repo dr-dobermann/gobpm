@@ -1900,7 +1900,7 @@ func (p *parser) readText(se xml.StartElement) (string, error) {
 // unsupported builds the *convert.UnsupportedElementError for an unmapped
 // in-namespace element (SRD-051 §FR-3/§FR-7). An element whose refusal
 // has a record beyond itself — a capability row, or the right position —
-// additionally names it, per ADR-038 §2.2's rule that the record IS the
+// additionally names it, per ADR-024 §2.16's rule that the record IS the
 // refusal's content.
 func unsupported(se xml.StartElement) error {
 	return &convert.UnsupportedElementError{
@@ -1928,7 +1928,7 @@ const dataAssocNote = "a data association lives on the activity whose " +
 
 // plannedNotes names the record behind each refused data-family tag —
 // after SRD-089.G none of them is STAGED: a task's family imports, and
-// what remains is a capability row (ADR-038 §2.3) or a position the
+// what remains is a capability row (ADR-024 §2.16) or a position the
 // standard reserves. A table rather than per-site wording so one family
 // reads as one answer.
 var plannedNotes = map[string]string{

@@ -25,12 +25,7 @@ work is milestoned there too, not restated here.
 
 Design decisions we've surfaced but not yet made.
 
-- **Check ADR-038's state, and why it is still `Draft`.** The converter
-  coverage-boundaries record sits at v.2 `Draft` while already governing work
-  (its §2.3 register drives the #335 capability queue, and ADR-039 consumed
-  its #323 row). Establish whether the status is an oversight to flip or
-  something is genuinely unsettled — and while at it, whether its sibling
-  drafts (ADR-024 v.5, SAD-001) are in the same state for the same reason.
+_None right now._
 
 ## Planned work / deferred
 

@@ -11,8 +11,8 @@
 > **Scope.** BPMN's §8.4.1 artifacts — **Association, Group, Text
 > Annotation** — become elements the model *carries*: held for BPMN loading
 > and round-trip, never executed. This is the model capability
-> [ADR-038 v.2](ADR-038-converter-coverage-boundaries.md) §2.3 registers for
-> the plain `<association>` (#323), delivered per its §2.4 as the
+> [ADR-024](ADR-024-process-interchange-converters.md) §2.16 registers for
+> the plain `<association>` (#323), delivered per its capability-first rule as the
 > capability's own decision record; the accompanying SRD lands it. Nothing
 > decided here runs.
 
@@ -44,7 +44,7 @@ obliges support for **import of Process diagrams**, and
 [ADR-024 v.5](ADR-024-process-interchange-converters.md) §2.8 guarantees a
 **semantic round-trip**, which can only re-emit what the model holds. The
 model holds none of the family, and the cost is recorded at the converter's
-edge: [ADR-038 v.2](ADR-038-converter-coverage-boundaries.md) §1.3 — the
+edge: [ADR-024](ADR-024-process-interchange-converters.md) §2.16 — the
 annotation is skipped, the line to it is refused, and an ordinary annotated
 diagram fails to load.
 
@@ -133,7 +133,7 @@ will read and does not advance the schedule.
 
 ## 3. Consequences
 
-- **An annotated diagram loads.** The ADR-038 §2.3 register row for #323 is
+- **An annotated diagram loads.** The #335 register row for #323 is
   consumed, and the register's "file refused for a comment" cost paragraph
   retires with it.
 - **The model authors what it loads** — annotations, groups and their links
@@ -158,7 +158,7 @@ decision the first time a grouped diagram matters. The category machinery a
 Group needs is bounded by §2.3's embed-the-value rule.
 
 **A converter-local artifact type.** Rejected without new argument:
-[ADR-038 v.2](ADR-038-converter-coverage-boundaries.md) §2.1 forbids the
+[ADR-024](ADR-024-process-interchange-converters.md) §2.16 forbids the
 converter compensating for a missing model capability.
 
 **An open, host-extensible artifact set** (§8.4.1's "MAY extend"). Rejected:
@@ -174,8 +174,8 @@ None. The one deliberate deferral — export re-emission — is scheduled in
 
 - [ADR-024 v.5](ADR-024-process-interchange-converters.md) — the disposition
   table §2.6 refines; the §2.14 report contract it reuses.
-- [ADR-038 v.2](ADR-038-converter-coverage-boundaries.md) — the capability
-  register this answers and the §2.4 ordering it obeys.
+- [ADR-024](ADR-024-process-interchange-converters.md) §2.16 — the capability
+  register this answers and the capability-first ordering it obeys.
 - [ADR-026 v.1](ADR-026-compensation-events.md) — the compensation wiring
   that owns the tag's executable meaning (§2.4).
 - [SAD-001 v.1.2](SAD-001-vision-and-architecture.md) §14 — the conformance
