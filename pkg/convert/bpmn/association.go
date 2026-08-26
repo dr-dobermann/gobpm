@@ -5,21 +5,31 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dr-dobermann/gobpm/pkg/convert"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/artifacts"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
 // assocSpec is an <association> as read. BPMN gives one tag to two
 // different things: the line from a comment to what it annotates, and the
-// link naming a compensation handler. Only the second carries execution
-// semantics (conformance.md line 176), and only the second is built
-// (SRD-089.E §4.7 and §4.9).
+// link naming a compensation handler. The second is execution semantics
+// and becomes the boundary's handler wiring (SRD-089.E §4.7); the first
+// is a carried artifact, built by buildAssociations (ADR-039, SRD-092
+// FR-9).
 type assocSpec struct {
 	id, srcRef, trgRef string
-	// used marks the association a compensation boundary consumed. What
-	// nothing consumes is a plain association, and plain associations are
-	// refused — see refusePlainAssociations.
+	// direction is the associationDirection attribute, "" when absent —
+	// the model defaults it to the standard's None (§8.4.1).
+	direction string
+	// container is the id of the declaring container, "" for the process —
+	// the same convention as nodeSpec (SRD-089.E §4.1).
+	container string
+	// used marks the association a compensation boundary consumed. That
+	// one document fact already has its model representation — the
+	// handler wiring — so it is NOT additionally carried as an artifact
+	// (ADR-039 §2.4). What nothing consumes is a plain association and
+	// becomes one.
 	used bool
 }
 
@@ -51,9 +61,11 @@ func parseAssociationElem(p *parser, asm *assembly, se xml.StartElement) error {
 	}
 
 	asm.assocs = append(asm.assocs, assocSpec{
-		id:     id,
-		srcRef: src,
-		trgRef: trg,
+		id:        id,
+		srcRef:    src,
+		trgRef:    trg,
+		direction: strings.TrimSpace(attrValue(se, "associationDirection")),
+		container: p.container,
 	})
 
 	return p.skipElement()
@@ -107,37 +119,100 @@ func compensationHandler(
 		errs.C(errorClass, errs.InvalidObject))
 }
 
-// refusePlainAssociations refuses every association no compensation
-// boundary consumed.
-//
-// A plain association is the line from a <textAnnotation> to what it
-// annotates. The annotation itself is skipped — dropping a comment leaves
-// the imported definition meaning the same — but the link cannot be:
-// pkg/model/artifacts declares Association with no constructor, nothing
-// imports that package, and a Process has nowhere to put an artifact
-// (#323). Skipping the link too would discard a stated relationship
-// silently, which is the disposition ADR-024 §2.9 reserves for elements
-// whose absence changes nothing.
-func refusePlainAssociations(asm *assembly) error {
+// endFor resolves one association end against everything pass 2 built
+// and holds: the flow nodes, the data elements, the sequence flows, the
+// lanes and lane sets, and the carried artifacts — associations included,
+// in document order. The standard types an end as any BaseElement
+// (§8.4.1), so the universe is everything the MODEL holds; what stays
+// outside it (a category value, a DI element) degrades to the report.
+func endFor(
+	asm *assembly, flowByID map[string]*flow.SequenceFlow, ref string,
+) (foundation.Identifyer, bool) {
+	if n, ok := asm.byID[ref]; ok {
+		return n, true
+	}
+
+	if e, ok := asm.dataElems[ref]; ok {
+		return e, true
+	}
+
+	if f, ok := flowByID[ref]; ok {
+		return f, true
+	}
+
+	if a, ok := asm.artsByID[ref]; ok {
+		return a, true
+	}
+
+	if l, ok := asm.lanesByID[ref]; ok {
+		return l, true
+	}
+
+	return nil, false
+}
+
+// buildAssociations materializes every association no compensation
+// boundary consumed as a carried artifact on its declaring container
+// (SRD-092 FR-9). An end naming nothing this import built degrades that
+// one association to a report — the file survives, and the host is told
+// which reference failed (FR-10, ADR-039 §2.6).
+func buildAssociations(
+	p *parser, asm *assembly, flowByID map[string]*flow.SequenceFlow,
+) error {
 	for _, a := range asm.assocs {
 		if a.used {
 			continue
 		}
 
-		return errs.New(
-			errs.E(&convert.UnsupportedElementError{
-				Tag: tagAssociation,
-				ID:  a.id,
-			}),
-			errs.M("bpmn: association %s links %q to %q and is not a "+
-				"compensation link. A plain association needs an artifact "+
-				"collection on the container and a constructor for "+
-				"artifacts.Association, neither of which this model has "+
-				"(#323) — the annotation it draws from is imported, the line "+
-				"is not",
-				strconv.Quote(a.id), a.srcRef, a.trgRef),
-			errs.C(errorClass, errs.InvalidObject))
+		src, ok := endFor(asm, flowByID, a.srcRef)
+		if !ok {
+			p.report(a.id, tagAssociation,
+				assocEndLoss("sourceRef", a.srcRef))
+
+			continue
+		}
+
+		trg, ok := endFor(asm, flowByID, a.trgRef)
+		if !ok {
+			p.report(a.id, tagAssociation,
+				assocEndLoss("targetRef", a.trgRef))
+
+			continue
+		}
+
+		na, err := artifacts.NewAssociation(src, trg,
+			artifacts.AssociationDirection(a.direction),
+			withDeclaredID(a.id)...)
+		if err != nil {
+			return errs.New(
+				errs.M("bpmn: association %s cannot be built",
+					strconv.Quote(a.id)),
+				errs.C(errorClass, errs.InvalidObject),
+				errs.E(err))
+		}
+
+		if err := attachArtifact(asm, a.container, na); err != nil {
+			return err
+		}
+
+		// A built association joins the lookup itself: an association may
+		// end on another association (§8.4.1 — any BaseElement). The
+		// resolution is document-ordered, so a FORWARD reference to a
+		// later association degrades to the report rather than resolving.
+		if a.id != "" {
+			asm.artsByID[a.id] = na
+		}
 	}
 
 	return nil
+}
+
+// assocEndLoss words the report for an association end that names nothing
+// this import built.
+func assocEndLoss(role, ref string) string {
+	return "its " + role + " " + strconv.Quote(ref) +
+		" resolves to no element this import built — an association states " +
+		"a relationship, and one end of this one has no model home, so the " +
+		"association is dropped and the rest of the file imports " +
+		"(ADR-039 §2.6)"
 }

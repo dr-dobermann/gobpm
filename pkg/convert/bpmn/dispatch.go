@@ -151,18 +151,9 @@ var policy = map[elementKey]dispositionKind{
 	{local: tagDocumentation, ctx: ctxInterface}:   skipped,
 	{local: tagDocumentation, ctx: ctxOperation}:   skipped,
 
-	// Visual artifacts. The vendored extract calls these "pure visual",
-	// and they are near-universal in modeler output — a file was being
-	// refused for carrying a comment. Dropping them leaves the imported
-	// definition meaning the same thing, which is the test ADR-024
-	// §2.9 sets for skipping rather than refusing.
-	//
-	// <association> is NOT one of them and stays refused: the extract
-	// keeps it in scope because it carries compensation semantics, so it
-	// is mapped work for the composites stage, not a comment to skip.
-	{local: tagTextAnnotation, ctx: ctxProcess}: skipped,
-	{local: tagGroup, ctx: ctxProcess}:          skipped,
-	{local: tagCategory, ctx: ctxDefinitions}:   skipped,
+	// The visual artifacts — <textAnnotation>, <group>, <category> — have
+	// no rows here anymore: they are MAPPED into the model-only artifact
+	// tier (ADR-039), claimed by the parsers in artifacts.go.
 
 	// Not execution-related (extract, out-of-scope table).
 	{local: tagRelationship, ctx: ctxDefinitions}: skipped,
@@ -315,6 +306,7 @@ var definitionsParsers = func() map[string]defsParser {
 		tagImport:         parseImportElem,
 		tagDataStore:      parseDataStoreElem,
 		tagCollaboration:  parseCollaborationElem,
+		tagCategory:       parseCategoryElem,
 	}
 
 	for local := range defBuilders {
@@ -404,6 +396,13 @@ func init() { //nolint:gochecknoinits // breaks the processParsers cycle
 	processParsers[tagTransaction] = parseContainerElem
 	processParsers[tagAssociation] = parseAssociationElem
 
+	// The carried artifacts (ADR-039). Registered here for the same
+	// reason as the data elements below: a container's children dispatch
+	// through processParsers, so an annotation or group inside a
+	// <subProcess> works with no second registration.
+	processParsers[tagTextAnnotation] = parseTextAnnotationElem
+	processParsers[tagGroup] = parseGroupElem
+
 	// The item-aware flow elements. Registered HERE rather than in a table
 	// of their own, because a container's children are dispatched through
 	// processParsers too — so a <dataObject> inside a <subProcess> works
@@ -434,7 +433,7 @@ func buildSubProcess(
 ) (flow.Node, error) {
 	opts := body.opts(id)
 
-	sets, err := buildLaneSets(&asm.places, body.laneSets)
+	sets, err := buildLaneSets(asm, body.laneSets)
 	if err != nil {
 		return nil, err
 	}

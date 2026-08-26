@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/artifacts"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	datastores "github.com/dr-dobermann/gobpm/pkg/model/data_stores"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -35,6 +36,10 @@ type SubProcess struct {
 	// laneSets are the Sub-Process-level lane sets — carried, never executed
 	// (SRD-076). Ordered, since lane names are optional and order is visible.
 	laneSets []*lanes.LaneSet
+	// artifacts are the Sub-Process-level artifacts — carried, never executed
+	// (ADR-039). Ordered: artifacts have no name, and declaration order is
+	// what a round-trip reproduces.
+	artifacts []artifacts.Artifact
 	// dataStoreRefs are the SubProcess-level Data Store References (SRD-068
 	// FR-3): flow-scope handles to engine-global stores. Not seeded into scope
 	// (their data lives in the engine registry) — kept for containment only.
@@ -127,6 +132,30 @@ func NewSubProcess(
 // Lanes are carried and never executed (SRD-076).
 func (sp *SubProcess) LaneSets() []*lanes.LaneSet {
 	return slices.Clone(sp.laneSets)
+}
+
+// AddArtifacts attaches artifacts to the Sub-Process. Artifacts are
+// model-only carriers (ADR-039): held for BPMN loading, never executed,
+// never cloned into an instance. A nil artifact and a duplicate id are
+// refused.
+func (sp *SubProcess) AddArtifacts(arts ...artifacts.Artifact) error {
+	aa, err := artifacts.Append(sp.artifacts, arts...)
+	if err != nil {
+		return errs.New(
+			errs.M("SubProcess %q: adding artifacts failed", sp.Name()),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
+	}
+
+	sp.artifacts = aa
+
+	return nil
+}
+
+// Artifacts returns a copy of the Sub-Process's artifact collection, in the
+// order the artifacts were added.
+func (sp *SubProcess) Artifacts() []artifacts.Artifact {
+	return slices.Clone(sp.artifacts)
 }
 
 // IsEventSubProcess reports whether this Sub-Process is an Event Sub-Process

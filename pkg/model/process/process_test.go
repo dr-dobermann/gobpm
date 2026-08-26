@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/artifacts"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
@@ -502,5 +503,45 @@ func TestProcessLaneSets(t *testing.T) {
 	t.Run("a nil lane set is refused at construction", func(t *testing.T) {
 		_, err := process.New("nil-set", lanes.WithLaneSets(nil))
 		require.Error(t, err)
+	})
+}
+
+// TestProcessArtifacts — SRD-092 T-5: the Process accepts, orders and exposes
+// its artifacts; the collection invariant refuses nils and duplicate ids.
+func TestProcessArtifacts(t *testing.T) {
+	p, err := process.New("artifacted")
+	require.NoError(t, err)
+
+	note := artifacts.MustTextAnnotation("Careful", "",
+		foundation.WithID("note"))
+	grp := artifacts.MustGroup("critical", foundation.WithID("grp"))
+
+	t.Run("accumulates in order and returns a copy", func(t *testing.T) {
+		require.NoError(t, p.AddArtifacts(note))
+		require.NoError(t, p.AddArtifacts(grp,
+			artifacts.MustAssociation(note, grp, artifacts.DirectionNone,
+				foundation.WithID("a1"))))
+
+		arts := p.Artifacts()
+		require.Len(t, arts, 3)
+		require.Equal(t, "note", arts[0].ID())
+		require.Equal(t, "grp", arts[1].ID())
+		require.Equal(t, "a1", arts[2].ID())
+
+		// the accessor hands out a copy, not the collection itself
+		arts[0] = nil
+		require.Equal(t, "note", p.Artifacts()[0].ID())
+	})
+
+	t.Run("a nil artifact is refused, the collection unchanged",
+		func(t *testing.T) {
+			require.ErrorContains(t, p.AddArtifacts(nil), "nil artifact")
+			require.Len(t, p.Artifacts(), 3)
+		})
+
+	t.Run("a duplicate id is refused", func(t *testing.T) {
+		err := p.AddArtifacts(artifacts.MustTextAnnotation("x", "",
+			foundation.WithID("note")))
+		require.ErrorContains(t, err, "duplicate artifact id")
 	})
 }

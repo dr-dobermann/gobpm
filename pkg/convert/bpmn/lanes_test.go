@@ -312,57 +312,20 @@ func TestTruncatedLaneSubtrees(t *testing.T) {
 	}
 }
 
-// TestLaneWithoutAnIDIsRefused covers the lane constructor's failure path.
-//
-// BPMN makes a BaseElement's id optional (0..1), and the model does not:
-// foundation.WithID rejects an empty one (options.go:36-51). So a lane the
-// document did not name is refused by the model, which is where the rule
-// belongs — the converter passes what the file wrote.
-func TestLaneWithoutAnIDIsRefused(t *testing.T) {
+// TestLaneIDJoinsTheLedger: a declared lane or lane-set id lives in the
+// document's one ledger (SRD-089.F §4.11) — before SRD-092 M5, a lane
+// could silently reuse a task's id.
+func TestLaneIDJoinsTheLedger(t *testing.T) {
 	_, err := importEventDoc(t, laneDoc(
 		`    <bpmn:laneSet id="ls1">
-      <bpmn:lane name="Finance"/>
+      <bpmn:lane id="t1" name="Finance"/>
     </bpmn:laneSet>`))
 	if err == nil {
-		t.Fatal("a <lane> with no id must be refused")
+		t.Fatal("a lane reusing a task's id must be refused")
 	}
 
-	if !strings.Contains(err.Error(), "lane") {
-		t.Errorf("error = %v, want the lane-building refusal", err)
-	}
-}
-
-// TestLaneSetWithoutAnIDIsRefused is the same failure one level up, and it
-// is the process's own lane sets that reach it — they are built before the
-// process exists, so the refusal comes from newAssembly rather than pass 2.
-func TestLaneSetWithoutAnIDIsRefused(t *testing.T) {
-	_, err := importEventDoc(t, laneDoc(
-		`    <bpmn:laneSet>
-      <bpmn:lane id="l1" name="Finance"/>
-    </bpmn:laneSet>`))
-	if err == nil {
-		t.Fatal("a <laneSet> with no id must be refused")
-	}
-
-	if !strings.Contains(err.Error(), "lane set") {
-		t.Errorf("error = %v, want the lane-set refusal", err)
-	}
-}
-
-// TestNestedLaneSetWithoutAnIDIsRefused covers the recursion's error path:
-// a child lane set is built by the same function, so its failure has to
-// travel back out through the parent.
-func TestNestedLaneSetWithoutAnIDIsRefused(t *testing.T) {
-	_, err := importEventDoc(t, laneDoc(
-		`    <bpmn:laneSet id="ls1">
-      <bpmn:lane id="l1" name="Finance">
-        <bpmn:childLaneSet>
-          <bpmn:lane id="l2" name="AP"/>
-        </bpmn:childLaneSet>
-      </bpmn:lane>
-    </bpmn:laneSet>`))
-	if err == nil {
-		t.Fatal("a <childLaneSet> with no id must be refused")
+	if !strings.Contains(err.Error(), `"t1"`) {
+		t.Errorf("error = %v, want it naming the duplicated id", err)
 	}
 }
 
@@ -377,5 +340,44 @@ func TestTruncatedForeignChildInALaneSet(t *testing.T) {
       <bpmndi:BPMNShape id="sh1"><bpmndi:Bounds`)
 	if err == nil {
 		t.Fatal("a document ending inside a skipped child must fail the import")
+	}
+}
+
+// TestLaneWithoutIDImports: a lane's (and a lane set's) id is 0..1, and
+// one without it used to refuse the file — buildLaneSet applied WithID("")
+// unconditionally, and an empty explicit id is an error (SRD-092 M5).
+// SRD-089.E pinned that refusal on the premise that "the model does not"
+// make ids optional; it does — an id-less element is carried under a
+// generated one (foundation.NewBaseElement), the same convention the
+// artifacts use, and it is the SRD-076 FR-2 cardinality argument one
+// attribute over. Unreferencable, it joins no lookup. The nested set
+// exercises the recursion.
+func TestLaneWithoutIDImports(t *testing.T) {
+	res, err := importEventDoc(t, laneDoc(`    <bpmn:laneSet>
+      <bpmn:lane name="sales">
+        <bpmn:flowNodeRef>t1</bpmn:flowNodeRef>
+        <bpmn:childLaneSet>
+          <bpmn:lane name="inside"/>
+        </bpmn:childLaneSet>
+      </bpmn:lane>
+    </bpmn:laneSet>`))
+	if err != nil {
+		t.Fatalf("an id-less lane must import: %v", err)
+	}
+
+	sets := res.Processes[0].LaneSets()
+	if len(sets) != 1 || len(sets[0].Lanes()) != 1 {
+		t.Fatalf("lane sets = %v, want one set with one lane", sets)
+	}
+
+	lane := sets[0].Lanes()[0]
+	if lane.Name() != "sales" || lane.ID() == "" {
+		t.Errorf("lane = %q/%q, want sales under a generated id",
+			lane.Name(), lane.ID())
+	}
+
+	if lane.ChildLaneSet() == nil ||
+		len(lane.ChildLaneSet().Lanes()) != 1 {
+		t.Error("the id-less nested lane set must be carried too")
 	}
 }

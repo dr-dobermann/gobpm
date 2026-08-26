@@ -35,12 +35,6 @@ func TestRefusalsSayWhichKindTheyAre(t *testing.T) {
 			standing: true,
 			wants:    []string{"ADR-028", "compensate"},
 		},
-		"plain association": {
-			doc: laneDoc(`    <bpmn:textAnnotation id="note"><bpmn:text>x</bpmn:text></bpmn:textAnnotation>
-    <bpmn:association id="a1" sourceRef="note" targetRef="t1"/>`),
-			standing: false,
-			wants:    []string{"#323", "artifacts.Association"},
-		},
 		"foreign calledElement": {
 			doc: callDoc(
 				`<bpmn:callActivity id="ca" name="F" calledElement="other:Proc"/>`),

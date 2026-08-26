@@ -163,7 +163,7 @@ The first distinction is the standard's own (§13 animates, §8/§10 supply). Th
 | Choreography family | `Choreography`, `SubChoreography`, `CallChoreography`, `ChoreographyTask`, `ChoreographyActivity`, `GlobalChoreographyTask` | Separate Choreography Modeling Conformance subclass |
 | Conversation family | `Conversation`, `SubConversation`, `CallConversation`, `GlobalConversation`, `ConversationNode`, `ConversationLink`, `ConversationAssociation` | Modeling-only, not execution |
 | Collaboration family | `Collaboration`, `Participant`, `ParticipantAssociation`, `ParticipantMultiplicity`, `PartnerEntity`, `PartnerRole`, `InteractionNode`, `MessageFlow`, `MessageFlowAssociation` | Not animated by Clause 13; inter-process messaging is covered by Message events. Note §2.3.2 names the "definitional Collaboration" for **import** — that is a server/converter concern, not a library one |
-| Visual artifacts | `TextAnnotation`, `Group`, `Category`, `CategoryValue`, `Artifact` | Pure visual — Association is kept because it carries compensation semantics |
+| Category machinery | `Category`, `CategoryValue` | Definitions-level taxonomy roots — consumed at load as the resolution input a `Group` embeds its value from (ADR-039); not carried as model elements |
 | Cross-namespace | `Relationship` | Not execution-related |
 | DI / DC | `BPMNShape`, `BPMNEdge`, `Bounds`, `Point`, all `bpmndi:*` and `dc:*`, `di:*` | Visual layout metamodel; not part of execution conformance |
 | BPEL mapping | (no bpmn-moddle types) | Separate conformance subclass |
@@ -174,6 +174,7 @@ The first distinction is the standard's own (§13 animates, §8/§10 supply). Th
 - **Boundary events on CallActivity** — explicitly allowed by §10.5.4. In scope.
 - **Event Sub-Process** — modeled as `SubProcess` with `triggeredByEvent=true`. In scope.
 - **Compensation Association** — `Association` between an activity and its compensation handler. The element is visual elsewhere; here it carries normative semantics.
+- **Artifacts (§8.4.1) — in scope, model-only** (ADR-039). The standard's three — `Association` (plain shape), `TextAnnotation`, `Group` — follow the Lane reading: §2.3.1 lets execution ignore them, and the model **carries** them for §2.3.2 loading and the converters' semantic round-trip. `pkg/model/artifacts` holds the three kinds behind a closed `Artifact` interface; `Process` and `SubProcess` carry the collection; no execution path reads one. The compensation shape of `Association` stays what the row above says — the boundary's handler wiring, never duplicated as an artifact. `Category`/`CategoryValue` remain un-carried: load-time resolution input only (the out-of-scope table's row).
 
 ## Spec section index (for cross-reference)
 

@@ -5,9 +5,11 @@ import (
 
 	"github.com/dr-dobermann/gobpm/generated/mockdata"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/artifacts"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/lanes"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -202,4 +204,45 @@ func TestSubProcessLaneSets(t *testing.T) {
 
 			require.ErrorContains(t, sp.Validate(), "outsider")
 		})
+}
+
+// TestSubProcessArtifacts — SRD-092 T-5: a Sub-Process is the other container
+// BPMN hangs artifacts off, so it accepts and exposes them exactly as a
+// Process does.
+func TestSubProcessArtifacts(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	sp, err := activities.NewSubProcess("body")
+	require.NoError(t, err)
+
+	note := artifacts.MustTextAnnotation("inner note", "",
+		foundation.WithID("sp-note"))
+	grp := artifacts.MustGroup("inner", foundation.WithID("sp-grp"))
+
+	t.Run("accumulates in order and returns a copy", func(t *testing.T) {
+		require.NoError(t, sp.AddArtifacts(note))
+		require.NoError(t, sp.AddArtifacts(
+			artifacts.MustAssociation(note, grp, artifacts.DirectionOne,
+				foundation.WithID("sp-a"))))
+
+		arts := sp.Artifacts()
+		require.Len(t, arts, 2)
+		require.Equal(t, "sp-note", arts[0].ID())
+		require.Equal(t, "sp-a", arts[1].ID())
+
+		arts[0] = nil
+		require.Equal(t, "sp-note", sp.Artifacts()[0].ID())
+	})
+
+	t.Run("a nil artifact is refused, the collection unchanged",
+		func(t *testing.T) {
+			require.ErrorContains(t, sp.AddArtifacts(nil), "nil artifact")
+			require.Len(t, sp.Artifacts(), 2)
+		})
+
+	t.Run("a duplicate id is refused", func(t *testing.T) {
+		err := sp.AddArtifacts(artifacts.MustTextAnnotation("x", "",
+			foundation.WithID("sp-note")))
+		require.ErrorContains(t, err, "duplicate artifact id")
+	})
 }
