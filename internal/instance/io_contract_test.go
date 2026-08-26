@@ -169,6 +169,130 @@ func TestBindContract(t *testing.T) {
 	})
 }
 
+// outputSnapshot builds start → end declaring one output, required or
+// optional, that nothing in the flow ever writes.
+func outputSnapshot(t *testing.T, optional bool) *snapshot.Snapshot {
+	t.Helper()
+
+	var opts []data.ParameterOption
+	if optional {
+		opts = append(opts, data.Optional())
+	}
+
+	p, err := process.New("resulting",
+		data.WithOutputs(intInput("total", opts...)))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	require.NoError(t, p.Add(start))
+	require.NoError(t, p.Add(end))
+	_, err = flow.Link(start, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	return s
+}
+
+// runToEnd constructs and runs an instance to a terminal state.
+func runToEnd(t *testing.T, s *snapshot.Snapshot) *Instance {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	rt := enginert.Default()
+
+	eh, err := eventhub.New(rt)
+	require.NoError(t, err)
+	require.NoError(t, eh.Start(ctx))
+
+	go func() { _ = eh.Run(ctx) }()
+
+	inst, err := New(s, scope.EmptyDataPath, rt, eh, nil)
+	require.NoError(t, err)
+	require.NoError(t, inst.Run(ctx))
+
+	require.Eventually(t,
+		func() bool {
+			st := inst.State()
+
+			return st == Completed || st == Terminated
+		},
+		2*time.Second, 5*time.Millisecond)
+
+	return inst
+}
+
+// TestOutputsCollected — SRD-093 T-10 at the instance level: a declared
+// output the flow left Ready in the root scope is collected into the result
+// at completion, and every Outputs() call hands out its own copy.
+func TestOutputsCollected(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rt := enginert.Default()
+
+	eh, err := eventhub.New(rt)
+	require.NoError(t, err)
+	require.NoError(t, eh.Start(ctx))
+
+	go func() { _ = eh.Run(ctx) }()
+
+	inst, err := New(outputSnapshot(t, false), scope.EmptyDataPath, rt, eh, nil)
+	require.NoError(t, err)
+
+	// what a task's output association would leave behind
+	require.NoError(t, inst.sc.bindRootData(
+		[]data.Data{delivered(t, "total", 42)}))
+
+	require.Empty(t, inst.Outputs(), "no result before completion")
+	require.NoError(t, inst.Run(ctx))
+
+	require.Eventually(t,
+		func() bool { return inst.State() == Completed },
+		2*time.Second, 5*time.Millisecond)
+	require.NoError(t, inst.LastErr())
+
+	outs := inst.Outputs()
+	require.Len(t, outs, 1)
+	require.Equal(t, "total", outs[0].Name())
+	require.Equal(t, 42, outs[0].Value().Get(ctx))
+
+	require.NoError(t, outs[0].Value().Update(ctx, 0))
+	require.Equal(t, 42, inst.Outputs()[0].Value().Get(ctx),
+		"a reader's copy never reaches the instance's record")
+}
+
+// TestMissingRequiredOutputFaults — SRD-093 T-11: a required output the flow
+// never produced faults the instance at completion in the terminal shape —
+// Terminated, LastErr naming the output, no result; an optional one absent is
+// skipped and the instance completes with an empty result.
+func TestMissingRequiredOutputFaults(t *testing.T) {
+	t.Run("a required output absent faults", func(t *testing.T) {
+		inst := runToEnd(t, outputSnapshot(t, false))
+
+		require.Equal(t, Terminated, inst.State())
+		require.ErrorContains(t, inst.LastErr(), `required output "total"`)
+		require.ErrorContains(t, inst.LastErr(), "resulting")
+		require.Empty(t, inst.Outputs())
+	})
+
+	t.Run("an optional output absent is skipped", func(t *testing.T) {
+		inst := runToEnd(t, outputSnapshot(t, true))
+
+		require.Equal(t, Completed, inst.State())
+		require.NoError(t, inst.LastErr())
+		require.Empty(t, inst.Outputs())
+	})
+}
+
 // TestEventBornLaunchWithRequiredInputRefused — SRD-093 T-9: an event-born
 // launch cannot fill a process input until the attachment capability lands,
 // so a REQUIRED input refuses the launch naming #329; an optional one lets

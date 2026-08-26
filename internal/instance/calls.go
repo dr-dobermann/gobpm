@@ -82,6 +82,7 @@ func (ls *loopState) onCallWaiting(ctx context.Context, ev trackEvent) {
 		Key:              ca.CalledKey(),
 		Version:          ca.CalledVersion(),
 		Inputs:           inputs,
+		Outputs:          ca.CallOutputs(),
 		ParentInstanceID: ls.inst.ID(),
 		CallNodeID:       ev.node.ID(),
 	})

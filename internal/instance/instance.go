@@ -48,9 +48,16 @@ type Instance struct {
 	scopeReq            chan scopeRequest
 	incidentReq         chan incidentRequest
 	invoker             exec.ProcessInvoker
-	waitHolders         exec.WaitHolders
-	sc                  instanceScope
-	corr                correlator
+	// result holds the declared outputs read at normal completion (ADR-040
+	// §2.3): the contract's committed values, written once by the loop in
+	// exitLoop; copy-on-write (the tracksSnap pattern), since a host may ask
+	// Outputs() at any time and a read racing the store must see nothing or
+	// the whole result. nil for a
+	// contract-less process and after an abnormal end.
+	result      atomic.Pointer[[]data.Data]
+	waitHolders exec.WaitHolders
+	sc          instanceScope
+	corr        correlator
 	// performers records who completed each human task, served read-only through
 	// the RUNTIME subtree and carried across a hydrate (ADR-020 v.2 §2.4.2).
 	performers *performers

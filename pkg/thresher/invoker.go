@@ -8,6 +8,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
+	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -61,6 +62,14 @@ func (t *Thresher) InvokeProcess(
 			errs.D(observability.AttrCalledKey, call.Key))
 	}
 
+	// The callee's contract is fixed the moment its version is (ADR-019
+	// latest-at-launch), so this is where the caller's declared outputs are
+	// checked against it (ADR-040 §2.4, SRD-093 FR-10); the inputs are
+	// checked by the child's own construction below.
+	if err := checkCallOutputs(s, call); err != nil {
+		return nil, err
+	}
+
 	// NewChild only fails on a malformed snapshot or linkage; the registry
 	// hands a validated snapshot and the linkage is checked above, so this is a
 	// defensive wrap (the launchInstance pattern).
@@ -101,6 +110,66 @@ func (t *Thresher) InvokeProcess(
 	return &childProcess{inst: inst, settled: settled, version: resolved}, nil
 }
 
+// checkCallOutputs refuses a call whose caller declares an output the callee's
+// contract does not (ADR-040 §2.4, SRD-093 FR-10). A contract-less callee
+// declares nothing to check against and serves what its scope holds.
+func checkCallOutputs(s *snapshot.Snapshot, call exec.ProcessCall) error {
+	if s.IOSpec == nil {
+		return nil
+	}
+
+	outputs := s.IOSpec.OutputSet()
+
+	declared := make(map[string]bool, len(outputs))
+	names := make([]string, 0, len(outputs))
+
+	for _, out := range outputs {
+		declared[out.Name()] = true
+		names = append(names, out.Name())
+	}
+
+	for _, name := range call.Outputs {
+		if !declared[name] {
+			return errs.New(
+				errs.M("call activity %q: output %q is not declared by "+
+					"process %q (declared outputs: %s)", call.CallNodeID, name,
+					call.Key, strings.Join(names, ", ")),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.D(observability.AttrCalledKey, call.Key))
+		}
+	}
+
+	return nil
+}
+
+// outputsFromResult serves the caller's requested names from a contracted
+// child's collected result, in the caller's order.
+func outputsFromResult(
+	childID string, result []data.Data, names []string,
+) ([]data.Data, error) {
+	byName := make(map[string]data.Data, len(result))
+	for _, d := range result {
+		byName[d.Name()] = d
+	}
+
+	out := make([]data.Data, 0, len(names))
+
+	for _, name := range names {
+		d, ok := byName[name]
+		if !ok {
+			return nil, errs.New(
+				errs.M("child instance %q has no declared output %q",
+					childID, name),
+				errs.C(errorClass, errs.ObjectNotFound),
+				errs.D(observability.AttrChildInstanceID, childID))
+		}
+
+		out = append(out, d)
+	}
+
+	return out, nil
+}
+
 // childProcess is the exec.ChildProcess adapter over a launched child instance:
 // a thin, read-only projection the caller loop watches. It never exposes the
 // instance object, only the call protocol's surface.
@@ -137,6 +206,13 @@ func (c *childProcess) Failed() error {
 // the Call Activity's declared Output parameters, the call's return values. A
 // missing name is a classified error (the call contract is broken).
 func (c *childProcess) Outputs(names []string) ([]data.Data, error) {
+	// A contracted child serves its collected result — the values read at
+	// its completion (SRD-093 FR-9); a contract-less one serves whatever
+	// its root scope holds, as it always has (ADR-040 §2.5).
+	if result := c.inst.Outputs(); len(result) != 0 {
+		return outputsFromResult(c.inst.ID(), result, names)
+	}
+
 	reader := c.inst.DataReader()
 	out := make([]data.Data, 0, len(names))
 

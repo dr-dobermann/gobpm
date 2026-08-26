@@ -2,15 +2,19 @@ package thresher_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 	"github.com/stretchr/testify/require"
 )
@@ -176,6 +180,217 @@ func TestLaunchTypeChecksInput(t *testing.T) {
 
 	_, err := th.StartLatest(p.ID(), thresher.WithStartInput("subtotal", "120"))
 	require.ErrorContains(t, err, `input "subtotal" rejects the delivered value`)
+}
+
+// contractedScaleCallee is scaleCallee with the contract declared: input
+// amount (required), output result (required) — the callee side ADR-040
+// §2.4 gives the call boundary. Its Go operation reads amount and returns
+// result = amount*f, committed into the root scope under the output's name.
+func contractedScaleCallee(
+	t *testing.T, key string, f int, extraOutputs ...*data.Parameter,
+) *process.Process {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("callee", foundation.WithID(key),
+		data.WithInputs(ioParam(t, "amount")),
+		data.WithOutputs(ioParam(t, "result")),
+		data.WithOutputs(extraOutputs...))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	op, err := gooper.New("scale",
+		func(ctx context.Context, ds service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			d, err := ds.GetData("amount")
+			if err != nil {
+				return nil, err
+			}
+
+			n, _ := d.Value().Get(ctx).(int)
+
+			return data.MustItemDefinition(values.NewVariable(n*f),
+				foundation.WithID("result")), nil
+		})
+	require.NoError(t, err)
+
+	scale, err := activities.NewServiceTask("scale", op,
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, scale, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, scale)
+	link(t, scale, end)
+
+	return p
+}
+
+// TestOutputsCollectedAtCompletion — SRD-093 T-10: the host reads the
+// declared result after Completed; it is a copy taken at completion.
+func TestOutputsCollectedAtCompletion(t *testing.T) {
+	p := contractedScaleCallee(t, "io-result", 3)
+	th := bootIOEngine(t, "io-result-engine", p)
+
+	h, err := th.StartLatest(p.ID(), thresher.WithStartInput("amount", 14))
+	require.NoError(t, err)
+
+	require.Empty(t, h.Outputs(), "no result before completion")
+
+	wctx, wc := context.WithTimeout(context.Background(), 5*time.Second)
+	defer wc()
+
+	state, err := h.WaitCompletion(wctx)
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, state)
+
+	outs := h.Outputs()
+	require.Len(t, outs, 1)
+	require.Equal(t, "result", outs[0].Name())
+	require.Equal(t, 42, outs[0].Value().Get(context.Background()))
+
+	// a copy: mutating what the host got leaves the instance's result alone
+	require.NoError(t, outs[0].Value().Update(context.Background(), 0))
+	require.Equal(t, 42, h.Outputs()[0].Value().Get(context.Background()))
+}
+
+// TestCallBindsThroughDeclaredInputs — SRD-093 T-13/T-14: a contracted
+// callee called through the existing caller path binds the caller's input
+// through its declaration and returns its collected result to the caller's
+// scope; the caller's check task records it.
+func TestCallBindsThroughDeclaredInputs(t *testing.T) {
+	var saw atomic.Int64
+
+	state, err := runCaller(t,
+		callerProcess(t, "io-callee", 7, 0, &saw),
+		contractedScaleCallee(t, "io-callee", 6))
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, state)
+	require.Equal(t, int64(42), saw.Load(),
+		"the caller committed the child's declared result")
+}
+
+// TestCallBoundaryValidatesOutputs — SRD-093 T-12: a caller output the
+// callee's contract does not declare faults the call at launch, at the
+// Call Activity, naming both sides.
+func TestCallBoundaryValidatesOutputs(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	caller, err := process.New("caller-mismatch",
+		data.WithProperties(
+			data.MustProperty("amount",
+				data.MustItemDefinition(values.NewVariable(1),
+					foundation.WithID("amount")),
+				data.ReadyDataState)))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	ca, err := activities.NewCallActivity("charge", "io-strict-callee",
+		activities.WithParameters(data.Input, ioParam(t, "amount")),
+		activities.WithParameters(data.Output, ioParam(t, "grandTotal")))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, ca, end} {
+		require.NoError(t, caller.Add(e))
+	}
+
+	link(t, start, ca)
+	link(t, ca, end)
+
+	// The refusal reaches the caller as the Call Activity's fault: an
+	// unhandled failure at that node, which the incident machinery records
+	// against it (ADR-036) — the caller parks there instead of running on.
+	th := bootIOEngine(t, "io-boundary-engine", caller)
+
+	_, err = th.RegisterProcess(contractedScaleCallee(t, "io-strict-callee", 2))
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(caller.ID())
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return h.OpenIncidents() == 1 },
+		5*time.Second, 10*time.Millisecond,
+		"the contract mismatch must fault the caller at the Call Activity")
+
+	inc := h.Incidents()
+	require.Len(t, inc, 1)
+	require.Equal(t, "charge", inc[0].NodeName)
+	require.Contains(t, inc[0].Cause, `output "grandTotal" is not declared`)
+	require.Contains(t, inc[0].Cause, "result")
+}
+
+// TestCallerReadsUnproducedOptionalOutput — SRD-093 FR-9's edge: a callee
+// may declare an OPTIONAL output and never produce it. The caller's output
+// name passes the launch check (it is declared), so the miss surfaces where
+// it happens — reading the result back — as the Call Activity's fault.
+func TestCallerReadsUnproducedOptionalOutput(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	note := func() *data.Parameter {
+		return data.MustParameter("note",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable("")),
+				data.ReadyDataState),
+			data.Optional())
+	}
+
+	// result is produced; note is declared optional and never produced.
+	callee := contractedScaleCallee(t, "io-opt-callee", 2, note())
+
+	caller, err := process.New("caller-opt",
+		data.WithProperties(
+			data.MustProperty("amount",
+				data.MustItemDefinition(values.NewVariable(1),
+					foundation.WithID("amount")),
+				data.ReadyDataState)))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	ca, err := activities.NewCallActivity("charge", "io-opt-callee",
+		activities.WithParameters(data.Input, ioParam(t, "amount")),
+		activities.WithParameters(data.Output, ioParam(t, "result"), note()))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, ca, end} {
+		require.NoError(t, caller.Add(e))
+	}
+
+	link(t, start, ca)
+	link(t, ca, end)
+
+	th := bootIOEngine(t, "io-opt-engine", caller)
+
+	_, err = th.RegisterProcess(callee)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(caller.ID())
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return h.OpenIncidents() == 1 },
+		5*time.Second, 10*time.Millisecond)
+
+	inc := h.Incidents()
+	require.Len(t, inc, 1)
+	require.Equal(t, "charge", inc[0].NodeName)
+	require.Contains(t, inc[0].Cause, `has no declared output "note"`)
 }
 
 // TestStartOptionsValidate covers the option constructors' own guards.

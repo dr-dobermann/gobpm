@@ -65,7 +65,12 @@ type ProcessCall struct {
 	ParentInstanceID string
 	CallNodeID       string
 	Inputs           []data.Data
-	Version          int
+	// Outputs are the caller's declared output names — what it will read
+	// back from the child. A callee declaring a contract validates them at
+	// launch (ADR-040 §2.4, SRD-093 FR-10); a contract-less callee ignores
+	// them here and serves whatever its root scope holds at completion.
+	Outputs []string
+	Version int
 }
 
 // ChildProcess is the caller loop's watch handle onto a launched child instance.

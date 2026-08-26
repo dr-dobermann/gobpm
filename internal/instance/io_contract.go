@@ -147,6 +147,80 @@ func bindDeclared(in *data.Parameter, d data.Data) (*data.Parameter, error) {
 	return data.NewParameter(in.Name(), ready, opts...)
 }
 
+// collectOutputs reads the declared outputs from the root scope at normal
+// completion and copies them into the instance's result (ADR-040 §2.3,
+// SRD-093 FR-8) — the contract's committed values, available after the
+// instance is reaped. A required output that is absent or not Ready is the
+// fault the caller reports: the process claimed a result it did not produce.
+// An optional output not produced is skipped. A contract-less process has
+// no result surface and is untouched.
+func (ls *loopState) collectOutputs() error {
+	inst := ls.inst
+
+	ios := inst.s.IOSpec
+	if ios == nil {
+		return nil
+	}
+
+	outputs := ios.OutputSet()
+	result := make([]data.Data, 0, len(outputs))
+
+	for _, out := range outputs {
+		d, err := inst.sc.plane.GetData(inst.sc.root, out.Name())
+		if err != nil || d.State().Name() != data.ReadyDataState.Name() {
+			if out.IsOptional() {
+				continue
+			}
+
+			return errs.New(
+				errs.M("process %q: required output %q is unavailable at "+
+					"completion", inst.s.ProcessName, out.Name()),
+				errs.C(errorClass, errs.ConditionFailed),
+				errs.D(observability.AttrProcessID, inst.s.ProcessID))
+		}
+
+		cloned, err := cloneNamed(out.Name(), d)
+		if err != nil {
+			return err
+		}
+
+		result = append(result, cloned)
+	}
+
+	inst.result.Store(&result)
+
+	return nil
+}
+
+// Outputs returns the instance's declared result — the outputs read at its
+// normal completion (SRD-093 FR-9). Empty before completion, after an
+// abnormal end, and for a contract-less process. Every call hands out its
+// own copy of each value: the result is a committed value, never a live
+// view (ADR-040 §2.3a), and a reader mutating what it got must not reach the
+// instance's record or another reader.
+func (inst *Instance) Outputs() []data.Data {
+	stored := inst.result.Load()
+	if stored == nil {
+		return nil
+	}
+
+	out := make([]data.Data, 0, len(*stored))
+
+	for _, d := range *stored {
+		cloned, err := cloneNamed(d.Name(), d)
+		if err != nil {
+			// A collected datum is a Ready clone already, so its value is
+			// never nil — the one thing cloneNamed refuses. Said in the form
+			// the coverage gate reads; the shared datum is the fallback.
+			cloned = d
+		}
+
+		out = append(out, cloned)
+	}
+
+	return out
+}
+
 // paramNames lists parameter names for a message.
 func paramNames(params []*data.Parameter) string {
 	names := make([]string, 0, len(params))

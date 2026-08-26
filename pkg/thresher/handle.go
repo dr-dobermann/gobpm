@@ -9,6 +9,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
@@ -150,6 +151,14 @@ func (h *InstanceHandle) State() InstanceState {
 // runtime variables. Read-only by interface (service.DataReader has no mutator).
 func (h *InstanceHandle) Data() service.DataReader {
 	return h.current().DataReader()
+}
+
+// Outputs returns the instance's declared result — the process's declared
+// outputs, read at its normal completion (ADR-040 §2.3, SRD-093 FR-9). Empty
+// before completion, after an abnormal end, and for a process that declares
+// no contract; read it after WaitCompletion reports Completed.
+func (h *InstanceHandle) Outputs() []data.Data {
+	return h.current().Outputs()
 }
 
 // Tokens returns a snapshot of where execution currently is — one TokenView per
