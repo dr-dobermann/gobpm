@@ -10,9 +10,9 @@ import (
 
 func TestAssociationDirection(t *testing.T) {
 	t.Run("association direction constants", func(t *testing.T) {
-		require.Equal(t, artifacts.AssociationDirection("None"), artifacts.None)
-		require.Equal(t, artifacts.AssociationDirection("One"), artifacts.One)
-		require.Equal(t, artifacts.AssociationDirection("Both"), artifacts.Both)
+		require.Equal(t, artifacts.AssociationDirection("None"), artifacts.DirectionNone)
+		require.Equal(t, artifacts.AssociationDirection("One"), artifacts.DirectionOne)
+		require.Equal(t, artifacts.AssociationDirection("Both"), artifacts.DirectionBoth)
 	})
 }
 
@@ -23,30 +23,30 @@ func TestNewAssociation(t *testing.T) {
 	trg := foundation.MustBaseElement(foundation.WithID("trg"))
 
 	t.Run("valid ends and direction are accepted", func(t *testing.T) {
-		a, err := artifacts.NewAssociation(src, trg, artifacts.One,
+		a, err := artifacts.NewAssociation(src, trg, artifacts.DirectionOne,
 			foundation.WithID("a1"))
 		require.NoError(t, err)
 		require.Equal(t, "a1", a.ID())
 		require.Same(t, src, a.Source())
 		require.Same(t, trg, a.Target())
-		require.Equal(t, artifacts.One, a.Direction())
+		require.Equal(t, artifacts.DirectionOne, a.Direction())
 	})
 
 	t.Run("an empty direction defaults to None", func(t *testing.T) {
 		a, err := artifacts.NewAssociation(src, trg, "")
 		require.NoError(t, err)
-		require.Equal(t, artifacts.None, a.Direction())
+		require.Equal(t, artifacts.DirectionNone, a.Direction())
 	})
 
 	t.Run("a nil source is refused", func(t *testing.T) {
-		a, err := artifacts.NewAssociation(nil, trg, artifacts.None)
+		a, err := artifacts.NewAssociation(nil, trg, artifacts.DirectionNone)
 		require.Error(t, err)
 		require.Nil(t, a)
 		require.Contains(t, err.Error(), "nil source")
 	})
 
 	t.Run("a nil target is refused", func(t *testing.T) {
-		a, err := artifacts.NewAssociation(src, nil, artifacts.None)
+		a, err := artifacts.NewAssociation(src, nil, artifacts.DirectionNone)
 		require.Error(t, err)
 		require.Nil(t, a)
 		require.Contains(t, err.Error(), "nil target")
@@ -60,7 +60,7 @@ func TestNewAssociation(t *testing.T) {
 	})
 
 	t.Run("an invalid base option is propagated", func(t *testing.T) {
-		a, err := artifacts.NewAssociation(src, trg, artifacts.None,
+		a, err := artifacts.NewAssociation(src, trg, artifacts.DirectionNone,
 			foundation.WithID(""))
 		require.Error(t, err)
 		require.Nil(t, a)
@@ -74,14 +74,14 @@ func TestMustAssociation(t *testing.T) {
 	trg := foundation.MustBaseElement(foundation.WithID("trg"))
 
 	t.Run("returns on success", func(t *testing.T) {
-		a := artifacts.MustAssociation(src, trg, artifacts.Both)
+		a := artifacts.MustAssociation(src, trg, artifacts.DirectionBoth)
 		require.NotNil(t, a)
-		require.Equal(t, artifacts.Both, a.Direction())
+		require.Equal(t, artifacts.DirectionBoth, a.Direction())
 	})
 
 	t.Run("panics on error", func(t *testing.T) {
 		require.Panics(t, func() {
-			artifacts.MustAssociation(nil, trg, artifacts.None)
+			artifacts.MustAssociation(nil, trg, artifacts.DirectionNone)
 		})
 	})
 }

@@ -322,17 +322,24 @@ func TestContainerReusingADeclaredIDIsRefused(t *testing.T) {
 	}
 }
 
-// TestBadLaneSetInsideAContainer covers the container child parser's
-// laneSet branch failing: the same refusal a process-level lane set gets,
-// reached through the container's own reader.
-func TestBadLaneSetInsideAContainer(t *testing.T) {
-	_, err := importEventDoc(t, subProcessDoc(
+// TestIDLessLaneSetInsideAContainer: an id-less lane in a container is
+// carried like one at process level (SRD-092 M5 — the same generated-id
+// convention everywhere). The build-failure this test once pinned no
+// longer has an XML shape to reach it: with the ids optional, no document
+// can make buildLaneSet fail.
+func TestIDLessLaneSetInsideAContainer(t *testing.T) {
+	res, err := importEventDoc(t, subProcessDoc(
 		`      <bpmn:laneSet id="ls1">
         <bpmn:lane name="Unnamed"/>
       </bpmn:laneSet>
 `+innerGraph))
-	if err == nil {
-		t.Fatal("a <lane> with no id inside a container must be refused")
+	if err != nil {
+		t.Fatalf("an id-less lane inside a container must import: %v", err)
+	}
+
+	sp := containerOf(t, nodeByID(t, res, "sub"))
+	if got := len(sp.LaneSets()); got != 1 {
+		t.Errorf("sub-process lane sets = %d, want 1", got)
 	}
 }
 

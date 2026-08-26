@@ -296,6 +296,10 @@ type assembly struct {
 	// the ids an association end can reference. One without a declared id
 	// is unreferencable and contributes no entry.
 	artsByID map[string]artifacts.Artifact
+	// lanesByID are the built lanes and lane sets by declared id, for the
+	// same reason: a lane is model-held, so an association may end on it
+	// (ADR-039 §2.6 degrades only what the model does NOT hold).
+	lanesByID map[string]foundation.Identifyer
 	// spec is the buffered <process> itself, built first in pass 2 — see
 	// procSpec.
 	spec procSpec
@@ -756,6 +760,7 @@ func (p *parser) newAssembly(spec procSpec) *assembly {
 		declared:     make(map[string]string),
 		dataElems:    make(map[string]flow.Element),
 		artsByID:     make(map[string]artifacts.Artifact),
+		lanesByID:    make(map[string]foundation.Identifyer),
 		interfaces:   p.interfaces,
 		ops:          p.ops,
 		cat:          p.cat,
@@ -769,7 +774,7 @@ func (p *parser) newAssembly(spec procSpec) *assembly {
 func constructProcess(p *parser, asm *assembly) error {
 	spec := asm.spec
 
-	sets, err := buildLaneSets(&asm.places, spec.laneSets)
+	sets, err := buildLaneSets(asm, spec.laneSets)
 	if err != nil {
 		return err
 	}

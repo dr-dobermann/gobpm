@@ -173,7 +173,7 @@ func TestPlainAssociationImports(t *testing.T) {
 	}
 
 	if a.ID() != "a1" || a.Source().ID() != "note" ||
-		a.Target().ID() != "t1" || a.Direction() != artifacts.None {
+		a.Target().ID() != "t1" || a.Direction() != artifacts.DirectionNone {
 		t.Errorf("association = %q %q→%q dir %q, want a1 note→t1 None "+
 			"(the absent attribute takes the standard's default)",
 			a.ID(), a.Source().ID(), a.Target().ID(), a.Direction())
@@ -222,9 +222,9 @@ func TestAssociationEnds(t *testing.T) {
 		target string
 		dir    artifacts.AssociationDirection
 	}{
-		"af": {"f1", artifacts.One},
-		"ad": {"do1", artifacts.Both},
-		"ag": {"g1", artifacts.None},
+		"af": {"f1", artifacts.DirectionOne},
+		"ad": {"do1", artifacts.DirectionBoth},
+		"ag": {"g1", artifacts.DirectionNone},
 	} {
 		a, ok := byID[id]
 		if !ok {
@@ -233,10 +233,107 @@ func TestAssociationEnds(t *testing.T) {
 			continue
 		}
 
+		if a.Source().ID() != "note" {
+			t.Errorf("association %q source = %q, want the annotation",
+				id, a.Source().ID())
+		}
+
 		if a.Target().ID() != want.target || a.Direction() != want.dir {
 			t.Errorf("association %q = →%q dir %q, want →%q %q",
 				id, a.Target().ID(), a.Direction(), want.target, want.dir)
 		}
+	}
+}
+
+// TestAssociationToAssociation: an end may be another carried association —
+// §8.4.1 types an end as any BaseElement, and a built association joins
+// the lookup itself (SRD-092 M5; the independent review's finding).
+// Resolution is document-ordered: the backward reference resolves, and a
+// FORWARD reference degrades to the report rather than resolving.
+func TestAssociationToAssociation(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="P" name="P">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:textAnnotation id="note">
+      <bpmn:text>x</bpmn:text>
+    </bpmn:textAnnotation>
+    <bpmn:association id="a1" sourceRef="note" targetRef="s1"/>
+    <bpmn:association id="a2" sourceRef="note" targetRef="a1"/>
+    <bpmn:association id="a3" sourceRef="note" targetRef="a4"/>
+    <bpmn:association id="a4" sourceRef="note" targetRef="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	res, err := importEventDoc(t, doc)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	// note, a1, a2, a4 are carried; a3 (a forward reference) is dropped
+	// with the report.
+	arts := res.Processes[0].Artifacts()
+	if len(arts) != 4 {
+		t.Fatalf("artifacts = %d, want 4 (a3 dropped)", len(arts))
+	}
+
+	var a2ok bool
+
+	for _, art := range arts {
+		if a, ok := art.(*artifacts.Association); ok && a.ID() == "a2" {
+			a2ok = a.Target().ID() == "a1"
+		}
+	}
+
+	if !a2ok {
+		t.Error("a2 must resolve its target to the earlier association a1")
+	}
+
+	if len(res.Dropped) != 1 || res.Dropped[0].Element != "a3" ||
+		!strings.Contains(res.Dropped[0].Reason, `"a4"`) {
+		t.Errorf("Dropped = %+v, want exactly a3's forward-reference report",
+			res.Dropped)
+	}
+}
+
+// TestAssociationToLane: a lane is model-held (SRD-076), so an
+// association may end on it — ADR-039 §2.6 reserves the report
+// degradation for what the model does NOT hold (the independent review's
+// finding).
+func TestAssociationToLane(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="P" name="P">
+    <bpmn:laneSet id="lset">
+      <bpmn:lane id="sales">
+        <bpmn:flowNodeRef>s1</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="s1"/>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:textAnnotation id="note">
+      <bpmn:text>the sales half</bpmn:text>
+    </bpmn:textAnnotation>
+    <bpmn:association id="a1" sourceRef="note" targetRef="sales"/>
+    <bpmn:association id="a2" sourceRef="note" targetRef="lset"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	res, err := importEventDoc(t, doc)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	if len(res.Dropped) != 0 {
+		t.Errorf("Dropped = %+v, want lane ends resolved", res.Dropped)
+	}
+
+	if got := len(res.Processes[0].Artifacts()); got != 3 {
+		t.Errorf("artifacts = %d, want the annotation and both associations",
+			got)
 	}
 }
 

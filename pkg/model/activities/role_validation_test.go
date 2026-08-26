@@ -222,7 +222,7 @@ func TestSubProcessArtifacts(t *testing.T) {
 	t.Run("accumulates in order and returns a copy", func(t *testing.T) {
 		require.NoError(t, sp.AddArtifacts(note))
 		require.NoError(t, sp.AddArtifacts(
-			artifacts.MustAssociation(note, grp, artifacts.One,
+			artifacts.MustAssociation(note, grp, artifacts.DirectionOne,
 				foundation.WithID("sp-a"))))
 
 		arts := sp.Artifacts()

@@ -10,19 +10,20 @@ import (
 type AssociationDirection string
 
 const (
-	// None represents no association direction.
-	None AssociationDirection = "None"
-	// One represents one-way association direction.
-	One AssociationDirection = "One"
-	// Both represents bi-directional association direction.
-	Both AssociationDirection = "Both"
+	// DirectionNone represents no association direction — the standard's
+	// default (§8.4.1). The string values are the spec's own literals.
+	DirectionNone AssociationDirection = "None"
+	// DirectionOne represents one-way association direction.
+	DirectionOne AssociationDirection = "One"
+	// DirectionBoth represents bi-directional association direction.
+	DirectionBoth AssociationDirection = "Both"
 )
 
 // validDirections is the standard's closed enumeration (§8.4.1).
 var validDirections = map[AssociationDirection]struct{}{
-	None: {},
-	One:  {},
-	Both: {},
+	DirectionNone: {},
+	DirectionOne:  {},
+	DirectionBoth: {},
 }
 
 // An Association links two model elements: typically a TextAnnotation to the
@@ -61,7 +62,7 @@ func NewAssociation(
 	}
 
 	if direction == "" {
-		direction = None
+		direction = DirectionNone
 	}
 
 	if _, ok := validDirections[direction]; !ok {

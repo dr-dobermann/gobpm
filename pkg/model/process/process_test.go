@@ -519,7 +519,7 @@ func TestProcessArtifacts(t *testing.T) {
 	t.Run("accumulates in order and returns a copy", func(t *testing.T) {
 		require.NoError(t, p.AddArtifacts(note))
 		require.NoError(t, p.AddArtifacts(grp,
-			artifacts.MustAssociation(note, grp, artifacts.None,
+			artifacts.MustAssociation(note, grp, artifacts.DirectionNone,
 				foundation.WithID("a1"))))
 
 		arts := p.Artifacts()

@@ -433,7 +433,7 @@ func buildSubProcess(
 ) (flow.Node, error) {
 	opts := body.opts(id)
 
-	sets, err := buildLaneSets(&asm.places, body.laneSets)
+	sets, err := buildLaneSets(asm, body.laneSets)
 	if err != nil {
 		return nil, err
 	}

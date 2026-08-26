@@ -119,10 +119,12 @@ func compensationHandler(
 		errs.C(errorClass, errs.InvalidObject))
 }
 
-// endFor resolves one association end against everything pass 2 built:
-// the flow nodes, the data elements, the sequence flows, and the carried
-// artifacts. The standard types an end as any BaseElement (§8.4.1), so
-// the universe is deliberately the whole assembly, not a curated subset.
+// endFor resolves one association end against everything pass 2 built
+// and holds: the flow nodes, the data elements, the sequence flows, the
+// lanes and lane sets, and the carried artifacts — associations included,
+// in document order. The standard types an end as any BaseElement
+// (§8.4.1), so the universe is everything the MODEL holds; what stays
+// outside it (a category value, a DI element) degrades to the report.
 func endFor(
 	asm *assembly, flowByID map[string]*flow.SequenceFlow, ref string,
 ) (foundation.Identifyer, bool) {
@@ -140,6 +142,10 @@ func endFor(
 
 	if a, ok := asm.artsByID[ref]; ok {
 		return a, true
+	}
+
+	if l, ok := asm.lanesByID[ref]; ok {
+		return l, true
 	}
 
 	return nil, false
@@ -187,6 +193,14 @@ func buildAssociations(
 
 		if err := attachArtifact(asm, a.container, na); err != nil {
 			return err
+		}
+
+		// A built association joins the lookup itself: an association may
+		// end on another association (§8.4.1 — any BaseElement). The
+		// resolution is document-ordered, so a FORWARD reference to a
+		// later association degrades to the report rather than resolving.
+		if a.id != "" {
+			asm.artsByID[a.id] = na
 		}
 	}
 

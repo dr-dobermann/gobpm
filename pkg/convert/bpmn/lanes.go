@@ -6,7 +6,6 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/lanes"
 )
 
@@ -35,11 +34,19 @@ type placement struct {
 	nodeRefs []string
 }
 
-// parseLaneSet reads one <laneSet> and everything under it.
+// parseLaneSet reads one <laneSet> and everything under it. A declared id
+// joins the document's one ledger (SRD-089.F §4.11) — before this claim, a
+// lane set could silently reuse a task's id.
 func (p *parser) parseLaneSet(se xml.StartElement) (laneSetSpec, error) {
 	ls := laneSetSpec{
 		id:   strings.TrimSpace(attrValue(se, "id")),
 		name: strings.TrimSpace(attrValue(se, "name")),
+	}
+
+	if ls.id != "" {
+		if err := p.claimID(ls.id, se.Name.Local); err != nil {
+			return laneSetSpec{}, err
+		}
 	}
 
 	for {
@@ -73,11 +80,18 @@ func (p *parser) parseLaneSet(se xml.StartElement) (laneSetSpec, error) {
 	}
 }
 
-// parseLane reads one <lane>: its flowNodeRefs and its childLaneSet.
+// parseLane reads one <lane>: its flowNodeRefs and its childLaneSet. A
+// declared id joins the one ledger like the lane set's.
 func (p *parser) parseLane(se xml.StartElement) (laneSpec, error) {
 	l := laneSpec{
 		id:   strings.TrimSpace(attrValue(se, "id")),
 		name: strings.TrimSpace(attrValue(se, "name")),
+	}
+
+	if l.id != "" {
+		if err := p.claimID(l.id, se.Name.Local); err != nil {
+			return laneSpec{}, err
+		}
 	}
 
 	for {
@@ -141,7 +155,7 @@ func (p *parser) parseLaneChild(l *laneSpec, se xml.StartElement) error {
 // so the ids are placed afterwards by placeLaneNodes — the same
 // read-now-resolve-later shape the deferred node build uses (§4.3).
 func buildLaneSets(
-	places *[]placement, specs []laneSetSpec,
+	asm *assembly, specs []laneSetSpec,
 ) ([]*lanes.LaneSet, error) {
 	if len(specs) == 0 {
 		return nil, nil
@@ -150,7 +164,7 @@ func buildLaneSets(
 	out := make([]*lanes.LaneSet, 0, len(specs))
 
 	for _, s := range specs {
-		set, err := buildLaneSet(places, s)
+		set, err := buildLaneSet(asm, s)
 		if err != nil {
 			return nil, err
 		}
@@ -161,9 +175,14 @@ func buildLaneSets(
 	return out, nil
 }
 
-// buildLaneSet builds one lane set and the lanes under it.
+// buildLaneSet builds one lane set and the lanes under it. Each built
+// lane and set with a declared id joins the assembly's lane lookup, so
+// an association can end on it (SRD-092 M5) — a lane is model-held, and
+// ADR-039 §2.6 reserves the report degradation for what the model does
+// NOT hold. An id is 0..1 on both elements, so one without an id is
+// carried under a generated id (and, unreferencable, joins no lookup).
 func buildLaneSet(
-	places *[]placement, s laneSetSpec,
+	asm *assembly, s laneSetSpec,
 ) (*lanes.LaneSet, error) {
 	built := make([]*lanes.Lane, 0, len(s.lanes))
 
@@ -171,7 +190,7 @@ func buildLaneSet(
 		var child *lanes.LaneSet
 
 		if ls.child != nil {
-			c, err := buildLaneSet(places, *ls.child)
+			c, err := buildLaneSet(asm, *ls.child)
 			if err != nil {
 				return nil, err
 			}
@@ -183,7 +202,7 @@ func buildLaneSet(
 		// carries as partitionElementRef into a <resource> this converter
 		// does not map; the lane itself is model-only either way.
 		l, err := lanes.NewLane(fallbackName(ls.id, ls.name), nil, "", child,
-			foundation.WithID(ls.id))
+			withDeclaredID(ls.id)...)
 		if err != nil {
 			return nil, errs.New(
 				errs.M("bpmn: couldn't create lane %q", ls.id),
@@ -191,8 +210,12 @@ func buildLaneSet(
 				errs.E(err))
 		}
 
+		if ls.id != "" {
+			asm.lanesByID[ls.id] = l
+		}
+
 		if len(ls.nodeRefs) != 0 {
-			*places = append(*places,
+			asm.places = append(asm.places,
 				placement{lane: l, nodeRefs: ls.nodeRefs})
 		}
 
@@ -200,12 +223,16 @@ func buildLaneSet(
 	}
 
 	set, err := lanes.NewLaneSet(fallbackName(s.id, s.name), built,
-		foundation.WithID(s.id))
+		withDeclaredID(s.id)...)
 	if err != nil {
 		return nil, errs.New(
 			errs.M("bpmn: couldn't create lane set %q", s.id),
 			errs.C(errorClass, errs.BulidingFailed),
 			errs.E(err))
+	}
+
+	if s.id != "" {
+		asm.lanesByID[s.id] = set
 	}
 
 	return set, nil

@@ -44,7 +44,7 @@ func TestConstructorsRejectInvalidOptions(t *testing.T) {
 			src := foundation.MustBaseElement(foundation.WithID("src"))
 			trg := foundation.MustBaseElement(foundation.WithID("trg"))
 			require.NotPanics(t, func() {
-				_, err := artifacts.NewAssociation(src, trg, artifacts.None,
+				_, err := artifacts.NewAssociation(src, trg, artifacts.DirectionNone,
 					foundation.WithID(""))
 				require.Error(t, err)
 			})

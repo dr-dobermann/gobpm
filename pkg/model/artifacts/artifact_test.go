@@ -23,7 +23,7 @@ func TestArtifactInterface(t *testing.T) {
 	trg := foundation.MustBaseElement(foundation.WithID("trg"))
 
 	arts := []artifacts.Artifact{
-		artifacts.MustAssociation(src, trg, artifacts.None),
+		artifacts.MustAssociation(src, trg, artifacts.DirectionNone),
 		artifacts.MustTextAnnotation("Careful", ""),
 		artifacts.MustGroup("critical"),
 	}

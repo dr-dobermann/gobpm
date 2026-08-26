@@ -68,16 +68,16 @@ func artifactedProcess(
 		grp := artifacts.MustGroup("critical", foundation.WithID("grp"))
 
 		require.NoError(t, p.AddArtifacts(note, grp,
-			artifacts.MustAssociation(work, note, artifacts.None,
+			artifacts.MustAssociation(work, note, artifacts.DirectionNone,
 				foundation.WithID("a1")),
-			artifacts.MustAssociation(note, grp, artifacts.Both,
+			artifacts.MustAssociation(note, grp, artifacts.DirectionBoth,
 				foundation.WithID("a2"))))
 
 		boxNote := artifacts.MustTextAnnotation("inner note", "",
 			foundation.WithID("box-note"))
 
 		require.NoError(t, box.AddArtifacts(boxNote,
-			artifacts.MustAssociation(innerWork, boxNote, artifacts.One,
+			artifacts.MustAssociation(innerWork, boxNote, artifacts.DirectionOne,
 				foundation.WithID("box-a"))))
 	}
 
