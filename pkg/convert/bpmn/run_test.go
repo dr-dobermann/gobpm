@@ -411,17 +411,30 @@ func TestLoopsRunOnAThresher(t *testing.T) {
 }
 
 // TestIteratedWaitingLeafPassesThrough is SRD-089.H §6 T-17 (§4.6): the
-// import does NOT pre-empt the engine's capability boundary — the file
-// imports cleanly, and registration refuses with the engine's own
-// instructive message naming #313 and the remodeling.
+// import does NOT pre-empt the engine's capability boundary. The converter
+// maps loop characteristics onto the model and says nothing about whether the
+// engine can execute the result — the engine decides, at registration.
+//
+// The boundary MOVED after this test was written. SRD-090.B made an iterated
+// waiting leaf work: a decorator owns the node's event registration across
+// iterations, so a SEQUENTIAL Multi-Instance over a ReceiveTask consumes one
+// message per pass (#313). What survives is the narrow refusal — a PARALLEL
+// fan-out over an uncorrelated Message catch, where a point-to-point envelope
+// with N waiters is ambiguous by construction.
+//
+// So the case is now tested in both directions, which is what §4.6 actually
+// claims: the same import path yields a process the engine ACCEPTS and one it
+// REFUSES, and the converter behaves identically for both.
 func TestIteratedWaitingLeafPassesThrough(t *testing.T) {
-	doc := `<?xml version="1.0"?>
+	doc := func(sequential string) string {
+		return `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
   <bpmn:message id="m1" name="Order placed"/>
   <bpmn:process id="WaitLoop" name="wait loop" isExecutable="true">
     <bpmn:startEvent id="s1"/>
     <bpmn:receiveTask id="t1" name="wait" messageRef="m1">
-      <bpmn:multiInstanceLoopCharacteristics id="mi1" isSequential="true">
+      <bpmn:multiInstanceLoopCharacteristics id="mi1" isSequential="` +
+			sequential + `">
         <bpmn:loopCardinality language="gobpm:lite">3</bpmn:loopCardinality>
       </bpmn:multiInstanceLoopCharacteristics>
     </bpmn:receiveTask>
@@ -430,30 +443,52 @@ func TestIteratedWaitingLeafPassesThrough(t *testing.T) {
     <bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="e1"/>
   </bpmn:process>
 </bpmn:definitions>`
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	p, err := importer{}.Import(ctx, strings.NewReader(doc))
-	if err != nil {
-		t.Fatalf("Import: %v — the boundary is the engine's, not the "+
-			"converter's (§4.6)", err)
 	}
 
-	engine, err := thresher.New("wait-loop-engine")
-	if err != nil {
-		t.Fatalf("thresher.New: %v", err)
-	}
+	register := func(t *testing.T, sequential string) error {
+		t.Helper()
 
-	_, err = engine.RegisterProcess(p)
-	if err == nil {
-		t.Fatal("RegisterProcess accepted an iterated waiting leaf; the " +
-			"#313 boundary has moved — revisit SRD-089.H §4.6")
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 
-	for _, want := range []string{"iterates and waits", "#313", "Sub-Process"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error = %v, want the engine's instructive %q", err, want)
+		p, err := importer{}.Import(ctx, strings.NewReader(doc(sequential)))
+		if err != nil {
+			t.Fatalf("Import: %v — the boundary is the engine's, not the "+
+				"converter's (§4.6)", err)
 		}
+
+		engine, err := thresher.New("wait-loop-engine")
+		if err != nil {
+			t.Fatalf("thresher.New: %v", err)
+		}
+
+		_, err = engine.RegisterProcess(p)
+
+		return err
 	}
+
+	t.Run("sequential registers", func(t *testing.T) {
+		if err := register(t, "true"); err != nil {
+			t.Fatalf("RegisterProcess refused a sequential iterated wait: %v"+
+				" — SRD-090.B made this buildable (#313)", err)
+		}
+	})
+
+	t.Run("parallel over an uncorrelated message is refused", func(t *testing.T) {
+		err := register(t, "false")
+		if err == nil {
+			t.Fatal("RegisterProcess accepted a PARALLEL Multi-Instance over " +
+				"an uncorrelated Message catch; the boundary has moved again " +
+				"— revisit SRD-090.B §4")
+		}
+
+		for _, want := range []string{
+			"PARALLEL Multi-Instance", "iteration correlation",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %v, want the engine's instructive %q",
+					err, want)
+			}
+		}
+	})
 }
