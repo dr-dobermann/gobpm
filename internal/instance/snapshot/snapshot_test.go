@@ -568,10 +568,10 @@ func TestOnlyTheAmbiguousIteratedWaitIsRefused(t *testing.T) {
 		require.NoError(t, err)
 
 		err = build(t, "wl-ut-par", ut)
-		require.ErrorContains(t, err, "do not yet park individually",
-			"the refusal names what is still missing — per-instance "+
-				"classification — rather than the shared identity this "+
-				"slice already fixed")
+		require.ErrorContains(t, err, "do not yet survive a dehydration",
+			"the refusal names what is still missing — the identities "+
+				"surviving a restore — rather than the per-instance parking "+
+				"and announcement this slice already built")
 		require.ErrorContains(t, err, "sequential",
 			"and the shape that does work")
 	})

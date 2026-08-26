@@ -272,7 +272,20 @@ type MIRecord struct {
 type IterationInstance struct {
 	State   string `json:"state"` // running | waiting | completed
 	ChildID string `json:"child_id,omitempty"`
-	Ordinal int    `json:"ordinal"`
+
+	// TaskID is this instance's parked-work identity, when it is waiting on
+	// a capability rather than an event — a human task, an external worker
+	// (ADR-020 §2.12).
+	//
+	// Recorded per INSTANCE because the identity is per instance: a fan-out
+	// holds N of them, and the track's single slot can carry only one. The id
+	// outlives the instance's residency in the distributor's inbox, so a
+	// restore that minted fresh ones would invalidate every reference a
+	// person or a UI is holding — the same rule SRD-071 FR-8 states for a
+	// lone task, at iteration granularity.
+	TaskID string `json:"task_id,omitempty"`
+
+	Ordinal int `json:"ordinal"`
 }
 
 // IterationRecord is an iterated activity's live instances (Schema 6,

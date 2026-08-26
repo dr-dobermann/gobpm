@@ -485,7 +485,9 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 	// belongs to the instance, a lone one to the track (ADR-020 §2.12). A
 	// restored execution adopts its recorded id inside, so a rehydrated task
 	// keeps the handle its inbox entry carries.
-	taskID, ord := t.humanTaskIdentity()
+	// no executor here: a born-parked waiter is the track's own, and a
+	// restored fan-out re-classifies per instance when its decorator runs.
+	taskID, ord := t.humanTaskIdentity(nil)
 
 	ls.addTask(ctx, taskID, t, node, ord)
 }

@@ -527,10 +527,45 @@ func recordIteration(
 		Completed:    mirror.completed,
 		ConditionMet: mirror.conditionMet,
 		Staging:      staging,
-		Instances:    mirror.instances,
+		Instances:    withTaskIDs(t, mirror.instances),
 	}
 
 	return nil
+}
+
+// withTaskIDs stamps each instance with the parked-work identity it was
+// announced under, so a restore returns it rather than minting a new one
+// (ADR-020 §2.12).
+//
+// Read at CAPTURE rather than posted at launch, because an instance mints its
+// id when it parks — after the position is posted, and only if it parks at
+// all. Reading here also keeps the loop's mirror describing positions, which
+// is what it is for.
+func withTaskIDs(
+	t *track, insts []checkpoint.IterationInstance,
+) []checkpoint.IterationInstance {
+	// read-only: the capture runs on the LOOP, and resolving an executor
+	// here would store it on a track another goroutine is driving.
+	owner := t.ownerIfResolved()
+	if owner == nil || len(insts) == 0 {
+		return insts
+	}
+
+	ids := owner.taskIDSnapshot()
+	if len(ids) == 0 {
+		return insts
+	}
+
+	out := make([]checkpoint.IterationInstance, len(insts))
+	copy(out, insts)
+
+	for i := range out {
+		if id, ok := ids[out[i].Ordinal]; ok {
+			out[i].TaskID = id
+		}
+	}
+
+	return out
 }
 
 // persistedStatus maps the runtime lifecycle onto the repository's

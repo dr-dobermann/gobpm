@@ -536,7 +536,7 @@ func TestAPassParksOnItsOwnBox(t *testing.T) {
 	done := make(chan error, 1)
 
 	go func() {
-		_, err := tr.parkForDelivery(t.Context(), tr.currentStep())
+		_, err := tr.parkForDelivery(t.Context(), tr.currentStep(), nil)
 		done <- err
 	}()
 

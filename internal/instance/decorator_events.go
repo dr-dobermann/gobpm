@@ -213,6 +213,30 @@ func (es *eventSubs) adoptTaskID(ord int, id string) {
 	es.taskIDs[ord] = id
 }
 
+// taskIDSnapshot copies the live parked-work identities, keyed by ordinal, for
+// the checkpoint to record (ADR-020 §2.12).
+//
+// A restore MUST give each instance back the id it was announced under: the
+// task outlives the instance's residency in the distributor's inbox, so a
+// fresh mint would invalidate every reference a person or a UI is holding.
+// The track's single recorded id can carry one of N, which is why this is per
+// ordinal.
+func (es *eventSubs) taskIDSnapshot() map[int]string {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	if len(es.taskIDs) == 0 {
+		return nil
+	}
+
+	out := make(map[int]string, len(es.taskIDs))
+	for k, v := range es.taskIDs {
+		out[k] = v
+	}
+
+	return out
+}
+
 // dropTaskID forgets instance ord's identity once its work is done, so a later
 // pass of the same activity mints its own rather than reusing a handle that
 // now names nothing (ADR-020 §2.12).
@@ -384,10 +408,13 @@ type activitySubscriber interface {
 	unparked(ord int)
 
 	// taskIDFor, adoptTaskID and dropTaskID own the parked-work identity of
-	// one instance (ADR-020 §2.12).
+	// one instance (ADR-020 §2.12); taskIDSnapshot hands the set to the
+	// checkpoint so a restore returns each instance the id it was announced
+	// under.
 	taskIDFor(ord int) string
 	adoptTaskID(ord int, id string)
 	dropTaskID(ord int)
+	taskIDSnapshot() map[int]string
 }
 
 // ProcessEvent is the hub's doorbell (ADR-006 §2.9.5): it runs on the HUB's

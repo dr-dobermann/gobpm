@@ -553,6 +553,17 @@ func (d *iterDecorator) runParallel(
 	// its outputs are already in the restored staging.
 	states := restoredStates(d.seed, n)
 
+	// a RESTORED instance takes back the identity it was announced under,
+	// before anything asks it for one. Without this each rebuilt instance
+	// would mint a fresh id and every reference a person or a UI is holding
+	// would name nothing (ADR-020 §2.12, SRD-071 FR-8 at iteration
+	// granularity).
+	if d.seed != nil {
+		for _, inst := range d.seed.Instances {
+			d.adoptTaskID(inst.Ordinal, inst.TaskID)
+		}
+	}
+
 	insts := make(map[int]activityExec, n)
 
 	// a COMPOSITE instance's output is read loop-side, into the cell the
@@ -1201,6 +1212,7 @@ func newNodeExec(t *track, step *stepInfo, ordinal int) *nodeExec {
 // run executes the node once, as this instance.
 func (e *nodeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	return e.t.executeNodeAs(ctx, e.step, activityInstance{
+		exec:    e,
 		local:   e.local,
 		capture: e.capture,
 	})

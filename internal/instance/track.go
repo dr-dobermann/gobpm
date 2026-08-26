@@ -555,9 +555,22 @@ func (t *track) resolveExec(step *stepInfo) activityExec {
 }
 
 func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
+	return t.checkNodeTypeFor(nil, node, atConstruction)
+}
+
+// checkNodeTypeFor classifies node on behalf of ONE execution.
+//
+// A CONCURRENT instance classifies its own node, because parking is per
+// execution: the activity is classified once when the token arrives, so
+// without this N instances of a fan-out would announce one task between them
+// and the rest would complete without anyone doing them. `e` is nil for every
+// other caller, whose execution and track are the same thing.
+func (t *track) checkNodeTypeFor(
+	e *nodeExec, node flow.Node, atConstruction bool,
+) error {
 	// Non-event wait nodes (human task / composite / call / worker) park via
 	// their capability, dispatched in checkActivityWaitKind.
-	if done, err := t.checkActivityWaitKind(node, atConstruction); done {
+	if done, err := t.checkActivityWaitKind(e, node, atConstruction); done {
 		return err
 	}
 
@@ -798,6 +811,23 @@ func (t *track) activityOwner() activitySubscriber {
 	return t.resolveExec(step).subscriber()
 }
 
+// ownerIfResolved is activityOwner without the resolution: it answers only
+// when an executor already exists, and never builds one.
+//
+// The LOOP uses it. activityOwner resolves lazily and STORES what it built,
+// so calling it off the track's own goroutine mutates the track's executor
+// handle — which once handed an advancing track the previous node's executor
+// and re-ran a node. A reader that only wants to know whether an activity
+// owns waits must not be able to cause that.
+func (t *track) ownerIfResolved() activitySubscriber {
+	h := t.exec.Load()
+	if h == nil {
+		return nil
+	}
+
+	return h.e.subscriber()
+}
+
 // holdWait offers a definition to the engine's durable holders (SRD-071 FR-3),
 // reporting whether one took it — in which case NO in-hub waiter is created for
 // it. A timer hands over its absolute deadline (FR-6), a message/signal its hub
@@ -979,11 +1009,25 @@ func (t *track) stashTimerPlan(
 // instance, which is FR-2's one decision and FR-11's transparency in the
 // same move.
 func (t *track) checkActivityWaitKind(
+	e *nodeExec,
 	node flow.Node,
 	atConstruction bool,
 ) (bool, error) {
 	if _, ok := node.(interactor.HumanTask); ok {
-		return true, t.parkHumanTask(node)
+		// An ITERATED activity is parked by its INSTANCES, not by the arrival
+		// that reaches the activity. Arrival happens once however many times
+		// the node runs, so parking here would announce one task for the
+		// activity on top of the one each instance announces for itself —
+		// and that activity-level task belongs to no execution, so nothing
+		// would ever complete it.
+		//
+		// e != nil means an instance IS the caller, which is the case that
+		// must go through.
+		if e == nil && drivesOwnIteration(node) {
+			return true, nil
+		}
+
+		return true, t.parkHumanTask(e, node)
 	}
 
 	if _, ok := node.(interface{ CalledKey() string }); ok {
@@ -1077,8 +1121,16 @@ func (t *track) parkCallActivity(node flow.Node, atConstruction bool) error {
 // reads t.taskID and registers it instead (mirroring evWaiting's construction
 // path). The UserTask registers NO hub waiter — completion arrives via Complete,
 // delivered to evtCh as a synthetic event, not fired through the hub.
-func (t *track) parkHumanTask(node flow.Node) error {
-	taskID, ord := t.humanTaskIdentity()
+func (t *track) parkHumanTask(e *nodeExec, node flow.Node) error {
+	taskID, ord := t.humanTaskIdentity(e)
+
+	// THIS execution is what is waiting (ADR-025 §2.13). A concurrent
+	// instance records it on itself, so the decorator's await is the
+	// conjunction over its instances rather than one instance's answer
+	// standing for all of them (§2.13b.1e).
+	if e != nil {
+		e.parked.Store(true)
+	}
 
 	t.updateState(TrackWaitForEvent)
 
@@ -1117,7 +1169,7 @@ func (t *track) parkHumanTask(node flow.Node) error {
 // a RESTORED execution carries its recorded id (SRD-071 FR-8), because the task
 // outlives the instance's residency in the distributor's inbox and re-minting
 // would invalidate the reference someone is about to act on.
-func (t *track) humanTaskIdentity() (string, int) {
+func (t *track) humanTaskIdentity(e *nodeExec) (string, int) {
 	owner := t.activityOwner()
 	if owner == nil {
 		t.m.Lock()
@@ -1130,7 +1182,13 @@ func (t *track) humanTaskIdentity() (string, int) {
 		return t.taskID, 0
 	}
 
+	// a CONCURRENT instance knows its own ordinal; the track's current
+	// executor is the decorator, whose ordinal is the activity's, not this
+	// instance's.
 	ord := t.execOrdinal()
+	if e != nil {
+		ord = e.ord
+	}
 
 	// a restored instance adopts the id its checkpoint recorded before it is
 	// asked for one, so the recorded value wins over a fresh mint.
@@ -1225,6 +1283,23 @@ func (t *track) currentState() trackState {
 	return t.state
 }
 
+// classifyForInstance lets a CONCURRENT instance classify its own node before
+// it parks on it.
+//
+// The activity was classified once when the token arrived, which marked the
+// TRACK and announced ONE task; each instance of a fan-out needs its own park,
+// its own identity and its own announcement (ADR-020 §2.12).
+//
+// A no-op for everything else: a sequential pass is re-classified by its
+// decorator, and a plain node was classified on arrival.
+func (t *track) classifyForInstance(step *stepInfo, e *nodeExec) error {
+	if e == nil || !e.concurrent {
+		return nil
+	}
+
+	return t.checkNodeTypeFor(e, step.node, false)
+}
+
 // currentStep returns current step of the track.
 func (t *track) currentStep() *stepInfo {
 	t.m.RLock()
@@ -1275,9 +1350,19 @@ var errRedispatch = errors.New("the delivery moved this token")
 // unit that runs a node is the thing that waits for it, so an activity
 // running its node N times waits N times rather than once.
 func (t *track) parkForDelivery(
-	ctx context.Context, step *stepInfo,
+	ctx context.Context, step *stepInfo, e *nodeExec,
 ) (*data.ItemDefinition, error) {
-	if !t.inState(TrackWaitForEvent) {
+	// A CONCURRENT instance asks ITSELF whether it is parked. The track's
+	// state is its siblings' as much as its own, so a sibling that parked
+	// would make this one wait for a delivery meant for nobody — and one
+	// that did not park would let this one run past its own wait.
+	concurrent := e != nil && e.concurrent
+
+	if concurrent {
+		if !e.parked.Load() {
+			return nil, nil
+		}
+	} else if !t.inState(TrackWaitForEvent) {
 		return nil, nil
 	}
 
@@ -1287,8 +1372,13 @@ func (t *track) parkForDelivery(
 	// which of them a point-to-point envelope was meant for.
 	box := t.evtCh
 
+	ord := t.execOrdinal()
+	if concurrent {
+		ord = e.ord
+	}
+
 	if owner := t.activityOwner(); owner != nil {
-		if b := owner.boxFor(t.execOrdinal()); b != nil {
+		if b := owner.boxFor(ord); b != nil {
 			box = b
 		}
 	}
@@ -1675,7 +1765,11 @@ func (t *track) executeNodeAs(
 	// Ahead of the frame open, because the delivery's payload is captured
 	// INTO that frame (ADR-006 §2.9.1): the receiving execution binds its own
 	// item, so it must have received it by the time the frame exists.
-	received, err := t.parkForDelivery(ctx, step)
+	if cerr := t.classifyForInstance(step, ai.exec); cerr != nil {
+		return nil, cerr
+	}
+
+	received, err := t.parkForDelivery(ctx, step, ai.exec)
 	if err != nil {
 		return nil, err
 	}
@@ -1767,6 +1861,14 @@ func (t *track) executeNodeAs(
 // activityInstance is what distinguishes ONE instance of an activity from its
 // siblings when a decorator drives several of them (ADR-025 §2.13).
 type activityInstance struct {
+	// exec is the EXECUTOR running this instance, when one owns it. It rides
+	// here so a park is recorded against the execution that is waiting rather
+	// than against the track its siblings share (ADR-025 §2.13: "a node
+	// executor … owns that node's wait").
+	//
+	// nil for a plain activity, whose track and execution are the same thing.
+	exec *nodeExec
+
 	// capture, when set, is called with this execution's frame once the node
 	// has produced its outputs and BEFORE they commit to the shared
 	// container scope. It is how a decorator takes ONE instance's declared

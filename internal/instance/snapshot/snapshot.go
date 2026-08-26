@@ -360,28 +360,30 @@ func checkUncorrelatedParallelMessage(n flow.Node) error {
 		return nil
 	}
 
-	// A CAPABILITY-PARKED ACTIVITY cannot fan out YET, and the reason is now
-	// narrower than it was. Each instance owns its parked-work identity and
-	// its delivery box, and a completion reaches the instance that owns the
-	// task — what is missing is that an instance does not classify and park
-	// its OWN node: the activity is classified once when the token arrives,
-	// so N instances announce one task between them and the rest complete
-	// without anyone doing them.
+	// A CAPABILITY-PARKED FAN-OUT is one step from working, and the reason it
+	// is still refused is now narrow.
 	//
-	// Refused rather than served, because that shape is a silent wrong
-	// answer: three approvals modeled, none performed, and the process runs
-	// to completion reporting success. The guard goes when per-instance
-	// classification lands, in the same commit as the mechanism — the shape
-	// SRD-090.B M3 used to retire the previous refusal.
+	// Its instances DO classify and park their own nodes, mint their own
+	// identities and announce one task each; a completion reaches the
+	// instance that owns it. What is missing is RESTORE: the identities are
+	// recorded per instance but a rehydrated fan-out does not take them back,
+	// so a dehydration part-way through the approvals leaves every
+	// outstanding task handle naming nothing.
+	//
+	// That matters more here than for most waits, because a human task is the
+	// wait most likely to dehydrate — a fan-out of approvals is exactly the
+	// case that sits idle for days. Refused until the identities survive the
+	// round trip.
 	if parksOnCapability(n) {
 		return errs.New(
 			errs.M("activity %q is a PARALLEL Multi-Instance over work that "+
 				"parks outside the event system (a User Task or an "+
-				"external-worker Service Task): its instances do not yet "+
-				"park individually, so only one task is announced and the "+
-				"rest complete without being done. Make the Multi-Instance "+
-				"sequential — one instance parks at a time there, and each "+
-				"pass is completed on its own", n.Name()),
+				"external-worker Service Task): its instances park and "+
+				"announce individually, but their task identities do not "+
+				"yet survive a dehydration, so an outstanding task would "+
+				"become unreachable. Make the Multi-Instance sequential — "+
+				"one instance parks at a time there, and each pass is "+
+				"completed on its own", n.Name()),
 			errs.C(errorClass, errs.InvalidObject),
 			errs.D(observability.AttrNodeID, n.ID()))
 	}
@@ -442,8 +444,8 @@ func hasMessageTrigger(en flow.EventNode) bool {
 // parksOnCapability reports whether executing this node parks through a
 // capability rather than an event subscription — a human task, or a Service
 // Task dispatched to an external worker. Both are addressed by a task
-// identity rather than a definition, so neither is classified per instance
-// yet.
+// identity rather than a definition, and that identity is what does not yet
+// survive a restore for a fan-out.
 func parksOnCapability(n flow.Node) bool {
 	if _, human := n.(interactor.HumanTask); human {
 		return true
