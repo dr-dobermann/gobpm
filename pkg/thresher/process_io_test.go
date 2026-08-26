@@ -466,6 +466,16 @@ func TestStartOptionsValidate(t *testing.T) {
 	_, err = th.StartLatest(p.ID(), thresher.WithStartInput("", 1))
 	require.ErrorContains(t, err, "can't be built")
 
+	// the other two doors fold the same options and refuse the same way
+	_, err = th.StartVersion(p.ID(), 1, thresher.WithStartInputs(nil))
+	require.ErrorContains(t, err, "nil datum")
+
+	reg, err := th.RegisterProcess(contractedProcess(t, "io-opts-reg"))
+	require.NoError(t, err)
+
+	_, err = th.StartProcess(reg, thresher.WithStartInputs(nil))
+	require.ErrorContains(t, err, "nil datum")
+
 	// StartVersion takes the same options; WithStartInputs delivers ready
 	// data as it is.
 	sub, err := data.ReadyValueParameter("subtotal", values.NewVariable(7))

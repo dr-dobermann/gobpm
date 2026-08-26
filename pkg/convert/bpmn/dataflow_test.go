@@ -500,6 +500,23 @@ func TestProcessEmptyIOSpecIsStrict(t *testing.T) {
 	}
 }
 
+// TestProcessIOSpecUnknownItemRefused — SRD-093 T-26: a process parameter
+// naming an itemSubjectRef the document does not define refuses the
+// import through constructProcess, naming the reference.
+func TestProcessIOSpecUnknownItemRefused(t *testing.T) {
+	_, err := importEventDoc(t, propDoc("",
+		`    <bpmn:ioSpecification id="io">
+      <bpmn:dataInput id="in-x" name="x" itemSubjectRef="nope"/>
+    </bpmn:ioSpecification>`))
+	if err == nil {
+		t.Fatal("want a refusal, got a clean import")
+	}
+
+	if !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("refusal does not name the reference:\n%v", err)
+	}
+}
+
 // TestProcessIOSpecOrdering — SRD-093 T-16: an <ioSpecification> after
 // the flow elements is refused, the lane-set ordering guard.
 func TestProcessIOSpecOrdering(t *testing.T) {
