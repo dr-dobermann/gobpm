@@ -1042,6 +1042,13 @@ func (t *Thresher) RegisterProcess(
 		return nil, err
 	}
 
+	// Likewise a Transaction whose abort method no coordinator this engine has
+	// can perform (ADR-028 §2.7): the scope would bind to nothing when it
+	// opened, long after registration reported success.
+	if err := t.validateTransactionCoverage(s); err != nil {
+		return nil, err
+	}
+
 	// Serialize this whole key operation against a concurrent unregister of the
 	// same key: the per-key lock spans the registry mutation AND the hub work
 	// below, so an UnregisterVersion/UnregisterProcess cannot drop the new
