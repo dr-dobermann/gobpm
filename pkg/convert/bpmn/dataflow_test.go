@@ -479,6 +479,27 @@ func TestProcessIOSpecWithoutItems(t *testing.T) {
 	}
 }
 
+// TestProcessEmptyIOSpecIsStrict — SRD-093 T-22: an explicit
+// <ioSpecification> declaring nothing is a strict EMPTY contract (ADR-040
+// §2.1 — no data required to start, none promised), not the contract-less
+// process an absent element leaves.
+func TestProcessEmptyIOSpecIsStrict(t *testing.T) {
+	res, err := importEventDoc(t, propDoc("",
+		`    <bpmn:ioSpecification id="io"/>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	ios := res.Processes[0].IOSpec()
+	if ios == nil {
+		t.Fatal("IOSpec() = nil, want an empty contract")
+	}
+
+	if n := len(ios.InputSet()) + len(ios.OutputSet()); n != 0 {
+		t.Fatalf("the empty contract declares %d parameters", n)
+	}
+}
+
 // TestProcessIOSpecOrdering — SRD-093 T-16: an <ioSpecification> after
 // the flow elements is refused, the lane-set ordering guard.
 func TestProcessIOSpecOrdering(t *testing.T) {

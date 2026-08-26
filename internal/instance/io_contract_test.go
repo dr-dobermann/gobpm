@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -142,6 +143,24 @@ func TestBindContract(t *testing.T) {
 		_, err = inst.sc.plane.GetData(inst.sc.root, "discount")
 		require.Error(t, err, "the optional input stays absent")
 	})
+
+	t.Run("a delivered optional input keeps its optionality",
+		func(t *testing.T) {
+			inst, err := New(contractedSnapshot(t), scope.EmptyDataPath, rt,
+				failEventProducer{}, nil,
+				WithRootData([]data.Data{
+					delivered(t, "subtotal", 1), delivered(t, "discount", 5)}))
+			require.NoError(t, err)
+
+			d, err := inst.sc.plane.GetData(inst.sc.root, "discount")
+			require.NoError(t, err)
+			require.Equal(t, 5, d.Value().Get(context.Background()))
+
+			p, ok := d.(*data.Parameter)
+			require.True(t, ok, "bound as the declared parameter")
+			require.True(t, p.IsOptional(),
+				"the declaration's optionality survives the binding")
+		})
 
 	t.Run("a required input unbound refuses", func(t *testing.T) {
 		_, err := New(contractedSnapshot(t), scope.EmptyDataPath, rt,
@@ -346,4 +365,92 @@ func TestEventBornLaunchWithRequiredInputRefused(t *testing.T) {
 			_, err = inst.sc.plane.GetData(inst.sc.root, "discount")
 			require.Error(t, err, "the optional input stays absent")
 		})
+}
+
+// TestOutputTypeMismatchFaults — SRD-093 T-23: an output is bound through
+// its declaration at completion exactly as an input is at launch, so a
+// value the declared item cannot carry is the same broken promise as a
+// missing one — Terminated, LastErr naming the output.
+func TestOutputTypeMismatchFaults(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rt := enginert.Default()
+
+	eh, err := eventhub.New(rt)
+	require.NoError(t, err)
+	require.NoError(t, eh.Start(ctx))
+
+	go func() { _ = eh.Run(ctx) }()
+
+	inst, err := New(outputSnapshot(t, false), scope.EmptyDataPath, rt, eh, nil)
+	require.NoError(t, err)
+
+	// a string where the declaration promised an int
+	require.NoError(t, inst.sc.bindRootData(
+		[]data.Data{delivered(t, "total", "forty-two")}))
+	require.NoError(t, inst.Run(ctx))
+
+	require.Eventually(t,
+		func() bool { return inst.State() == Terminated },
+		2*time.Second, 5*time.Millisecond)
+	require.ErrorContains(t, inst.LastErr(),
+		`output "total" holds a value its declaration cannot carry`)
+	require.Nil(t, inst.Outputs(), "no result after a faulted completion")
+}
+
+// TestOutputsConcurrentReaders — SRD-093 T-24: Outputs() is read by hosts
+// on their own goroutines while the loop stores the result; every reader
+// gets its own copy, and the race detector sees nothing shared.
+func TestOutputsConcurrentReaders(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rt := enginert.Default()
+
+	eh, err := eventhub.New(rt)
+	require.NoError(t, err)
+	require.NoError(t, eh.Start(ctx))
+
+	go func() { _ = eh.Run(ctx) }()
+
+	inst, err := New(outputSnapshot(t, false), scope.EmptyDataPath, rt, eh, nil)
+	require.NoError(t, err)
+	require.NoError(t, inst.sc.bindRootData(
+		[]data.Data{delivered(t, "total", 42)}))
+
+	const readers = 8
+
+	var wg sync.WaitGroup
+	wg.Add(readers)
+
+	// what each reader saw last, checked on the test goroutine
+	seen := make([]any, readers)
+
+	for i := range readers {
+		go func() {
+			defer wg.Done()
+
+			for inst.State() != Completed {
+				for _, d := range inst.Outputs() {
+					_ = d.Value().Update(ctx, 0) // a private copy
+				}
+			}
+
+			outs := inst.Outputs()
+			if len(outs) == 1 {
+				seen[i] = outs[0].Value().Get(ctx)
+			}
+		}()
+	}
+
+	require.NoError(t, inst.Run(ctx))
+	wg.Wait()
+
+	for i, v := range seen {
+		require.Equal(t, 42, v, "reader %d", i)
+	}
+
+	require.Equal(t, 42, inst.Outputs()[0].Value().Get(ctx),
+		"no reader's mutation reached the record")
 }

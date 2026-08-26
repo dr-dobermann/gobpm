@@ -192,9 +192,12 @@ input and gets none is the exact failure the contract exists to end.
 **FR-8 — outputs are read at normal completion.** In `exitLoop`, after the
 incident park check and before `settleFinalState`: when the loop is not
 stopping and the snapshot carries a contract, each declared output is read
-from the root scope and cloned into the instance's **result**
-(`[]data.Data`, exposed by `Instance.Outputs()`). A **required output that
-is absent or not `Ready` faults the instance**: `inst.fail(err)` with the
+from the root scope and **bound through its declaration** — the same
+`bindDeclared` path an input takes at launch, so the declared item types
+the value — into the instance's **result** (`[]data.Data`, exposed by
+`Instance.Outputs()`). A **required output that is absent or not `Ready`
+faults the instance**, and so does **a value the declaration cannot
+carry** (either direction's broken promise): `inst.fail(err)` with the
 output named, and the loop's `stopping` flips so the state settles
 `Terminated` with `LastErr()` set — an abnormal end, no result surface
 (ADR-040 §2.3). An optional output not produced is skipped.
@@ -202,9 +205,14 @@ output named, and the loop's `stopping` flips so the state settles
 **FR-9 — the result reaches the caller and the host.**
 `childProcess.Outputs(names)` keeps its reader path (the contract-less
 child, ADR-040 §2.5) but serves a contracted child's names from the
-collected result; `InstanceHandle` gains `Outputs() []data.Data` — the
-declared result of a completed instance, empty before completion or after
-an abnormal end.
+collected result — told apart by a nil result, never by an empty one, so a
+contracted child that produced nothing still never exposes its raw scope.
+A name the result lacks is a declared optional output the child never
+produced (every name passed FR-10's check): it comes back as a **nil
+slot**, and `bindCallOutputs` commits nothing under it — the output simply
+does not flow (ADR-040 §2.3), no fault. `InstanceHandle` gains
+`Outputs() []data.Data` — the declared result of a completed instance,
+empty before completion or after an abnormal end.
 
 **FR-10 — the call boundary validates at launch, by name.**
 `exec.ProcessCall` gains `Outputs []string` (the caller's declared output
@@ -243,9 +251,13 @@ mid-flow.
 **NFR-3 — no import cycles.** `data` gains no imports; `process` and
 `thresher` already import `data`; `exec.ProcessCall` gains a `[]string`.
 
-**NFR-4 — the diff-coverage gate passes at `COVER_MIN`**, every touched
-function at 100%; `make gen_mock_files` re-run if a mocked interface
-moves (none is expected to).
+**NFR-4 — the diff-coverage gate passes at `COVER_MIN`**, and every
+reachable branch of a touched function is pinned by a test in the
+function's own package (cross-package coverage does not count toward the
+gate). The only lines left uncovered are invariant branches a caller cannot
+provoke — a clone or a constructor failing on input the code itself built —
+each marked "said in the form the coverage gate reads". `make
+gen_mock_files` re-run if a mocked interface moves (none is expected to).
 
 **NFR-5 — the example runs under `run-examples`**: exit 0 within the 90 s
 budget, stdin `/dev/null`, its own `go.mod`.
@@ -611,13 +623,18 @@ No existing signature breaks; the consumer-smoke gate proves it.
 | T-11 | `TestMissingRequiredOutputFaults` | state `Terminated`, `LastErr()` names the output, `Outputs()` empty; an optional output absent is skipped | FR-8 |
 | T-12 | `TestCallBoundaryValidatesOutputs` | a caller output not declared by the callee faults at the Call Activity, catchable by an Error boundary | FR-10 |
 | T-13 | `TestCallBindsThroughDeclaredInputs` | the child's `subtotal` is the declared parameter; a contract-less callee keeps today's behaviour (the existing call-activity tests unchanged) | FR-4, NFR-1 |
-| T-14 | `TestChildOutputsServedFromResult` | `childProcess.Outputs` for a contracted child come from the collected result | FR-9 |
+| T-14 | `TestCallBindsThroughDeclaredInputs` (folded into T-13: the caller's check task records the child's collected result) and `TestCallerReadsUnproducedOptionalOutput` | `childProcess.Outputs` for a contracted child come from the collected result | FR-9 |
 | T-15 | `TestIOSpecificationOnAProcess` | the §3.6-D document imports; parameters, optionality, items as declared | FR-11 |
 | T-16 | `TestProcessIOSpecOrdering` | an `<ioSpecification>` after the flow elements is refused (the laneSet guard) | FR-11 |
 | T-17 | `TestProcessSecondIOSpecRefused` (+ the multi-set row) | the activity refusals hold at process level | FR-11 |
 | T-18 | `TestProcessBareDataInputRefused` | the note names the process as an owner; `#330` no longer appears anywhere | FR-11 |
-| T-19 | e2e `TestContractlessProcessesUnchanged` | the thresher suite's existing call and start tests pass untouched | NFR-1 |
+| T-19 | the existing thresher call and start suites (`invoker_test.go`, `thresher_test.go`) plus the contract-less branch of `TestLaunchRefusesUndeclaredDatum` — no new test, the untouched suites are the proof | the thresher suite's existing call and start tests pass untouched | NFR-1 |
 | T-20 | `TestEventBornLaunchWithRequiredInputRefused` (fact sink) | a refused launch leaves no `Created` fact — the instance never existed | FR-4 |
+| T-21 | `TestBindContract` "a delivered optional input keeps its optionality" | an optional input that IS delivered binds as the declared parameter and stays optional | FR-4 |
+| T-22 | `TestProcessEmptyIOSpecIsStrict` | an explicit `<ioSpecification/>` declaring nothing imports as a non-nil, empty contract | FR-11 |
+| T-23 | `TestOutputTypeMismatchFaults` | a value the declared output cannot carry faults the instance at completion — `Terminated`, `LastErr()` names the output, no result | FR-8 |
+| T-24 | `TestOutputsConcurrentReaders` (`-race`) | hosts reading `Outputs()` concurrently with the loop storing the result each get their own copy | FR-9 |
+| T-25 | `TestCallerReadsUnproducedOptionalOutput` (two cases: result produced with the optional absent; nothing produced at all) | the caller completes without an incident, the optional name stays unbound; an EMPTY result is still served as the result, never the child's raw scope | FR-9 |
 
 The retired pins are rewritten in the same milestone: the
 `"ioSpecification on a process"` row of `refusalwording_test.go`
@@ -634,6 +651,7 @@ different refused element).
 | M4 | Importer: the buffered process `<ioSpecification>`, the `buildParamSpecs` extraction, retired refusal text and pins (T-15…T-18) | one |
 | M5 | `examples/process-io/` (process.go / handlers.go / launch.go / check.go / main.go / README) + the examples index and README rows | one |
 | M5a | Found by M5's run log: `instance.New` announced `Created` before the scope load and the contract binding, so a refused launch left an orphan fact with no transition after it. The announcement now follows a successful seed (T-20) | one |
+| M6 | Review follow-ups (the `/check-srd` audit and the independent three-lens review): `childProcess.Outputs` distinguishes an empty result from no contract (`result != nil`); an unproduced optional output does not flow to the caller instead of faulting the call (nil slot in `exec.ChildProcess.Outputs`); outputs are bound through their declaration at completion, so a type mismatch faults; an explicit empty `<ioSpecification/>` imports as a strict empty contract; the racy pre-completion assertion dropped; the delivered-optional-input, `Option()` marker and concurrent-reader tests (T-21…T-25); NFR-4 restated as the gate's criterion; the `#330` comment residue removed | one |
 
 ## §8 Cross-doc references
 
@@ -657,7 +675,7 @@ No downward references.
 2. Every §6 test exists and passes; the two retired pins rewritten.
 3. `make ci` green, both halves, the new example executing under
    `run-examples`.
-4. Diff-coverage at `COVER_MIN`; every touched function at 100%.
+4. Diff-coverage at `COVER_MIN`; every reachable branch of a touched function pinned in its own package (NFR-4).
 5. The doc-sync commit: ADR-038 §2.3's #330 register row retired as
    consumed; ADR-011 §2.5's "lands with…" sentence updated to point at the
    landed carrier and the remaining event-wiring deferral; ADR-023's I/O

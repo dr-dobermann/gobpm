@@ -82,8 +82,8 @@ func TestRefusalsSayWhichKindTheyAre(t *testing.T) {
 
 // TestDataFamilyRefusalWordings replaces the T-24 staged sweep: after
 // SRD-089.G nothing in the family is staged — a task's family imports,
-// and every remaining refusal names either a capability row (#329,
-// #330) or the position the standard reserves. Never "yet".
+// and every remaining refusal names either the capability row (#329)
+// or the position the standard reserves. Never "yet".
 func TestDataFamilyRefusalWordings(t *testing.T) {
 	onTask := func(child string) string {
 		return propDoc("", `    <bpmn:task id="t1" name="T">

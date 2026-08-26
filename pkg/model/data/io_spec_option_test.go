@@ -58,6 +58,14 @@ func TestWithInputsOutputs(t *testing.T) {
 			require.Equal(t, "c", adder.got[data.Output][0].Name())
 		})
 
+	t.Run("the option carries the options.Option marker",
+		func(t *testing.T) {
+			// the marker is what lets process.New take the option among
+			// its other options; it does nothing else
+			var opt options.Option = data.WithInputs(a)
+			opt.Option()
+		})
+
 	t.Run("a nil parameter is refused naming the option and the index",
 		func(t *testing.T) {
 			adder := &ioAdder{}

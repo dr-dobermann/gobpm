@@ -243,8 +243,6 @@ func TestOutputsCollectedAtCompletion(t *testing.T) {
 	h, err := th.StartLatest(p.ID(), thresher.WithStartInput("amount", 14))
 	require.NoError(t, err)
 
-	require.Empty(t, h.Outputs(), "no result before completion")
-
 	wctx, wc := context.WithTimeout(context.Background(), 5*time.Second)
 	defer wc()
 
@@ -332,25 +330,50 @@ func TestCallBoundaryValidatesOutputs(t *testing.T) {
 	require.Contains(t, inc[0].Cause, "result")
 }
 
-// TestCallerReadsUnproducedOptionalOutput — SRD-093 FR-9's edge: a callee
-// may declare an OPTIONAL output and never produce it. The caller's output
-// name passes the launch check (it is declared), so the miss surfaces where
-// it happens — reading the result back — as the Call Activity's fault.
-func TestCallerReadsUnproducedOptionalOutput(t *testing.T) {
-	require.NoError(t, data.CreateDefaultStates())
+// noteParam declares "note": an optional string output.
+func noteParam(t *testing.T) *data.Parameter {
+	t.Helper()
 
-	note := func() *data.Parameter {
-		return data.MustParameter("note",
-			data.MustItemAwareElement(
-				data.MustItemDefinition(values.NewVariable("")),
-				data.ReadyDataState),
-			data.Optional())
+	return data.MustParameter("note",
+		data.MustItemAwareElement(
+			data.MustItemDefinition(values.NewVariable("")),
+			data.ReadyDataState),
+		data.Optional())
+}
+
+// optionalOnlyCallee declares amount in and ONLY the optional note out, and
+// produces nothing: its collected result is empty, not absent.
+func optionalOnlyCallee(t *testing.T, key string) *process.Process {
+	t.Helper()
+
+	p, err := process.New("quiet", foundation.WithID(key),
+		data.WithInputs(ioParam(t, "amount")),
+		data.WithOutputs(noteParam(t)))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, end} {
+		require.NoError(t, p.Add(e))
 	}
 
-	// result is produced; note is declared optional and never produced.
-	callee := contractedScaleCallee(t, "io-opt-callee", 2, note())
+	link(t, start, end)
 
-	caller, err := process.New("caller-opt",
+	return p
+}
+
+// optionalCaller builds start → charge[calls key] → end, mapping amount in
+// and the given outputs back.
+func optionalCaller(
+	t *testing.T, name, key string, outputs ...*data.Parameter,
+) *process.Process {
+	t.Helper()
+
+	caller, err := process.New(name,
 		data.WithProperties(
 			data.MustProperty("amount",
 				data.MustItemDefinition(values.NewVariable(1),
@@ -361,9 +384,9 @@ func TestCallerReadsUnproducedOptionalOutput(t *testing.T) {
 	start, err := events.NewStartEvent("start")
 	require.NoError(t, err)
 
-	ca, err := activities.NewCallActivity("charge", "io-opt-callee",
+	ca, err := activities.NewCallActivity("charge", key,
 		activities.WithParameters(data.Input, ioParam(t, "amount")),
-		activities.WithParameters(data.Output, ioParam(t, "result"), note()))
+		activities.WithParameters(data.Output, outputs...))
 	require.NoError(t, err)
 
 	end, err := events.NewEndEvent("end")
@@ -376,21 +399,57 @@ func TestCallerReadsUnproducedOptionalOutput(t *testing.T) {
 	link(t, start, ca)
 	link(t, ca, end)
 
-	th := bootIOEngine(t, "io-opt-engine", caller)
+	return caller
+}
 
-	_, err = th.RegisterProcess(callee)
-	require.NoError(t, err)
+// TestCallerReadsUnproducedOptionalOutput — SRD-093 FR-9's edge: a callee
+// may declare an OPTIONAL output and never produce it. The caller's output
+// name passes the launch check (it is declared), and at completion it
+// simply does not flow (ADR-040 §2.3): the caller completes with the name
+// unbound, no incident. The second case has the callee produce NOTHING —
+// an empty result, which must still be served as the result and never fall
+// through to the child's raw scope.
+func TestCallerReadsUnproducedOptionalOutput(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
 
-	h, err := th.StartLatest(caller.ID())
-	require.NoError(t, err)
+	tests := map[string]struct {
+		callee  *process.Process
+		outputs []*data.Parameter
+	}{
+		"result produced, note absent": {
+			callee:  contractedScaleCallee(t, "io-opt-callee", 2, noteParam(t)),
+			outputs: []*data.Parameter{ioParam(t, "result"), noteParam(t)},
+		},
+		"nothing produced at all": {
+			callee:  optionalOnlyCallee(t, "io-quiet-callee"),
+			outputs: []*data.Parameter{noteParam(t)},
+		},
+	}
 
-	require.Eventually(t, func() bool { return h.OpenIncidents() == 1 },
-		5*time.Second, 10*time.Millisecond)
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			caller := optionalCaller(t, "caller-"+tc.callee.ID(),
+				tc.callee.ID(), tc.outputs...)
 
-	inc := h.Incidents()
-	require.Len(t, inc, 1)
-	require.Equal(t, "charge", inc[0].NodeName)
-	require.Contains(t, inc[0].Cause, `has no declared output "note"`)
+			th := bootIOEngine(t, "io-opt-engine-"+tc.callee.ID(), caller)
+
+			_, err := th.RegisterProcess(tc.callee)
+			require.NoError(t, err)
+
+			h, err := th.StartLatest(caller.ID())
+			require.NoError(t, err)
+
+			wctx, wc := context.WithTimeout(context.Background(),
+				5*time.Second)
+			defer wc()
+
+			state, err := h.WaitCompletion(wctx)
+			require.NoError(t, err)
+			require.Equal(t, thresher.StateCompleted, state)
+			require.Zero(t, h.OpenIncidents(),
+				"an unproduced optional output is not a fault")
+		})
+	}
 }
 
 // TestStartOptionsValidate covers the option constructors' own guards.

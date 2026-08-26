@@ -854,13 +854,14 @@ func constructProcess(p *parser, asm *assembly) error {
 			return ioErr
 		}
 
-		if pp := byDir[data.Input]; len(pp) != 0 {
-			opts = append(opts, data.WithInputs(pp...))
-		}
-
-		if pp := byDir[data.Output]; len(pp) != 0 {
-			opts = append(opts, data.WithOutputs(pp...))
-		}
+		// Both options always, even with nothing in them: an explicit
+		// <ioSpecification> that declares no parameter is a STRICT empty
+		// contract — no data required to start, none promised to finish
+		// (ADR-040 §2.1) — not the contract-less process an absent element
+		// leaves.
+		opts = append(opts,
+			data.WithInputs(byDir[data.Input]...),
+			data.WithOutputs(byDir[data.Output]...))
 	}
 
 	proc, err := p.newProcess(spec.name, opts...)

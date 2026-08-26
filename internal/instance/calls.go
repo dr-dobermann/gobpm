@@ -291,6 +291,13 @@ func (ls *loopState) bindCallOutputs(entry *callEntry) error {
 	// not remain shared with the caller).
 	committed := make([]data.Data, 0, len(outs))
 	for i, d := range outs {
+		// a nil slot is a declared optional output the contracted child never
+		// produced (ADR-040 §2.3): nothing flows, the caller's name stays
+		// unbound
+		if d == nil {
+			continue
+		}
+
 		cloned, cerr := cloneNamed(names[i], d)
 		if cerr != nil {
 			return cerr

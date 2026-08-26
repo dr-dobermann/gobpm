@@ -179,12 +179,21 @@ func (ls *loopState) collectOutputs() error {
 				errs.D(observability.AttrProcessID, inst.s.ProcessID))
 		}
 
-		cloned, err := cloneNamed(out.Name(), d)
+		// bound through the DECLARED parameter, exactly as an input is at
+		// launch: the declaration's item types the value, so a producer that
+		// left the wrong kind of value under the declared name is the same
+		// broken promise as a missing one
+		bound, err := bindDeclared(out, d)
 		if err != nil {
-			return err
+			return errs.New(
+				errs.M("process %q: output %q holds a value its declaration "+
+					"cannot carry", inst.s.ProcessName, out.Name()),
+				errs.C(errorClass, errs.TypeCastingError),
+				errs.D(observability.AttrProcessID, inst.s.ProcessID),
+				errs.E(err))
 		}
 
-		result = append(result, cloned)
+		result = append(result, bound)
 	}
 
 	inst.result.Store(&result)

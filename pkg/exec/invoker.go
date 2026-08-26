@@ -96,9 +96,12 @@ type ChildProcess interface {
 	// cancellation that carried no fault). Read after Done is closed.
 	Failed() error
 
-	// Outputs reads the named data from the child's root scope after
-	// completion — the declared Output parameters of the Call Activity, the
-	// call contract's return values. A missing name is a classified error.
+	// Outputs reads the named data after completion — the declared Output
+	// parameters of the Call Activity, the call contract's return values —
+	// in the order of names. A child with a declared contract serves its
+	// collected result, and a name it declared optional but never produced
+	// comes back as a nil slot (nothing flows); a contract-less child reads
+	// its root scope, where a missing name is a classified error.
 	Outputs(names []string) ([]data.Data, error)
 
 	// Terminate ends the child (the cancel cascade). Idempotent.
