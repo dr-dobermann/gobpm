@@ -515,8 +515,56 @@ No downward references.
 
 ## §10 Implementation summary
 
-*Post-landing placeholder: milestones as landed, divergences from the draft,
-verification results.*
+### §10.1 Milestones as landed (branch `feat/artifact-carrier`)
+
+| Commit | Milestone |
+|---|---|
+| `cea6efbc` | ADR-039 v.1 + SAD-001 v.1.2 (the decision this implements) |
+| `0dff86dd` | this document |
+| `4e009464` | **M1** — the artifacts package: interface, `NewAssociation`, `TextAnnotation`, markers |
+| `230e1220` | **M2** — container wiring + the invariance and non-cloning proofs |
+| `f770f9fd` | **M3** — importer carriers: annotation, group, category lookup |
+| `6371c4bc` | **M4** — the association builder, the report degradation, the retired refusal |
+
+### §10.2 Where reality diverged from the draft
+
+All five are test-naming, found by writing the tests rather than by review;
+no behaviour differs from §2.
+
+1. **T-3 dissolved into its neighbours.** A standalone
+   `TestArtifactAccessors` would have re-read fields T-1/T-2 already assert;
+   the accessor and `Must*` checks live in `TestNewAssociation` /
+   `TestNewTextAnnotation` / `TestMustAssociation` / `TestMustTextAnnotation`.
+2. **T-6 landed as `TestPlainAssociationImports`** — the rewrite of
+   `TestPlainAssociationIsRefused` keeps the old test's fixture and its
+   position in `association_test.go`, so the history of the refusal and its
+   retirement reads in one place. `TestAnnotationImports` carries the
+   annotation-only half.
+3. **T-8 is `TestGroupImports`** (plural, matching `TestAnnotationImports`).
+4. **T-9 folded into `TestAssociationEnds`** — one table over the whole
+   resolution universe (flow, data object, group) beats three tests sharing
+   a fixture.
+5. **T-10 split by artifact kind** — `TestGroupUnresolvableRefIsReported`
+   (M3, where groups are built) and `TestAssociationDanglingEndIsReported`
+   (M4, covering both ends), because the two degradations land in different
+   milestones.
+
+Also worth recording: the `associationDirection` attribute turned out to be
+**unread** by the pre-existing parser — the compensation reading never needed
+it — so M4 is where the document's direction first reaches the model at all.
+
+### §10.3 Verification
+
+- `make ci`: **PASS, 14/14 steps in 9m27s** (`.ci/last-run.json`), including
+  the end-to-end example runs.
+- `make cover-check` at `6371c4bc`: **diff-coverage 99.3% of 274 changed
+  coverable lines — PASS**; every touched function 100% except the two
+  `errs.Invariant` continuation lines in `artifactHolderFor`, the same
+  unreachable-guard residue `containerFor` ships with.
+- FR-6's "never executed" is a property of the import graph: nothing under
+  `internal/`, `pkg/thresher/` or `pkg/exec/` imports `pkg/model/artifacts`.
+- The load-bearing proof is `TestArtifactsDoNotAffectExecution`: one process,
+  bare and fully artifacted on both containers, completing identically.
 
 ## Open questions
 
