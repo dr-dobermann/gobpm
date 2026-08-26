@@ -59,10 +59,11 @@ func TestVisualArtifactsAreCarried(t *testing.T) {
 	}
 }
 
-// TestAssociationIsNotAnAnnotation guards the one artifact that must NOT
-// join the skip list. The extract keeps Association in scope precisely
-// because it carries compensation semantics, so silently dropping it
-// would drop the link between a compensating activity and its handler.
+// TestAssociationIsNotAnAnnotation guards the one artifact that is never
+// silently droppable: an association STATES a relationship, so its
+// dispositions are consume (compensation), carry (plain, resolvable) or
+// report (unresolvable) — never the annotation's old silent skip. Here
+// the plain node-to-node shape must come out CARRIED.
 func TestAssociationIsNotAnAnnotation(t *testing.T) {
 	doc := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
@@ -74,15 +75,14 @@ func TestAssociationIsNotAnAnnotation(t *testing.T) {
   </bpmn:process>
 </bpmn:definitions>`
 
-	_, err := importer{}.Import(context.Background(), strings.NewReader(doc))
-
-	var uee *convert.UnsupportedElementError
-	if !errors.As(err, &uee) {
-		t.Fatalf("Import with an association = %v, want it refused, not skipped", err)
+	p, err := importer{}.Import(context.Background(), strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Import with an association = %v, want it carried", err)
 	}
 
-	if uee.Tag != tagAssociation {
-		t.Errorf("refused tag = %q, want %q", uee.Tag, tagAssociation)
+	arts := p.Artifacts()
+	if len(arts) != 1 || arts[0].ID() != "a1" {
+		t.Fatalf("artifacts = %v, want exactly the association", arts)
 	}
 }
 

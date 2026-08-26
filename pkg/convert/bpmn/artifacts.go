@@ -216,6 +216,10 @@ func buildCarriedArtifacts(p *parser, asm *assembly) error {
 		if err := attachArtifact(asm, s.container, ta); err != nil {
 			return err
 		}
+
+		if s.id != "" {
+			asm.artsByID[s.id] = ta
+		}
 	}
 
 	for _, s := range asm.groups {
@@ -239,6 +243,10 @@ func buildCarriedArtifacts(p *parser, asm *assembly) error {
 
 		if err := attachArtifact(asm, s.container, g); err != nil {
 			return err
+		}
+
+		if s.id != "" {
+			asm.artsByID[s.id] = g
 		}
 	}
 

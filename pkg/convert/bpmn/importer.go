@@ -11,6 +11,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/convert"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/artifacts"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -291,6 +292,10 @@ type assembly struct {
 	// FR-7/FR-8).
 	annots []annotationSpec
 	groups []groupSpec
+	// artsByID are the built carrier artifacts by their DECLARED ids —
+	// the ids an association end can reference. One without a declared id
+	// is unreferencable and contributes no entry.
+	artsByID map[string]artifacts.Artifact
 	// spec is the buffered <process> itself, built first in pass 2 — see
 	// procSpec.
 	spec procSpec
@@ -750,6 +755,7 @@ func (p *parser) newAssembly(spec procSpec) *assembly {
 		byID:         make(map[string]flow.Node),
 		declared:     make(map[string]string),
 		dataElems:    make(map[string]flow.Element),
+		artsByID:     make(map[string]artifacts.Artifact),
 		interfaces:   p.interfaces,
 		ops:          p.ops,
 		cat:          p.cat,
@@ -1666,12 +1672,6 @@ func build(p *parser, asm *assembly) (*process.Process, error) {
 		return nil, err
 	}
 
-	// Every association a compensation boundary did not consume is a
-	// plain one, and plain associations have no model home (§4.9).
-	if err := refusePlainAssociations(asm); err != nil {
-		return nil, err
-	}
-
 	flowByID := make(map[string]*flow.SequenceFlow, len(asm.flows))
 
 	for i := range asm.flows {
@@ -1683,6 +1683,13 @@ func build(p *parser, asm *assembly) (*process.Process, error) {
 		}
 
 		flowByID[fs.id] = sf
+	}
+
+	// The plain associations, last among the artifacts: an end may be
+	// anything pass 2 built — a node, a data element, a sequence flow,
+	// or a carried artifact (SRD-092 FR-9/FR-10).
+	if err := buildAssociations(p, asm, flowByID); err != nil {
+		return nil, err
 	}
 
 	if err := resolveRefs(asm.refs, newRefIndex(asm, flowByID)); err != nil {
