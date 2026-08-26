@@ -29,6 +29,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<lane>`/`<laneSet>` imports under a generated id instead of refusing
   the file, and declared lane ids join the document's one id ledger.
 
+- **An iterated activity can wait** (SRD-090.B, ADR-025 §2.13, ADR-006
+  §2.9.5, closes #313). A Standard Loop or a sequential Multi-Instance over
+  a `ReceiveTask` — or any leaf that parks — now builds and runs: a
+  sequential fan-out consumes one message per pass instead of being refused
+  at `snapshot.New`.
+
+  The decorator is the activity's single registered event processor. It
+  holds one subscription per definition for as long as any instance awaits
+  it, and routes each delivery to the instance that was waiting — where
+  before, arming was keyed to a token *arriving* at the node, and an
+  in-place iteration never arrives twice, so passes after the first ran
+  without waiting at all.
+
+  Two shapes stay refused, each for a stated reason rather than for want of
+  a mechanism. A **parallel** fan-out over a Message catch with no
+  `WithIterationCorrelation` is ambiguous by construction — a message is
+  point-to-point, so nothing says which envelope belongs to which of N
+  waiting instances. A **parallel** fan-out over work that parks outside
+  the event system — a User Task, an external-worker Service Task — would
+  have its instances share one parked-work identity, so only one would be
+  addressable and the rest would complete without anyone doing them; make
+  it sequential, or model N tasks. ADR-025 §2.15 and ADR-020 §2.12 decide
+  what that fan-out means, and the refusal lifts when each instance owns
+  its identity.
 - **BPMN import covers the loop characteristics** (SRD-089.H, part of
   #284). `<standardLoopCharacteristics>` maps onto `NewStandardLoop` —
   condition, `testBefore`, `loopMaximum` — and
@@ -91,6 +115,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Claiming a human task no longer lapses when the instance wakes**
+  (ADR-020 §2.1, §2.4.1). Hydrating a released instance re-parks its
+  UserTask wait and re-announces it under the recorded task id, and the
+  engine rebuilt the whole task record on every announcement — silently
+  resetting `actualOwner` and re-resolving the eligible set §2.7 freezes
+  at distribution.
+
+  The visible failure was on claim → open the form → submit, which is the
+  natural order for a task offered to several candidates, since claiming
+  first is what stops two of them working it in parallel: the `Take` that
+  opened the form woke the instance, the wake discarded the claim, and
+  the holder's own `Complete` came back `TASK_UNCLAIMED`. Worse, a second
+  eligible candidate could claim the task out from under the first. Only
+  tasks parked long enough to release their instance were affected —
+  which is to say the long-lived ones the guarantee exists for.
+
+  A re-announcement is now recognized as one and leaves the record alone.
+  Ownership is still not durable across an engine *restart*, where a
+  different engine re-registers a task it never saw claimed.
+
+- **An iterated Sub-Process no longer pins its process instance in
+  memory** (SRD-090.A M3d, ADR-007 §2.4, part of #313). Residency now
+  asks what an activity instance is *awaiting*: a Sub-Process executor
+  parked for its body's drain contributes nothing, because it holds no
+  wait of its own — the body's own tokens decide, as they always did. A
+  host parked that way used to read as "live but not a long wait" and
+  disqualified its whole instance, so a Sub-Process iterating over three
+  approvals kept the engine holding it for as long as the approvals took.
+  It is released with the body now, and re-enters its decorator at the
+  recorded pass when a trigger wakes the instance.
+
+  A scope host is never the *reason* an instance releases — it rides
+  along with the body's held waits or it stays. Nothing external could
+  wake it: what it waits for arrives from inside.
+
+  An instance carrying an open incident or a dead letter still parks as
+  itself rather than as dehydrated; the incident record carries its
+  continuation, and it is waiting for an operator, not a trigger.
+
+- **A sequential Multi-Instance Sub-Process re-ran its first pass on
+  every restore** (SRD-090.A M3d). Restore rebuilds a scope entry from
+  the checkpoint's scope table, which records the path and its host but
+  not who drives it, so the rebuilt entry lost the flag saying it belongs
+  to an iteration — and the drain accounting ignores an entry without it.
+  The position record therefore stayed at zero, and each restore resumed
+  the activity at pass 0: with a wait long enough to dehydrate between
+  passes, the activity never finished at all. The re-attaching executor
+  now declares it, exactly as a fresh scope open does.
+
+  Predates the node execution model; it was invisible because nothing had
+  driven a composite Multi-Instance through more than one restore cycle.
 - **The Lane and Collaboration § pins are restored, verified**
   (closes #334). SRD-089.F FR-8 removed the invented section numbers
   `laneSet`/`lane` and `collaboration`/`participant`/`messageFlow`
@@ -462,13 +537,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaf runs its passes in place (fresh frame each, split item +
   loopCounter bound); a parallel leaf fans out per-instance scopes
   each running one track at the task; both restore at their position
-  over the existing checkpoint schema. A leaf that **waits** stays
-  unsupported and is now **refused at build time** rather than run
-  wrongly: an activity that both iterates and parks on execution (a
-  ReceiveTask or other catching event node, a user task, an external
-  worker) fails `snapshot.New` with a message naming it and pointing at
-  the workaround — model the wait inside an iterated Sub-Process. The
-  decorator that would make it work natively is tracked in #313.
+  over the existing checkpoint schema. A leaf that **waits** was refused
+  at build time here rather than run wrongly; SRD-090.B (above) makes it
+  work natively and narrows the refusal to the two parallel shapes that
+  remain genuinely ambiguous.
 
 
 - **In-instance event delivery: per-delivery payload binding and

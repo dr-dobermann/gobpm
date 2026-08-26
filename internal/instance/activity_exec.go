@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/scope"
@@ -60,17 +61,43 @@ type instanceState struct {
 // decorator holds N and implements the same interface, which closes the
 // composition and is why a track cannot tell how many instances are behind
 // the activity it is executing.
+// **Two goroutines call this interface, and an implementor has to know
+// which.** `run` executes on the TOKEN's goroutine and is the only method
+// that may mutate; `awaits` and `state` are called by the single-writer LOOP
+// while run is still in flight — that is the whole point of them — so they
+// must be safe to call concurrently with it and must not mutate. Anything
+// one writes and the others read is fenced by the implementor (an atomic
+// flag, an atomic pointer), never by luck of the call graph.
+//
+// `run`'s error is also a channel: a returned `errDehydrated` means the loop
+// released this executor mid-flight and the run loop must unwind WITHOUT
+// treating it as a discard or a failure. Any implementor or decorator that
+// wraps errors opaquely breaks that — return it as it came.
 type activityExec interface {
 	// run executes this instance and returns the flows to follow, or none
 	// when the instance parks or belongs to a set whose decorator follows
-	// the activity's flows once on its behalf.
+	// the activity's flows once on its behalf. TOKEN goroutine.
 	run(ctx context.Context) ([]*flow.SequenceFlow, error)
 
-	// awaits reports what this instance is waiting on right now.
+	// awaits reports what this instance is waiting on right now. Called
+	// from the LOOP goroutine, concurrently with run.
 	awaits() awaitKind
 
-	// state reports the instance in the iteration vocabulary.
+	// state reports the instance in the iteration vocabulary. Called from
+	// the LOOP goroutine, concurrently with run.
 	state() instanceState
+
+	// subscriber reports who registers with the hub for this activity's
+	// waits, or nil to leave the existing per-trigger rule alone
+	// (SRD-090.B FR-1).
+	//
+	// The question is asked of the executor rather than answered by a test
+	// on the node, which is the whole shape of this slice: a driver never
+	// learns that an activity iterates, it learns who owns the wait. A leaf
+	// or a composite instance answers nil — it has one execution, which is
+	// its own subscriber (ADR-006 §2.9.5 Scope) — and a decorator answers
+	// itself, holding one subscription for the activity across every pass.
+	subscriber() activitySubscriber
 }
 
 // nodeExec is the leaf realization: it runs an activity that is not a scope
@@ -161,11 +188,22 @@ type iterDecorator struct {
 
 	// live is the instance currently executing, or nil between passes and
 	// after the last one. A sequential decorator holds at most one.
-	live activityExec
+	//
+	// Atomic because the decorator's own goroutine writes it while the LOOP
+	// reads it to ask what this activity awaits (SRD-090.A FR-8). The handle
+	// on the track is atomic too, but that only fences WHICH executor is
+	// current — this fences the field it points at.
+	live atomic.Pointer[execHandle]
 
 	// seed is the restored executor set this activity resumes from, taken
 	// from the track at the start of the run (SRD-090.A FR-7).
 	seed *checkpoint.IterationRecord
+
+	// eventSubs makes the decorator the hub's subscriber for this activity's
+	// waits (ADR-006 §2.9.5, SRD-090.B FR-1): one identity per iterated
+	// activity, one subscription per definition, alive while any instance
+	// awaits it.
+	eventSubs
 
 	composite bool
 }
@@ -174,7 +212,13 @@ type iterDecorator struct {
 func newIterDecorator(
 	t *track, step *stepInfo, mi multiInstance, composite bool,
 ) *iterDecorator {
-	return &iterDecorator{t: t, step: step, mi: mi, composite: composite}
+	return &iterDecorator{
+		eventSubs: subsIDFor(t, step.node),
+		t:         t,
+		step:      step,
+		mi:        mi,
+		composite: composite,
+	}
 }
 
 // buildInstance makes the executor for ordinal ord: a child scope for a
@@ -273,7 +317,7 @@ func (d *iterDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 
 	d.t.miState = nil
 	d.t.setLoopCounter(0)
-	d.live = nil
+	d.live.Store(nil)
 
 	// a condition-stopped (or zero-flow) run still leaves via the
 	// activity's outgoing flow, exactly once. A composite's instances
@@ -318,7 +362,11 @@ func (d *iterDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 func (d *iterDecorator) runInstance(
 	ctx context.Context, it miIterator, i, n int,
 ) ([]*flow.SequenceFlow, bool, error) {
-	d.live = d.buildInstance(i)
+	d.live.Store(&execHandle{e: d.buildInstance(i)})
+
+	// cleared when this instance is done, so the field means what it says:
+	// nil between instances (see loopDecorator.runPass).
+	defer d.live.Store(nil)
 
 	flows, stop, err := d.runPass(ctx, it, i, n)
 	if err != nil {
@@ -337,7 +385,8 @@ func (d *iterDecorator) runInstance(
 // the snapshot refuses, but WHAT it decides — a waiting instance stops the
 // iteration, naming which one — is ordinary logic and is pinned as such.
 func (d *iterDecorator) refuseIfParked(i int) error {
-	if d.live == nil || d.live.awaits() == awaitNothing {
+	h := d.live.Load()
+	if h == nil || h.e.awaits() == awaitNothing {
 		return nil
 	}
 
@@ -353,23 +402,29 @@ func (d *iterDecorator) refuseIfParked(i int) error {
 // is trivial while at most one instance runs (ADR-025 §2.13's
 // releasability rule takes its general form when parallel instances arrive).
 func (d *iterDecorator) awaits() awaitKind {
-	if d.live == nil {
+	h := d.live.Load()
+	if h == nil {
 		return awaitNothing
 	}
 
-	return d.live.awaits()
+	return h.e.awaits()
 }
 
 // state reports the ACTIVITY's iteration state: the live instance's ordinal
 // and what it is doing. Its own ordinal is 0 — the activity is one instance
 // of itself from the track's point of view.
 func (d *iterDecorator) state() instanceState {
-	if d.live == nil {
+	h := d.live.Load()
+	if h == nil {
 		return instanceState{ordinal: 0, await: awaitNothing}
 	}
 
-	return d.live.state()
+	return h.e.state()
 }
+
+// subscriber: the decorator holds ONE subscription per definition for the
+// whole activity, across every pass (ADR-006 §2.9.5, SRD-090.B FR-1/FR-2).
+func (d *iterDecorator) subscriber() activitySubscriber { return d }
 
 // runParallel drives every instance of a parallel leaf activity at once and
 // awaits them all (ADR-025 §2.13, SRD-090.A FR-5). The N-of-N barrier is
@@ -1038,6 +1093,10 @@ func (e *nodeExec) awaits() awaitKind {
 	return awaitNothing
 }
 
+// subscriber: a leaf execution is its own subscriber, so the per-trigger
+// rule in armWaiters stands unchanged (SRD-090.B FR-1).
+func (e *nodeExec) subscriber() activitySubscriber { return nil }
+
 // state reports this instance in the iteration vocabulary.
 func (e *nodeExec) state() instanceState {
 	a := e.awaits()
@@ -1083,9 +1142,31 @@ func (d *iterDecorator) runPass(
 	// instances open scopes rather than re-running it.
 	if !d.composite {
 		step.state = StepCreated
+
+		// re-classify the node for THIS pass (SRD-090.B FR-2). Arming and
+		// parking are keyed to a token arriving, and an in-place iteration
+		// arrives once — so without this the pass runs a waiting node
+		// without waiting, which is #313's defect. The decorator does it
+		// because the decorator is what re-runs the node; the subscription
+		// bookkeeping underneath is idempotent for an ordinal already
+		// recorded, so a node that does not wait pays nothing.
+		if err := d.t.checkNodeType(step.node, false); err != nil {
+			return nil, false, err
+		}
 	}
 
-	flows, err := d.live.run(ctx)
+	// runInstance stores the instance before calling this, and nothing else
+	// calls it — so the handle is always set here, where the two other
+	// Load sites guard because they answer the LOOP, which can ask between
+	// instances. Failing loudly beats a nil dereference three frames down
+	// if a future caller breaks that.
+	h := d.live.Load()
+	if h == nil {
+		return nil, false, errs.Invariant(
+			"no live instance for %q at ordinal %d", d.step.node.Name(), i)
+	}
+
+	flows, err := h.e.run(ctx)
 	if err != nil {
 		return nil, false, err
 	}

@@ -324,90 +324,156 @@ func cloneAfterCheck(n flow.Node) (flow.Node, error) {
 	// until the iteration decorator owns the node's event registration
 	// (#313): the engine would otherwise run the iteration without ever
 	// waiting past its first pass.
-	if err := checkIteratedWaitingLeaf(n); err != nil {
+	if err := checkUncorrelatedParallelMessage(n); err != nil {
 		return nil, err
 	}
 
 	return cloneNode(n)
 }
 
-// checkIteratedWaitingLeaf refuses a LEAF activity that both iterates
-// (Multi-Instance or Standard Loop) and PARKS when it executes — a
-// ReceiveTask, a User Task, an external-worker Service Task, or an
-// event catch on a non-Conditional trigger.
+// checkUncorrelatedParallelMessage refuses the ONE iterated waiting shape
+// that is ambiguous in the model rather than merely unimplemented: a PARALLEL
+// Multi-Instance over a Message catch that declares no iteration correlation
+// (SRD-090.B FR-4, ADR-006 §2.9.5).
 //
-// Such a node cannot iterate correctly today: a wait is armed when a
-// track ARRIVES at the node, so passes after the first would execute
-// without waiting at all — the iteration would consume one trigger and
-// run the rest through. Closing that needs the iteration decorator to
-// become the node's single EventProcessor and interpose on its event
-// registration, which is its own design work (#313). Until then the
-// model is refused at registration rather than run wrong: a silent
-// wrong answer is the one outcome worse than an unsupported one.
+// A Message is point-to-point — one envelope reaches one receiver (ADR-006
+// §2.9.2) — so N instances waiting at once need something that says which
+// envelope belongs to which. With a declared key the decorator routes by it;
+// without one, any choice is arbitrary. "The first still waiting in ordinal
+// order" is a defensible rule for a SEQUENTIAL iteration, where exactly one
+// instance waits at a time and each pass consumes one envelope, and it is a
+// coin toss where N wait together.
 //
-// A COMPOSITE that iterates is unaffected — its body re-opens per
-// iteration, so each pass arrives at its inner nodes afresh.
-func checkIteratedWaitingLeaf(n flow.Node) error {
-	if !iterates(n) {
+// Every other iterated waiting shape now builds: a sequential Multi-Instance,
+// a Standard Loop, and a parallel Multi-Instance over a Signal, Timer or
+// Conditional — those fan out to every waiting instance, which is their own
+// semantics rather than a fallback.
+//
+// This replaces the blanket refusal of any activity that both iterates and
+// waits. That guard existed because a wait was armed on ARRIVAL and an
+// in-place iteration never re-arrives, so passes after the first ran without
+// waiting; the decorator owning the subscription removes the arrival
+// dependency entirely (SRD-090.B FR-1/FR-2), so the construct is correct and
+// there is nothing left to refuse but the ambiguity.
+func checkUncorrelatedParallelMessage(n flow.Node) error {
+	if _, ok := parallelMultiInstance(n); !ok {
 		return nil
 	}
 
-	// a composite iterates by re-opening its child scope; only leaves
-	// are affected.
-	if _, composite := n.(interface{ Nodes() []flow.Node }); composite {
-		return nil
-	}
-
-	if !parksOnExecution(n) {
-		return nil
-	}
-
-	return errs.New(
-		errs.M("activity %q both iterates and waits: a Multi-Instance or "+
-			"Standard Loop over a WAITING leaf (a ReceiveTask, a User "+
-			"Task, an external-worker Service Task or an event catch) "+
-			"is not supported yet — its passes after the first would "+
-			"run without waiting (#313). Model it as an iterated "+
-			"Sub-Process containing the wait.", n.Name()),
-		errs.C(errorClass, errs.InvalidObject),
-		errs.D(observability.AttrNodeID, n.ID()))
-}
-
-// iterates reports whether the node carries loop characteristics —
-// the same capability probe the runtime uses (multiInstanceOf /
-// standardLoopOf).
-func iterates(n flow.Node) bool {
-	lch, ok := n.(interface {
-		LoopCharacteristics() activities.LoopCharacteristics
-	})
-
-	return ok && lch.LoopCharacteristics() != nil
-}
-
-// parksOnExecution reports whether executing this node parks its track.
-func parksOnExecution(n flow.Node) bool {
-	if _, human := n.(interactor.HumanTask); human {
-		return true
-	}
-
-	if ew, ok := n.(tasks.ExternalWorker); ok {
-		if _, isWorker := ew.WorkerTopic(); isWorker {
-			return true
-		}
+	// A CAPABILITY-PARKED ACTIVITY cannot fan out at all yet. A human task
+	// and an external-worker Service Task park through their own capability
+	// rather than an event subscription, and the identity that addresses the
+	// parked work — `track.taskID` — is one slot on the host track. N
+	// instances parking at once therefore announce ONE task between them:
+	// measured, a three-item parallel Multi-Instance over a User Task
+	// announces a single task and the process runs to completion without
+	// anyone completing it. Three approvals modeled, none performed.
+	//
+	// That is the silent wrong answer the blanket refusal used to prevent,
+	// and it was reachable between SRD-090.B M3 (which deleted that refusal)
+	// and this guard. A SEQUENTIAL iteration is unaffected — one instance
+	// parks at a time, each pass registers its own entry, and each requires
+	// its own completion.
+	if parksOnCapability(n) {
+		return errs.New(
+			errs.M("activity %q is a PARALLEL Multi-Instance over work that "+
+				"parks outside the event system (a User Task or an "+
+				"external-worker Service Task): its instances would share "+
+				"one task identity, so only one is addressable and the rest "+
+				"complete without being done. Make the Multi-Instance "+
+				"sequential — one instance parks at a time there, and each "+
+				"pass is completed on its own", n.Name()),
+			errs.C(errorClass, errs.InvalidObject),
+			errs.D(observability.AttrNodeID, n.ID()))
 	}
 
 	en, isEvent := n.(flow.EventNode)
 	if !isEvent {
+		return nil
+	}
+
+	if !hasMessageTrigger(en) || declaresIterationCorrelation(n) {
+		return nil
+	}
+
+	return errs.New(
+		errs.M("activity %q is a PARALLEL Multi-Instance over a Message "+
+			"catch and declares no iteration correlation: with several "+
+			"instances waiting at once, nothing says which message belongs "+
+			"to which. Declare one with "+
+			"activities.WithIterationCorrelation, or make the "+
+			"Multi-Instance sequential — one instance waits at a time "+
+			"there, so each pass consumes one message", n.Name()),
+		errs.C(errorClass, errs.InvalidObject),
+		errs.D(observability.AttrNodeID, n.ID()))
+}
+
+// parksOnCapability reports whether executing this node parks through a
+// capability rather than an event subscription — a human task, or a Service
+// Task dispatched to an external worker. Both are addressed by a task
+// identity the host track holds one of.
+func parksOnCapability(n flow.Node) bool {
+	if _, human := n.(interactor.HumanTask); human {
+		return true
+	}
+
+	ew, ok := n.(tasks.ExternalWorker)
+	if !ok {
 		return false
 	}
 
+	_, isWorker := ew.WorkerTopic()
+
+	return isWorker
+}
+
+// parallelMultiInstance reports the node's Multi-Instance characteristics
+// when it carries them AND they are parallel.
+func parallelMultiInstance(
+	n flow.Node,
+) (*activities.MultiInstanceLoopCharacteristics, bool) {
+	lch, ok := n.(interface {
+		LoopCharacteristics() activities.LoopCharacteristics
+	})
+	if !ok {
+		return nil, false
+	}
+
+	mi, isMI := lch.LoopCharacteristics().(*activities.MultiInstanceLoopCharacteristics)
+	if !isMI || mi.IsSequential() {
+		return nil, false
+	}
+
+	return mi, true
+}
+
+// hasMessageTrigger reports whether any of the node's definitions is a
+// Message — the one trigger whose delivery is point-to-point.
+func hasMessageTrigger(en flow.EventNode) bool {
 	for _, d := range en.Definitions() {
-		if d.Type() != flow.TriggerConditional {
+		if d.Type() == flow.TriggerMessage {
 			return true
 		}
 	}
 
 	return false
+}
+
+// declaresIterationCorrelation reports whether the node says how a
+// concurrently-waiting iteration of it is addressed by an arriving message
+// (SRD-085 FR-3) — the declaration that makes a parallel fan-out over a
+// Message unambiguous.
+func declaresIterationCorrelation(n flow.Node) bool {
+	ic, ok := n.(interface {
+		IterationCorrelation() (string, data.FormalExpression)
+	})
+	if !ok {
+		return false
+	}
+
+	name, expr := ic.IterationCorrelation()
+
+	return name != "" && expr != nil
 }
 
 // isInstantiatingTask reports whether n is a no-incoming instantiate

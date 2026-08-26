@@ -823,8 +823,66 @@ func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 		return // correlation mismatch — drop, keep the track parked
 	}
 
+	// AN ITERATED ACTIVITY'S DELIVERY GOES TO ITS INSTANCES, not to the
+	// track they share (SRD-090.B FR-3). The decorator says which are
+	// waiting; the rule for how many receive it is the trigger's own.
+	if ev.iterProc != nil {
+		ls.dispatchToInstances(tr, ev)
+
+		return
+	}
+
 	ls.flipNotParked(tr)
 	tr.evtCh <- ev.eDef
+}
+
+// dispatchToInstances routes one occurrence to the instances of an iterated
+// activity waiting for it (SRD-090.B FR-3, ADR-006 §2.9.2).
+//
+// The multiplicity is the KIND's, stated as contract rather than left to
+// mechanism: a Signal reaches every waiting instance (publication fan-out),
+// a Timer and a Conditional likewise since each instance's trigger is its
+// own, and a Message reaches exactly ONE — it is point-to-point, so serving
+// N would let N instances consume one envelope and all complete.
+//
+// Ordinal order is normative where the instances are otherwise
+// indistinguishable: nothing else can decide which receives an envelope, and
+// two runs of one model must not disagree about it.
+func (ls *loopState) dispatchToInstances(tr *track, ev trackEvent) {
+	ords := ev.iterProc.waitingOn(ev.eDef.ID())
+	if len(ords) == 0 {
+		return // nobody waits on it any more — drop, as a losing arm does
+	}
+
+	// EXACTLY ONE INSTANCE, the first still waiting in ordinal order.
+	//
+	// A Message is point-to-point (ADR-006 §2.9.2), and a Message is the
+	// only trigger an iterated leaf can carry: `ReceiveTask` is the sole
+	// iterable activity that is a `flow.EventNode`, and its one definition
+	// is a message. A UserTask and an external-worker ServiceTask park
+	// through capabilities and never reach this path, and an event catch
+	// cannot iterate at all — loop characteristics belong to activities.
+	//
+	// So the broadcast half of the rule — a Signal or Timer serving EVERY
+	// waiting instance — has no expressible case today. It stays decided in
+	// ADR-006 §2.9.2 rather than written here as code nothing can exercise;
+	// the slice that makes such a wait expressible implements it against a
+	// test that can fail.
+	//
+	// Ordinal order is what makes "the first" reproducible: with nothing to
+	// tell the instances apart, two runs of one model must not disagree
+	// about which received an envelope. Telling them APART is the
+	// correlated case, and it needs the key per instance rather than per
+	// track (SRD-090.B M5c).
+	ev.iterProc.deliverTo(ords[0], ev.eDef)
+
+	// the TRACK leaves the parked set only once no instance of its activity
+	// waits: it is one entry standing for N waiters, so flipping it on the
+	// first delivery would drop every later occurrence at the gate above
+	// (the same reason the activity's hold outlives all but the last).
+	if !ev.iterProc.anyWaiting() {
+		ls.flipNotParked(tr)
+	}
 }
 
 // flipNotParked removes tr from the parked set and clears its message-index and
@@ -1309,6 +1367,20 @@ func (ls *loopState) maybeDehydrate(ctx context.Context) {
 		return
 	}
 
+	// An OPEN INCIDENT owns the park (SRD-090.A T-17, ADR-036 §2.2). The
+	// loop's tail tries dehydration before parkOnIncidents, so the two exits
+	// are not mutually exclusive by position — they were only ever
+	// mutually exclusive because a failing track ends TrackIncident, which
+	// is absent from liveTrackStates and therefore read as a terminal
+	// record, while its composite HOST disqualified the instance through
+	// the default arm. FR-8 removes that second half, so the guard has to
+	// be stated rather than inherited: an instance waiting for a retry or
+	// an operator parks as itself, with the incident records carrying its
+	// continuations, and not as Dehydrated.
+	if ls.inst.openIncidents() > 0 || ls.inst.deadLetters() > 0 {
+		return
+	}
+
 	parked := ls.dehydratableParked(ctx)
 	if parked == nil {
 		return // not fully idle, or nothing to release
@@ -1378,7 +1450,7 @@ func waitKindOf(node flow.Node) string {
 func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 	inst := ls.inst
 
-	var parked []*track
+	var parked, hosts []*track
 
 	for _, t := range inst.tracks {
 		switch {
@@ -1420,6 +1492,38 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 
 		case !liveTrackStates[t.currentState()]:
 			// terminal (Ended/Merged/Canceled/Failed) — a retained record.
+			//
+			// Asked BEFORE the executor question below, and the order is
+			// load-bearing: a track's terminal state is the last word on
+			// whether it is doing anything, while its executor answers
+			// from the other goroutine and can lag. A host canceled by an
+			// interrupting boundary still reports awaitScope until its own
+			// goroutine processes the cancel — and releasing it there would
+			// record it as dehydrated instead of canceled.
+
+		case t.awaits() == awaitScope:
+			// FR-8: a host parked for its body's drain is NOT doing work —
+			// the body's own tracks are, and they answer for themselves in
+			// the arms above. Before this, such a host fell to the default
+			// arm and disqualified its whole instance, so an iterated
+			// Sub-Process holding parked User Tasks pinned it for as long
+			// as the approvals took — the case ADR-007 v.2.1 exists for.
+			//
+			// Its boundaries still have to be held, for the same reason a
+			// parked track's do: an unheld boundary dies with the released
+			// instance, and "approve within 24h or escalate" would never
+			// escalate. The guarded activity here is the composite itself.
+			if !ls.boundariesHeld(t.ID()) {
+				return nil
+			}
+
+			// Released, but NOT counted as a reason to release. A host
+			// holds no wait — ADR-007 §2.4 is per-WAIT — so nothing
+			// external can wake it, and an instance whose only "wait" is
+			// a scope host would park on a drain that was about to
+			// arrive from inside. It rides along with the body's waits
+			// or it does not go at all.
+			hosts = append(hosts, t)
 
 		default:
 			// live but not a long wait (executing, or a join barrier) — the
@@ -1428,11 +1532,14 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 		}
 	}
 
+	// at least one REAL wait, or there is nothing to hydrate this instance
+	// back: a released instance wakes on a trigger, and only a held wait
+	// has one.
 	if len(parked) == 0 {
 		return nil
 	}
 
-	return parked
+	return append(parked, hosts...)
 }
 
 // waitReleasable reports whether a parked track's wait is both eligible
