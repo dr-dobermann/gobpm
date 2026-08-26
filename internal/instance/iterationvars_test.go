@@ -367,3 +367,94 @@ func TestIterationsRegisterIgnoresAnUnnamedActivity(t *testing.T) {
 	require.Equal(t, 2, got["act"].Completed)
 	require.Equal(t, 1, got["act"].Terminated)
 }
+
+// TestStandardLoopPublishesItsOwnVars (SRD-090.D FR-3): a Standard Loop
+// publishes the same engine names as a Multi-Instance, and reports its own
+// shape.
+//
+// Worth its own case because a Standard Loop reaches the publication through a
+// third path (bindLoopCounterAt, not the MI binder), and because the guide
+// tells a reader ITERATION_MODE can read "std_loop" — a claim that should be
+// pinned rather than asserted.
+func TestStandardLoopPublishesItsOwnVars(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	var (
+		mu   sync.Mutex
+		seen []map[string]string
+	)
+
+	op, err := gooper.New("sl-vars-op",
+		func(ctx context.Context, r service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			got := map[string]string{}
+
+			for _, n := range []string{
+				data.LoopCounterName, IterationNumber, IterationMode,
+			} {
+				d, gerr := r.GetData(n)
+				if gerr != nil {
+					return nil, fmt.Errorf("read %q: %w", n, gerr)
+				}
+
+				got[n] = fmt.Sprint(d.Value().Get(ctx))
+			}
+
+			mu.Lock()
+			seen = append(seen, got)
+			mu.Unlock()
+
+			return data.MustItemDefinition(
+				values.NewVariable("ok"), foundation.WithID("res")), nil
+		})
+	require.NoError(t, err)
+
+	sl, err := activities.NewStandardLoop(loopCondLt(t, 3))
+	require.NoError(t, err)
+
+	p, err := process.New("sl-vars", foundation.WithID("sl-vars"))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start", foundation.WithID("slv-start"))
+	require.NoError(t, err)
+
+	work, err := activities.NewServiceTask("work", op,
+		activities.WithoutParams(), activities.WithLoop(sl),
+		foundation.WithID("slv-work"))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end", foundation.WithID("slv-end"))
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, work, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, work)
+	link(t, work, end)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
+		&recordingProducer{}, nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	<-inst.Done()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	require.NotEmpty(t, seen, "the loop ran at least one pass")
+
+	for i, got := range seen {
+		require.Equal(t, iterKindStdLoop, got[IterationMode],
+			"a Standard Loop reports its own shape, not a Multi-Instance one")
+		require.Equal(t, got[data.LoopCounterName], got[IterationNumber],
+			"pass %d: the two spellings of the ordinal agree", i)
+	}
+}

@@ -9,7 +9,9 @@ A **Standard Loop** re-runs a single activity in place, one pass at a time, for
 as long as a boolean condition holds — the BPMN counterpart of a `while` or
 `do…while` (§13.3.6). You mark an activity with loop characteristics instead of
 drawing the same task twice; the engine drives the passes and publishes a
-0-based `loopCounter` the condition and the body can read. This page is the
+0-based `loopCounter` the condition and the body can read (with the rest of
+what a loop publishes — see
+[Iteration runtime variables](runtime-variables.md)). This page is the
 developer reference — the type, its constructor, the marker contract, its
 options, and its runtime behavior.
 

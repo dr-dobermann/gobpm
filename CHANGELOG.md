@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An iterating activity publishes which instance is running** (SRD-090.D,
+  ADR-025 §2.9.2, part of #340). Beside BPMN's `loopCounter`, every instance
+  of a Standard Loop or Multi-Instance now reads `ITERATION_NUMBER`, its
+  stable `ITERATION_ID` and its `ITERATION_MODE` (`std_loop` /
+  `mi_sequential` / `mi_parallel`) as plain names — each instance seeing its
+  own, on every publication path.
+
+  `ITERATION_ID` is derived rather than minted: enclosing scope path +
+  activity id + ordinal, all of which already survive a checkpoint, so it is
+  stable across a restart with nothing stored for it.
+
+  New `RUNTIME/ITERATIONS` answers what an activity's iteration *did* —
+  `{kind, total, completed, terminated}` keyed by activity id — from any node
+  after it. That is the question the `numberOf*` counts cannot answer at any
+  address, since they end with the activation they describe. Keyed by
+  activity id so it stays unambiguous when two activities iterate at once.
+
+  Documented in one place: [Iteration runtime variables](docs/guides/iteration/runtime-variables.md).
+
 - **The standard's artifacts are carried, and an annotated diagram
   imports** (ADR-039 v.1 / SRD-092, closes #323). BPMN §8.4.1's three
   artifacts — `Association` (plain shape), `TextAnnotation`, `Group` —
@@ -112,6 +131,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuse-vs-warn split for required settings, portable value
   encodings, the cluster declaration, and per-dialect migration
   serialization.
+
+### Changed
+
+- **The engine's data names are reserved** (SRD-090.D FR-6, ADR-025 §2.9.2).
+  A process property, data object, data store reference or activity **output**
+  named `loopCounter`, one of the four `numberOf*` counts, `ITERATION_NUMBER`,
+  `ITERATION_ID`, `ITERATION_MODE` or `ITERATIONS` is now refused when the
+  process is built, naming the element. `data.ReservedNames()` lists them.
+
+  This is what protects the counts, which stay readable by plain name at the
+  activity's own scope — a `completionCondition` and the body of an iterated
+  Sub-Process both reach them by walk-up. Without the refusal, a declared
+  output named `numberOfCompletedInstances` commits to that same scope and a
+  completion condition then stops on a number the model chose, silently.
+
+  A **structural field** is unaffected: `order.loopCounter` is reached through
+  `order` and shadows nothing. No address changed — every one of these names
+  resolves exactly as it did before.
 
 ### Fixed
 

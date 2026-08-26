@@ -213,9 +213,15 @@ Behavior worth knowing:
 - **The output collection is assembled positionally** (output slot = input
   ordinal), so the result is deterministic even when parallel instances complete
   out of order. It is published **once** at completion — never visible mid-run.
-- **Each instance publishes runtime attributes** readable by name at the host
-  scope: `loopCounter`, `numberOfInstances`, `numberOfActiveInstances`,
-  `numberOfCompletedInstances`, and (parallel) `numberOfTerminatedInstances`.
+- **Each instance publishes runtime attributes** readable by name:
+  `loopCounter` and the engine's `ITERATION_NUMBER` / `ITERATION_ID` /
+  `ITERATION_MODE` are the *instance's own*; `numberOfInstances`,
+  `numberOfActiveInstances`, `numberOfCompletedInstances` and
+  `numberOfTerminatedInstances` belong to the activity. All of them end with
+  the activity; `RUNTIME/ITERATIONS` is what a later node reads. The full
+  table, with addresses and lifetimes, is
+  [Iteration runtime variables](runtime-variables.md) — and note the names are
+  reserved: a model declaring one is refused at build time.
 
 > The marker works on any activity, but a composite (Sub-Process / Call
 > Activity) **opens a child scope per instance**, so the iterations are
