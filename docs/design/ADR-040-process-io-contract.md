@@ -246,6 +246,48 @@ input or output sets remain the standing multi-set boundary
 ([SAD-001 v.1.2](SAD-001-vision-and-architecture.md) §14.1), stated as a
 choice, not a schedule.
 
+### 2.9 The run, moment by moment
+
+The contract touches an instance's life at **exactly two moments**, and is
+invisible in between:
+
+1. **Registration** validates the declaration: the one namespace (§2.6),
+   the specification's own well-formedness. A snapshot carries the
+   contract as a declaration, shared by every instance of that version.
+2. **Launch, before any token exists.** Whatever the entry delivered —
+   the caller's declared inputs, the host's start request — is bound
+   through the declared input parameters (§2.2): each declared input
+   takes its value from the delivered datum of its name, type-checked
+   against the declaration; a required input with no datum, or a
+   delivered datum naming no declared input, refuses the launch. No
+   instance exists after a refusal — no loop, no track, nothing to clean
+   up. An event-born launch runs the same binding; until the attachment
+   capability (§2.7) can fill a process input from a start payload, a
+   process declaring a **required** input cannot be event-started, and
+   says so.
+3. **The run.** The bound inputs are ordinary root-scope data — readable
+   by name from every frame and every child scope, exactly as properties
+   are. A declared output is a root-scope slot the flow fills by the
+   ordinary copy machinery (§2.3a). **No engine decision reads the
+   contract while tokens move**: not the scheduler, not the gateways,
+   not the data-association gates. Checkpoint, restore, dehydration and
+   hydration carry the bound data as the root-scope data it is and never
+   re-bind.
+4. **Normal completion, after the last token ended.** The declared
+   outputs are read from the root scope and copied into the instance's
+   result (§2.3); a required output absent or unavailable faults the
+   instance at this moment — the terminal-fault shape the engine already
+   has, so a caller faults at its Call Activity and a host receives the
+   error from its wait, with no result surface either way. An abnormal
+   end never reaches this step.
+5. **Hand-back.** The result flows to whoever launched: committed into
+   the caller's scope under the caller's declared output names (§2.4's
+   name correspondence, checked at the call's launch), or exposed to the
+   host as the completed instance's declared result.
+
+A process without a contract skips moments 2 and 4 entirely and runs as
+it always has (§2.5).
+
 ## 3. Consequences
 
 - **The call contract becomes two-sided.** ADR-023's "map to the
@@ -330,4 +372,4 @@ multi-set selection (§2.8, a standing boundary).
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
-| v.1 | 2026-08-26 | Ruslan Gabitov | Initial decision. The Process gains a **single-set I/O contract** (SAD-001 §14.1's deviation extended to the callable): named, typed, required-or-optional parameters. **Inputs bind into the root scope at launch** — from the Call Activity's declared inputs (§10.4.1 p216 direct mapping, at last with a callee side) or from the host's start request; a required input unbound at launch refuses the launch, never waits. **Outputs are read from the root scope at normal completion** — committed to the caller or handed to the host; a required output unavailable at completion faults the instance; abnormal ends have no result surface. **Correspondence at the call boundary is by name** (engine note — the standard states no rule) and **validates at launch** (ADR-019's latest-at-launch makes earlier impossible). A process declaring **no contract keeps the permissive meaning** — strictness is the callee's opt-in. Properties stay distinct (one namespace, no implicit bridging; a name clash refuses at registration). §2.3a inventories the **publishing routes** — the ordinary copy machinery (activity output associations; data-object/property values via copies; the End-Event gathering once the attachment capability lands), the **runtime variables** published only by mapping the read-only `RUNTIME/…` reads (ADR-010 v.2 §2.7) through a task's associations or a Go operation's reader (never declared as outputs — they are not scope data), and the exclusions: data stores (engine-global), child-scope locals (copied out before the scope closes), and **aliasing** (an output is a committed copy, never a live view — the standard's own copy semantics). The **event-association wiring is deferred** to the attachment capability (§2.7); the converter maps `<ioSpecification>` on `<process>` once the carrier lands, consuming the #330 register row. |
+| v.1 | 2026-08-26 | Ruslan Gabitov | Initial decision. The Process gains a **single-set I/O contract** (SAD-001 §14.1's deviation extended to the callable): named, typed, required-or-optional parameters. **Inputs bind into the root scope at launch** — from the Call Activity's declared inputs (§10.4.1 p216 direct mapping, at last with a callee side) or from the host's start request; a required input unbound at launch refuses the launch, never waits. **Outputs are read from the root scope at normal completion** — committed to the caller or handed to the host; a required output unavailable at completion faults the instance; abnormal ends have no result surface. **Correspondence at the call boundary is by name** (engine note — the standard states no rule) and **validates at launch** (ADR-019's latest-at-launch makes earlier impossible). A process declaring **no contract keeps the permissive meaning** — strictness is the callee's opt-in. Properties stay distinct (one namespace, no implicit bridging; a name clash refuses at registration). §2.3a inventories the **publishing routes** — the ordinary copy machinery (activity output associations; data-object/property values via copies; the End-Event gathering once the attachment capability lands), the **runtime variables** published only by mapping the read-only `RUNTIME/…` reads (ADR-010 v.2 §2.7) through a task's associations or a Go operation's reader (never declared as outputs — they are not scope data), and the exclusions: data stores (engine-global), child-scope locals (copied out before the scope closes), and **aliasing** (an output is a committed copy, never a live view — the standard's own copy semantics). The **event-association wiring is deferred** to the attachment capability (§2.7); the converter maps `<ioSpecification>` on `<process>` once the carrier lands, consuming the #330 register row. §2.9 fixes the run's shape: the contract touches an instance at **exactly two moments** — launch (before any token) and normal completion (after the last) — and is invisible to every engine decision in between; refusal at launch leaves no instance behind, and an abnormal end never reaches the result step. |
