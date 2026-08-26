@@ -37,6 +37,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Claiming a human task no longer lapses when the instance wakes**
+  (ADR-020 §2.1, §2.4.1). Hydrating a released instance re-parks its
+  UserTask wait and re-announces it under the recorded task id, and the
+  engine rebuilt the whole task record on every announcement — silently
+  resetting `actualOwner` and re-resolving the eligible set §2.7 freezes
+  at distribution.
+
+  The visible failure was on claim → open the form → submit, which is the
+  natural order for a task offered to several candidates, since claiming
+  first is what stops two of them working it in parallel: the `Take` that
+  opened the form woke the instance, the wake discarded the claim, and
+  the holder's own `Complete` came back `TASK_UNCLAIMED`. Worse, a second
+  eligible candidate could claim the task out from under the first. Only
+  tasks parked long enough to release their instance were affected —
+  which is to say the long-lived ones the guarantee exists for.
+
+  A re-announcement is now recognized as one and leaves the record alone.
+  Ownership is still not durable across an engine *restart*, where a
+  different engine re-registers a task it never saw claimed.
+
 - **An iterated Sub-Process no longer pins its process instance in
   memory** (SRD-090.A M3d, ADR-007 §2.4, part of #313). Residency now
   asks what an activity instance is *awaiting*: a Sub-Process executor
