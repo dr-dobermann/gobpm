@@ -442,6 +442,14 @@ func withRootData(dd []data.Data) newOption {
 	}
 }
 
+// WithRootData is the exported twin of withRootData for the host's start
+// request (ADR-040 §2.2, SRD-093 FR-6): the values the engine binds through
+// the process's declared inputs at launch — or, for a contract-less process,
+// commits into the root scope as they are.
+func WithRootData(dd []data.Data) Option {
+	return withRootData(dd)
+}
+
 // withCallLinkage stamps the call linkage (SRD-050 FR-4) onto every fact the
 // instance emits, stitching a child's trace back to its caller. Exposed via
 // NewChild. Empty ids leave the instance top-level (unstamped).
@@ -640,6 +648,13 @@ func (inst *Instance) seedInitialData(cfg *newConfig) (flow.Node, error) {
 	}
 
 	if err := inst.sc.bindRootData(cfg.rootData); err != nil {
+		return nil, err
+	}
+
+	// The declared contract, if any, binds the delivered data through its
+	// input parameters — the one moment before any token exists (ADR-040
+	// §2.9); a contract-less process is untouched.
+	if err := inst.bindContract(cfg); err != nil {
 		return nil, err
 	}
 

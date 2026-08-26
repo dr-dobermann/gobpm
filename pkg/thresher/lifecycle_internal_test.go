@@ -308,7 +308,7 @@ func TestEngineContextRefusedBeforeRun(t *testing.T) {
 	snap := th.latestSnapshotLocked(proc.ID())
 	require.NotNil(t, snap)
 
-	_, err = th.launchInstance(snap)
+	_, err = th.launchInstance(snap, nil)
 	require.ErrorContains(t, err, "launchInstance")
 	require.ErrorContains(t, err, "isn't running")
 
@@ -432,7 +432,7 @@ func TestShutdownAwaitsInstanceBornDuringCancel(t *testing.T) {
 	var bornID string
 
 	th.engine.Store(&engineCtx{ctx: ec.ctx, cancel: func() {
-		h, lerr := th.launchInstance(th.latestSnapshotLocked(proc.ID()))
+		h, lerr := th.launchInstance(th.latestSnapshotLocked(proc.ID()), nil)
 		if lerr == nil {
 			bornID = h.ID()
 			<-entered // it is inside the blocking task, so it cannot settle

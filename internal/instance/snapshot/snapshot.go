@@ -32,6 +32,11 @@ type Snapshot struct {
 	// scope at instance start; their task associations are re-pointed at these
 	// clones by wireClonedDataObjects.
 	DataObjects []*dataobjects.DataObject
+	// IOSpec is the process's declared I/O contract (ADR-040), nil for a
+	// contract-less process. Shared by reference across clones: a
+	// declaration whose parameters are per-execution templates
+	// (ADR-010 §2.3), not per-instance state.
+	IOSpec *data.InputOutputSpecification
 	// CorrelationKeys are the process's declared correlation keys (the Key of
 	// each CorrelationSubscription). An in-instance receiver derives them from
 	// an incoming message's payload to grow the instance's conversation key-set
@@ -116,6 +121,7 @@ func New(
 		Nodes:       map[string]flow.Node{},
 		Properties:  props,
 		DataObjects: dobjs,
+		IOSpec:      p.IOSpec(),
 	}
 
 	s.CorrelationKeys = correlationKeys(p)
@@ -532,6 +538,7 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 		Nodes:               make(map[string]flow.Node, len(s.Nodes)),
 		Properties:          props,
 		DataObjects:         dobjs,
+		IOSpec:              s.IOSpec,
 		CorrelationKeys:     s.CorrelationKeys,
 		InstantiatingStarts: s.InstantiatingStarts,
 		HasConditionals:     s.HasConditionals,
