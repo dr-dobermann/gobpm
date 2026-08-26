@@ -111,12 +111,17 @@ Three outcomes:
 
 - **Skipped silently** — diagram interchange (`bpmndi:*`, `dc:*`, `di:*`) and
   any other foreign-namespace subtree. Layout is not execution.
-- **Skipped silently, despite being BPMN** — `<bpmn:extensionElements>`, the
-  purely visual artifacts (`<textAnnotation>`, `<group>`, `<category>`), and
-  `<relationship>`. All are common in modeler output and carry no
-  execution semantics, so dropping them leaves the imported definition meaning
-  the same thing — erroring on them would reject a runnable file for carrying a
-  comment.
+- **Skipped silently, despite being BPMN** — `<bpmn:extensionElements>` and
+  `<relationship>`: common in modeler output, no execution semantics, and
+  nothing in the model points at them, so dropping them leaves the imported
+  definition meaning the same thing.
+- **Carried, never executed** — the standard's artifacts (`<textAnnotation>`,
+  `<group>`, the plain `<association>`) land in the container's model-only
+  artifact collection (`Process.Artifacts()` / `SubProcess.Artifacts()`),
+  preserved for round-trip and ignored by execution (ADR-039); `<category>`
+  is consumed at load as the value a group embeds. An association end or a
+  `categoryValueRef` naming nothing the model holds degrades that one
+  artifact to a `Dropped` report — the file imports, and the host is told.
 - **Refused** — a BPMN-namespace element the converter recognizes and does
   not map (each refusal names why: waiting on a capability, or expressible
   only programmatically, ADR-024 §2.13) yields a

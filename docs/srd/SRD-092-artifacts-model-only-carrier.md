@@ -525,6 +525,7 @@ No downward references.
 | `230e1220` | **M2** — container wiring + the invariance and non-cloning proofs |
 | `f770f9fd` | **M3** — importer carriers: annotation, group, category lookup |
 | `6371c4bc` | **M4** — the association builder, the report degradation, the retired refusal |
+| `ef2d31ee` | **M5** — the independent-review round (below) |
 
 ### §10.2 Where reality diverged from the draft
 
@@ -553,14 +554,40 @@ Also worth recording: the `associationDirection` attribute turned out to be
 **unread** by the pre-existing parser — the compensation reading never needed
 it — so M4 is where the document's direction first reaches the model at all.
 
+### §10.2a The independent-review round (M5)
+
+Three doc-blind lenses (agy / gemini-3.1-pro-high) returned six notes; five
+were agreed (one — the association-to-association gap — raised independently
+by two lenses), two rejected with written reasons (the exported `Append`;
+the invalid-direction refusal). The landed corrections:
+
+- **A built association joins the artifact lookup**, so an association may
+  end on an earlier one; a forward reference degrades to the report,
+  document order being the resolution order.
+- **Lanes and lane sets join the resolution universe** — ADR-039 §2.6
+  degrades only what the model does *not* hold, and a lane is held.
+- **Two SRD-089.E pins are superseded**, both resting on the mistaken
+  premise that the model requires ids (it generates one when none is
+  given): an id-less `<lane>`/`<laneSet>`/`<childLaneSet>` now imports
+  under a generated id — the FR-4-style cardinality preservation, and the
+  same convention as the artifacts — and declared lane/lane-set ids now
+  join the document's one ledger, where before a lane could silently reuse
+  a task's id. SRD-089.E stays frozen; the supersession is recorded here.
+- **The direction constants renamed** to `DirectionNone`/`DirectionOne`/
+  `DirectionBoth` (`artifacts.None` read as artifact cardinality at call
+  sites); the enum is this branch's to reshape, since NFR-5 already
+  reshaped the package's surface and nothing external imports it.
+- `TestAssociationEnds` asserts sources as well as targets.
+
 ### §10.3 Verification
 
-- `make ci`: **PASS, 14/14 steps in 9m27s** (`.ci/last-run.json`), including
-  the end-to-end example runs.
-- `make cover-check` at `6371c4bc`: **diff-coverage 99.3% of 274 changed
-  coverable lines — PASS**; every touched function 100% except the two
-  `errs.Invariant` continuation lines in `artifactHolderFor`, the same
-  unreachable-guard residue `containerFor` ships with.
+- `make ci` at `ef2d31ee` (all five milestones): **PASS, 14/14 steps in
+  8m06s** (`.ci/last-run.json`), including the end-to-end example runs.
+- Diff-coverage in that run: **98.6% of 296 changed coverable lines —
+  PASS**; every touched function 100% except `errs.Invariant`
+  continuation lines (`artifactHolderFor`, the same unreachable-guard
+  residue `containerFor` ships with) and pre-existing error-wrap blocks
+  the lane builder carries.
 - FR-6's "never executed" is a property of the import graph: nothing under
   `internal/`, `pkg/thresher/` or `pkg/exec/` imports `pkg/model/artifacts`.
 - The load-bearing proof is `TestArtifactsDoNotAffectExecution`: one process,

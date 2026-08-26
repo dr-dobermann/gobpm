@@ -23,7 +23,7 @@ condition and default-flow mechanics that make a gateway route, and the shared
 | Constructor | `flow.Link(src, trg, opts…)` — also `CloneFlow` / `MustCloneFlow` for snapshot cloning |
 | Endpoints | a `flow.SequenceSource` (outgoing) → a `flow.SequenceTarget` (incoming) |
 | Data association | `data.Association` — moves a value along a data edge ([Data associations](data-associations.md)) |
-| Artifact association | `artifacts.Association` — ties an annotation/artifact to a flow object |
+| Artifact association | `artifacts.Association` — the carried, model-only line tying an annotation or artifact to a model element (ADR-039) |
 
 Only Gateways, Activities, and Events can be sequence-flow endpoints — they are
 the node families that embed `flow.BaseNode`. See the family pages:
@@ -241,7 +241,7 @@ association types live in two packages — don't confuse them:
 | Type | Package | Purpose |
 |---|---|---|
 | `data.Association` | `pkg/model/data` | a **data association** — moves an item's value into a node's input or out of its output. Covered in full on **[Data associations](data-associations.md)**. |
-| `artifacts.Association` | `pkg/model/artifacts` | a **visual association** (BPMN Artifact) — a plain `Source`/`Target`/`Direction` struct that ties a text annotation to a flow object, or points a compensation activity at what it compensates. Carries **no** runtime value and does not participate in token flow. |
+| `artifacts.Association` | `pkg/model/artifacts` | a **visual association** (BPMN §8.4.1 Artifact) — built with `NewAssociation(source, target, direction)` over any two model elements and carried in a container's artifact collection (`AddArtifacts`/`Artifacts`), model-only per ADR-039: no runtime value, no part in token flow. The tag's *compensation* shape is **not** this type — it is realized as the boundary event's handler wiring. |
 
 ## See also
 

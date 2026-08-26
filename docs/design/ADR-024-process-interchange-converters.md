@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Draft |
-| Version | v.5 |
-| Date | 2026-08-17 |
+| Version | v.6 |
+| Date | 2026-08-26 |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §4 N7 / §5 / §9 / §14, [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md), [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning.md), [ADR-003 Module Layout](ADR-003-module-layout.md) |
 
@@ -330,8 +330,9 @@ mapped" and "not present" must not look alike:
 | Family | Disposition on import | Why |
 |---|---|---|
 | Lane / LaneSet | **parse and preserve**, attach no behaviour | model-only per [conformance.md](../bpmn-spec/conformance.md); §2.3.1 lets execution ignore lanes, §2.3.2 obliges an importer to keep them |
-| Visual artifacts — `textAnnotation`, `group`, `category` | **skip silently** | "pure visual" in the out-of-scope table; they carry no semantics, and erroring on them rejects ordinary modeler files for a comment |
-| `association` | **map** | kept in scope because it carries compensation semantics, not because it is drawn |
+| Artifacts — `textAnnotation`, `group`, the plain `association` | **parse and preserve** into the model-only artifact tier, attach no behaviour | [ADR-039 v.1](ADR-039-standard-artifacts.md): the same two-obligation reading as lanes — §2.3.2 loading and §2.8's round-trip need the model to hold what a diagram states, while execution ignores it. A reference the model cannot resolve degrades that one artifact to the §2.14 report — the file survives |
+| `category` / `categoryValue` | **consume** as load-time resolution input — the value a group embeds; no model element is created | ADR-039 v.1 §2.3 |
+| `association` (compensation shape) | **map** — resolved into the boundary event's handler wiring, not duplicated as an artifact | execution semantics (§8.4.1); one document fact, one model representation (ADR-039 v.1 §2.4) |
 | Diagram interchange (`bpmndi:` / `dc:` / `di:`) | skip silently (unchanged) | not part of execution conformance |
 | `relationship` | skip silently | not execution-related |
 | `import` | **map** — collected by namespace and bound to the `<itemDefinition>` whose `structureRef` prefix resolves to it; one nothing refers to is reported | the skip row's own code comment scheduled the revisit "when itemDefinition lands with the data stage" — SRD-089.F FR-7 was that revisit |
@@ -340,8 +341,12 @@ mapped" and "not present" must not look alike:
 
 The distinction that decides each row is *representation vs. semantics*: an
 element the engine will not act on may still be skipped only when dropping it
-leaves the imported definition **meaning the same thing**. A text annotation
-passes that test; a Choreography does not.
+leaves the imported definition **meaning the same thing**. A Choreography
+fails that test outright. A text annotation passes it — and is carried
+anyway, because since [ADR-039 v.1](ADR-039-standard-artifacts.md) the
+*representation* obligation cuts across the semantics test the same way it
+did for lanes: the model holds what the diagram states, so a skip that was
+once the only alternative to refusal is no longer the disposition.
 
 ### 2.10 Expressions: one supported language, one translated dialect
 
@@ -861,6 +866,7 @@ trigger, not questions awaiting an answer.
 
 | Version | Date | Change |
 |---|---|---|
+| v.6 | 2026-08-26 | **The artifact rows catch up with [ADR-039 v.1](ADR-039-standard-artifacts.md).** §2.9's table skipped `textAnnotation`/`group`/`category` silently and mapped `association` for its compensation semantics alone. The standard's three artifacts are now **parsed and preserved** into the model-only artifact tier (the lanes reading: §2.3.2 loading + §2.8 round-trip need the model to hold what a diagram states); `category`/`categoryValue` are **consumed** as load-time resolution input; the compensation association stays the boundary's handler wiring, never duplicated as an artifact; an unresolvable reference degrades that one artifact to the §2.14 report. The deciding-rule paragraph now records that the representation obligation cuts across the means-the-same test. Table rows and one paragraph only; the dispositions' vocabulary and the report contract are unchanged. |
 | v.5 | 2026-08-17 | **The `import` disposition row catches up with SRD-089.F FR-7.** §2.9's table said `<import>` is skipped silently — true when v.4 was written, and scheduled for revisit by the skip's own code comment ("when itemDefinition lands with the data stage, its typeRef makes the declaration meaningful"). The data stage landed: an `<import>` is collected by namespace and bound to the `<itemDefinition>` whose `structureRef` prefix resolves to it, and one nothing refers to is reported rather than dropped. The row is split (`relationship` keeps its skip) and re-stated as **map**. A table-row correction only; no decision changes. |
 | v.1 | 2026-07-17 | Initial draft — converter seam (`pkg/convert`), BPMN as the batteries-included separate-module converter, MVP element subset, semantic round-trip. |
 | v.2 | 2026-07-30 | Accepted on the SRD-051 slice-1 landing. §4-A reversed: the converter is the package `pkg/convert/bpmn`, not a top-level module — the stdlib parser costs core no dependency, and a module would have stayed invisible to the diff-coverage gate (§2.3). Q1 (module rename) withdrawn; the SAD-001 §9 `doc-source/` reservation retired. §2.6: `serviceTask` restored to the MVP set with the new `ServiceTask.Operation()` accessor, and the `documentation`/`extensionElements` silent-skip carve-out recorded. |

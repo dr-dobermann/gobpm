@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Draft |
-| Version | v.2 |
-| Date | 2026-08-17 |
+| Version | v.3 |
+| Date | 2026-08-26 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-024 Process Interchange Converters](ADR-024-process-interchange-converters.md) |
 
@@ -51,28 +51,27 @@ covers both.
 
 As a **compensation link** it carries execution semantics — it names the
 activity a compensation boundary event routes to, which is why the vendored
-extract keeps it in scope while calling the surrounding artifacts "pure visual"
-(`docs/bpmn-spec/conformance.md` line 166). The model has the constructor for
-it; the converter has simply not reached the element, and a boundary event
-carrying a compensation trigger is refused today by naming exactly that
-(`pkg/convert/bpmn/dispatch.go:623`). That is a **schedule**.
+extract keeps it in scope while calling the surrounding artifacts "pure
+visual". When this record was written, the model had the constructor and the
+converter had simply not reached the element — a **schedule**, since paid:
+the compensation reading landed with the containers stage of the import.
 
-As a **plain link** — from a `<textAnnotation>` to the activity it comments on —
-it carries nothing executable, and it is refused for an unrelated reason.
-`pkg/model/artifacts` declares `Association` as a struct of exported fields with
-no constructor, and no package outside it imports the package at all;
-`process.Process` holds properties, roles, nodes, flows, data objects, data
-store references and lane sets, and has nowhere to put an artifact, though the
-standard gives it `artifacts 0..*` (`docs/bpmn-spec/elements/process.md` line
-24). The element is expressible, the converter parses it perfectly well, and the
-**model** cannot accept the result. That is a **capability**.
+As a **plain link** — from a `<textAnnotation>` to the activity it comments
+on — it carried nothing executable and was refused for an unrelated reason:
+`pkg/model/artifacts` declared `Association` with no constructor, and a
+`process.Process` had nowhere to put an artifact, though the standard gives
+every flow-element container `artifacts 0..*`. The element was expressible,
+the converter parsed it perfectly well, and the **model** could not accept
+the result. That was a **capability** — the class §2.3 registers — and it
+too has since been paid: [ADR-039 v.1](ADR-039-standard-artifacts.md) landed
+the artifact tier, the converter rows followed per §2.4, and the tag now
+imports whole.
 
-Meanwhile the annotation that plain link points at is already `skipped` —
-dropped as visual, the imported definition meaning the same without it. Two
-halves of one diagram feature, three dispositions between them, and nothing
-records why: the comment at the refusal site calls the whole tag "mapped work
-for the composites stage", which is true of the compensation half and false of
-the other.
+The example stays because the shape of the mistake it caught is permanent:
+two halves of one diagram feature, three dispositions between them, and — at
+the time — nothing recording why. The comment at the refusal site called the
+whole tag "mapped work for the composites stage", true of the compensation
+half and false of the other.
 
 ## 2. Decision
 
@@ -136,12 +135,19 @@ is otherwise complete.
 
 | Missing capability | What it unblocks | Tracking |
 |---|---|---|
-| An artifact collection on `Process`, and a constructor for `artifacts.Association` | the plain `<association>`, and with it the annotated diagrams whose annotation is already skipped but whose link is refused | [#323](https://github.com/dr-dobermann/gobpm/issues/323) |
 | A callable-resolution seam | `calledElement` beyond a literal key, and the whole GlobalTask family | [#325](https://github.com/dr-dobermann/gobpm/issues/325) |
 | Association-expression evaluation on the scope-routed copy path (the SRD-063 §10.3 follow-up) | `<transformation>`, `<assignment>`, and the multi-source data associations only a transformation makes legal | [#328](https://github.com/dr-dobermann/gobpm/issues/328) |
 | An attachment API for event data associations | data associations and bare data inputs/outputs on catch and throw events | [#329](https://github.com/dr-dobermann/gobpm/issues/329) |
 | A process-level I/O carrier (ADR-011 §2.5's planned work) | `<ioSpecification>` on a `<process>`, and the Start/End process data path | [#330](https://github.com/dr-dobermann/gobpm/issues/330) |
 | `Associate*` on `Property` | a `<property>` as a data-association end | [#331](https://github.com/dr-dobermann/gobpm/issues/331) |
+
+The register has also had its first row **consumed the way §2.4 intends**:
+the artifact collection and the `artifacts.Association` constructor
+([#323](https://github.com/dr-dobermann/gobpm/issues/323)) landed as
+[ADR-039 v.1](ADR-039-standard-artifacts.md)'s model-only artifact tier,
+with the converter rows following — the capability first, its own decision
+record, the one-line consumers after. A consumed row leaves the table; the
+issue closes with the landing rather than being re-scoped.
 
 A transaction's `protocol` and `method` were on this table, tracked by
 [#324](https://github.com/dr-dobermann/gobpm/issues/324), until
@@ -204,10 +210,13 @@ would let it through.
 a shadow parser, a shadow type or a shadow copy of a position rule, so there is
 no second implementation to diverge and no import-versus-runtime split.
 
-**Coverage lags the executed element set, visibly.** A file whose only
-unsupported content is a comment attached to a task is refused — not for the
-comment, which is skipped, but for the line drawn to it. That is the accepted
-price of §2.1, and §2.3 is what keeps it from being mistaken for neglect.
+**Coverage lags the executed element set, visibly.** For a register row's
+lifetime, some legal documents are refused by an engine that could execute
+them if built in Go — a `<callActivity>` naming anything beyond a literal
+key still is ([#325](https://github.com/dr-dobermann/gobpm/issues/325)).
+That is the accepted price of §2.1, and §2.3 is what keeps it from being
+mistaken for neglect. (The price's original poster child — a file refused
+for the line drawn to a comment — has since been paid off by ADR-039 v.1.)
 
 **A standing boundary is stable.** Ad-hoc routing and complex-gateway
 activation will not reappear as bugs, because the record says why they are not.
@@ -266,5 +275,6 @@ left open.
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
+| v.3 | 2026-08-26 | Ruslan Gabitov | **The register's first consumed row.** The #323 capability — an artifact collection on the containers plus a constructor for `artifacts.Association` — landed as [ADR-039 v.1](ADR-039-standard-artifacts.md)'s model-only artifact tier, the converter rows following per §2.4. The row leaves §2.3 with a prose note distinguishing *consumed* (the §2.4 path working as designed) from the two *false* rows removed earlier; §1.3's worked example is re-tensed as history with its resolution, staying as the record of the mistake-shape; §3's cost paragraph swaps its paid-off poster child for a live one (#325). No class definitions, obligations or orderings change. |
 | v.2 | 2026-08-17 | Ruslan Gabitov | Four §2.3 register rows added with SRD-089.G (the data-flow import): association-expression evaluation on the scope-routed copy path — the SRD-063 §10.3 follow-up, unblocking `<transformation>`/`<assignment>`/multi-source ([#328](https://github.com/dr-dobermann/gobpm/issues/328)); an attachment API for event data associations ([#329](https://github.com/dr-dobermann/gobpm/issues/329)); a process-level I/O carrier, ADR-011 §2.5's planned work ([#330](https://github.com/dr-dobermann/gobpm/issues/330)); and `Associate*` on `Property` ([#331](https://github.com/dr-dobermann/gobpm/issues/331)). Each was admitted the way §2.3 demands — from what the model was read to lack, not from what the converter could not do — and each refusal in `pkg/convert/bpmn` names its row. |
 | v.1 | 2026-08-12 | Ruslan Gabitov | Initial decision. Three situations had collapsed into one refusal — work not yet reached, a **missing model capability**, and a **standing** property of the engine — and the last two read identically while meaning opposite things. The unit classified is the **construct, not the tag**: `<association>` holds a scheduled compensation link and a capability-blocked plain one. The converter **never compensates locally** for a missing capability (a private parser or type is the import-versus-runtime split in another costume, and the model layer would have to supersede it); it reports and refuses, **naming the capability**, so the refusal doubles as the specification of the work that removes it — and naming it forces the search for the model's existing way in, which is what a capability wrongly registered on the strength of one constructor costs. Standing boundaries — a complex gateway's token-count activation, an ad-hoc container's host-supplied Router, a transaction's `method="store"`/`"image"` — either take a Go value no document can carry or are a **decided non-goal**, and **never become extension points**. Capability-blocked ones are registered with what unblocks them: an artifact collection on `Process` plus a constructor for `artifacts.Association` ([#323](https://github.com/dr-dobermann/gobpm/issues/323)) and a callable-resolution seam ([#325](https://github.com/dr-dobermann/gobpm/issues/325)). Transaction coordination ([#324](https://github.com/dr-dobermann/gobpm/issues/324)) was registered and removed: ADR-028 §2.7 had already ruled it out, making it the register's second false row after the timer — both admitted from what the converter could not do, without reading what the model offers or what was already decided. A capability **lands before** the converter row consuming it. An external payload schema is deliberately unregistered — it needs a schema the converter cannot fetch and a Go value to bind, so it stays reported rather than scheduled. |
