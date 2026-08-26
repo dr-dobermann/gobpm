@@ -390,6 +390,159 @@ func TestIOSpecificationImportsOntoATask(t *testing.T) {
 	}
 }
 
+// processIODoc is the SRD-093 §3.6-D shape: a process declaring its
+// contract in the leading-child slot, over one int item.
+func processIODoc(ioSpec string) string {
+	return propDoc(
+		`  <bpmn:itemDefinition id="idInt" structureRef="xsd:int"/>`,
+		ioSpec)
+}
+
+const processIOSpec = `    <bpmn:ioSpecification id="io">
+      <bpmn:dataInput id="in-subtotal" name="subtotal" itemSubjectRef="idInt"/>
+      <bpmn:dataInput id="in-discount" name="discount" itemSubjectRef="idInt"/>
+      <bpmn:dataOutput id="out-total" name="total" itemSubjectRef="idInt"/>
+      <bpmn:inputSet id="is">
+        <bpmn:dataInputRefs>in-subtotal</bpmn:dataInputRefs>
+        <bpmn:dataInputRefs>in-discount</bpmn:dataInputRefs>
+        <bpmn:optionalInputRefs>in-discount</bpmn:optionalInputRefs>
+      </bpmn:inputSet>
+      <bpmn:outputSet id="os">
+        <bpmn:dataOutputRefs>out-total</bpmn:dataOutputRefs>
+      </bpmn:outputSet>
+    </bpmn:ioSpecification>`
+
+// TestIOSpecificationOnAProcess — SRD-093 T-15: the process's declared
+// contract imports as its IOSpec — parameters, optionality from the set,
+// items resolved by itemSubjectRef — and a process declaring none stays
+// contract-less.
+func TestIOSpecificationOnAProcess(t *testing.T) {
+	res, err := importEventDoc(t, processIODoc(processIOSpec))
+	if err != nil {
+		t.Fatalf("import of a contracted process: %v", err)
+	}
+
+	ios := res.Processes[0].IOSpec()
+	if ios == nil {
+		t.Fatal("IOSpec() = nil, want the declared contract")
+	}
+
+	ins := ios.InputSet()
+	if len(ins) != 2 || ins[0].Name() != "subtotal" ||
+		ins[1].Name() != "discount" {
+		t.Fatalf("InputSet() = %v, want subtotal, discount", ins)
+	}
+
+	if ins[0].IsOptional() || !ins[1].IsOptional() {
+		t.Errorf("optionality = %v/%v, want subtotal required, discount "+
+			"optional (from <optionalInputRefs>)",
+			ins[0].IsOptional(), ins[1].IsOptional())
+	}
+
+	if ins[0].ItemDefinition().ID() != "idInt" {
+		t.Errorf("subtotal item = %q, want idInt", ins[0].ItemDefinition().ID())
+	}
+
+	outs := ios.OutputSet()
+	if len(outs) != 1 || outs[0].Name() != "total" || outs[0].IsOptional() {
+		t.Errorf("OutputSet() = %v, want one required total", outs)
+	}
+
+	if len(res.Dropped) != 0 {
+		t.Errorf("Dropped = %v, want nothing", res.Dropped)
+	}
+
+	plain, err := importEventDoc(t, propDoc("", ""))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	if plain.Processes[0].IOSpec() != nil {
+		t.Error("a process declaring no contract must be contract-less")
+	}
+}
+
+// TestProcessIOSpecWithoutItems: a parameter naming no itemSubjectRef takes
+// the empty item — a process has no association partner to adopt from.
+func TestProcessIOSpecWithoutItems(t *testing.T) {
+	res, err := importEventDoc(t, propDoc("",
+		`    <bpmn:ioSpecification id="io">
+      <bpmn:dataInput id="in-x" name="x"/>
+    </bpmn:ioSpecification>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	ins := res.Processes[0].IOSpec().InputSet()
+	if len(ins) != 1 || ins[0].Name() != "x" {
+		t.Fatalf("InputSet() = %v, want x", ins)
+	}
+}
+
+// TestProcessIOSpecOrdering — SRD-093 T-16: an <ioSpecification> after
+// the flow elements is refused, the lane-set ordering guard.
+func TestProcessIOSpecOrdering(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="P" name="P">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:ioSpecification id="io"/>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	_, err := importEventDoc(t, doc)
+	if err == nil {
+		t.Fatal("an <ioSpecification> after the flow elements must be refused")
+	}
+
+	if !strings.Contains(err.Error(), "after its flow elements") {
+		t.Errorf("err = %v, want the ordering refusal", err)
+	}
+}
+
+// TestProcessSecondIOSpecRefused — SRD-093 T-17: the activity's refusals
+// hold at process level — a second specification, and a second set.
+func TestProcessSecondIOSpecRefused(t *testing.T) {
+	_, err := importEventDoc(t, propDoc("",
+		`    <bpmn:ioSpecification id="io1"/>
+    <bpmn:ioSpecification id="io2"/>`))
+	if err == nil || !strings.Contains(err.Error(), "second <ioSpecification>") {
+		t.Errorf("err = %v, want the second-specification refusal", err)
+	}
+
+	_, err = importEventDoc(t, propDoc("",
+		`    <bpmn:ioSpecification id="io">
+      <bpmn:inputSet id="is1"/>
+      <bpmn:inputSet id="is2"/>
+    </bpmn:ioSpecification>`))
+	if err == nil || !strings.Contains(err.Error(), "ONE set per direction") {
+		t.Errorf("err = %v, want the single-set refusal", err)
+	}
+}
+
+// TestProcessBareDataInputRefused — SRD-093 T-18: a bare <dataInput>
+// under <process> stays refused, its note naming the process beside the
+// task as an owner; nothing names #330 any more.
+func TestProcessBareDataInputRefused(t *testing.T) {
+	_, err := importEventDoc(t, propDoc("",
+		`    <bpmn:dataInput id="in-x" name="x"/>`))
+	if err == nil {
+		t.Fatal("a bare <dataInput> under <process> must be refused")
+	}
+
+	for _, want := range []string{"on a task or a process", "<ioSpecification>"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to say %q", err, want)
+		}
+	}
+
+	if strings.Contains(err.Error(), "#330") {
+		t.Error("the refusal still names #330 — the capability landed")
+	}
+}
+
 // TestParameterFlagsSurvive is T-4's build half: the set's ref lists
 // arrive on the model's parameters.
 func TestParameterFlagsSurvive(t *testing.T) {

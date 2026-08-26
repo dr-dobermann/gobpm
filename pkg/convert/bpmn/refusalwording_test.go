@@ -95,10 +95,6 @@ func TestDataFamilyRefusalWordings(t *testing.T) {
 		doc   string
 		wants []string
 	}{
-		"ioSpecification on a process": {
-			doc:   propDoc("", `    <bpmn:ioSpecification id="io1"/>`),
-			wants: []string{"#330", "ADR-011 §2.5"},
-		},
 		// A bare parameter or set outside an ioSpecification: on a task
 		// the note points inside the spec; the same note carries the
 		// event capability, since one settle path serves both owners.
