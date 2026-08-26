@@ -122,9 +122,10 @@ type IOSpecAdder interface {
 
 type IOSpecOption func(cfg IOSpecAdder) error
 
-// WithIOParameters declares a callable's input or output parameters
-// (ADR-040 §2.1). Accumulates across calls; a nil parameter is refused.
-func WithIOParameters(dir Direction, params ...*Parameter) IOSpecOption
+// WithInputs / WithOutputs declare a callable's input / output parameters
+// (ADR-040 §2.1). Each accumulates across calls; a nil parameter is refused.
+func WithInputs(params ...*Parameter) IOSpecOption
+func WithOutputs(params ...*Parameter) IOSpecOption
 ```
 
 `processConfig` implements the adder and `process.New` gains the switch
@@ -168,12 +169,13 @@ datum binds as today (ADR-040 §2.5).
 `StartVersion` gain variadic `...StartOption`:
 
 ```go
-// WithInputs supplies the launch's input values by name (ADR-040 §2.2 —
-// the host's start request). A nil datum is refused.
-func WithInputs(dd ...data.Data) StartOption
-// WithInput is the one-value convenience: a name and a Go value, lifted
-// through values.NewVariable.
-func WithInput(name string, value any) StartOption
+// WithStartInputs supplies the launch's input values by name (ADR-040
+// §2.2 — the host's start request). A nil datum is refused. "Start" says
+// which moment: data.WithInputs DECLARES a slot, this SUPPLIES its value.
+func WithStartInputs(dd ...data.Data) StartOption
+// WithStartInput is the one-value convenience: a name and a Go value,
+// lifted through values.NewVariable.
+func WithStartInput(name string, value any) StartOption
 ```
 
 `launchInstance` passes them as `withRootData`. Existing callers compile
@@ -221,7 +223,7 @@ elements, the same ordering guard), reusing `parseIOSpecification` whole;
 `constructProcess` builds the parameters through the spec-level half of
 `buildIOParams` — extracted so it takes `[]paramSpec` and the owner's
 name, the association-partner adoption staying with the activity caller —
-and passes `data.WithIOParameters(...)`. The `plannedNotes` #330 text
+and passes `data.WithInputs(...)`/`data.WithOutputs(...)`. The `plannedNotes` #330 text
 retires; `dataParamNote` names the process beside the task as an
 `<ioSpecification>` owner; a second `<ioSpecification>` on the process is
 refused like an activity's. Bare `<dataInput>`/`<dataOutput>` under
@@ -261,10 +263,12 @@ type IOSpecOption func(cfg IOSpecAdder) error
 
 func (IOSpecOption) Option() {}
 
-func WithIOParameters(dir Direction, params ...*Parameter) IOSpecOption {
+func WithInputs(params ...*Parameter) IOSpecOption  { return withIOParams(Input, params) }
+func WithOutputs(params ...*Parameter) IOSpecOption { return withIOParams(Output, params) }
+
+func withIOParams(dir Direction, params []*Parameter) IOSpecOption {
     return func(cfg IOSpecAdder) error {
-        // dir.Validate() → InvalidParameter; a nil params[i] →
-        // EmptyNotAllowed with errs.D("index", i); then
+        // a nil params[i] → EmptyNotAllowed with errs.D("index", i); then
         return cfg.AddIOParameters(dir, params...)
     }
 }
@@ -312,8 +316,8 @@ delivered data in `rootData` as today.
 ```go
 // pkg/thresher
 type StartOption func(*startConfig) error
-func WithInputs(dd ...data.Data) StartOption
-func WithInput(name string, value any) StartOption
+func WithStartInputs(dd ...data.Data) StartOption
+func WithStartInput(name string, value any) StartOption
 func (t *Thresher) StartLatest(key string, opts ...StartOption) (*InstanceHandle, error)
 // StartProcess, StartVersion likewise
 func (h *InstanceHandle) Outputs() []data.Data
@@ -337,10 +341,11 @@ if spec.io != nil {
     params, err := buildParamSpecs(p, asm,
         "process "+strconv.Quote(spec.id), spec.io.params)
     …
-    for _, dir := range []data.Direction{data.Input, data.Output} {
-        if pp := params[dir]; len(pp) != 0 {
-            opts = append(opts, data.WithIOParameters(dir, pp...))
-        }
+    if pp := params[data.Input]; len(pp) != 0 {
+        opts = append(opts, data.WithInputs(pp...))
+    }
+    if pp := params[data.Output]; len(pp) != 0 {
+        opts = append(opts, data.WithOutputs(pp...))
     }
 }
 ```
@@ -372,8 +377,8 @@ at := data.MustParameter("computedAt",
 
 pricing, _ := process.New("pricing",
     foundation.WithID("pricing"),
-    data.WithIOParameters(data.Input, sub, disc),
-    data.WithIOParameters(data.Output, total, at))
+    data.WithInputs(sub, disc),
+    data.WithOutputs(total, at))
 
 // A Go operation that reads the inputs and RUNTIME/STARTED_AT through its
 // data reader (SAD-001 §14.2) and returns total + computedAt as its
@@ -386,8 +391,8 @@ compute, _ := activities.NewServiceTask("compute", pricingOp,
 
 th.RegisterProcess(pricing)
 h, err := th.StartLatest("pricing",
-    thresher.WithInput("subtotal", 120),
-    thresher.WithInput("discount", 20))
+    thresher.WithStartInput("subtotal", 120),
+    thresher.WithStartInput("discount", 20))
 state, err := h.WaitCompletion(ctx)   // Completed, nil
 for _, d := range h.Outputs() {       // total=100, computedAt="2026-…"
     fmt.Println(d.Name(), d.Value().Get(ctx))
@@ -397,10 +402,10 @@ for _, d := range h.Outputs() {       // total=100, computedAt="2026-…"
 The refusal at the boundary, same process:
 
 ```go
-_, err = th.StartLatest("pricing", thresher.WithInput("discount", 5))
+_, err = th.StartLatest("pricing", thresher.WithStartInput("discount", 5))
 // err: process "pricing": required input "subtotal" is unbound at launch
 _, err = th.StartLatest("pricing",
-    thresher.WithInput("subtotal", 120), thresher.WithInput("subttl", 1))
+    thresher.WithStartInput("subtotal", 120), thresher.WithStartInput("subttl", 1))
 // err: process "pricing" declares no input "subttl" — delivered at launch
 //      (declared inputs: subtotal, discount)
 ```
@@ -492,8 +497,13 @@ an activity option and give `processConfig` an activity's config surface.
 The `data` package already owns the parameter types and already ships the
 container-agnostic `PropertyOption`/`PropertyAdder` pair that
 `process.New` consumes — the I/O option is the same pattern one type
-over. The name differs (`WithIOParameters`) so a file importing both
-`activities` and `data` reads unambiguously.
+over. The pair is **direction-named** (`WithInputs`/`WithOutputs`) rather
+than direction-parameterized like `activities.WithParameters(dir, …)`: the
+call site reads as the contract itself, and a file building a process and
+its tasks together never sees two `WithParameters`. The launch-side
+options carry the `Start` prefix (`thresher.WithStartInputs`) so "inputs"
+on `data` always means *declaring* and on `thresher` always means
+*supplying at launch*.
 
 ### §4.2 Why binding goes *through* the declared parameter
 
@@ -573,11 +583,11 @@ the boundary refusal), while the XML import of `<ioSpecification>` on a
 
 | Symbol | Package | Change |
 |---|---|---|
-| `IOSpecAdder`, `IOSpecOption`, `WithIOParameters` | `data` | new |
+| `IOSpecAdder`, `IOSpecOption`, `WithInputs`, `WithOutputs` | `data` | new |
 | `Process.IOSpec()` | `process` | new |
 | `Snapshot.IOSpec` | `snapshot` | new field |
 | `Instance.Outputs()` | `instance` | new |
-| `StartOption`, `WithInputs`, `WithInput` | `thresher` | new |
+| `StartOption`, `WithStartInputs`, `WithStartInput` | `thresher` | new |
 | `StartProcess/StartLatest/StartVersion(…, opts ...StartOption)` | `thresher` | variadic widening, source-compatible |
 | `InstanceHandle.Outputs()` | `thresher` | new |
 | `ProcessCall.Outputs []string` | `exec` | new field (additive) |
@@ -588,11 +598,11 @@ No existing signature breaks; the consumer-smoke gate proves it.
 
 | # | Test | Asserts | FR |
 |---|---|---|---|
-| T-1 | `TestWithIOParameters` | direction validated; nil parameter refused with index; accumulates across calls | FR-1 |
+| T-1 | `TestWithInputsOutputs` | each option lands in its direction; nil parameter refused with index; accumulates across calls | FR-1 |
 | T-2 | `TestProcessIOSpec` | declared parameters read back per direction; a process without any has `IOSpec() == nil` | FR-1 |
 | T-3 | `TestProcessIONameSpace` | a parameter named like a property / a data object / an opposite-direction parameter fails `Validate()` naming both | FR-2 |
 | T-4 | `TestSnapshotCarriesIOSpec` | `New` sets it; `Clone` shares the pointer | FR-3 |
-| T-5 | `TestLaunchBindsDeclaredInputs` | host `WithInput` values arrive as the declared parameters (typed by the declaration); an optional absent stays absent | FR-4, FR-6 |
+| T-5 | `TestLaunchBindsDeclaredInputs` | host `WithStartInput` values arrive as the declared parameters (typed by the declaration); an optional absent stays absent | FR-4, FR-6 |
 | T-6 | `TestLaunchRefusesUnboundRequiredInput` | the launch fails naming the process and the input; no instance exists afterwards | FR-4 |
 | T-7 | `TestLaunchRefusesUndeclaredDatum` | a datum naming no declared input fails naming it and the declared set; a contract-less process accepts it | FR-5 |
 | T-8 | `TestLaunchTypeChecksInput` | a string delivered to an `int` input refuses the launch | FR-4 |
@@ -617,7 +627,7 @@ different refused element).
 
 | M | Scope | Commit |
 |---|---|---|
-| M1 | `data.WithIOParameters`, the `Process` carrier, the namespace validation (T-1…T-3) | one |
+| M1 | `data.WithInputs`/`WithOutputs`, the `Process` carrier, the namespace validation (T-1…T-3) | one |
 | M2 | Snapshot carriage, the launch binding with type check and both refusals, the host `StartOption`, the event-born rule (T-4…T-9) | one |
 | M3 | Completion reading, the required-output fault, `Outputs()` on instance and handle, `ProcessCall.Outputs` + the invoker check, result-served child outputs (T-10…T-14, T-19) | one |
 | M4 | Importer: the buffered process `<ioSpecification>`, the `buildParamSpecs` extraction, retired refusal text and pins (T-15…T-18) | one |
