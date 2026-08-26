@@ -6,7 +6,7 @@
 | Date | 2026-08-25 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-039 v.1](../design/ADR-039-standard-artifacts.md) (the model-only artifact tier: the carried three, the closed set, the category-embed rule, the compensation exclusion, the degradation-to-report disposition) |
-| Upstream | [ADR-038 v.2](../design/ADR-038-converter-coverage-boundaries.md) §2.3/§2.4 (the #323 register row and the capability-lands-first ordering); [ADR-024 v.5](../design/ADR-024-process-interchange-converters.md) §2.8/§2.9/§2.14 (round-trip, the disposition rows, the `Dropped` contract); [SAD-001 v.1.2](../design/SAD-001-vision-and-architecture.md) §14 (the model-only carrier tier statement) |
+| Upstream | [ADR-024](../design/ADR-024-process-interchange-converters.md) §2.16 (the #323 register row and the capability-lands-first ordering); [ADR-024 v.5](../design/ADR-024-process-interchange-converters.md) §2.8/§2.9/§2.14 (round-trip, the disposition rows, the `Dropped` contract); [SAD-001 v.1.2](../design/SAD-001-vision-and-architecture.md) §14 (the model-only carrier tier statement) |
 | Related | [SRD-076](SRD-076-lanes-model-only-carrier.md) (the carrier pattern this mirrors), [SRD-089.E](SRD-089.E-bpmn-import-containers-and-lanes.md) (the compensation reading of `<association>`, preserved unchanged) |
 | Closes | [#323](https://github.com/dr-dobermann/gobpm/issues/323) |
 
@@ -477,7 +477,7 @@ ways asserts it.
 | M3 | Importer, carriers: `<textAnnotation>`/`<group>` parsers, the `<category>` lookup (T-8, T-12, the carrier half of T-7) | one |
 | M4 | Importer, associations: `buildArtifacts` association half, dropped-report degradation, retired refusals and rewritten pins (T-6, T-9, T-10, T-11, rest of T-7) | one |
 
-Doc sync (ADR-024 §2.9 rows, ADR-038 §1.3/§2.3, `conformance.md`,
+Doc sync (ADR-024 §2.9 rows, ADR-024 §2.16, `conformance.md`,
 `conformance-status.md`, README sweep) follows as its own `docs:` commit at
 the handover step, per the flow.
 
@@ -486,7 +486,7 @@ the handover step, per the flow.
 | Direction | Document | Why |
 |---|---|---|
 | up | [ADR-039 v.1](../design/ADR-039-standard-artifacts.md) | the decision this implements |
-| up | [ADR-038 v.2](../design/ADR-038-converter-coverage-boundaries.md) §2.3, §2.4 | the register row this consumes and the lands-first rule this obeys |
+| up | [ADR-024](../design/ADR-024-process-interchange-converters.md) §2.16 | the register row this consumes and the lands-first rule this obeys |
 | up | [ADR-024 v.5](../design/ADR-024-process-interchange-converters.md) §2.8, §2.9, §2.14 | the round-trip guarantee, the disposition rows this changes, the `Dropped` contract FR-10 reuses |
 | up | [SAD-001 v.1.2](../design/SAD-001-vision-and-architecture.md) §14 | the model-only carrier tier statement |
 | side | [SRD-076](SRD-076-lanes-model-only-carrier.md) | the carrier pattern |

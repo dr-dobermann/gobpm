@@ -7,7 +7,7 @@ import (
 
 // TestRefusalsSayWhichKindTheyAre sweeps the four things this stage
 // refuses and checks the WORDING of each, because the wording is the
-// whole deliverable: ADR-038 §2.5 says a standing boundary and a
+// whole deliverable: ADR-024 §2.16 says a standing boundary and a
 // capability-blocked one must not read alike, and a reader who cannot
 // tell them apart either waits for something that is not coming or
 // rebuilds something that is already correct.

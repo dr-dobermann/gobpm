@@ -126,7 +126,9 @@ Three outcomes:
   not map (each refusal names why: waiting on a capability, or expressible
   only programmatically, ADR-024 §2.13) yields a
   `*convert.UnsupportedElementError` naming the tag, its id, and the spec
-  section, so a modeler learns exactly what the engine will not run. What is
+  section, so a modeler learns exactly what the engine will not run — the
+  refused constructs, by kind, are listed in
+  [BPMN import coverage](bpmn-import-coverage.md). What is
   consumed rather than refused — a `<messageFlow>`, a dialect attribute, a
   data store's host obligation — lands in `ImportDocument`'s `Dropped`
   report, each entry naming the element, the construct, and the reason:
@@ -247,6 +249,7 @@ instance completed: Completed
 
 ## See also
 
+- [BPMN import coverage](bpmn-import-coverage.md) — every refused construct, whether it is waiting on a capability or standing, and what to do instead
 - Examples: `examples/bpmn-convert/`
 - Related guides: [Service Task](../tasks/service-task.md) · [Custom Operation](operation.md) · [Custom expression engine](expression-engine.md)
 - Design: [ADR-024 — Process interchange: pluggable import/export converters](../../design/ADR-024-process-interchange-converters.md) · [SRD-051 — BPMN 2.0 converter](../../srd/SRD-051-bpmn-converter.md) · [ADR-019 — Definition versioning](../../design/ADR-019-definition-versioning.md)
