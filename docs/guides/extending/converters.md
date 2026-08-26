@@ -49,6 +49,18 @@ p, err := convert.Import(ctx, convert.BPMN, file)   // *process.Process
 err = convert.Export(ctx, convert.BPMN, os.Stdout, p)
 ```
 
+`convert.Import` returns THE process of a document: the only one, or —
+in a multi-process document — the single one marked `isExecutable`;
+anything else is an error naming the counts. A collaboration document
+carrying several pools is read whole with `convert.ImportDocument`,
+which returns every process plus the `Dropped` report:
+
+```go
+res, err := convert.ImportDocument(ctx, convert.BPMN, file)  // *convert.Result
+for _, p := range res.Processes { ... }
+for _, d := range res.Dropped { log.Printf("%s (%s): %s", d.Construct, d.Element, d.Reason) }
+```
+
 Without the blank import, `convert.Import` returns a self-identifying *unknown
 format* error listing whatever **is** registered — never a silent failure.
 `convert.Formats()` reports the same list.
@@ -61,20 +73,24 @@ lineage on the **process id**, so re-importing an edited file and registering it
 produces v2 of the same definition rather than a second singleton. A flow
 element with a missing or blank `id` is a hard import error.
 
-### What the current slice maps
+### What the importer maps
 
-| BPMN element | Model target |
+The importer covers the executable element set (the SRD-089 series), at
+family granularity:
+
+| BPMN family | Model target |
 |---|---|
-| `<bpmn:process>` | `process.New(name, WithID(id))` |
-| `<bpmn:startEvent>` / `<bpmn:endEvent>` (none) | `events.NewStartEvent` / `NewEndEvent` |
-| `<bpmn:task>` / `<bpmn:manualTask>` | `activities.NewManualTask` |
-| `<bpmn:userTask>` | `activities.NewUserTask` |
-| `<bpmn:serviceTask>` (`operationRef`, `implementation`) | `activities.NewServiceTask` (+ `WithImplementation`) |
-| `<bpmn:interface>` / `<bpmn:operation>` | `service.NewOperation` (catalog stub) |
+| `<bpmn:process>` — one or several per document | `process.New`; `ImportDocument` returns the set, `Import` the single executable one |
+| Events — start, end, intermediate catch/throw, boundary — with their message / timer / signal / error / escalation / conditional / terminate definitions | `events.New*Event` + the typed event definitions |
+| Tasks — `task`/`manualTask`, `userTask`, `serviceTask` (`operationRef`, `implementation`), `sendTask`, `receiveTask`, `scriptTask`, `businessRuleTask` | the `activities.New*Task` constructors |
+| Containers — `subProcess` (incl. event sub-process), `transaction`, `callActivity` | `activities.NewSubProcess` / `NewCallActivity` |
+| Gateways — exclusive (+ `default`), parallel, inclusive, event-based | `gateways.New*Gateway` |
+| Loop markers — `standardLoopCharacteristics`, `multiInstanceLoopCharacteristics` (cardinality or collection pair, output pair, completion condition, all four behaviors) | `activities.NewStandardLoop` / `NewMultiInstance` |
+| The data family — `itemDefinition` (+ the `<import>` it names), `dataObject` (+ reference), `dataStoreReference`, `property`, `ioSpecification`, both data association kinds, `association` (compensation) | typed items, scope data, the activity's parameters and `Associate*` wiring |
 | `<bpmn:sequenceFlow>` (+ `conditionExpression`) | `flow.Link` (+ `flow.WithCondition`) |
-| `<bpmn:exclusiveGateway>` (+ `default`) | `gateways.NewExclusiveGateway` |
-| `<bpmn:parallelGateway>` | `gateways.NewParallelGateway` |
-| `<bpmn:documentation>` (on any of the above) | `foundation.WithDoc` → `Docs()` |
+| `<bpmn:interface>` / `<bpmn:operation>` | `service.NewOperation` (catalog stub) |
+| `<bpmn:collaboration>` | consumed definitionally: participants name processes, each `<messageFlow>` is reported — the engine performs the exchange itself through message events and correlation |
+| `<bpmn:documentation>` (wherever the model can hold it) | `foundation.WithDoc` → `Docs()` |
 
 An imported `serviceTask` is bound to an operation **without an implementor** —
 a catalog stub carrying the id and name from the definitions-level
@@ -97,15 +113,18 @@ Three outcomes:
   any other foreign-namespace subtree. Layout is not execution.
 - **Skipped silently, despite being BPMN** — `<bpmn:extensionElements>`, the
   purely visual artifacts (`<textAnnotation>`, `<group>`, `<category>`), and
-  `<relationship>`/`<import>`. All are common in modeler output and carry no
+  `<relationship>`. All are common in modeler output and carry no
   execution semantics, so dropping them leaves the imported definition meaning
   the same thing — erroring on them would reject a runnable file for carrying a
-  comment. `<association>` is **not** in this group: it carries compensation
-  semantics, so it is reported until the converter maps it.
-- **Reported** — a *flow element* in the BPMN namespace that this slice does
-  not map yet (inclusive gateway, boundary event, sub-process, …) yields a
+  comment.
+- **Refused** — a BPMN-namespace element the converter recognizes and does
+  not map (each refusal names why: waiting on a capability, or expressible
+  only programmatically, ADR-024 §2.13) yields a
   `*convert.UnsupportedElementError` naming the tag, its id, and the spec
-  section, so a modeler learns exactly what the engine will not run:
+  section, so a modeler learns exactly what the engine will not run. What is
+  consumed rather than refused — a `<messageFlow>`, a dialect attribute, a
+  data store's host obligation — lands in `ImportDocument`'s `Dropped`
+  report, each entry naming the element, the construct, and the reason:
 
 ```go
 var uee *convert.UnsupportedElementError

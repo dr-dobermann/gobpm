@@ -167,13 +167,15 @@ func TestImportErrors(t *testing.T) {
 		{
 			name: "unsupported in-namespace element",
 			doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
-  <bpmn:process id="p"><bpmn:participant id="part"/></bpmn:process>
+  <bpmn:process id="p"><bpmn:choreographyTask id="ct"/></bpmn:process>
 </bpmn:definitions>`,
-			want:    `unsupported element "participant"`,
+			want:    `unsupported element "choreographyTask"`,
 			wantUee: true,
-			// No §: the extract keeps <participant> in scope but pins
-			// no section for it, and an invented one is worse feedback
-			// than none (SRD-089.F FR-8).
+			// No §: neither the extract nor a spec-text verification
+			// pins the Choreography family, and an invented section is
+			// worse feedback than none (SRD-089.F FR-8). <participant>
+			// stopped being this test's sample when #334 pinned it at
+			// the spec text's §9.2.1.
 			wantSec: "",
 		},
 		{
@@ -964,7 +966,9 @@ func TestImporterBoundaryErrors(t *testing.T) {
 		{name: "nil context", want: "ctx is nil"},
 		{name: "malformed XML", ctx: context.Background(), doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">`, want: "XML syntax error"},
 		{name: "process without id", ctx: context.Background(), doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"><bpmn:process/></bpmn:definitions>`, want: "has no id"},
-		{name: "second process", ctx: context.Background(), doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"><bpmn:process id="p"/><bpmn:process id="q"/></bpmn:definitions>`, want: "unsupported element"},
+		// Two processes IMPORT since SRD-089.I; Import (the singular
+		// entry) refuses the ambiguity, naming the document-level call.
+		{name: "second process, none executable", ctx: context.Background(), doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"><bpmn:process id="p"/><bpmn:process id="q"/></bpmn:definitions>`, want: "use ImportDocument"},
 	}
 
 	for _, tc := range tests {
@@ -1079,19 +1083,23 @@ func TestSectionFor(t *testing.T) {
 		"itemDefinition":                   "§8.4.10",
 		"dataObject":                       "§10.4.1",
 		"dataInputAssociation":             "§10.4.1",
-		"multiInstanceLoopCharacteristics": "§13.3.5",
+		// §13.3.6/§13.3.7 since SRD-089.H FR-6: the §13.3.5 both rows
+		// carried was supported by no extract line, while the extract's
+		// own heading pins these two (semantics/multi-instance.md:3).
+		"standardLoopCharacteristics":      "§13.3.6",
+		"multiInstanceLoopCharacteristics": "§13.3.7",
 		"unknown":                          "",
 
-		// Pinned as ABSENT, not as a number. The extract keeps these
-		// in scope and pins no § for any of them; they carried
-		// invented ones until SRD-089.F FR-8. A future pin has to
-		// come with the spec text that supplies it, and changing
-		// these lines is where that gets noticed.
-		"laneSet":       "",
-		"lane":          "",
-		"collaboration": "",
-		"participant":   "",
-		"messageFlow":   "",
+		// Restored by #334 from the spec text (formal/2011-01-03),
+		// after SRD-089.F FR-8 removed the invented numbers they
+		// carried: Lanes §10.7 (spec p.305-307), Collaboration §9.1
+		// (p.111), Participant §9.2.1 (p.114), Message Flow §9.3
+		// (p.120).
+		"laneSet":       "§10.7",
+		"lane":          "§10.7",
+		"collaboration": "§9.1",
+		"participant":   "§9.2.1",
+		"messageFlow":   "§9.3",
 	}
 
 	for tag, want := range tests {

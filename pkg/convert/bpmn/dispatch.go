@@ -38,6 +38,9 @@ const (
 	// <dataState>, so an element met there is not the one the process
 	// context would have expected.
 	ctxData
+	// ctxCollab is inside a <collaboration> — the definitional-only
+	// container SRD-089.I consumes.
+	ctxCollab
 )
 
 // elementKey identifies one element in one parse context.
@@ -185,43 +188,46 @@ var policy = map[elementKey]dispositionKind{
 // event. The one-line section index in that file used to say otherwise
 // and was the source of nine wrong data pins (SRD-089.F FR-8).
 var sections = map[string]string{
-	"sendTask":                         "§13.3.3",
-	"receiveTask":                      "§13.3.3",
-	"scriptTask":                       "§13.3.3",
-	"businessRuleTask":                 "§13.3.3",
-	"callActivity":                     "§13.3.3",
-	"subProcess":                       "§13.3.4",
-	"adHocSubProcess":                  "§13.3.4",
-	"transaction":                      "§13.3.4",
-	"complexGateway":                   "§13.4",
-	"intermediateCatchEvent":           "§13.5",
-	"intermediateThrowEvent":           "§13.5",
-	"boundaryEvent":                    "§13.5.5",
-	"messageEventDefinition":           "§13.5",
-	"timerEventDefinition":             "§13.5",
-	"signalEventDefinition":            "§13.5",
-	"errorEventDefinition":             "§13.5",
-	"escalationEventDefinition":        "§13.5",
-	"compensateEventDefinition":        "§13.5",
-	"conditionalEventDefinition":       "§13.5",
-	"linkEventDefinition":              "§13.5",
-	"terminateEventDefinition":         "§13.5",
-	"cancelEventDefinition":            "§13.5",
-	"itemDefinition":                   "§8.4.10",
-	"dataObject":                       "§10.4.1",
-	"dataObjectReference":              "§10.4.1",
-	"dataStore":                        "§10.4.1",
-	"dataStoreReference":               "§10.4.1",
-	"ioSpecification":                  "§10.4.1",
-	"property":                         "§10.4.1",
-	"dataInput":                        "§10.4.1",
-	"dataOutput":                       "§10.4.1",
-	"inputSet":                         "§10.4.1",
-	"outputSet":                        "§10.4.1",
-	"dataInputAssociation":             "§10.4.1",
-	"dataOutputAssociation":            "§10.4.1",
-	"multiInstanceLoopCharacteristics": "§13.3.5",
-	"standardLoopCharacteristics":      "§13.3.5",
+	"sendTask":                   "§13.3.3",
+	"receiveTask":                "§13.3.3",
+	"scriptTask":                 "§13.3.3",
+	"businessRuleTask":           "§13.3.3",
+	"callActivity":               "§13.3.3",
+	"subProcess":                 "§13.3.4",
+	"adHocSubProcess":            "§13.3.4",
+	"transaction":                "§13.3.4",
+	"complexGateway":             "§13.4",
+	"intermediateCatchEvent":     "§13.5",
+	"intermediateThrowEvent":     "§13.5",
+	"boundaryEvent":              "§13.5.5",
+	"messageEventDefinition":     "§13.5",
+	"timerEventDefinition":       "§13.5",
+	"signalEventDefinition":      "§13.5",
+	"errorEventDefinition":       "§13.5",
+	"escalationEventDefinition":  "§13.5",
+	"compensateEventDefinition":  "§13.5",
+	"conditionalEventDefinition": "§13.5",
+	"linkEventDefinition":        "§13.5",
+	"terminateEventDefinition":   "§13.5",
+	"cancelEventDefinition":      "§13.5",
+	"itemDefinition":             "§8.4.10",
+	"dataObject":                 "§10.4.1",
+	"dataObjectReference":        "§10.4.1",
+	"dataStore":                  "§10.4.1",
+	"dataStoreReference":         "§10.4.1",
+	"ioSpecification":            "§10.4.1",
+	"property":                   "§10.4.1",
+	"dataInput":                  "§10.4.1",
+	"dataOutput":                 "§10.4.1",
+	"inputSet":                   "§10.4.1",
+	"outputSet":                  "§10.4.1",
+	"dataInputAssociation":       "§10.4.1",
+	"dataOutputAssociation":      "§10.4.1",
+	// §13.3.6 and §13.3.7 on the extract's own heading
+	// (semantics/multi-instance.md:3); the §13.3.5 both rows carried
+	// before SRD-089.H was supported by no extract line (its FR-6).
+	"standardLoopCharacteristics":      "§13.3.6",
+	"multiInstanceLoopCharacteristics": "§13.3.7",
 
 	// The Conversation family is a separate conformance concern; the
 	// vendored extract pins its metamodel at §9.5.1
@@ -229,13 +235,21 @@ var sections = map[string]string{
 	// too, but carries no § here — the extract does not pin one, and a
 	// section asserted from memory is worse feedback than none.
 	//
-	// Three more families are absent for that same reason, having once
-	// been present with invented numbers: <laneSet>/<lane>, and the
-	// Collaboration group <collaboration>/<participant>/<messageFlow>.
-	// conformance.md line 32 and lines 165-176 keep all of them in
-	// scope but pin no § for any, and a modeler sent to the wrong
-	// chapter stops trusting the rest of the message. They are pinned
-	// when the spec text supplies a number, not before.
+	// The Lane and Collaboration families are pinned from the SPEC TEXT
+	// (formal/2011-01-03), the grounding order's second authority — the
+	// extract keeps them in scope and pins no § (conformance.md:32,
+	// 165-176), and both once carried invented numbers until SRD-089.F
+	// FR-8 removed them (#334 restores them verified): Lanes are §10.7
+	// (spec p.305-307 — "a Lane is contained within a LaneSet, which is
+	// contained within a Process"); the Collaboration concept is §9.1
+	// (p.111), a Participant §9.2.1 (p.114), a Message Flow §9.3
+	// (p.120).
+	"laneSet":       "§10.7",
+	"lane":          "§10.7",
+	"collaboration": "§9.1",
+	"participant":   "§9.2.1",
+	"messageFlow":   "§9.3",
+
 	"conversation":            "§9.5.1",
 	"subConversation":         "§9.5.1",
 	"callConversation":        "§9.5.1",
@@ -281,42 +295,78 @@ func (p *parser) settle(ctx parseCtx, se xml.StartElement) error {
 }
 
 // defsParser parses one child of <bpmn:definitions>. It returns a
-// non-nil assembly when the child was the document's first <process>.
-type defsParser func(p *parser, asm *assembly, se xml.StartElement) (*assembly, error)
+// non-nil assembly when the child was a <process>, appended to the
+// document's set in order.
+type defsParser func(p *parser, se xml.StartElement) (*assembly, error)
 
-// definitionsParsers claims the children of <bpmn:definitions>.
-var definitionsParsers = map[string]defsParser{
-	tagInterface:      parseInterfaceElem,
-	tagProcess:        parseProcessElem,
-	tagMessage:        parseCatalogElem,
-	tagSignal:         parseCatalogElem,
-	tagError:          parseCatalogElem,
-	tagEscalation:     parseCatalogElem,
-	tagItemDefinition: parseItemDefElem,
-	tagImport:         parseImportElem,
-	tagDataStore:      parseDataStoreElem,
+// definitionsParsers claims the children of <bpmn:definitions>. Every
+// event definition is a root element too — the position a Multi-Instance
+// behavior ref resolves against (SRD-089.H §4.7) — derived from
+// defBuilders rather than listed again, the nodeChildParsers pattern.
+var definitionsParsers = func() map[string]defsParser {
+	dp := map[string]defsParser{
+		tagInterface:      parseInterfaceElem,
+		tagProcess:        parseProcessElem,
+		tagMessage:        parseCatalogElem,
+		tagSignal:         parseCatalogElem,
+		tagError:          parseCatalogElem,
+		tagEscalation:     parseCatalogElem,
+		tagItemDefinition: parseItemDefElem,
+		tagImport:         parseImportElem,
+		tagDataStore:      parseDataStoreElem,
+		tagCollaboration:  parseCollaborationElem,
+	}
+
+	for local := range defBuilders {
+		dp[local] = parseRootDefElem
+	}
+
+	return dp
+}()
+
+// parseRootDefElem parses a definitions-level event definition into the
+// registry the Multi-Instance behavior refs resolve against. Unlike a
+// definition inside an event, a root one exists only to be referenced,
+// so its id is required.
+func parseRootDefElem(p *parser, se xml.StartElement) (*assembly, error) {
+	id, err := requiredID(se)
+	if err != nil {
+		return nil, err
+	}
+
+	err = p.claimID(id, se.Name.Local)
+	if err != nil {
+		return nil, err
+	}
+
+	body := nodeBody{}
+	if err := p.parseEventDef(&body, se); err != nil {
+		return nil, err
+	}
+
+	spec := body.defs[0]
+	spec.id = id
+	p.rootDefs[id] = spec
+
+	return nil, nil
 }
 
 // parseCatalogElem parses one definitions-level catalog object — the
 // <message>, <signal>, <error> or <escalation> an event definition refers
 // to.
-func parseCatalogElem(p *parser, _ *assembly, se xml.StartElement) (*assembly, error) {
+func parseCatalogElem(p *parser, se xml.StartElement) (*assembly, error) {
 	return nil, p.parseCatalogElement(se)
 }
 
 // parseInterfaceElem parses a definitions-level service catalog entry.
-func parseInterfaceElem(p *parser, _ *assembly, se xml.StartElement) (*assembly, error) {
+func parseInterfaceElem(p *parser, se xml.StartElement) (*assembly, error) {
 	return nil, p.parseInterface(se)
 }
 
-// parseProcessElem parses the document's process; a second one is
-// refused, since Import yields one definition (the document-level
-// capability arrives with the collaboration slice).
-func parseProcessElem(p *parser, asm *assembly, se xml.StartElement) (*assembly, error) {
-	if asm != nil {
-		return nil, unsupported(se)
-	}
-
+// parseProcessElem parses one of the document's processes — each gets
+// its own assembly over the shared document state, in document order
+// (SRD-089.I §4.1).
+func parseProcessElem(p *parser, se xml.StartElement) (*assembly, error) {
 	return p.parseProcess(se)
 }
 
@@ -536,6 +586,8 @@ var nodeChildParsers = func() map[string]nodeChildParser {
 		tagIOSpecification: parseIOSpecElem,
 		tagDataInputAssoc:  parseDataAssocElem,
 		tagDataOutputAssoc: parseDataAssocElem,
+		tagStandardLoop:    parseLoopElem,
+		tagMultiInstance:   parseLoopElem,
 	}
 
 	// Every event definition is a node child, derived from defBuilders
