@@ -11,6 +11,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/artifacts"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
@@ -40,7 +41,10 @@ type Process struct {
 	dataObjects   map[string]*dataobjects.DataObject
 	dataStoreRefs map[string]*datastores.DataStoreReference
 	laneSets      []*lanes.LaneSet
-	name          string
+	// artifacts is ordered, not keyed: artifacts have no name, and
+	// declaration order is what a round-trip reproduces (ADR-039).
+	artifacts []artifacts.Artifact
+	name      string
 	foundation.BaseElement
 	CorrelationSubscriptions []*bpmncommon.CorrelationSubscription
 }
@@ -119,6 +123,29 @@ func (p *Process) Roles() []*hi.ResourceRole {
 // Lanes are carried and never executed (SRD-076).
 func (p *Process) LaneSets() []*lanes.LaneSet {
 	return slices.Clone(p.laneSets)
+}
+
+// AddArtifacts attaches artifacts to the process. Artifacts are model-only
+// carriers (ADR-039): held for BPMN loading, never executed, never cloned
+// into an instance. A nil artifact and a duplicate id are refused.
+func (p *Process) AddArtifacts(arts ...artifacts.Artifact) error {
+	aa, err := artifacts.Append(p.artifacts, arts...)
+	if err != nil {
+		return errs.New(
+			errs.M("Process %q: adding artifacts failed", p.name),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
+	}
+
+	p.artifacts = aa
+
+	return nil
+}
+
+// Artifacts returns a copy of the process's artifact collection, in the
+// order the artifacts were added.
+func (p *Process) Artifacts() []artifacts.Artifact {
+	return slices.Clone(p.artifacts)
 }
 
 // Properties returns the Process properties.

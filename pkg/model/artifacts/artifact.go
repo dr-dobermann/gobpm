@@ -2,6 +2,8 @@
 package artifacts
 
 import (
+	"strconv"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -33,6 +35,37 @@ type Artifact interface {
 	foundation.BaseObject
 
 	artifact()
+}
+
+// Append validates arts — no nil entry, no id duplicating existing or each
+// other — and returns existing extended with them. It is the one
+// implementation of the collection invariant both containers (Process and
+// SubProcess) delegate to, so the rule cannot fork between them.
+func Append(existing []Artifact, arts ...Artifact) ([]Artifact, error) {
+	ids := make(map[string]struct{}, len(existing)+len(arts))
+	for _, a := range existing {
+		ids[a.ID()] = struct{}{}
+	}
+
+	for i, a := range arts {
+		if a == nil {
+			return nil, errs.New(
+				errs.M("artifacts.Append: a nil artifact isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed),
+				errs.D("artifact_index", strconv.Itoa(i)))
+		}
+
+		if _, ok := ids[a.ID()]; ok {
+			return nil, errs.New(
+				errs.M("artifacts.Append: duplicate artifact id %q", a.ID()),
+				errs.C(errorClass, errs.DuplicateObject),
+				errs.D("artifact_index", strconv.Itoa(i)))
+		}
+
+		ids[a.ID()] = struct{}{}
+	}
+
+	return append(existing, arts...), nil
 }
 
 // *****************************************************************************
