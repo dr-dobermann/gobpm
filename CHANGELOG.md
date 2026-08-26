@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An iterated activity can wait** (SRD-090.B, ADR-025 §2.13, ADR-006
+  §2.9.5, closes #313). A Standard Loop or a sequential Multi-Instance over
+  a `ReceiveTask` — or any leaf that parks — now builds and runs: a
+  sequential fan-out consumes one message per pass instead of being refused
+  at `snapshot.New`.
+
+  The decorator is the activity's single registered event processor. It
+  holds one subscription per definition for as long as any instance awaits
+  it, and routes each delivery to the instance that was waiting — where
+  before, arming was keyed to a token *arriving* at the node, and an
+  in-place iteration never arrives twice, so passes after the first ran
+  without waiting at all.
+
+  Two shapes stay refused, each for a stated reason rather than for want of
+  a mechanism. A **parallel** fan-out over a Message catch with no
+  `WithIterationCorrelation` is ambiguous by construction — a message is
+  point-to-point, so nothing says which envelope belongs to which of N
+  waiting instances. A **parallel** fan-out over work that parks outside
+  the event system — a User Task, an external-worker Service Task — would
+  have its instances share one parked-work identity, so only one would be
+  addressable and the rest would complete without anyone doing them; make
+  it sequential, or model N tasks. ADR-025 §2.15 and ADR-020 §2.12 decide
+  what that fan-out means, and the refusal lifts when each instance owns
+  its identity.
+
 - **The SQLite Repository adapter** (SRD-091, ADR-037, closes #316).
   `adapters/sqlite` implements the durable Repository contract over
   a pure-Go driver (`modernc.org/sqlite`, no CGo): CAS saves,
@@ -437,13 +462,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaf runs its passes in place (fresh frame each, split item +
   loopCounter bound); a parallel leaf fans out per-instance scopes
   each running one track at the task; both restore at their position
-  over the existing checkpoint schema. A leaf that **waits** stays
-  unsupported and is now **refused at build time** rather than run
-  wrongly: an activity that both iterates and parks on execution (a
-  ReceiveTask or other catching event node, a user task, an external
-  worker) fails `snapshot.New` with a message naming it and pointing at
-  the workaround — model the wait inside an iterated Sub-Process. The
-  decorator that would make it work natively is tracked in #313.
+  over the existing checkpoint schema. A leaf that **waits** was refused
+  at build time here rather than run wrongly; SRD-090.B (above) makes it
+  work natively and narrows the refusal to the two parallel shapes that
+  remain genuinely ambiguous.
 
 
 - **In-instance event delivery: per-delivery payload binding and
