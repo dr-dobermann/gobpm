@@ -186,11 +186,11 @@ state, the start time and the performer register already live. A second
 mechanism for a problem that already has one is the mistake this rejection
 exists to prevent.
 
-**What the scope would not have solved anyway** is ADDRESSING, and §2.9.2 states
-it: the supplier is handed a name, and `loopCounter` differs per executing
-instance, so it must learn WHICH execution is asking. That seam is
-[ADR-010](ADR-010-process-data-model.md)'s, and a scope would have left it
-exactly where it is.
+**What the scope would not have bought either** is per-execution addressing.
+`loopCounter` differs per executing instance, and §2.9.2 resolves that by
+publishing it **frame-local** — the frame already being the per-execution
+address space. An iteration scope sits at the activity, one level above the
+instances, so it would have been no better placed to tell them apart.
 
 **The output staging** is the one thing RUNTIME does not answer for: it is not
 a named variable a model reads, but the decorator's own working state. It
@@ -526,28 +526,58 @@ that ignores it sees one token per activity, which is what BPMN describes.
 that iteration state belongs *on* it rather than being inferred from token
 count. The contract change to the view itself is that ADR's to make.
 
-#### 2.9.2 Iteration values are engine-published, and outlive the activity
+#### 2.9.2 Iteration values are engine-published, at the address their cardinality allows
 
-Left as ordinary scope data, §2.9's variables carry two consequences worth
-deciding rather than inheriting: a model can **overwrite** them — then read its
-own value back from an expression that looks exactly like the engine's — and
-they **vanish** when the activity completes, so "how many did we process?" is
-unanswerable one node later and a map key (§2.6.1) has nothing durable to key
-on.
+An iteration value is **engine-published**: a process reads it and must not be
+able to overwrite the answer, nor collide with it by naming a variable the same
+way. Where it is published follows from **how many answers it has**, and the
+iteration values do not all have the same number.
 
-**Every iteration value is therefore published in the reserved read-only RUNTIME
-source, without exception**, alongside the instance values already served there
-(the started time, the state, the track count, the performer register). Being
-engine-published is the point: a process reads them and cannot overwrite the
-answer, nor collide with it by naming a variable the same way.
+**Two classes, and they need different addresses.**
 
-| Name | Shape | Available |
+- **A value of the ACTIVITY** has one answer per process instance: how many
+  instances there are, how many completed, who owns which ordinal. These are
+  the values that need the reserved read-only **RUNTIME** source, and they fit
+  it exactly as the instance values already served there do (the started time,
+  the state, the track count, the performer register) — one supplier, one
+  answer per name.
+- **A value of the EXECUTION** has one answer per *instance of the activity*,
+  and N of those run at once. `loopCounter` is the case: three parallel
+  instances reading it at the same moment must get 0, 1 and 2. A supplier keyed
+  by name alone cannot say whose.
+
+**A value of the execution is published frame-local, not in RUNTIME.** It is
+bound into the executing instance's own frame, which is what makes it
+per-execution by construction — the instances of one activity cannot overwrite
+each other's, because none of them can see another's frame (§2.2). It also
+already carries the property RUNTIME would have been for: a plain name resolves
+**frame-first**, so a process property of the same name is *shadowed by* the
+engine's value rather than shadowing it. Publication is achieved; the reserved
+subtree is not needed to achieve it.
+
+| Name | Shape | Published |
 |---|---|---|
-| `ITERATION_NUMBER` | the executing instance's 0-based ordinal | inside an instance |
-| `ITERATION_ID` | the executing instance's **stable identity** (§2.9.3) | inside an instance |
-| `ITERATION_MODE` | the executing instance's iteration shape — the `kind` of §2.9.3 | inside an instance |
-| `ITERATIONS` | map: activity id → `{kind, total, completed, terminated}` | during, **and after the activity completes** |
-| `ITERATION_OWNERS` | map: activity id → (ordinal → actual owner) | during, and after |
+| `loopCounter` | the executing instance's 0-based ordinal (§2.9a) | frame-local |
+| `ITERATION_NUMBER` | the same ordinal, under the engine's own name | frame-local |
+| `ITERATION_ID` | the executing instance's **stable identity** (§2.9.3) | frame-local |
+| `ITERATION_MODE` | the executing instance's iteration shape — the `kind` of §2.9.3 | frame-local |
+| `numberOfInstances` | total fixed at activation (§2.4) | `RUNTIME/` |
+| `numberOfActiveInstances` | currently running | `RUNTIME/` |
+| `numberOfCompletedInstances` | completed so far | `RUNTIME/` |
+| `numberOfTerminatedInstances` | cancelled by a completion condition (§2.7) | `RUNTIME/` |
+| `ITERATIONS` | map: activity id → `{kind, total, completed, terminated}` | `RUNTIME/`, during **and after the activity completes** |
+| `ITERATION_OWNERS` | map: activity id → (ordinal → actual owner) | `RUNTIME/`, during and after |
+
+**Rejected: carrying the asking execution into the source lookup.** The
+alternative to splitting by cardinality is to publish *everything* in RUNTIME
+and teach the source which execution is asking — the supplier receives only a
+name, so the reader's frame would have to travel with it. That is a change to
+the data plane's named-source contract (**ADR-010**), a contract that exists so
+an *embedding application* can expose its own data as a named source. It would
+widen a public interface every embedder may implement, to serve one value in
+one engine-owned provider, and it would buy `loopCounter` a protection it
+already has. One problem, one mechanism (§2.2a): the frame is the per-execution
+address space, and it is already there.
 
 **Maps rather than one name per activity**, deliberately: the RUNTIME name set
 is closed, and an open per-activity namespace would make it grow without bound
@@ -555,32 +585,26 @@ and force prefix matching to serve it. Keying by activity id is also what lets
 the values outlive the activity — a frame dies with its execution and a counter
 dies with the token, but a map in the instance's runtime source does not.
 
-**The BPMN-named five are not an exception to it.** Leaving `loopCounter` and
-the counts outside the rule would put a hole in it at precisely the names most
-models touch.
-
-| BPMN attribute (§13.3.7) | Address | Per |
-|---|---|---|
-| `loopCounter` | `RUNTIME/loopCounter` | executing instance |
-| `numberOfInstances` | `RUNTIME/numberOfInstances` | activity |
-| `numberOfActiveInstances` | `RUNTIME/numberOfActiveInstances` | activity |
-| `numberOfCompletedInstances` | `RUNTIME/numberOfCompletedInstances` | activity |
-| `numberOfTerminatedInstances` | `RUNTIME/numberOfTerminatedInstances` | activity |
+**Why the counts move and the counter does not.** The counts are bound at the
+activity's shared host scope, where both defects are real: a model can declare
+over them, and they die with the activity, so "how many did we process?" is
+unanswerable one node later and a map key (§2.6.1) has nothing durable to key
+on. The counter has neither defect — frame-first resolution protects it, and a
+per-execution value *should* die with its execution, the durable question being
+`ITERATIONS`'. Moving it would be motion without a motive.
 
 **Naming rule: a value the standard names keeps the standard's spelling; a
-value the engine invented uses the engine's convention.** So the five above
-read exactly as BPMN writes them and the migration is a pure prefix, while
-`ITERATIONS` and `ITERATION_OWNERS`, which the spec has no word for, follow the
-existing runtime-name convention.
+value the engine invented uses the engine's convention.** So the BPMN-named
+attributes read exactly as BPMN writes them at whichever address they occupy,
+while `ITERATION_*`, which the spec has no word for, follows the existing
+runtime-name convention.
 
-**This requires the runtime source to know WHICH execution is asking.** A
-supplier answering per instance suffices for instance-wide values and for the
-activity-keyed maps above, but not for `loopCounter`: its value differs
-per executing instance, and the supplier is handed only a name. The reader
-already holds the frame of the execution doing the reading, so the asking
-execution's identity can be carried into the lookup. That seam belongs to the
-data model (**ADR-010**), and this ADR states the requirement it places on
-it rather than redesigning it here.
+**Consequence: the four counts become a breaking change for models that read
+them bare.** `numberOfInstances` and its siblings no longer resolve unprefixed;
+expressions read `RUNTIME/numberOfInstances`. `loopCounter` is untouched and
+keeps working exactly as written. The accompanying SRD carries the migration
+and the CHANGELOG states it, because a silent address change is worse than a
+loud one.
 
 **A model that declares a colliding name refuses at build time.** A process
 property or data object named `loopCounter` (or any reserved iteration name) is
@@ -588,11 +612,6 @@ rejected when the process is built, naming the element — rather than silently
 shadowing the engine's value and producing a wrong answer somewhere far away.
 Located errors are the point: an overwritten counter is discovered as a strange
 result three nodes later, a refused name is discovered where it is written.
-
-**Consequence: this is a breaking change for models that read the bare names.**
-`loopCounter` no longer resolves unprefixed; expressions read
-`RUNTIME/loopCounter`. The accompanying SRD carries the migration and the
-CHANGELOG states it, because a silent address change is worse than a loud one.
 
 **The performer register needs an iterated-case rule, and gets one.** The
 register maps an activity to the user who completed it — one activity, one
@@ -609,7 +628,9 @@ expressions (§13.3.7). What it says nothing about is their **lifetime** after
 the activity completes, their **write-protection**, and the existence of an
 engine-published read-only source at all. Those three, and the `ITERATION_*`
 names that have no counterpart in the standard, are the engine choices in this
-subsection; the five BPMN-named attributes are not.
+subsection — as is the split by cardinality itself. The BPMN-named attributes
+are not: the standard enumerates the set, and this subsection decides only
+where each one is served.
 
 #### 2.9.3 An instance has an identity, and it is derived
 
