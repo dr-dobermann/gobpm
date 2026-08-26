@@ -313,6 +313,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ADR-038 retired; its rule moves into ADR-024 §2.16.** The converter
+  coverage-boundaries record had become a ledger — bumped to v.3 across
+  three landings while its contract never moved, and never flipped out of
+  Draft. The decision it carried (three refusal classes per construct:
+  staged / capability-blocked / standing; the converter never compensates
+  for a missing model capability; a capability lands before the converter
+  row consuming it; what each refusal owes its reader) is now one section
+  of the ADR it refined. The capability register lives only in the import
+  epic #335, one issue per row, and the new guide
+  `docs/guides/extending/bpmn-import-coverage.md` lists every refused
+  construct with its kind, the alternative today and its tracking issue.
+  References in ADR-039, its Russian twin, the SRD-089 series, SRD-092 and
+  `pkg/convert/bpmn` are retargeted; no code behaviour changes.
+
 - **Every activity now executes through one object, whatever its
   iteration** (ADR-025 §2.13/§2.13a/§2.13b, SRD-090.A, part of #313).
   `executeStep` used to route a node through five iteration branches —

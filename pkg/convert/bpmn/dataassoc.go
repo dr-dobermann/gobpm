@@ -51,7 +51,7 @@ func assocLabel(a *dataAssocSpec) string {
 }
 
 // wireDataAssoc resolves and wires one association, or refuses it by its
-// ADR-038 class (§4.6, §4.7).
+// ADR-024 §2.16 class (SRD-089.G §4.6, §4.7).
 func wireDataAssoc(
 	p *parser, asm *assembly, s *nodeSpec, a *dataAssocSpec,
 ) error {
