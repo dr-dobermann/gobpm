@@ -11,12 +11,11 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 )
 
-// TestVisualArtifactsAreSkipped covers SRD-089.A §6 T-6 (FR-8). A file was
-// refused outright for carrying a comment: textAnnotation, group and
-// category are "pure visual" in the vendored extract, and near-universal
-// in modeler output. Dropping them leaves the definition meaning the same
-// thing, which is the test ADR-024 §2.9 sets for skipping.
-func TestVisualArtifactsAreSkipped(t *testing.T) {
+// TestVisualArtifactsAreCarried — once SRD-089.A T-6's skip disposition,
+// re-decided by ADR-039: the annotation and the group are CARRIED into the
+// model-only artifact tier, the category is consumed as their resolution
+// input, and none of them becomes a node.
+func TestVisualArtifactsAreCarried(t *testing.T) {
 	doc := `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
   <bpmn:category id="c1" name="Ops">
@@ -47,6 +46,16 @@ func TestVisualArtifactsAreSkipped(t *testing.T) {
 
 	if got := len(p.Flows()); got != 2 {
 		t.Errorf("flows = %d, want 2", got)
+	}
+
+	// ...and the artifacts are held, not dropped (ADR-039).
+	arts := p.Artifacts()
+	if len(arts) != 2 {
+		t.Fatalf("artifacts = %d, want the annotation and the group", len(arts))
+	}
+
+	if arts[0].ID() != "a1" || arts[1].ID() != "g1" {
+		t.Errorf("artifacts = %q/%q, want a1/g1", arts[0].ID(), arts[1].ID())
 	}
 }
 

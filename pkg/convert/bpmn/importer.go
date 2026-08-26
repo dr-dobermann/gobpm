@@ -286,6 +286,11 @@ type assembly struct {
 	// object, or a reference to one — built after the nodes, since the
 	// container holding one IS a node (SRD-089.F §4.4).
 	datas []dataSpec
+	// annots and groups are the carried artifacts read in pass 1, built
+	// by buildCarriedArtifacts once their containers exist (SRD-092
+	// FR-7/FR-8).
+	annots []annotationSpec
+	groups []groupSpec
 	// spec is the buffered <process> itself, built first in pass 2 — see
 	// procSpec.
 	spec procSpec
@@ -314,6 +319,13 @@ type parser struct {
 	// position a Multi-Instance behavior ref resolves against
 	// (SRD-089.H §4.7).
 	rootDefs map[string]defSpec
+	// categoryValues is the document's categoryValue id → value lookup,
+	// read from the definitions-level <category> declarations. It is
+	// resolution input, not model state (ADR-039 §2.3): a group embeds
+	// the value it resolves to, and nothing else ever reads a category.
+	// Document-level, like the catalog: a <category> may follow the
+	// <process> whose group refers to it.
+	categoryValues map[string]string
 	// asms are the document's processes, one assembly each, in document
 	// order (SRD-089.I §4.1).
 	asms []*assembly
@@ -359,15 +371,16 @@ type parser struct {
 // class of bug the import stages keep being in a position to introduce.
 func newParser(ctx context.Context, r io.Reader) *parser {
 	return &parser{
-		dec:        xml.NewDecoder(r),
-		ctx:        ctx,
-		newProcess: process.New,
-		interfaces: make(map[string]string),
-		ops:        make(map[string]opSpec),
-		cat:        newCatalog(),
-		items:      newItems(),
-		ids:        make(map[string]string),
-		rootDefs:   make(map[string]defSpec),
+		dec:            xml.NewDecoder(r),
+		ctx:            ctx,
+		newProcess:     process.New,
+		interfaces:     make(map[string]string),
+		ops:            make(map[string]opSpec),
+		cat:            newCatalog(),
+		items:          newItems(),
+		ids:            make(map[string]string),
+		rootDefs:       make(map[string]defSpec),
+		categoryValues: make(map[string]string),
 	}
 }
 
@@ -1644,6 +1657,12 @@ func build(p *parser, asm *assembly) (*process.Process, error) {
 	// the container's own validation checks that what a lane holds is what
 	// the container holds (§4.3).
 	if err := placeLaneNodes(asm); err != nil {
+		return nil, err
+	}
+
+	// The carried artifacts, once their containers exist: annotations,
+	// then groups with their category values resolved (SRD-092 FR-7/FR-8).
+	if err := buildCarriedArtifacts(p, asm); err != nil {
 		return nil, err
 	}
 
