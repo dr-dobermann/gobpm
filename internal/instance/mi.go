@@ -89,6 +89,18 @@ type miIterator struct {
 	mi multiInstance
 }
 
+// kind names the shape this iterator drives, in the record's own vocabulary
+// (iter_mirror.go) — the same answer iterDecorator.iterKind gives, so the
+// value a model reads as ITERATION_MODE does not depend on which publication
+// path bound it.
+func (it miIterator) kind() string {
+	if it.mi != nil && it.mi.IsSequential() {
+		return iterKindMISequential
+	}
+
+	return iterKindMIParallel
+}
+
 // captureSequentialOutput reads a draining sequential-MI instance's output item
 // from its child scope into the private staging collection (SRD-055 FR-9), keyed
 // by the instance ordinal — the one loop-side step of the off-loop decorator, run
@@ -267,6 +279,13 @@ func (it miIterator) bindInstance(
 		{name: "numberOfActiveInstances", value: 1},
 		{name: "numberOfCompletedInstances", value: st.completed},
 	}
+
+	// the engine's own names for this execution, from the one builder every
+	// publication path shares (iterationvars.go). Bound here rather than
+	// frame-local because this path binds at the activity's own scope, where
+	// a composite instance's body reads them by walk-up.
+	binds = append(binds, iterationBindings(
+		host.scopePath.String(), it.kind(), host.currentStep().node, i)...)
 
 	if st.collection != nil {
 		elem, err := st.collection.GetAt(ctx, i)

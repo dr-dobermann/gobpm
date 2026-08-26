@@ -245,6 +245,27 @@ func (d *iterDecorator) iterKind() string {
 	return iterKindMIParallel
 }
 
+// recordIteration reports this activity's account to the instance's durable
+// register (ADR-025 §2.9.2). The counts at the activity's own scope end with
+// the activation; this is what answers "how many did we process?" from a
+// later node, and what §2.6.1's map key has to key on.
+//
+// Keyed by the activity's id, so two iterated activities running at once —
+// a parallel gateway with a Multi-Instance on each arm — stay distinguishable,
+// which a flat runtime name could not manage.
+func (d *iterDecorator) recordIteration(total, completed, terminated int) {
+	if d.step == nil || d.step.node == nil || d.t == nil {
+		return
+	}
+
+	d.t.instance.iterations.record(d.step.node.ID(), iterationFact{
+		Kind:       d.iterKind(),
+		Total:      total,
+		Completed:  completed,
+		Terminated: terminated,
+	})
+}
+
 // exitFlows follows the activity's outgoing flow ONCE, on exit.
 //
 // A composite re-runs executeNode: its node execution is what selects the
@@ -781,6 +802,10 @@ func (d *iterDecorator) awaitParallel(
 		return nil, err
 	}
 
+	// and the durable account, which outlives the activity the counts end
+	// with (ADR-025 §2.9.2).
+	d.recordIteration(run.n, b.completed, b.terminated)
+
 	if err := it.publishOutput(t); err != nil {
 		return nil, err
 	}
@@ -817,6 +842,8 @@ func (d *iterDecorator) sequentialStep(
 		return false, err
 	}
 
+	d.recordIteration(n, t.miState.completed, 0)
+
 	if err := t.throwMIBehavior(
 		ctx, mi, step.node, t.miState.completed); err != nil {
 		return false, err
@@ -838,6 +865,8 @@ func (d *iterDecorator) sequentialStep(
 		n, 0, t.miState.completed, n-t.miState.completed); err != nil {
 		return false, err
 	}
+
+	d.recordIteration(n, t.miState.completed, n-t.miState.completed)
 
 	return true, nil
 }
@@ -887,7 +916,8 @@ func (d *iterDecorator) instanceFor(
 		return d.compositeInstanceFor(ctx, ord)
 	}
 
-	local, err := iterationLocals(ctx, st, ord)
+	local, err := iterationLocals(ctx, st, ord,
+		d.t.scopePath.String(), d.iterKind(), d.step.node)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -959,6 +989,7 @@ func (d *iterDecorator) compositeInstanceFor(
 // activity cannot overwrite each other's (SRD-090.A FR-4).
 func iterationLocals(
 	ctx context.Context, st *miState, ord int,
+	scopePath, kind string, node flow.Node,
 ) ([]data.Data, error) {
 	counter, err := data.ReadyValueParameter(
 		"loopCounter", values.NewVariable(ord))
@@ -966,8 +997,17 @@ func iterationLocals(
 		return nil, err
 	}
 
-	local := make([]data.Data, 0, 2)
+	local := make([]data.Data, 0, 5)
 	local = append(local, counter)
+
+	// the engine's own names for the same execution, built by the one
+	// builder every publication path shares (iterationvars.go).
+	vars, err := iterationVars(scopePath, kind, node, ord)
+	if err != nil {
+		return nil, err
+	}
+
+	local = append(local, vars...)
 
 	if st.collection == nil {
 		return local, nil

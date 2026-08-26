@@ -25,6 +25,16 @@ const (
 	// open per-task namespace would force prefix matching here and make
 	// RuntimeVarNames grow with every completion.
 	CompletedBy = "COMPLETED_BY"
+
+	// Iterations names the iteration register: a map of activity id → what
+	// that activity's iteration did (kind, total, completed, terminated).
+	// Served here, keyed by activity id, for two reasons that both matter —
+	// the RUNTIME name set stays closed, and a key disambiguates two iterated
+	// activities running at once, which a flat name could not (ADR-025
+	// §2.9.2). It outlives the activity: the counts at the activity's own
+	// scope end with the activation, and this is what answers "how many did
+	// we process?" one node later.
+	Iterations = "ITERATIONS"
 )
 
 // DataReader returns the instance's read-only root data reader — process
@@ -55,6 +65,15 @@ func (inst *Instance) RuntimeVar(name string) (data.Data, error) {
 
 	case CompletedBy:
 		m, err := values.NewMap(inst.performers.snapshot())
+		if err != nil {
+			return nil,
+				fmt.Errorf("couldn't build the %q runtime variable: %w", name, err)
+		}
+
+		d = m
+
+	case Iterations:
+		m, err := values.NewMap(inst.iterations.snapshot())
 		if err != nil {
 			return nil,
 				fmt.Errorf("couldn't build the %q runtime variable: %w", name, err)
@@ -97,5 +116,5 @@ func (inst *Instance) RuntimeVar(name string) (data.Data, error) {
 // RuntimeVarNames implements scope.RuntimeVarsSupplier: it lists the runtime
 // variables the instance exposes under the RUNTIME source.
 func (inst *Instance) RuntimeVarNames() []string {
-	return []string{StartedAt, CurrState, TracksCount, CompletedBy}
+	return []string{StartedAt, CurrState, TracksCount, CompletedBy, Iterations}
 }

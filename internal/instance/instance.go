@@ -54,6 +54,10 @@ type Instance struct {
 	// performers records who completed each human task, served read-only through
 	// the RUNTIME subtree and carried across a hydrate (ADR-020 v.2 §2.4.2).
 	performers *performers
+	// iterations records what each iterated activity did — the durable half of
+	// §2.9's attributes, keyed by activity id so two concurrent iterations
+	// stay distinguishable (ADR-025 §2.9.2).
+	iterations *iterations
 	now        func() time.Time
 	tracksSnap atomic.Pointer[[]*track]
 	lastErr    atomic.Pointer[error]
@@ -573,6 +577,7 @@ func New(
 	// inst escapes via &inst below (the instanceScope loader takes it the same way).
 	inst.corr = correlator{inst: &inst, keys: map[string]string{}}
 	inst.performers = newPerformers()
+	inst.iterations = newIterations()
 
 	if err := inst.sc.load(
 		parentRoot, inst.s.ProcessName, inst.s.Properties,

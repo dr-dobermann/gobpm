@@ -188,6 +188,17 @@ func (d *loopDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 			return nil, err
 		}
 
+		// the engine's own names for this pass, from the one builder every
+		// publication path shares (iterationvars.go), at the same scope the
+		// counter is bound to.
+		for _, b := range iterationBindings(
+			t.scopePath.String(), iterKindStdLoop, d.step.node, pass) {
+			if err := t.instance.sc.bindDataItemAt(
+				t.scopePath, b.name, b.value); err != nil {
+				return nil, err
+			}
+		}
+
 		// pre-tested (while) tests every pass; post-tested (do-while) skips
 		// the first — one test site for both.
 		if d.sl.TestBefore() || pass > 0 {

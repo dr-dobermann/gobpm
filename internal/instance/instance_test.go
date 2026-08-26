@@ -114,6 +114,11 @@ func TestMonitoring(t *testing.T) {
 			// deliberately not one name per completed task, so this set stays
 			// closed as human tasks complete.
 			instance.CompletedBy,
+			// The iteration register (ADR-025 §2.9.2) — one map-valued name
+			// keyed by activity id, for the same reason: the set stays closed
+			// however many activities iterate, and a key disambiguates two
+			// iterating at once where a flat name could not.
+			instance.Iterations,
 		},
 		inst.RuntimeVarNames())
 
