@@ -8,6 +8,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
+	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -61,6 +62,14 @@ func (t *Thresher) InvokeProcess(
 			errs.D(observability.AttrCalledKey, call.Key))
 	}
 
+	// The callee's contract is fixed the moment its version is (ADR-019
+	// latest-at-launch), so this is where the caller's declared outputs are
+	// checked against it (ADR-040 §2.4, SRD-093 FR-10); the inputs are
+	// checked by the child's own construction below.
+	if err := checkCallOutputs(s, call); err != nil {
+		return nil, err
+	}
+
 	// NewChild only fails on a malformed snapshot or linkage; the registry
 	// hands a validated snapshot and the linkage is checked above, so this is a
 	// defensive wrap (the launchInstance pattern).
@@ -101,6 +110,59 @@ func (t *Thresher) InvokeProcess(
 	return &childProcess{inst: inst, settled: settled, version: resolved}, nil
 }
 
+// checkCallOutputs refuses a call whose caller declares an output the callee's
+// contract does not (ADR-040 §2.4, SRD-093 FR-10). A contract-less callee
+// declares nothing to check against and serves what its scope holds.
+func checkCallOutputs(s *snapshot.Snapshot, call exec.ProcessCall) error {
+	if s.IOSpec == nil {
+		return nil
+	}
+
+	outputs := s.IOSpec.OutputSet()
+
+	declared := make(map[string]bool, len(outputs))
+	names := make([]string, 0, len(outputs))
+
+	for _, out := range outputs {
+		declared[out.Name()] = true
+		names = append(names, out.Name())
+	}
+
+	for _, name := range call.Outputs {
+		if !declared[name] {
+			return errs.New(
+				errs.M("call activity %q: output %q is not declared by "+
+					"process %q (declared outputs: %s)", call.CallNodeID, name,
+					call.Key, strings.Join(names, ", ")),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.D(observability.AttrCalledKey, call.Key))
+		}
+	}
+
+	return nil
+}
+
+// outputsFromResult serves the caller's requested names from a contracted
+// child's collected result, in the caller's order. Every requested name
+// passed checkCallOutputs at launch, so a name the result lacks is a
+// declared OPTIONAL output the child never produced: it simply does not
+// flow (ADR-040 §2.3) — its slot is nil, and the caller binds nothing
+// under it.
+func outputsFromResult(result []data.Data, names []string) []data.Data {
+	byName := make(map[string]data.Data, len(result))
+	for _, d := range result {
+		byName[d.Name()] = d
+	}
+
+	out := make([]data.Data, 0, len(names))
+
+	for _, name := range names {
+		out = append(out, byName[name])
+	}
+
+	return out
+}
+
 // childProcess is the exec.ChildProcess adapter over a launched child instance:
 // a thin, read-only projection the caller loop watches. It never exposes the
 // instance object, only the call protocol's surface.
@@ -133,10 +195,22 @@ func (c *childProcess) Failed() error {
 	return c.inst.LastErr()
 }
 
-// Outputs reads the named data from the child's root scope after completion —
-// the Call Activity's declared Output parameters, the call's return values. A
-// missing name is a classified error (the call contract is broken).
+// Outputs serves the Call Activity's declared Output parameters — the call's
+// return values — after completion. A contracted child serves its collected
+// result, with a nil slot for a declared optional output it never produced;
+// a contract-less one reads its root scope, where a missing name is a
+// classified error (the call contract is broken).
 func (c *childProcess) Outputs(names []string) ([]data.Data, error) {
+	// A contracted child serves its collected result — the values read at
+	// its completion (SRD-093 FR-9); a contract-less one serves whatever
+	// its root scope holds, as it always has (ADR-040 §2.5). The result is
+	// nil only for a contract-less child: a contracted one that produced
+	// nothing holds an EMPTY result, and must not fall through to its raw
+	// scope — that is the boundary.
+	if result := c.inst.Outputs(); result != nil {
+		return outputsFromResult(result, names), nil
+	}
+
 	reader := c.inst.DataReader()
 	out := make([]data.Data, 0, len(names))
 

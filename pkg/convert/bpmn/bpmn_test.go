@@ -181,9 +181,9 @@ func TestImportErrors(t *testing.T) {
 		{
 			name: "unsupported element that DOES carry a section",
 			doc: `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
-  <bpmn:process id="p"><bpmn:ioSpecification id="ios"/></bpmn:process>
+  <bpmn:process id="p"><bpmn:dataInput id="ios"/></bpmn:process>
 </bpmn:definitions>`,
-			want:    `unsupported element "ioSpecification"`,
+			want:    `unsupported element "dataInput"`,
 			wantUee: true,
 			wantSec: "§10.4.1",
 		},

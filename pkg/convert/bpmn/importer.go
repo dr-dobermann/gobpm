@@ -606,8 +606,13 @@ func (p *parser) parseProcess(se xml.StartElement) (*assembly, error) {
 // ahead of a Process's own flowElements, so a schema-valid file always
 // presents it first.
 type procBuild struct {
-	p        *parser
-	asm      *assembly
+	p   *parser
+	asm *assembly
+	// io is the process's <ioSpecification>, buffered for the same reason
+	// the lane sets and properties are (SRD-093 FR-11): the declared
+	// contract is a construction option, and BPMN serializes a callable's
+	// ioSpecification ahead of its flowElements too.
+	io       *ioSpec
 	id, name string
 	docs     []docSpec
 	// laneSets are buffered for the same reason docs are: they reach the
@@ -639,6 +644,10 @@ func (pb *procBuild) child(se xml.StartElement) error {
 
 	if se.Name.Local == tagProperty {
 		return pb.property(se)
+	}
+
+	if se.Name.Local == tagIOSpecification {
+		return pb.ioSpec(se)
 	}
 
 	if pb.asm == nil {
@@ -715,6 +724,36 @@ func (pb *procBuild) property(se xml.StartElement) error {
 }
 
 // build creates the pass-1 state; the process itself is built in pass 2.
+// ioSpec buffers the process's <ioSpecification> — its declared I/O
+// contract (ADR-040, SRD-093 FR-11) — under the same ordering guard as a
+// lane set, and with the activity's at-most-one rule.
+func (pb *procBuild) ioSpec(se xml.StartElement) error {
+	if pb.asm != nil {
+		return errs.New(
+			errs.M("bpmn: <process> %q carries <ioSpecification> after its "+
+				"flow elements; a callable's ioSpecification precedes its "+
+				"flowElements", pb.id),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	if pb.io != nil {
+		return errs.New(
+			errs.M("bpmn: <process> %q carries a second <ioSpecification>; "+
+				"a callable has at most one (§10.4.1)", pb.id),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	spec, err := pb.p.parseIOSpecification(se)
+	if err != nil {
+		return err
+	}
+
+	pb.io = spec
+
+	return nil
+}
+
+// build hands the buffered process spec to a fresh assembly.
 func (pb *procBuild) build() {
 	pb.asm = pb.p.newAssembly(procSpec{
 		id:         pb.id,
@@ -722,6 +761,7 @@ func (pb *procBuild) build() {
 		docs:       pb.docs,
 		laneSets:   pb.laneSets,
 		props:      pb.props,
+		io:         pb.io,
 		executable: pb.executable,
 	})
 }
@@ -743,6 +783,9 @@ func (pb *procBuild) finish() (*assembly, error) {
 // construction moved to pass 2 with the nodes — the same document-order
 // freedom that defers them defers it (§4.6).
 type procSpec struct {
+	// io is the declared I/O contract, nil when the process declares none
+	// (SRD-093 FR-11).
+	io       *ioSpec
 	id, name string
 	docs     []docSpec
 	laneSets []laneSetSpec
@@ -792,6 +835,33 @@ func constructProcess(p *parser, asm *assembly) error {
 		}
 
 		opts = append(opts, data.WithProperties(props...))
+	}
+
+	// The declared contract (ADR-040), through the owner-agnostic half of
+	// the activity's parameter build: a process has no association partner
+	// to adopt an item from, so a parameter names its item or takes the
+	// empty one (SRD-093 FR-11).
+	if spec.io != nil {
+		byDir, ioErr := buildParamSpecs(spec.io.params, false,
+			func(ps *paramSpec, from string) (*data.ItemDefinition, error) {
+				if ps.itemRef == "" {
+					return emptyItem(ps.id)
+				}
+
+				return itemFor(p, asm, from, ps.id, ps.itemRef)
+			})
+		if ioErr != nil {
+			return ioErr
+		}
+
+		// Both options always, even with nothing in them: an explicit
+		// <ioSpecification> that declares no parameter is a STRICT empty
+		// contract — no data required to start, none promised to finish
+		// (ADR-040 §2.1) — not the contract-less process an absent element
+		// leaves.
+		opts = append(opts,
+			data.WithInputs(byDir[data.Input]...),
+			data.WithOutputs(byDir[data.Output]...))
 	}
 
 	proc, err := p.newProcess(spec.name, opts...)
@@ -1917,8 +1987,8 @@ func unsupported(se xml.StartElement) error {
 // structure), and on an event the bare form is legal BPMN awaiting the
 // model's attachment capability (#329) — the settle path cannot tell the
 // two owners apart, so the note carries both truths.
-const dataParamNote = "on a task this element lives inside its " +
-	"<ioSpecification> (§10.4.1) — write it there; an event's bare I/O " +
+const dataParamNote = "on a task or a process this element lives inside " +
+	"its <ioSpecification> (§10.4.1) — write it there; an event's bare I/O " +
 	"awaits the event data attachment capability, #329"
 
 // dataAssocNote explains an association outside an activity's body — its
@@ -1927,14 +1997,11 @@ const dataAssocNote = "a data association lives on the activity whose " +
 	"parameter it wires (§10.4.1); write it inside that task"
 
 // plannedNotes names the record behind each refused data-family tag —
-// after SRD-089.G none of them is STAGED: a task's family imports, and
-// what remains is a capability row (ADR-024 §2.16) or a position the
-// standard reserves. A table rather than per-site wording so one family
-// reads as one answer.
+// after SRD-089.G none of them is STAGED: a task's family imports, a
+// process's contract imports since SRD-093, and what remains is a
+// capability row (ADR-024 §2.16) or a position the standard reserves. A
+// table rather than per-site wording so one family reads as one answer.
 var plannedNotes = map[string]string{
-	tagIOSpecification: "a task's <ioSpecification> imports; the " +
-		"process-level I/O carrier is the missing capability, #330 " +
-		"(ADR-011 §2.5's planned work)",
 	tagDataInput:       dataParamNote,
 	tagDataOutput:      dataParamNote,
 	tagInputSet:        dataParamNote,
