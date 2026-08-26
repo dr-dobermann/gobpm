@@ -1,17 +1,23 @@
 package activities
 
-import "github.com/dr-dobermann/gobpm/pkg/model/lanes"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/lanes"
+)
 
 // subProcessConfig collects the SubProcess-specific construction options.
 type subProcessConfig struct {
 	adHoc *adHocSpec
 
+	// tx is set by WithTransaction: the characteristics that make the
+	// Sub-Process a Transaction (ADR-028 §2.1), nil for every other variant.
+	tx *TransactionCharacteristics
+
 	// laneSets are carried through to the SubProcess; lanes are model-only and
 	// never reach execution (SRD-076).
 	laneSets []*lanes.LaneSet
 
-	triggered     bool
-	isTransaction bool
+	triggered bool
 }
 
 // AddLaneSet implements lanes.LaneSetAdder — a Sub-Process is one of the two
@@ -48,16 +54,32 @@ func WithTriggeredByEvent() SubProcessOption {
 	})
 }
 
-// WithTransaction marks the SubProcess as a Transaction Sub-Process (BPMN §10.7,
+// WithTransaction makes the SubProcess a Transaction Sub-Process (BPMN §10.7,
 // ADR-028 §2.1): a plain embedded Sub-Process in every respect except that
-// reaching a Cancel End Event inside it triggers an ACID-like abort — compensate
-// its completed inner activities, terminate the running ones, and leave through
-// its Cancel boundary. The marker only permits Cancel (End + boundary) and names
-// the scope a cancel aborts; it is mutually exclusive with WithTriggeredByEvent
-// (a handler is not a transaction).
-func WithTransaction() SubProcessOption {
+// reaching a Cancel End Event inside it triggers an ACID-like abort —
+// compensate its completed inner activities, terminate the running ones, and
+// leave through its Cancel boundary. The characteristics permit Cancel (End +
+// boundary), name the scope a cancel aborts, and carry the abort method and
+// coordination protocol the document stated (ADR-028 §2.7); with no options
+// the method is compensate and no protocol is stated. Mutually exclusive with
+// WithTriggeredByEvent (a handler is not a transaction).
+func WithTransaction(opts ...TransactionOption) SubProcessOption {
 	return SubProcessOption(func(cfg *subProcessConfig) error {
-		cfg.isTransaction = true
+		tc := &TransactionCharacteristics{method: TransactionCompensate}
+
+		for _, o := range opts {
+			if o == nil {
+				return errs.New(
+					errs.M("WithTransaction: a nil TransactionOption isn't allowed"),
+					errs.C(errorClass, errs.InvalidParameter))
+			}
+
+			if err := o(tc); err != nil {
+				return err
+			}
+		}
+
+		cfg.tx = tc
 
 		return nil
 	})
