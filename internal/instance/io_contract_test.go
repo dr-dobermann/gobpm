@@ -16,6 +16,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/stretchr/testify/require"
 )
 
@@ -302,11 +303,18 @@ func TestEventBornLaunchWithRequiredInputRefused(t *testing.T) {
 		func(t *testing.T) {
 			s, start, fired := contractedMsgStart(t, intInput("subtotal"))
 
-			_, err := NewFromEvent(s, scope.EmptyDataPath, enginert.Default(),
+			// a refused launch never existed: it leaves no Created fact
+			// behind (T-20)
+			sink := &cpSink{}
+
+			_, err := NewFromEvent(s, scope.EmptyDataPath,
+				enginert.Default().WithReporter(sink),
 				failEventProducer{}, nil, start.ID(), fired, "", "")
 			require.Error(t, err)
 			require.ErrorContains(t, err, `required input "subtotal"`)
 			require.ErrorContains(t, err, "#329")
+			require.False(t, sink.has(observability.PhaseCreated),
+				"a refused launch announced Created")
 		})
 
 	t.Run("an optional input lets the event-born instance run",

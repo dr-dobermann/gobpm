@@ -617,6 +617,7 @@ No existing signature breaks; the consumer-smoke gate proves it.
 | T-17 | `TestProcessSecondIOSpecRefused` (+ the multi-set row) | the activity refusals hold at process level | FR-11 |
 | T-18 | `TestProcessBareDataInputRefused` | the note names the process as an owner; `#330` no longer appears anywhere | FR-11 |
 | T-19 | e2e `TestContractlessProcessesUnchanged` | the thresher suite's existing call and start tests pass untouched | NFR-1 |
+| T-20 | `TestEventBornLaunchWithRequiredInputRefused` (fact sink) | a refused launch leaves no `Created` fact — the instance never existed | FR-4 |
 
 The retired pins are rewritten in the same milestone: the
 `"ioSpecification on a process"` row of `refusalwording_test.go`
@@ -631,7 +632,8 @@ different refused element).
 | M2 | Snapshot carriage, the launch binding with type check and both refusals, the host `StartOption`, the event-born rule (T-4…T-9) | one |
 | M3 | Completion reading, the required-output fault, `Outputs()` on instance and handle, `ProcessCall.Outputs` + the invoker check, result-served child outputs (T-10…T-14, T-19) | one |
 | M4 | Importer: the buffered process `<ioSpecification>`, the `buildParamSpecs` extraction, retired refusal text and pins (T-15…T-18) | one |
-| M5 | `examples/process-io/` (process.go / handlers.go / main.go / check.go / README) + the examples index and README rows | one |
+| M5 | `examples/process-io/` (process.go / handlers.go / launch.go / check.go / main.go / README) + the examples index and README rows | one |
+| M5a | Found by M5's run log: `instance.New` announced `Created` before the scope load and the contract binding, so a refused launch left an orphan fact with no transition after it. The announcement now follows a successful seed (T-20) | one |
 
 ## §8 Cross-doc references
 

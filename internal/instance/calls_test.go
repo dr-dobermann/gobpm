@@ -316,6 +316,8 @@ func TestCallInputsClonedToChild(t *testing.T) {
 // TestCallCompletionBindsOutputs (SRD-050 FR-7): the child's declared output is
 // read by name and committed into the caller's scope.
 func TestCallCompletionBindsOutputs(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
 	child := newFakeChild("child-3", 1)
 	child.outputs = map[string]data.Data{"result": namedDatum("result", 99)}
 	child.finish()

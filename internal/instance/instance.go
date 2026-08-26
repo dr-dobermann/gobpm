@@ -583,7 +583,6 @@ func New(
 	}
 
 	inst.wireWaitHeld()
-	inst.announceCreated()
 	// The correlator back-pointer refers to the same heap object New returns —
 	// inst escapes via &inst below (the instanceScope loader takes it the same way).
 	inst.corr = correlator{inst: &inst, keys: map[string]string{}}
@@ -606,6 +605,11 @@ func New(
 	if serr != nil {
 		return nil, serr
 	}
+
+	// Announced only now: a launch the scope load or the I/O contract refuses
+	// (ADR-040 §2.2) never existed, so it must not leave a Created fact with
+	// no transition after it.
+	inst.announceCreated()
 
 	// Seed the conversation key BEFORE createTracks (SRD-017 §4.5): createTracks
 	// parks an in-instance receiver reached directly off the born start, and the
