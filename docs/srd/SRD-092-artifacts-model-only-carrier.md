@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-25 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-039 v.1](../design/ADR-039-standard-artifacts.md) (the model-only artifact tier: the carried three, the closed set, the category-embed rule, the compensation exclusion, the degradation-to-report disposition) |

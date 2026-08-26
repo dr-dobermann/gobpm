@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The standard's artifacts are carried, and an annotated diagram
+  imports** (ADR-039 v.1 / SRD-092, closes #323). BPMN §8.4.1's three
+  artifacts — `Association` (plain shape), `TextAnnotation`, `Group` —
+  become model elements behind a closed `artifacts.Artifact` interface,
+  held by `Process` and `SubProcess` (`AddArtifacts`/`Artifacts`) under
+  the lanes-style model-only contract: preserved for BPMN loading and
+  round-trip, never executed, never on an instance. The importer maps
+  them in every container context — retiring the refusal that rejected
+  a whole file for the line drawn to a comment — with `<category>`
+  consumed at load as the value a group embeds, and any reference the
+  model does not hold degrading that ONE artifact to a `Dropped` report
+  while the file survives. The compensation `<association>` stays the
+  boundary's handler wiring, never duplicated as an artifact. Along the
+  way: `Association` gains a validating constructor over
+  `foundation.Identifyer` ends with the spec's `None` default
+  (`DirectionNone`/`DirectionOne`/`DirectionBoth`), `TextAnnotation` is
+  new, the bare `Artifact` struct is gone; an id-less
+  `<lane>`/`<laneSet>` imports under a generated id instead of refusing
+  the file, and declared lane ids join the document's one id ledger.
+
 - **BPMN import covers the loop characteristics** (SRD-089.H, part of
   #284). `<standardLoopCharacteristics>` maps onto `NewStandardLoop` —
   condition, `testBefore`, `loopMaximum` — and
@@ -301,7 +321,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than refused — a runnable file was being rejected for carrying a
   comment. `<association>` is deliberately still refused: it carries
   compensation semantics. (`<import>` was skipped here too, until the
-  data-family entry below made it meaningful.)
+  data-family entry below made it meaningful. Both dispositions were
+  since superseded by the artifact tier above: the artifacts are
+  CARRIED now, and the plain association imports.)
 
 ### Added
 
