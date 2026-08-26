@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync/atomic"
 
@@ -9,6 +10,13 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
+
+// errDehydrated unwinds a track whose executor the loop released while it
+// held something open (SRD-090.A FR-8). It is NOT a failure and not a
+// cancellation: the activity is mid-flight and stays that way, durably, and
+// the run loop returns without touching the terminal state the release
+// already set.
+var errDehydrated = errors.New("the loop released this executor")
 
 // scopeExec is the sub-process realization of activityExec: it runs ONE
 // instance of a COMPOSITE activity, and an instance of a composite activity
@@ -183,6 +191,31 @@ func (e *scopeExec) awaitDrain(ctx context.Context) error {
 		// as a cancellation, which is how the evtCh close read before.
 		return context.Canceled
 
+	case <-e.t.dehydrateCh:
+		// A DRAIN THAT ALREADY HAPPENED WINS. Both channels are closed by
+		// the loop, and it can close them back to back: completeScope
+		// closes the drain, and the loop tail then runs maybeDehydrate
+		// while this goroutine has not yet been scheduled — so it still
+		// reads as parked and gets released too. With both ready, select
+		// picks at random, and picking the release would discard a
+		// completion that will never be signaled again: the restored host
+		// would re-attach to a scope the loop had already torn down.
+		select {
+		case <-e.drain:
+			return nil
+		default:
+		}
+
+		// the loop released this host (SRD-090.A FR-8): every live track,
+		// this instance's body included, is parked on a held wait, so the
+		// whole instance is going away and the drain will not arrive in
+		// this process. The scope is NOT closed and the body is NOT torn
+		// down — both are durable, and a restore re-enters this decorator
+		// at its recorded position, re-attaching to the scope it left.
+		e.t.updateState(TrackDehydrated)
+
+		return errDehydrated
+
 	case <-e.drain:
 		return nil
 	}
@@ -198,6 +231,10 @@ func (e *scopeExec) awaits() awaitKind {
 
 	return awaitNothing
 }
+
+// subscriber: a composite instance opens a scope and registers nothing —
+// the body's own tracks own their waits (SRD-090.B FR-1).
+func (e *scopeExec) subscriber() activitySubscriber { return nil }
 
 // instanceScopesOf returns the still-open INSTANCE scopes this host fanned
 // out, in ordinal order — never its own serial pass's scope, which is one

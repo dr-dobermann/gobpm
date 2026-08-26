@@ -21,9 +21,27 @@ type trackEvent struct {
 	succs        []successor
 	msgDefIDs    []string
 	condDefs     []*events.ConditionalEventDefinition
-	changes      []data.Change
-	compWait     bool
-	kind         trackEventKind
+	// iterProc names the DECORATOR a delivery arrived through, when the
+	// subscriber was an iterated activity rather than a track (ADR-006
+	// §2.9.5). nil for every other delivery, which is every delivery today:
+	// the loop asks it which instances are waiting and dispatches to them
+	// (SRD-090.B FR-3), because routing is the single writer's and stays
+	// there.
+	iterProc iterProcessor
+	changes  []data.Change
+	compWait bool
+	kind     trackEventKind
+}
+
+// iterProcessor is the decorator's dispatch face, as the LOOP sees it: which
+// ordinals are parked on a definition, in the order a delivery must reach
+// them. Narrow on purpose — the loop learns which executions await something,
+// never that the activity iterates, how many instances it holds, or of what
+// kind (SRD-090.A FR-11).
+type iterProcessor interface {
+	waitingOn(defID string) []int
+	deliverTo(ord int, eDef flow.EventDefinition) bool
+	anyWaiting() bool
 }
 
 // successor is one next step for a track: the node to run and, when the token

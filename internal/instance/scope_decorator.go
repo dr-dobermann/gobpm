@@ -265,6 +265,16 @@ func (ls *loopState) reattachScope(
 		ls.ensureIterMirror(req.host, req.iterKind)
 	}
 
+	// A RESTORED entry does not know it belongs to an iteration: restore
+	// rebuilds it from the scope table, which records the path and its host
+	// but not who drives it. The re-attaching executor declares that here,
+	// the same way a fresh open does — and it has to, because markIterDrain
+	// ignores a non-iterating entry: without this the mirror's completed
+	// count never advances after a restore, the position record stays at
+	// zero, and a sequential composite re-runs its first pass on every
+	// wake, forever (SRD-090.A M3d).
+	entry.iterating = req.iterating
+
 	entry.awaitAttach = false
 
 	// the re-attaching instance is a NEW executor over an old scope, so the

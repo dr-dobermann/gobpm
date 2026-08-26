@@ -60,9 +60,32 @@ type taskRecord struct {
 // registerTask records a distributed task: its owning instance, the triad resolved
 // at distribution, and — when the triad names exactly one actor — that actor as the
 // initial owner, so a directly-assigned task is born owned (ADR-020 v.2 §2.5.3).
+//
+// An ALREADY REGISTERED id is a RE-ANNOUNCEMENT, not a new task, and keeps the
+// record it already has. Hydrating a released instance re-parks the wait and
+// announces it again under the recorded id (ADR-020 §2.1), and both fields must
+// survive that:
+//
+//   - owner, or a claim taken during the wait is wiped by the very Take that opens
+//     the form — measured: Claim → Take → Complete refused the holder's own
+//     completion as TASK_UNCLAIMED, so §2.4.1's exclusivity lapsed exactly on the
+//     long-lived tasks it exists for, and a second candidate could claim behind the
+//     first one's back;
+//   - eligible, because §2.7 freezes the eligible set at distribution — a set
+//     re-resolved on a later announcement is not the set the task was offered on.
+//
+// Ids come from foundation.GenerateID and a completed or withdrawn task is
+// unregistered, so a live id in the map is always the same task — and a rebuild
+// restores the instance under its own id, so instanceID cannot have moved either.
+// The record is therefore left entirely alone, which keeps owner the only field
+// that ever mutates after registration.
 func (t *Thresher) registerTask(task interactor.TaskInfo) {
 	t.m.Lock()
 	defer t.m.Unlock()
+
+	if _, ok := t.tasks[task.TaskID]; ok {
+		return
+	}
 
 	t.tasks[task.TaskID] = &taskRecord{
 		instanceID: task.InstanceID,

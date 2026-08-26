@@ -232,34 +232,48 @@ in a fresh frame with its split item and `loopCounter` — and a
 **parallel leaf** fans out per-instance scopes, each running one track
 at the task. Before SRD-086 a leaf MI silently executed ONCE.
 
-**A leaf that WAITS cannot be iterated yet, and the engine refuses to
-build one.** If an activity both declares loop characteristics and
-parks on execution — a ReceiveTask or other catching event node, a
-user task, an external worker — `snapshot.New` fails with a message
-naming the activity and pointing at
-[#313](https://github.com/dr-dobermann/gobpm/issues/313). The reason is
-that nothing owns the node's event registration across iterations: the
-node registers one wait, so a second iteration either never arms or
-serves the wrong one, and both in-place mechanisms tried during SRD-086
-failed (one hung, one fanned out recursively). A refusal at build time
-is the honest outcome until the loop/MI decorator becomes the single
-event processor for the node.
+**A leaf that WAITS can be iterated** (SRD-090.B). The decorator owns the
+node's event registration across iterations, so it is the single event
+processor for the activity: it holds one subscription per definition and
+routes each delivery to the instance that was waiting for it. A sequential
+Multi-Instance over a `ReceiveTask` consumes one message per pass, and a
+Standard Loop over one does the same.
 
-**The workaround is a Sub-Process.** Put the wait inside an iterated
-Sub-Process and iterate that: the composite machinery already opens a
-scope per iteration and drives its waits correctly, including
-`events.WithIterationCorrelation` message routing (see *Events in a
-parallel body*, below).
+Two shapes are still refused at `snapshot.New`, and for different reasons:
+
+- **A parallel fan-out over a Message catch with no iteration correlation.**
+  A message is point-to-point, so with N instances waiting at once nothing
+  says which envelope belongs to which. Declare
+  `activities.WithIterationCorrelation` (see *Events in a parallel body*)
+  and it builds; leave it out and any choice would be a coin toss.
+- **A parallel fan-out over work that parks outside the event system** — a
+  User Task or an external-worker Service Task. Those park on a capability
+  rather than a subscription, and the identity that addresses the parked
+  work is one slot on the host track, so N instances would announce a single
+  task between them: the rest would complete without anyone doing them.
+  Make it **sequential** — one instance parks at a time and each pass is
+  completed on its own — or model N tasks.
 
 ```go
-// refused by snapshot.New: the wait IS the iterated activity
+// works: one message consumed per pass
 recv, _ := activities.NewReceiveTask("collect", msg,
-    activities.WithLoop(mi))
+    activities.WithoutParams(), activities.WithLoop(seqMI))
 
-// works: iterate the container, and put the wait inside it
-body, _ := activities.NewSubProcess("collect", activities.WithLoop(mi))
-// … add the ReceiveTask (without WithLoop) to body's own flow
+// works: a parallel fan-out that says how its envelopes are addressed
+recv, _ := activities.NewReceiveTask("collect", msg,
+    activities.WithoutParams(), activities.WithLoop(parallelMI),
+    activities.WithIterationCorrelation("iterKey", iterExpr))
+
+// refused: a parallel fan-out over a User Task
+ut, _ := activities.NewUserTask("approve",
+    activities.WithCandidateUsers("alice"),
+    activities.WithoutParams(), activities.WithLoop(parallelMI))
 ```
+
+The parallel human fan-out is designed — [ADR-025](../../design/ADR-025-activity-iteration-loop-and-multi-instance.md)
+§2.15 and [ADR-020](../../design/ADR-020-human-interaction-execution-model.md)
+§2.12 decide what it means — and the refusal lifts when each instance owns
+its parked identity.
 
 ## Events in a parallel body
 

@@ -207,12 +207,34 @@ type stepInfo struct {
 	state  stepState
 }
 
+// execHandle carries an activityExec through an atomic.Pointer — the
+// interface value needs a concrete box to live in.
+//
+// node is what the executor was built FOR. The handle outlives a single call
+// now (arrival resolves it, execution reuses it — SRD-090.B FR-1), so a
+// reader has to be able to tell whether the executor it finds belongs to the
+// step it is asking about: a track that advanced would otherwise be handed
+// the previous node's executor and re-run it.
+type execHandle struct {
+	e    activityExec
+	node flow.Node
+}
+
 // track processed single line of the process from start noed or
 // from fork of sequence flow.
 type track struct {
-	lastErr     error
-	ctx         context.Context
-	hist        atomic.Pointer[[]stepUpdate]
+	lastErr error
+	ctx     context.Context
+	hist    atomic.Pointer[[]stepUpdate]
+	// exec is the executor currently running this track's step, or nil
+	// between steps. The track's OWN goroutine writes it; the LOOP reads it
+	// to ask what the activity awaits (SRD-090.A FR-8) — which is why it is
+	// atomic and why the answer comes from the executor rather than from a
+	// mirror the loop would have to keep in step.
+	//
+	// A pointer to a one-field struct because the value is an interface:
+	// atomic.Pointer needs a concrete type to point at.
+	exec        atomic.Pointer[execHandle]
 	instance    *Instance
 	cancel      context.CancelFunc
 	miState     *miState
@@ -513,6 +535,25 @@ func newTrack(
 // on its own channel — the born-parked track is recorded by spawn's
 // recordBornWaiter instead (SRD-027 FR-5). Only the mid-run path (the
 // track's own goroutine) emits.
+// resolveExec returns the executor this track addresses for the given step,
+// building it on first use and retaining it (SRD-090.B FR-1).
+//
+// ONE object per step, from arrival until the step ends: classification,
+// arming, execution and unregistration all address it. Two constructions
+// would produce two objects with one identity — the hub compares subscribers
+// by ID — and the subscription set would live on whichever was not
+// dispatching.
+func (t *track) resolveExec(step *stepInfo) activityExec {
+	if h := t.exec.Load(); h != nil && h.node == step.node {
+		return h.e
+	}
+
+	e := execFor(t, step)
+	t.exec.Store(&execHandle{e: e, node: step.node})
+
+	return e
+}
+
 func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	// Non-event wait nodes (human task / composite / call / worker) park via
 	// their capability, dispatched in checkActivityWaitKind.
@@ -540,16 +581,6 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 
 	defs := en.Definitions()
 	if len(defs) == 0 {
-		return nil
-	}
-
-	// a PARALLEL Multi-Instance host doesn't wait — its decorator drives
-	// the iteration, and registering the host would evaluate iteration
-	// correlation at the HOST scope, where no split item exists. The
-	// instances themselves cannot wait either while an iterated waiting
-	// activity is refused at build time (SRD-090.A FR-10); SRD-090.B makes
-	// the decorator the registered processor and retires that refusal.
-	if mi := multiInstanceOf(node); mi != nil && !mi.IsSequential() {
 		return nil
 	}
 
@@ -679,7 +710,19 @@ func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error
 	// data), so an EBG carrying one always stays resident.
 	allHeld := true
 
+	owner := t.activityOwner()
+
 	for _, d := range defs {
+		// A SIBLING ALREADY ARMED THIS DEFINITION. Its hold and its hub
+		// subscription serve this instance too, because both belong to the
+		// activity rather than to one of its instances (SRD-090.B FR-2) —
+		// so recording the waiter is all this pass owes. Arming again would
+		// take a second hold under the same (instance, track) key, and the
+		// first delivery's ReleaseWaits would then withdraw the lot.
+		if owner != nil && !owner.awaiting(d, t.execOrdinal()) {
+			continue
+		}
+
 		if t.holdWait(d) {
 			continue
 		}
@@ -690,8 +733,20 @@ func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error
 			continue
 		}
 
+		// WHO registers is the executor's answer (SRD-090.B FR-1). A
+		// decorator subscribes for the whole ACTIVITY and holds one
+		// subscription across every pass, where a track's registration is
+		// keyed to an arrival an in-place iteration never repeats. A leaf
+		// owns its own wait and answers nil, leaving the per-trigger rule
+		// below exactly as it was: a Message registers the Instance, which
+		// owns correlation, anything else registers the track.
 		proc := eventproc.EventProcessor(t)
-		if d.Type() == flow.TriggerMessage {
+
+		switch {
+		case owner != nil:
+			proc = owner
+
+		case d.Type() == flow.TriggerMessage:
 			proc = t.instance
 		}
 
@@ -709,6 +764,38 @@ func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error
 	t.held.Store(allHeld && len(defs) > 0)
 
 	return nil
+}
+
+// activitySubscriber reports the executor that subscribes for this track's
+// current activity, or nil when the existing per-trigger rule stands.
+// execOrdinal is the ordinal of the instance parking right now — the join key
+// the subscription set records a waiter under (SRD-090.B FR-2/FR-3).
+//
+// Asked of the executor, which is the only thing that knows: a decorator's
+// live instance reports its own ordinal, and a plain activity is instance
+// zero of one.
+func (t *track) execOrdinal() int {
+	h := t.exec.Load()
+	if h == nil {
+		return 0
+	}
+
+	return h.e.state().ordinal
+}
+
+func (t *track) activityOwner() activitySubscriber {
+	step := t.currentStep()
+	if step == nil || step.node == nil {
+		return nil
+	}
+
+	// Resolved from the track's OWN step, not from a synthesized one: the
+	// executor built here is the object executeStep will reuse, so it must be
+	// built from the same step or it would lose what the step carries (the
+	// arrival flow, the pass state). Resolving lazily also keeps every plain
+	// node's path untouched — its executor answers nil, so nothing about
+	// arming changes for it (SRD-090.B FR-1/NFR-1).
+	return t.resolveExec(step).subscriber()
 }
 
 // holdWait offers a definition to the engine's durable holders (SRD-071 FR-3),
@@ -806,6 +893,16 @@ func (t *track) holdTask(flow.Node) bool {
 // no-op. A hold that outlives its wait is never benign: a stale deadline or
 // subscription wakes a later cycle for a wait that no longer exists.
 func (t *track) releaseHolds() {
+	// The hold belongs to the ACTIVITY, not to the instance that just
+	// delivered (SRD-090.B FR-2). ReleaseWaits withdraws every hold taken
+	// for this track, so releasing while a sibling still waits would leave
+	// that sibling with nothing able to wake a released instance — the
+	// sibling-teardown failure ADR-006 §2.9.5 names, one layer below the
+	// hub.
+	if owner := t.activityOwner(); owner != nil && owner.anyWaiting() {
+		return
+	}
+
 	if t.held.Swap(false) && t.instance.waitHolders != nil {
 		t.instance.waitHolders.ReleaseWaits(t.instance.ID(), t.ID())
 	}
@@ -1122,6 +1219,68 @@ func (t *track) stop() {
 
 // run start execution loop of the track which ends by ctx's cancel or
 // when there is no outgoing flows from the processing nodes.
+// errStopped unwinds a unit whose track was taken away while it waited — a
+// cancellation, a terminate, or the loop closing its channel. awaitTrigger
+// has already set the terminal state; the goroutine's remaining job is to
+// stop existing, which is what the run loop does with this.
+var errStopped = errors.New("the track was stopped while it waited")
+
+// errRedispatch unwinds a unit whose step is no longer the track's current
+// one, which delivery can do: an Event-Based Gateway advances onto the arm
+// that fired (deliver → advanceToArm), so the gate's unit must yield rather
+// than execute a node the token has moved past.
+var errRedispatch = errors.New("the delivery moved this token")
+
+// parkForDelivery blocks until this pass's trigger arrives, when the track is
+// parked for one (SRD-090.B FR-2). A no-op for every node that does not wait,
+// which is nearly all of them.
+//
+// It replaces the run loop's pre-step gate. Same act, one level down: the
+// unit that runs a node is the thing that waits for it, so an activity
+// running its node N times waits N times rather than once.
+func (t *track) parkForDelivery(
+	ctx context.Context, step *stepInfo,
+) (*data.ItemDefinition, error) {
+	if !t.inState(TrackWaitForEvent) {
+		return nil, nil
+	}
+
+	// An instance of an iterated activity blocks on ITS OWN box, not on the
+	// track's shared channel (SRD-090.B M5b): N of them can wait at once,
+	// and one channel can neither reach them all for a broadcast nor say
+	// which of them a point-to-point envelope was meant for.
+	box := t.evtCh
+
+	if owner := t.activityOwner(); owner != nil {
+		if b := owner.boxFor(t.execOrdinal()); b != nil {
+			box = b
+		}
+	}
+
+	if !t.awaitTrigger(ctx, box) {
+		return nil, errStopped
+	}
+
+	if cur := t.currentStep(); cur != nil && cur.node != step.node {
+		return nil, errRedispatch
+	}
+
+	// THE PAYLOAD IS THIS INSTANCE'S, and leaves the track with the unit
+	// that received it (ADR-006 §2.9.1: the receiving execution captures the
+	// item into its own frame).
+	//
+	// `deliver` stages it on the track, which is a single slot — fine while
+	// one execution waits at a time, and wrong the moment N instances of one
+	// activity wait concurrently: each would overwrite the others' item
+	// before binding it, off its own goroutine, on a field whose own comment
+	// says it is track-goroutine owned. Taking it here puts it on the unit's
+	// stack, where it belongs to exactly one execution by construction.
+	item := t.receivedItem
+	t.receivedItem = nil
+
+	return item, nil
+}
+
 // awaitTrigger parks the track on its event channel until a trigger arrives, the
 // loop releases it (dehydration, SRD-071), the loop closes evtCh on stop, or the
 // context is canceled. Zero CPU while parked (SRD-027 FR-1): the loop is the sole
@@ -1129,7 +1288,9 @@ func (t *track) stop() {
 // returns true to continue the run loop (event delivered), false when the
 // goroutine must return — setting the terminal state (Canceled / Dehydrated /
 // Failed) accordingly.
-func (t *track) awaitTrigger(ctx context.Context) (proceed bool) {
+func (t *track) awaitTrigger(
+	ctx context.Context, box chan flow.EventDefinition,
+) (proceed bool) {
 	select {
 	case <-ctx.Done():
 		t.updateState(TrackCanceled)
@@ -1145,7 +1306,7 @@ func (t *track) awaitTrigger(ctx context.Context) (proceed bool) {
 
 		return false
 
-	case eDef, ok := <-t.evtCh:
+	case eDef, ok := <-box:
 		if !ok {
 			// the loop closed evtCh on stop — terminate like a cancellation.
 			t.updateState(TrackCanceled)
@@ -1153,15 +1314,43 @@ func (t *track) awaitTrigger(ctx context.Context) (proceed bool) {
 			return false
 		}
 
-		if err := t.deliver(ctx, eDef); err != nil {
-			t.lastErr = err
-			t.updateState(TrackFailed)
+		return t.applyTrigger(ctx, eDef)
+
+	// THE TRACK'S OWN CHANNEL STAYS LIVE alongside the instance's box.
+	// Only a delivery the DECORATOR routed lands in the box (SRD-090.B
+	// FR-3); everything else still arrives here — a wait the engine HELD
+	// rather than registered with the hub, a task completion, a call or
+	// job outcome. An instance takes whichever comes.
+	//
+	// For a sequential activity that is exact: one instance waits, so both
+	// channels mean the same waiter. A PARALLEL one sharing this channel
+	// would hand a holder-delivered trigger to an arbitrary instance —
+	// which is M6's, with the restore and residency work that owns the
+	// holder seam.
+	case eDef, ok := <-t.evtCh:
+		if !ok {
+			t.updateState(TrackCanceled)
 
 			return false
 		}
 
-		return true
+		return t.applyTrigger(ctx, eDef)
 	}
+}
+
+// applyTrigger delivers a fired definition on the track's own goroutine,
+// reporting whether the run loop continues.
+func (t *track) applyTrigger(
+	ctx context.Context, eDef flow.EventDefinition,
+) (proceed bool) {
+	if err := t.deliver(ctx, eDef); err != nil {
+		t.lastErr = err
+		t.updateState(TrackFailed)
+
+		return false
+	}
+
+	return true
 }
 
 func (t *track) run(
@@ -1178,14 +1367,6 @@ func (t *track) run(
 			t.updateState(TrackCanceled)
 
 			return
-		}
-
-		if t.inState(TrackWaitForEvent) {
-			if !t.awaitTrigger(ctx) {
-				return
-			}
-
-			continue
 		}
 
 		select {
@@ -1223,6 +1404,23 @@ func (t *track) run(
 
 		nextFlows, err := t.executeStep(ctx, step)
 		if err != nil {
+			// the loop released this executor while it held something open
+			// (SRD-090.A FR-8). Not a discard and not a failure: the
+			// activity is mid-flight and stays that way durably, the
+			// release already set TrackDehydrated, and the goroutine's
+			// only remaining job is to stop existing.
+			if errors.Is(err, errDehydrated) || errors.Is(err, errStopped) {
+				return
+			}
+
+			// the delivery moved this token — an Event-Based Gateway
+			// advances onto its winning arm inside deliver — so the unit
+			// yielded rather than executing a step that is no longer
+			// current. Re-dispatch on the step that IS.
+			if errors.Is(err, errRedispatch) {
+				continue
+			}
+
 			t.discardOrFail(ctx, err)
 
 			return
@@ -1432,6 +1630,22 @@ func (t *track) executeNodeAs(
 	step *stepInfo,
 	ai activityInstance,
 ) ([]*flow.SequenceFlow, error) {
+	// THE UNIT PARKS ITS OWN PASS (SRD-090.B FR-2). Before this, parking was
+	// the run loop's pre-step gate — once per STEP, above executeStep — so
+	// every pass of an iterated activity ran below it and, after the first
+	// delivery, executed its node without waiting at all. That was #313's
+	// defect surviving the ownership change.
+	//
+	// Ahead of the frame open, because the delivery's payload is captured
+	// INTO that frame (ADR-006 §2.9.1): the receiving execution binds its own
+	// item, so it must have received it by the time the frame exists.
+	received, err := t.parkForDelivery(ctx, step)
+	if err != nil {
+		return nil, err
+	}
+
+	ai.received = received
+
 	ne, ok := step.node.(exec.NodeExecutor)
 	if !ok {
 		return nil,
@@ -1452,6 +1666,15 @@ func (t *track) executeNodeAs(
 				errs.E(err))
 	}
 
+	// Stage this instance's payload as soon as its frame exists, not at
+	// finalize: the node's own Exec reads it through the execution
+	// environment (execEnv.ReceivedItem), which resolves from the FRAME —
+	// per execution — before falling back to the track's single slot. A
+	// ReceiveTask produces its output from it, so binding it later starved
+	// the node that needed it (SRD-090.B M5a).
+	if ai.received != nil {
+		f.SetReceived(ai.received)
+	}
 	defer f.Discard()
 
 	// A compensation-handler track reads the ledger entry's snapshot, not the
@@ -1521,6 +1744,11 @@ type activityInstance struct {
 	// collection-driven Multi-Instance, its split input item. Bound
 	// frame-local, so a sibling cannot overwrite it and it never reaches the
 	// shared container scope (SRD-090.A FR-4).
+	// received is the payload THIS execution's delivery carried, taken off
+	// the track by parkForDelivery and bound into this instance's own frame
+	// (ADR-006 §2.9.1, SRD-090.B M5a). nil for a node that did not wait.
+	received *data.ItemDefinition
+
 	local []data.Data
 }
 
@@ -1635,11 +1863,13 @@ func (t *track) finalizeNodeExecution(
 		t.updateState(TrackProcessStepResults)
 	}
 
-	// stage the delivery's payload for the catch node's binding and
-	// consume it — the next execution must not see a stale item
-	// (SRD-085 FR-1; for an Event-Based Gateway the item survives to
-	// the WINNING ARM's upload, which is this call on the arm's step).
-	if t.receivedItem != nil {
+	// stage the delivery's payload for the catch node's binding
+	// (SRD-085 FR-1). It arrives on the instance rather than the track now
+	// (parkForDelivery), so N concurrent instances of one activity each bind
+	// their own; the track field survives only for the paths that stage an
+	// item without parking — an Event-Based Gateway's winning arm, whose
+	// upload is this call on the ARM's step.
+	if ai.received == nil && t.receivedItem != nil {
 		f.SetReceived(t.receivedItem)
 		t.receivedItem = nil
 	}
@@ -1806,7 +2036,24 @@ func (t *track) unregisterEvent(n flow.Node) error {
 			continue
 		}
 
-		if err := t.instance.UnregisterEvent(t, eDef.ID()); err != nil {
+		// Symmetric with arming (SRD-090.B FR-2): when the ACTIVITY owns the
+		// subscription, the withdrawal is due only once none of its
+		// instances waits on the definition any more. Withdrawing on the
+		// first instance to finish would take its siblings' wait with it —
+		// the failure ADR-006 §2.9.5 names, and the reason the entry's
+		// lifetime is stated as "while any instance awaits" rather than
+		// per-pass.
+		proc := eventproc.EventProcessor(t)
+
+		if owner := t.activityOwner(); owner != nil {
+			if !owner.stopped(eDef, t.execOrdinal()) {
+				continue
+			}
+
+			proc = owner
+		}
+
+		if err := t.instance.UnregisterEvent(proc, eDef.ID()); err != nil {
 			return errs.New(
 				errs.M("failed to unregister event"),
 				errs.C(errorClass, errs.OperationFailed),
