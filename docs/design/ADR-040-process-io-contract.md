@@ -6,7 +6,7 @@
 | Version | v.1 |
 | Date | 2026-08-26 |
 | Owner | Ruslan Gabitov |
-| Refines | [ADR-011 v.7](ADR-011-process-data-flow.md) §2.5 (the scheduled process-level Start/End data path — this record delivers its carrier half), [ADR-023 v.3](ADR-023-sub-process-and-call-activity.md) (the Call Activity's direct I/O mapping — this record supplies the callee side it names), [SAD-001 v.1.2](SAD-001-vision-and-architecture.md) §14.1 (the single-set deviation and the identity `ioBinding`, both of which extend here) |
+| Refines | [ADR-011 v.8](ADR-011-process-data-flow.md) §2.5 (the scheduled process-level Start/End data path — this record delivers its carrier half), [ADR-023 v.4](ADR-023-sub-process-and-call-activity.md) (the Call Activity's direct I/O mapping — this record supplies the callee side it names), [SAD-001 v.1.2](SAD-001-vision-and-architecture.md) §14.1 (the single-set deviation and the identity `ioBinding`, both of which extend here) |
 
 > **Scope.** A BPMN `Process` is a `CallableElement` and may declare an
 > `InputOutputSpecification` — process-level data inputs and outputs, the
@@ -44,11 +44,11 @@ DataAssociation**"* (§10.4.1 p216).
 
 ### 1.2 Where the engine stands
 
-[ADR-011 v.7](ADR-011-process-data-flow.md) §2.5 scheduled exactly this:
+[ADR-011 v.8](ADR-011-process-data-flow.md) §2.5 scheduled exactly this:
 the process-level Start/End special case is *"part of the conception and
 lands with the messaging/call-activity work that needs it."* The
 call-activity work has since landed — and its decision record already
-speaks the standard's language: [ADR-023 v.3](ADR-023-sub-process-and-call-activity.md)
+speaks the standard's language: [ADR-023 v.4](ADR-023-sub-process-and-call-activity.md)
 prescribes that a Call Activity's inputs *"map to the callable's
 InputOutputSpecification"*, inputs bound into the child's root scope at
 launch, outputs bound back at completion.
@@ -121,7 +121,7 @@ no result surface.
 
 A declared parameter is a named, typed item-aware element, so anything
 the model's value family expresses can cross the boundary: a scalar, a
-record, a list, a map ([ADR-011 v.7](ADR-011-process-data-flow.md)'s
+record, a list, a map ([ADR-011 v.8](ADR-011-process-data-flow.md)'s
 structural data), including values lifted from host-native structs
 through the adapter tier.
 
@@ -182,7 +182,7 @@ data everywhere — properties, parameters, scope lookups — while a
 positional correspondence ties the meaning of a call to declaration order
 on both sides, so an innocent reorder silently rewires data: exactly the
 class of quiet breakage a declared contract exists to end.
-[ADR-023 v.3](ADR-023-sub-process-and-call-activity.md) already stated
+[ADR-023 v.4](ADR-023-sub-process-and-call-activity.md) already stated
 the binding as "positional/by-name"; this record settles it on the name.
 
 Validation happens **at launch, not at registration**, because it cannot
@@ -349,9 +349,9 @@ multi-set selection (§2.8, a standing boundary).
 
 ## 6. References
 
-- [ADR-011 v.7](ADR-011-process-data-flow.md) §2.5 — the scheduled
+- [ADR-011 v.8](ADR-011-process-data-flow.md) §2.5 — the scheduled
   conception this delivers the carrier for.
-- [ADR-023 v.3](ADR-023-sub-process-and-call-activity.md) — the call
+- [ADR-023 v.4](ADR-023-sub-process-and-call-activity.md) — the call
   contract whose callee side this supplies.
 - [ADR-019 v.1](ADR-019-definition-versioning.md) — latest-at-launch,
   which fixes the validation moment (§2.4).

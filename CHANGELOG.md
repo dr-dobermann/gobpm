@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A process declares its own I/O contract** (ADR-040 v.1 / SRD-093,
+  closes #330). `process.New` takes `data.WithInputs`/`data.WithOutputs`
+  — one input set, one output set of named, typed, required-or-optional
+  parameters, in the namespace properties and data objects share — and the
+  importer accepts `<ioSpecification>` directly under `<process>` (an
+  explicit empty one is a strict empty contract). Declared inputs bind into
+  the instance's root scope at launch: a host supplies them with
+  `thresher.WithStartInput(name, value)` / `WithStartInputs(...)` on
+  `StartProcess`/`StartLatest`/`StartVersion`, a Call Activity through its
+  parameters, each value type-checked against its declaration. A required
+  input left unbound, or a datum the contract does not name, refuses the
+  launch before the instance exists — the process never waits for data —
+  and an event-born launch cannot fill a required input until #329 lands,
+  so it is refused naming that row. Declared outputs are read from the root
+  scope at normal completion and bound through their declaration: a
+  required one missing, or a value the declared item cannot carry, faults
+  the instance (`Terminated`, `LastErr()` naming the output); an optional
+  one not produced simply does not flow. The collected result is served
+  by `InstanceHandle.Outputs()` (a copy per call) and, across a call
+  boundary, committed back to the caller — a contracted child never
+  exposes its raw scope, even when it produced nothing. The Call
+  Activity's declared names are validated against the resolved callable at
+  launch (latest-at-launch), faulting at the node on a mismatch. A process
+  without a contract keeps its permissive meaning. `examples/process-io/`
+  runs the whole contract end to end, including publishing the engine's
+  `RUNTIME/STARTED_AT` under a declared output.
+
 - **The standard's artifacts are carried, and an annotated diagram
   imports** (ADR-039 v.1 / SRD-092, closes #323). BPMN §8.4.1's three
   artifacts — `Association` (plain shape), `TextAnnotation`, `Group` —

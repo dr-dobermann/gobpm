@@ -6,7 +6,7 @@
 | Date | 2026-08-26 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-040 v.1](../design/ADR-040-process-io-contract.md) (the single-set Process I/O contract: launch binding of inputs, completion reading of outputs, by-name launch-time validation at the call boundary, the permissive contract-less process, the publishing routes, the event-wiring deferral) |
-| Upstream | [ADR-011 v.7](../design/ADR-011-process-data-flow.md) §2.2/§2.5 (the single-set parameter model; the scheduled Start/End path); [ADR-023 v.3](../design/ADR-023-sub-process-and-call-activity.md) (the Call Activity's direct mapping); [ADR-019 v.1](../design/ADR-019-definition-versioning.md) (latest-at-launch); [ADR-010 v.2](../design/ADR-010-process-data-model.md) §2.3/§2.7 (parameters as templates; the `RUNTIME` source); [ADR-038 v.3](../design/ADR-038-converter-coverage-boundaries.md) §2.3/§2.4 (the #330 register row; capability first, converter row after); [SAD-001 v.1.2](../design/SAD-001-vision-and-architecture.md) §14.1/§14.2 |
+| Upstream | [ADR-011 v.8](../design/ADR-011-process-data-flow.md) §2.2/§2.5 (the single-set parameter model; the scheduled Start/End path); [ADR-023 v.4](../design/ADR-023-sub-process-and-call-activity.md) (the Call Activity's direct mapping); [ADR-019 v.1](../design/ADR-019-definition-versioning.md) (latest-at-launch); [ADR-010 v.2](../design/ADR-010-process-data-model.md) §2.3/§2.7 (parameters as templates; the `RUNTIME` source); [ADR-038 v.3](../design/ADR-038-converter-coverage-boundaries.md) §2.3/§2.4 (the #330 register row; capability first, converter row after); [SAD-001 v.1.2](../design/SAD-001-vision-and-architecture.md) §14.1/§14.2 |
 | Related | [SRD-050](SRD-050-call-activity.md) (the caller-side mapping this completes), [SRD-089.G](SRD-089.G-bpmn-import-data-flow.md) (the activity `<ioSpecification>` machinery this reuses), [SRD-007](SRD-007-process-data-model.md) (frames, root scope) |
 | Closes | [#330](https://github.com/dr-dobermann/gobpm/issues/330) |
 
@@ -658,8 +658,8 @@ different refused element).
 | Direction | Document | Why |
 |---|---|---|
 | up | [ADR-040 v.1](../design/ADR-040-process-io-contract.md) | the decision this implements |
-| up | [ADR-011 v.7](../design/ADR-011-process-data-flow.md) §2.2, §2.5 | the single-set parameter model; the scheduled Start/End path this delivers the carrier of |
-| up | [ADR-023 v.3](../design/ADR-023-sub-process-and-call-activity.md) | the call mapping whose callee side lands |
+| up | [ADR-011 v.8](../design/ADR-011-process-data-flow.md) §2.2, §2.5 | the single-set parameter model; the scheduled Start/End path this delivers the carrier of |
+| up | [ADR-023 v.4](../design/ADR-023-sub-process-and-call-activity.md) | the call mapping whose callee side lands |
 | up | [ADR-019 v.1](../design/ADR-019-definition-versioning.md) | latest-at-launch, fixing the validation moment |
 | up | [ADR-010 v.2](../design/ADR-010-process-data-model.md) §2.3, §2.7 | parameters as per-execution templates; the `RUNTIME` source |
 | up | [ADR-038 v.3](../design/ADR-038-converter-coverage-boundaries.md) §2.3, §2.4 | the #330 register row and the ordering |
