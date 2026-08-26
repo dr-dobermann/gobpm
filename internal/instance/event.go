@@ -29,6 +29,12 @@ type trackEvent struct {
 	// there.
 	iterProc iterProcessor
 	changes  []data.Change
+	// ord is the INSTANCE a capability wait belongs to, when the parking
+	// activity iterates (ADR-020 §2.12). Zero for a lone activity, which is
+	// also instance 0's ordinal — the two are indistinguishable here and do
+	// not need distinguishing: a lone activity has exactly one execution, so
+	// "instance 0" names it correctly.
+	ord      int
 	compWait bool
 	kind     trackEventKind
 }

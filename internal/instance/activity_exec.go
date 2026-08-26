@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"strconv"
+	"sync"
 	"sync/atomic"
 
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
@@ -122,6 +123,33 @@ type nodeExec struct {
 	local []data.Data
 
 	ord int
+
+	// parked is what THIS execution awaits, owned here rather than read off
+	// the track (ADR-025 §2.13: "a node executor … owns that node's wait";
+	// §2.13b.1e: "a track's state is what its executor awaits").
+	//
+	// Reading the track's state instead works only while a track and an
+	// execution are one to one, which a parallel fan-out breaks: N instances
+	// share one track, so one instance parking would read as all of them
+	// parking, and the barrier would proceed on the first. Owned per
+	// execution, the decorator's await becomes the conjunction over its
+	// instances, which is what makes it wait for every approval.
+	//
+	// Written by the executing goroutine before it blocks and read by the
+	// decorator's, so it is atomic. A bool rather than an awaitKind because
+	// an event wait is the only kind a leaf can hold — it opens no scope and
+	// owns no child instance.
+	parked atomic.Bool
+
+	// concurrent marks an instance of a PARALLEL fan-out — one of N running
+	// at the same time on one track.
+	//
+	// It decides whether this execution may fall back to reading the track's
+	// wait state. A SEQUENTIAL pass may: one instance runs at a time, so the
+	// track's state is that instance's however high its ordinal. A concurrent
+	// one may not: its siblings share the track, so the answer would be
+	// theirs as much as its own.
+	concurrent bool
 }
 
 // execFor builds the executor that runs this node: a decorator when the node
@@ -195,6 +223,15 @@ type iterDecorator struct {
 	// current — this fences the field it points at.
 	live atomic.Pointer[execHandle]
 
+	// fanned is the instance set of a PARALLEL run, held while the barrier
+	// awaits them. `live` names the ONE instance a sequential pass is
+	// running, which cannot describe N at once — and what the activity
+	// awaits is the conjunction over all of them (ADR-025 §2.13b.1e).
+	//
+	// Guarded by its own mutex: the decorator's goroutine builds and clears
+	// it while the loop reads it to ask what this activity awaits.
+	fanned []*nodeExec
+
 	// seed is the restored executor set this activity resumes from, taken
 	// from the track at the start of the run (SRD-090.A FR-7).
 	seed *checkpoint.IterationRecord
@@ -204,6 +241,10 @@ type iterDecorator struct {
 	// activity, one subscription per definition, alive while any instance
 	// awaits it.
 	eventSubs
+
+	// fannedMu guards fanned. Placed here rather than beside it so the
+	// struct's pointer-bearing fields stay grouped (fieldalignment).
+	fannedMu sync.Mutex
 
 	composite bool
 }
@@ -423,12 +464,42 @@ func (d *iterDecorator) refuseIfParked(i int) error {
 // is trivial while at most one instance runs (ADR-025 §2.13's
 // releasability rule takes its general form when parallel instances arrive).
 func (d *iterDecorator) awaits() awaitKind {
+	// a PARALLEL run: the activity awaits whatever ANY instance still
+	// awaits. The conjunction is the point — with N instances sharing a
+	// track, reporting only one of them would let the activity read as
+	// finished while somebody still holds work (ADR-025 §2.13b.1e).
+	d.fannedMu.Lock()
+	fanned := d.fanned
+	d.fannedMu.Unlock()
+
+	for _, e := range fanned {
+		if k := e.awaits(); k != awaitNothing {
+			return k
+		}
+	}
+
+	if len(fanned) > 0 {
+		return awaitNothing
+	}
+
+	// a SEQUENTIAL pass: one instance at a time, so the live one IS the
+	// conjunction.
 	h := d.live.Load()
 	if h == nil {
 		return awaitNothing
 	}
 
 	return h.e.awaits()
+}
+
+// setFanned records the instance set a parallel run is awaiting, so the
+// activity can answer what it awaits as the conjunction over them. Cleared
+// when the barrier is done with them.
+func (d *iterDecorator) setFanned(ee []*nodeExec) {
+	d.fannedMu.Lock()
+	defer d.fannedMu.Unlock()
+
+	d.fanned = ee
 }
 
 // state reports the ACTIVITY's iteration state: the live instance's ordinal
@@ -519,6 +590,22 @@ func (d *iterDecorator) runParallel(
 	defer cancelRest()
 
 	done := make(chan instanceDone, n)
+
+	// the activity's await is the conjunction over these (ADR-025 §2.13b.1e),
+	// so the set is posted before any of them starts: an instance that parks
+	// immediately must already be counted, or the activity would read as
+	// awaiting nothing while somebody holds work.
+	leaves := make([]*nodeExec, 0, len(insts))
+
+	for _, e := range insts {
+		if le, ok := e.(*nodeExec); ok {
+			le.concurrent = true
+			leaves = append(leaves, le)
+		}
+	}
+
+	d.setFanned(leaves)
+	defer d.setFanned(nil)
 
 	for ord, e := range insts {
 		go func(ord int, e activityExec) {
@@ -1126,7 +1213,16 @@ func (e *nodeExec) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 // to one. A decorator's instances report their own (M2), and the reading
 // here does not change: a parked leaf awaits an event.
 func (e *nodeExec) awaits() awaitKind {
-	if e.t.inState(TrackWaitForEvent) {
+	if e.parked.Load() {
+		return awaitEvent
+	}
+
+	// An execution that is alone on its track still derives from it, because
+	// a node parks through paths that mark the track and never reach an
+	// executor — a born-parked waiter, a restored one. A plain activity and
+	// a sequential pass are both alone in that sense, so the reading is
+	// exact for them.
+	if !e.concurrent && e.t.inState(TrackWaitForEvent) {
 		return awaitEvent
 	}
 

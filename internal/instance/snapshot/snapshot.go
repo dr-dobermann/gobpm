@@ -360,27 +360,26 @@ func checkUncorrelatedParallelMessage(n flow.Node) error {
 		return nil
 	}
 
-	// A CAPABILITY-PARKED ACTIVITY cannot fan out at all yet. A human task
-	// and an external-worker Service Task park through their own capability
-	// rather than an event subscription, and the identity that addresses the
-	// parked work — `track.taskID` — is one slot on the host track. N
-	// instances parking at once therefore announce ONE task between them:
-	// measured, a three-item parallel Multi-Instance over a User Task
-	// announces a single task and the process runs to completion without
-	// anyone completing it. Three approvals modeled, none performed.
+	// A CAPABILITY-PARKED ACTIVITY cannot fan out YET, and the reason is now
+	// narrower than it was. Each instance owns its parked-work identity and
+	// its delivery box, and a completion reaches the instance that owns the
+	// task — what is missing is that an instance does not classify and park
+	// its OWN node: the activity is classified once when the token arrives,
+	// so N instances announce one task between them and the rest complete
+	// without anyone doing them.
 	//
-	// That is the silent wrong answer the blanket refusal used to prevent,
-	// and it was reachable between SRD-090.B M3 (which deleted that refusal)
-	// and this guard. A SEQUENTIAL iteration is unaffected — one instance
-	// parks at a time, each pass registers its own entry, and each requires
-	// its own completion.
+	// Refused rather than served, because that shape is a silent wrong
+	// answer: three approvals modeled, none performed, and the process runs
+	// to completion reporting success. The guard goes when per-instance
+	// classification lands, in the same commit as the mechanism — the shape
+	// SRD-090.B M3 used to retire the previous refusal.
 	if parksOnCapability(n) {
 		return errs.New(
 			errs.M("activity %q is a PARALLEL Multi-Instance over work that "+
 				"parks outside the event system (a User Task or an "+
-				"external-worker Service Task): its instances would share "+
-				"one task identity, so only one is addressable and the rest "+
-				"complete without being done. Make the Multi-Instance "+
+				"external-worker Service Task): its instances do not yet "+
+				"park individually, so only one task is announced and the "+
+				"rest complete without being done. Make the Multi-Instance "+
 				"sequential — one instance parks at a time there, and each "+
 				"pass is completed on its own", n.Name()),
 			errs.C(errorClass, errs.InvalidObject),
@@ -406,25 +405,6 @@ func checkUncorrelatedParallelMessage(n flow.Node) error {
 			"there, so each pass consumes one message", n.Name()),
 		errs.C(errorClass, errs.InvalidObject),
 		errs.D(observability.AttrNodeID, n.ID()))
-}
-
-// parksOnCapability reports whether executing this node parks through a
-// capability rather than an event subscription — a human task, or a Service
-// Task dispatched to an external worker. Both are addressed by a task
-// identity the host track holds one of.
-func parksOnCapability(n flow.Node) bool {
-	if _, human := n.(interactor.HumanTask); human {
-		return true
-	}
-
-	ew, ok := n.(tasks.ExternalWorker)
-	if !ok {
-		return false
-	}
-
-	_, isWorker := ew.WorkerTopic()
-
-	return isWorker
 }
 
 // parallelMultiInstance reports the node's Multi-Instance characteristics
@@ -457,6 +437,26 @@ func hasMessageTrigger(en flow.EventNode) bool {
 	}
 
 	return false
+}
+
+// parksOnCapability reports whether executing this node parks through a
+// capability rather than an event subscription — a human task, or a Service
+// Task dispatched to an external worker. Both are addressed by a task
+// identity rather than a definition, so neither is classified per instance
+// yet.
+func parksOnCapability(n flow.Node) bool {
+	if _, human := n.(interactor.HumanTask); human {
+		return true
+	}
+
+	ew, ok := n.(tasks.ExternalWorker)
+	if !ok {
+		return false
+	}
+
+	_, isWorker := ew.WorkerTopic()
+
+	return isWorker
 }
 
 // declaresIterationCorrelation reports whether the node says how a

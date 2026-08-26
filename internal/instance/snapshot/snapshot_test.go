@@ -556,7 +556,7 @@ func TestOnlyTheAmbiguousIteratedWaitIsRefused(t *testing.T) {
 					"something is")
 		})
 
-	t.Run("a PARALLEL MI over a User Task is refused", func(t *testing.T) {
+	t.Run("a PARALLEL MI over a User Task is refused for now", func(t *testing.T) {
 		mi, err := activities.NewMultiInstance(
 			activities.WithInputCollection("items", "item"))
 		require.NoError(t, err)
@@ -568,9 +568,12 @@ func TestOnlyTheAmbiguousIteratedWaitIsRefused(t *testing.T) {
 		require.NoError(t, err)
 
 		err = build(t, "wl-ut-par", ut)
-		require.ErrorContains(t, err, "parks outside the event system")
+		require.ErrorContains(t, err, "do not yet park individually",
+			"the refusal names what is still missing — per-instance "+
+				"classification — rather than the shared identity this "+
+				"slice already fixed")
 		require.ErrorContains(t, err, "sequential",
-			"the refusal names the shape that does work")
+			"and the shape that does work")
 	})
 
 	t.Run("a SEQUENTIAL MI over a User Task builds", func(t *testing.T) {

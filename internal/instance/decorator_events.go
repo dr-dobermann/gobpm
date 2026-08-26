@@ -7,6 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
 // iterSubscription is one definition an iterated activity waits on, and the
@@ -42,6 +43,30 @@ type iterSubscription struct {
 type eventSubs struct {
 	subs map[string]*iterSubscription
 
+	// capParked is the ordinals parked on a CAPABILITY rather than an event
+	// subscription — a human task, an external-worker Service Task.
+	//
+	// It exists because a delivery box must belong to PARKING, not to
+	// subscription bookkeeping. Opening one as a side effect of registering an
+	// event definition works only for instances that have a definition; a User
+	// Task has none, so its box was never opened and its completion was routed
+	// into a nil channel and dropped. That is the defect that reverted the
+	// first attempt at the human fan-out (SRD-090.B §7), and keeping the two
+	// lifetimes separate is what prevents it recurring.
+	capParked map[int]bool
+
+	// taskIDs is each capability-parked instance's own parked-work identity,
+	// keyed by ordinal (ADR-020 §2.12).
+	//
+	// The identity is what a person or a UI is holding, and what Withdraw and
+	// Complete both name. One slot per ACTIVITY would make N instances
+	// announce a single task between them: only one would be addressable and
+	// the rest would complete without anyone doing them — three approvals
+	// modeled, none performed. So an instance mints its own, keeps it while it
+	// is parked (re-minting would invalidate a reference someone is about to
+	// act on), and drops it when its work is done.
+	taskIDs map[int]string
+
 	// boxes is each waiting instance's own delivery channel, keyed by
 	// ordinal (SRD-090.B M5b).
 	//
@@ -66,9 +91,11 @@ type eventSubs struct {
 // newEventSubs builds the subscription set for one iterated activity.
 func newEventSubs(instanceID, nodeID string) eventSubs {
 	return eventSubs{
-		id:    instanceID + "/" + nodeID,
-		subs:  map[string]*iterSubscription{},
-		boxes: map[int]chan flow.EventDefinition{},
+		id:        instanceID + "/" + nodeID,
+		subs:      map[string]*iterSubscription{},
+		boxes:     map[int]chan flow.EventDefinition{},
+		capParked: map[int]bool{},
+		taskIDs:   map[int]string{},
 	}
 }
 
@@ -108,9 +135,7 @@ func (es *eventSubs) awaiting(def flow.EventDefinition, ord int) bool {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
-	if _, open := es.boxes[ord]; !open {
-		es.boxes[ord] = make(chan flow.EventDefinition, eventBufferDepth)
-	}
+	es.openBoxLocked(ord)
 
 	s, ok := es.subs[def.ID()]
 	if !ok {
@@ -127,6 +152,89 @@ func (es *eventSubs) awaiting(def flow.EventDefinition, ord int) bool {
 	}
 
 	return false
+}
+
+// openBoxLocked gives instance ord its delivery channel if it has none. The
+// single place a box is created, so every way of parking gets one alike.
+// Caller holds mu.
+func (es *eventSubs) openBoxLocked(ord int) {
+	if _, open := es.boxes[ord]; !open {
+		es.boxes[ord] = make(chan flow.EventDefinition, eventBufferDepth)
+	}
+}
+
+// parking records that instance ord is parked on a CAPABILITY — a human task
+// awaiting a completion, an external-worker task awaiting a report — and opens
+// its delivery box.
+//
+// There is nothing to register with the hub: such a wait is addressed by a
+// task identity rather than an event definition, so the decorator only needs
+// to know the instance is waiting, and to have somewhere to deliver its
+// outcome (ADR-025 §2.15a).
+func (es *eventSubs) parking(ord int) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	es.openBoxLocked(ord)
+	es.capParked[ord] = true
+}
+
+// taskIDFor returns instance ord's parked-work identity, minting one on first
+// ask and returning the same value while the instance stays parked.
+//
+// Stability is the requirement: the id is a reference a human or a UI holds,
+// so re-minting it mid-wait would invalidate the very thing they are about to
+// act on. A restored instance is given its recorded id through adoptTaskID
+// before anything asks, for the same reason (SRD-071 FR-8).
+func (es *eventSubs) taskIDFor(ord int) string {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	if id, ok := es.taskIDs[ord]; ok {
+		return id
+	}
+
+	id := foundation.GenerateID()
+	es.taskIDs[ord] = id
+
+	return id
+}
+
+// adoptTaskID gives instance ord the identity a checkpoint recorded, so a
+// rehydrated task keeps the id its inbox entry already carries.
+func (es *eventSubs) adoptTaskID(ord int, id string) {
+	if id == "" {
+		return
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	es.taskIDs[ord] = id
+}
+
+// dropTaskID forgets instance ord's identity once its work is done, so a later
+// pass of the same activity mints its own rather than reusing a handle that
+// now names nothing (ADR-020 §2.12).
+func (es *eventSubs) dropTaskID(ord int) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	delete(es.taskIDs, ord)
+}
+
+// unparked records that instance ord's capability wait is over — its task was
+// completed, withdrawn or canceled — and drops its box once it waits on
+// nothing at all.
+func (es *eventSubs) unparked(ord int) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	delete(es.capParked, ord)
+
+	if !es.waitsAnywhereLocked(ord) {
+		delete(es.boxes, ord)
+	}
 }
 
 // stopped records that instance ord is no longer parked on def, and reports
@@ -163,6 +271,10 @@ func (es *eventSubs) stopped(def flow.EventDefinition, ord int) bool {
 // waitsAnywhereLocked reports whether ord is still parked on ANY definition —
 // the condition for keeping its delivery box open. Caller holds mu.
 func (es *eventSubs) waitsAnywhereLocked(ord int) bool {
+	if es.capParked[ord] {
+		return true
+	}
+
 	for _, s := range es.subs {
 		if idx := sort.SearchInts(s.waiting, ord); idx < len(s.waiting) &&
 			s.waiting[idx] == ord {
@@ -218,7 +330,7 @@ func (es *eventSubs) anyWaiting() bool {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
-	return len(es.subs) > 0
+	return len(es.subs) > 0 || len(es.capParked) > 0
 }
 
 // waitingOn returns the ordinals parked on def, ascending — the dispatch
@@ -262,6 +374,20 @@ type activitySubscriber interface {
 	// boxFor is the channel instance ord's unit blocks on for its own
 	// delivery.
 	boxFor(ord int) chan flow.EventDefinition
+
+	// parking and unparked bracket a CAPABILITY wait — one addressed by a
+	// task identity rather than an event definition. They exist separately
+	// from awaiting/stopped because such a wait has no definition to hang a
+	// delivery box off, and a box opened only as a side effect of
+	// subscribing is a box a human task never gets.
+	parking(ord int)
+	unparked(ord int)
+
+	// taskIDFor, adoptTaskID and dropTaskID own the parked-work identity of
+	// one instance (ADR-020 §2.12).
+	taskIDFor(ord int) string
+	adoptTaskID(ord int, id string)
+	dropTaskID(ord int)
 }
 
 // ProcessEvent is the hub's doorbell (ADR-006 §2.9.5): it runs on the HUB's

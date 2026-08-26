@@ -67,6 +67,13 @@ type taskEntry struct {
 	// §2.7). Write-once and read-only afterwards, so the engine-level registry may
 	// hold the same value without a consistency hazard (SRD-073 FR-5a).
 	eligible interactor.Eligibility
+
+	// ord is the instance of an iterated activity this task belongs to
+	// (ADR-020 §2.12). N instances of one activity share a track, so the
+	// track alone cannot say which of them a completion is for — and
+	// delivering to the track would hand it to whichever instance read
+	// first. Zero for a lone activity, which has one execution anyway.
+	ord int
 }
 
 // Take authorizes actor against the parked UserTask taskID and, on success,
@@ -258,9 +265,8 @@ func (ls *loopState) completeTask(
 	// on this loop goroutine. So flip it out and deliver on its own evtCh, where the
 	// loop is the sole sender and it is parked-and-undelivered (SRD-027). The track
 	// wakes, ProcessEvent binds the outputs, Exec advances.
-	ls.flipNotParked(entry.track)
 	delete(ls.tasks, req.taskID)
-	entry.track.evtCh <- interactor.NewTaskCompletion(req.outputs)
+	ls.deliverCompletion(entry, interactor.NewTaskCompletion(req.outputs))
 
 	// The actor completed the task; the parked track resumes (SRD-041 §3.4).
 	// The following withdrawTask additionally emits Withdrawn — the distributor
@@ -276,6 +282,46 @@ func (ls *loopState) completeTask(
 	ls.inst.withdrawTask(ctx, req.taskID)
 
 	req.reply <- taskReply{}
+}
+
+// deliverCompletion hands an accepted completion to the execution that owns the
+// task, and takes the track out of the parked set only when nothing else does.
+//
+// Both halves matter once an activity can hold N tasks at once (ADR-020 §2.12):
+//
+//   - delivering on the TRACK's channel would hand the outcome to whichever
+//     instance happened to read first, which is not necessarily the one whose
+//     task was completed;
+//   - flipping the track out on the FIRST completion would drop every
+//     sibling's delivery at the dispatch gate, because a track that is no
+//     longer parked is no longer a delivery target.
+//
+// A lone activity has one instance and no decorator, so it keeps the track's
+// own channel and flips out immediately — the path is unchanged for it.
+func (ls *loopState) deliverCompletion(
+	entry taskEntry, completion flow.EventDefinition,
+) {
+	owner := entry.track.activityOwner()
+	if owner == nil {
+		ls.flipNotParked(entry.track)
+		entry.track.evtCh <- completion
+
+		return
+	}
+
+	// this instance's work is done: its identity names nothing from here, and
+	// a later pass of the same activity mints its own.
+	owner.dropTaskID(entry.ord)
+	owner.unparked(entry.ord)
+
+	if box := owner.boxFor(entry.ord); box != nil {
+		box <- completion
+	}
+
+	// the track leaves the parked set only when NO instance still holds work.
+	if !owner.anyWaiting() {
+		ls.flipNotParked(entry.track)
+	}
 }
 
 // recordCompletedBy notes the completing actor in the instance's performer register,
@@ -313,6 +359,7 @@ func (ls *loopState) addTask(
 	taskID string,
 	tr *track,
 	node flow.Node,
+	ord int,
 ) {
 	if taskID == "" {
 		return // not a human task — nothing to register
@@ -327,6 +374,7 @@ func (ls *loopState) addTask(
 	ls.tasks[taskID] = taskEntry{
 		track:    tr,
 		node:     node,
+		ord:      ord,
 		eligible: info.Eligible,
 	}
 
@@ -425,7 +473,21 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 		}
 	}
 
-	ls.addTask(ctx, t.taskID, t, node)
+	// Only a HUMAN task has a parked-work identity. Every other born waiter —
+	// an event catch, a compensation throw — parks on a subscription and must
+	// not be registered as a task; asking for an identity here would mint one
+	// for it and announce a task nobody modeled.
+	if _, human := node.(interactor.HumanTask); !human {
+		return
+	}
+
+	// the same identity rule as a mid-run park: an ITERATED activity's task
+	// belongs to the instance, a lone one to the track (ADR-020 §2.12). A
+	// restored execution adopts its recorded id inside, so a rehydrated task
+	// keeps the handle its inbox entry carries.
+	taskID, ord := t.humanTaskIdentity()
+
+	ls.addTask(ctx, taskID, t, node, ord)
 }
 
 // onTaskWaiting records a parked UserTask and announces it to the distributor,
@@ -438,7 +500,7 @@ func (ls *loopState) onTaskWaiting(ctx context.Context, ev trackEvent) {
 	}
 
 	ls.waiting[ev.track.ID()] = struct{}{}
-	ls.addTask(ctx, ev.taskID, ev.track, ev.node)
+	ls.addTask(ctx, ev.taskID, ev.track, ev.node, ev.ord)
 }
 
 // withdrawAllTasks withdraws every parked task and clears the registry, used on

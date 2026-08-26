@@ -1078,16 +1078,7 @@ func (t *track) parkCallActivity(node flow.Node, atConstruction bool) error {
 // path). The UserTask registers NO hub waiter — completion arrives via Complete,
 // delivered to evtCh as a synthetic event, not fired through the hub.
 func (t *track) parkHumanTask(node flow.Node) error {
-	t.m.Lock()
-	// A RESTORED track carries its recorded task id (SRD-071 FR-8): the task
-	// outlives the instance's residency in the distributor's inbox, so the id a
-	// human (or a UI) is holding must survive rehydration — minting a fresh one
-	// would silently invalidate the reference they are about to act on. A fresh
-	// park mints.
-	if t.taskID == "" {
-		t.taskID = foundation.GenerateID()
-	}
-	t.m.Unlock()
+	taskID, ord := t.humanTaskIdentity()
 
 	t.updateState(TrackWaitForEvent)
 
@@ -1101,11 +1092,56 @@ func (t *track) parkHumanTask(node flow.Node) error {
 			kind:   evTaskWaiting,
 			track:  t,
 			node:   node,
-			taskID: t.taskID,
+			taskID: taskID,
+			ord:    ord,
 		})
 	}
 
 	return nil
+}
+
+// humanTaskIdentity gives this execution its parked-work identity and returns
+// it with the ordinal that owns it.
+//
+// An ITERATED activity's identity belongs to the INSTANCE, not to the track
+// they share: N instances parked at once must announce N addressable tasks, or
+// only one is reachable and the rest complete without anyone doing them
+// (ADR-020 §2.12). The decorator also learns the instance is parked, which is
+// what opens its delivery box — a capability wait has no event definition to
+// open one as a side effect of.
+//
+// A LONE activity keeps the track's single slot, so nothing about the
+// non-iterated path changes.
+//
+// Either way the id is minted once and reused while the instance stays parked:
+// a RESTORED execution carries its recorded id (SRD-071 FR-8), because the task
+// outlives the instance's residency in the distributor's inbox and re-minting
+// would invalidate the reference someone is about to act on.
+func (t *track) humanTaskIdentity() (string, int) {
+	owner := t.activityOwner()
+	if owner == nil {
+		t.m.Lock()
+		defer t.m.Unlock()
+
+		if t.taskID == "" {
+			t.taskID = foundation.GenerateID()
+		}
+
+		return t.taskID, 0
+	}
+
+	ord := t.execOrdinal()
+
+	// a restored instance adopts the id its checkpoint recorded before it is
+	// asked for one, so the recorded value wins over a fresh mint.
+	t.m.RLock()
+	recorded := t.taskID
+	t.m.RUnlock()
+
+	owner.adoptTaskID(ord, recorded)
+	owner.parking(ord)
+
+	return owner.taskIDFor(ord), ord
 }
 
 // parkServiceTask parks a worker-dispatched ServiceTask as an external-worker
