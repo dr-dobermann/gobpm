@@ -274,10 +274,10 @@ func (it miIterator) bindInstance(
 	st := host.miState
 
 	binds := []miBinding{
-		{name: "loopCounter", value: i},
-		{name: "numberOfInstances", value: st.numberOfInstances},
-		{name: "numberOfActiveInstances", value: 1},
-		{name: "numberOfCompletedInstances", value: st.completed},
+		{name: data.LoopCounterName, value: i},
+		{name: data.NumberOfInstancesName, value: st.numberOfInstances},
+		{name: data.NumberOfActiveInstancesName, value: 1},
+		{name: data.NumberOfCompletedInstancesName, value: st.completed},
 	}
 
 	// the engine's own names for this execution, from the one builder every
@@ -499,10 +499,10 @@ func drivesOwnIteration(node flow.Node) bool {
 // between the two carried whichever fired last.
 func (t *track) bindMICounters(n, active, completed, terminated int) error {
 	binds := []miBinding{
-		{name: "numberOfInstances", value: n},
-		{name: "numberOfActiveInstances", value: active},
-		{name: "numberOfCompletedInstances", value: completed},
-		{name: "numberOfTerminatedInstances", value: terminated},
+		{name: data.NumberOfInstancesName, value: n},
+		{name: data.NumberOfActiveInstancesName, value: active},
+		{name: data.NumberOfCompletedInstancesName, value: completed},
+		{name: data.NumberOfTerminatedInstancesName, value: terminated},
 	}
 
 	for _, b := range binds {

@@ -964,7 +964,7 @@ func (d *iterDecorator) compositeInstanceFor(
 	// is collection-driven — bound at the instance's own scope, which is
 	// what makes them concurrency-safe where the sequential slice's
 	// host-scope binds are not.
-	e.binds = []miBinding{{name: "loopCounter", value: ord}}
+	e.binds = []miBinding{{name: data.LoopCounterName, value: ord}}
 
 	if st != nil && st.collection != nil {
 		elem, err := st.collection.GetAt(ctx, ord)
@@ -992,7 +992,7 @@ func iterationLocals(
 	scopePath, kind string, node flow.Node,
 ) ([]data.Data, error) {
 	counter, err := data.ReadyValueParameter(
-		"loopCounter", values.NewVariable(ord))
+		data.LoopCounterName, values.NewVariable(ord))
 	if err != nil {
 		return nil, err
 	}

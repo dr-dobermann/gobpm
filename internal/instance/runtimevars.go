@@ -34,7 +34,7 @@ const (
 	// §2.9.2). It outlives the activity: the counts at the activity's own
 	// scope end with the activation, and this is what answers "how many did
 	// we process?" one node later.
-	Iterations = "ITERATIONS"
+	Iterations = data.IterationsName
 )
 
 // DataReader returns the instance's read-only root data reader — process

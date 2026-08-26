@@ -209,7 +209,7 @@ func (sc *instanceScope) bindValueAt(
 func (sc *instanceScope) bindLoopCounterAt(
 	path scope.DataPath, counter int,
 ) error {
-	return sc.bindDataItemAt(path, "loopCounter", counter)
+	return sc.bindDataItemAt(path, data.LoopCounterName, counter)
 }
 
 // bindRootData commits the caller-resolved Call Activity inputs into the

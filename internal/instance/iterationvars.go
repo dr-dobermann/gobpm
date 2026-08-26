@@ -18,18 +18,23 @@ import (
 // where the path binds frame-local, at the activity's own scope where it
 // binds there — and never at a flat RUNTIME name, which receives a name and
 // nothing else and so could not say whose ordinal was asked for.
+// The names themselves are declared in the model layer (pkg/model/data),
+// which owns the data vocabulary and refuses a model that declares one of
+// them. The runtime references those constants rather than repeating the
+// strings, so the set that is PUBLISHED here and the set that is REFUSED
+// there cannot drift apart.
 const (
 	// IterationNumber is the executing instance's 0-based ordinal — the same
 	// value as `loopCounter`, under the engine's own name.
-	IterationNumber = "ITERATION_NUMBER"
+	IterationNumber = data.IterationNumberName
 
 	// IterationID is the executing instance's derived identity (ADR-025
 	// §2.9.3): the enclosing scope path, the activity id and the ordinal.
-	IterationID = "ITERATION_ID"
+	IterationID = data.IterationIDName
 
 	// IterationMode is the shape being iterated — the record's own `kind`,
 	// not a second vocabulary (iter_mirror.go).
-	IterationMode = "ITERATION_MODE"
+	IterationMode = data.IterationModeName
 )
 
 // iterationIDOf derives an instance's identity rather than minting one
