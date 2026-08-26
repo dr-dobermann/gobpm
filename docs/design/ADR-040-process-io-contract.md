@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-08-26 |
 | Owner | Ruslan Gabitov |
@@ -14,8 +14,9 @@
 > that contract is to this engine: the model carrier, when and how inputs
 > bind and outputs are read, what the call boundary validates, and what a
 > process without a contract means. It is the model capability
-> [ADR-038 v.3](ADR-038-converter-coverage-boundaries.md) §2.3 registers for
-> `<ioSpecification>` on a `<process>` (#330), delivered per its §2.4 as the
+> [ADR-024 v.6](ADR-024-process-interchange-converters.md) §2.16 registers for
+> `<ioSpecification>` on a `<process>` (#330), delivered per its second
+> rule — a capability lands before the row that consumes it — as the
 > capability's own decision record; the accompanying SRD lands it. The
 > event-association wiring of the same conception is deferred to its own
 > registered capability (§2.7).
@@ -61,8 +62,8 @@ as a data-resolution failure deep inside the running child, far from the
 call site. A host launching a process directly has the same gap in both
 directions: no declared launch payload, no declared result. And the
 importer refuses a legal `<ioSpecification>` on a `<process>`, registered
-capability-blocked ([ADR-038 v.3](ADR-038-converter-coverage-boundaries.md)
-§2.3, #330).
+capability-blocked ([ADR-024 v.6](ADR-024-process-interchange-converters.md)
+§2.16, #330).
 
 ## 2. Decision
 
@@ -228,7 +229,7 @@ The standard's Start/End special case (§10.4.2) flows *through event data
 associations*: a Start Event's output associations may target the process
 inputs, an End Event's input associations may source the process outputs.
 Data associations on events are their own registered model capability
-([ADR-038 v.3](ADR-038-converter-coverage-boundaries.md) §2.3, the
+([ADR-024 v.6](ADR-024-process-interchange-converters.md) §2.16, the
 attachment API row) and are **not** decided here. Until that lands, the
 contract binds through the direct paths of §2.2/§2.3 — which is the
 standard's own mechanism for calls, no associations involved — and the
@@ -240,7 +241,7 @@ capability that carries it.
 Once the carrier exists, `<ioSpecification>` on a `<process>` (and its
 bare data inputs/outputs) is **mapped** — parsed into the process
 contract — consuming the #330 register row per
-[ADR-038 v.3](ADR-038-converter-coverage-boundaries.md) §2.4. The
+[ADR-024 v.6](ADR-024-process-interchange-converters.md) §2.16. The
 importer keeps refusing what this record does not give a home: multiple
 input or output sets remain the standing multi-set boundary
 ([SAD-001 v.1.2](SAD-001-vision-and-architecture.md) §14.1), stated as a
@@ -355,7 +356,7 @@ multi-set selection (§2.8, a standing boundary).
   contract whose callee side this supplies.
 - [ADR-019 v.1](ADR-019-definition-versioning.md) — latest-at-launch,
   which fixes the validation moment (§2.4).
-- [ADR-038 v.3](ADR-038-converter-coverage-boundaries.md) — the #330
+- [ADR-024 v.6](ADR-024-process-interchange-converters.md) §2.16 — the #330
   register row this consumes, and the attachment-API row §2.7 defers to.
 - [SAD-001 v.1.2](SAD-001-vision-and-architecture.md) §14.1 — the
   single-set and no-data-wait deviations this extends.
@@ -372,4 +373,4 @@ multi-set selection (§2.8, a standing boundary).
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
-| v.1 | 2026-08-26 | Ruslan Gabitov | Initial decision. The Process gains a **single-set I/O contract** (SAD-001 §14.1's deviation extended to the callable): named, typed, required-or-optional parameters. **Inputs bind into the root scope at launch** — from the Call Activity's declared inputs (§10.4.1 p216 direct mapping, at last with a callee side) or from the host's start request; a required input unbound at launch refuses the launch, never waits. **Outputs are read from the root scope at normal completion** — committed to the caller or handed to the host; a required output unavailable at completion faults the instance; abnormal ends have no result surface. **Correspondence at the call boundary is by name** (engine note — the standard states no rule) and **validates at launch** (ADR-019's latest-at-launch makes earlier impossible). A process declaring **no contract keeps the permissive meaning** — strictness is the callee's opt-in. Properties stay distinct (one namespace, no implicit bridging; a name clash refuses at registration). §2.3a inventories the **publishing routes** — the ordinary copy machinery (activity output associations; data-object/property values via copies; the End-Event gathering once the attachment capability lands), the **runtime variables** published only by mapping the read-only `RUNTIME/…` reads (ADR-010 v.2 §2.7) through a task's associations or a Go operation's reader (never declared as outputs — they are not scope data), and the exclusions: data stores (engine-global), child-scope locals (copied out before the scope closes), and **aliasing** (an output is a committed copy, never a live view — the standard's own copy semantics). The **event-association wiring is deferred** to the attachment capability (§2.7); the converter maps `<ioSpecification>` on `<process>` once the carrier lands, consuming the #330 register row. §2.9 fixes the run's shape: the contract touches an instance at **exactly two moments** — launch (before any token) and normal completion (after the last) — and is invisible to every engine decision in between; refusal at launch leaves no instance behind, and an abnormal end never reaches the result step. |
+| v.1 | 2026-08-26 | Ruslan Gabitov | Initial decision. The Process gains a **single-set I/O contract** (SAD-001 §14.1's deviation extended to the callable): named, typed, required-or-optional parameters. **Inputs bind into the root scope at launch** — from the Call Activity's declared inputs (§10.4.1 p216 direct mapping, at last with a callee side) or from the host's start request; a required input unbound at launch refuses the launch, never waits. **Outputs are read from the root scope at normal completion** — committed to the caller or handed to the host; a required output unavailable at completion faults the instance; abnormal ends have no result surface. **Correspondence at the call boundary is by name** (engine note — the standard states no rule) and **validates at launch** (ADR-019's latest-at-launch makes earlier impossible). A process declaring **no contract keeps the permissive meaning** — strictness is the callee's opt-in. Properties stay distinct (one namespace, no implicit bridging; a name clash refuses at registration). §2.3a inventories the **publishing routes** — the ordinary copy machinery (activity output associations; data-object/property values via copies; the End-Event gathering once the attachment capability lands), the **runtime variables** published only by mapping the read-only `RUNTIME/…` reads (ADR-010 v.2 §2.7) through a task's associations or a Go operation's reader (never declared as outputs — they are not scope data), and the exclusions: data stores (engine-global), child-scope locals (copied out before the scope closes), and **aliasing** (an output is a committed copy, never a live view — the standard's own copy semantics). The **event-association wiring is deferred** to the attachment capability (§2.7); the converter maps `<ioSpecification>` on `<process>` once the carrier lands, consuming the #330 register row. §2.9 fixes the run's shape: the contract touches an instance at **exactly two moments** — launch (before any token) and normal completion (after the last) — and is invisible to every engine decision in between; refusal at launch leaves no instance behind, and an abnormal end never reaches the result step. **Accepted 2026-08-26** — landed whole via SRD-093 (the carrier, the launch binding, the completion reading, the call-boundary check, the importer row, `examples/process-io/`); the landing audit and an independent review folded into it (an unproduced optional output does not flow to the caller; outputs are bound through their declaration, so a type mismatch faults; an explicit empty `<ioSpecification/>` is a strict empty contract). Status flip; the register reference moved with ADR-038's retirement to ADR-024 v.6 §2.16. RU twin created. |

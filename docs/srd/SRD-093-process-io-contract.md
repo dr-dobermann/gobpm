@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-26 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-040 v.1](../design/ADR-040-process-io-contract.md) (the single-set Process I/O contract: launch binding of inputs, completion reading of outputs, by-name launch-time validation at the call boundary, the permissive contract-less process, the publishing routes, the event-wiring deferral) |
-| Upstream | [ADR-011 v.8](../design/ADR-011-process-data-flow.md) §2.2/§2.5 (the single-set parameter model; the scheduled Start/End path); [ADR-023 v.4](../design/ADR-023-sub-process-and-call-activity.md) (the Call Activity's direct mapping); [ADR-019 v.1](../design/ADR-019-definition-versioning.md) (latest-at-launch); [ADR-010 v.2](../design/ADR-010-process-data-model.md) §2.3/§2.7 (parameters as templates; the `RUNTIME` source); [ADR-038 v.3](../design/ADR-038-converter-coverage-boundaries.md) §2.3/§2.4 (the #330 register row; capability first, converter row after); [SAD-001 v.1.2](../design/SAD-001-vision-and-architecture.md) §14.1/§14.2 |
+| Upstream | [ADR-011 v.8](../design/ADR-011-process-data-flow.md) §2.2/§2.5 (the single-set parameter model; the scheduled Start/End path); [ADR-023 v.4](../design/ADR-023-sub-process-and-call-activity.md) (the Call Activity's direct mapping); [ADR-019 v.1](../design/ADR-019-definition-versioning.md) (latest-at-launch); [ADR-010 v.2](../design/ADR-010-process-data-model.md) §2.3/§2.7 (parameters as templates; the `RUNTIME` source); [ADR-024 v.6](../design/ADR-024-process-interchange-converters.md) §2.16 (the #330 register row; capability first, converter row after); [SAD-001 v.1.2](../design/SAD-001-vision-and-architecture.md) §14.1/§14.2 |
 | Related | [SRD-050](SRD-050-call-activity.md) (the caller-side mapping this completes), [SRD-089.G](SRD-089.G-bpmn-import-data-flow.md) (the activity `<ioSpecification>` machinery this reuses), [SRD-007](SRD-007-process-data-model.md) (frames, root scope) |
 | Closes | [#330](https://github.com/dr-dobermann/gobpm/issues/330) |
 
@@ -635,6 +635,9 @@ No existing signature breaks; the consumer-smoke gate proves it.
 | T-23 | `TestOutputTypeMismatchFaults` | a value the declared output cannot carry faults the instance at completion — `Terminated`, `LastErr()` names the output, no result | FR-8 |
 | T-24 | `TestOutputsConcurrentReaders` (`-race`) | hosts reading `Outputs()` concurrently with the loop storing the result each get their own copy | FR-9 |
 | T-25 | `TestCallerReadsUnproducedOptionalOutput` (two cases: result produced with the optional absent; nothing produced at all) | the caller completes without an incident, the optional name stays unbound; an EMPTY result is still served as the result, never the child's raw scope | FR-9 |
+| T-26 | `TestProcessIOSpecUnknownItemRefused` | a process parameter naming an `itemSubjectRef` the document lacks refuses the import naming it | FR-11 |
+| T-27 | `TestCallNilOutputSlotBindsNothing` (instance package, fake child) | a nil slot commits nothing under the caller's name; the caller completes, the name unbound | FR-9 |
+| T-28 | `TestStartOptionsValidate` (`StartProcess` / `StartVersion` cases) | all three doors fold the options and refuse a bad one the same way | FR-6 |
 
 The retired pins are rewritten in the same milestone: the
 `"ioSpecification on a process"` row of `refusalwording_test.go`
@@ -652,6 +655,7 @@ different refused element).
 | M5 | `examples/process-io/` (process.go / handlers.go / launch.go / check.go / main.go / README) + the examples index and README rows | one |
 | M5a | Found by M5's run log: `instance.New` announced `Created` before the scope load and the contract binding, so a refused launch left an orphan fact with no transition after it. The announcement now follows a successful seed (T-20) | one |
 | M6 | Review follow-ups (the `/check-srd` audit and the independent three-lens review): `childProcess.Outputs` distinguishes an empty result from no contract (`result != nil`); an unproduced optional output does not flow to the caller instead of faulting the call (nil slot in `exec.ChildProcess.Outputs`); outputs are bound through their declaration at completion, so a type mismatch faults; an explicit empty `<ioSpecification/>` imports as a strict empty contract; the racy pre-completion assertion dropped; the delivered-optional-input, `Option()` marker and concurrent-reader tests (T-21…T-25); NFR-4 restated as the gate's criterion; the `#330` comment residue removed | one |
+| M6a | The re-audit's NFR-4 sweep: four reachable blocks pinned in their own package — the nil-slot skip in `bindCallOutputs`, `constructProcess`'s parameter-build error, the option-fold refusal in `StartProcess`/`StartVersion` (T-26…T-28) — and the two invariant branches of `bindDeclared` marked | one |
 
 ## §8 Cross-doc references
 
@@ -662,7 +666,7 @@ different refused element).
 | up | [ADR-023 v.4](../design/ADR-023-sub-process-and-call-activity.md) | the call mapping whose callee side lands |
 | up | [ADR-019 v.1](../design/ADR-019-definition-versioning.md) | latest-at-launch, fixing the validation moment |
 | up | [ADR-010 v.2](../design/ADR-010-process-data-model.md) §2.3, §2.7 | parameters as per-execution templates; the `RUNTIME` source |
-| up | [ADR-038 v.3](../design/ADR-038-converter-coverage-boundaries.md) §2.3, §2.4 | the #330 register row and the ordering |
+| up | [ADR-024 v.6](../design/ADR-024-process-interchange-converters.md) §2.16 | the #330 register row and the ordering |
 | up | [SAD-001 v.1.2](../design/SAD-001-vision-and-architecture.md) §14.1, §14.2 | the deviations extended; the Go operation reader |
 | side | [SRD-050](SRD-050-call-activity.md) | the caller-side mapping (frozen; its permissive behaviour is preserved for contract-less callees) |
 | side | [SRD-089.G](SRD-089.G-bpmn-import-data-flow.md) | the ioSpecification parser reused (frozen; its #330 deferral row is superseded by this landing) |
@@ -676,7 +680,8 @@ No downward references.
 3. `make ci` green, both halves, the new example executing under
    `run-examples`.
 4. Diff-coverage at `COVER_MIN`; every reachable branch of a touched function pinned in its own package (NFR-4).
-5. The doc-sync commit: ADR-038 §2.3's #330 register row retired as
+5. The doc-sync commit: the #330 row of the capability register (ADR-024
+   §2.16; the table lives in the import-coverage guide) retired as
    consumed; ADR-011 §2.5's "lands with…" sentence updated to point at the
    landed carrier and the remaining event-wiring deferral; ADR-023's I/O
    bullet gains the callee side; `conformance-status.md`; the examples
@@ -687,7 +692,31 @@ No downward references.
 
 ## §10 Implementation summary
 
-*Post-landing placeholder.*
+Landed on `feat/process-io`, one commit per milestone, `make ci` PASS
+(14/14) at M5a and again at M6:
+
+| Commit | Milestone |
+|---|---|
+| `4f39f3ff` | ADR-040 v.1 |
+| `ac7f6ca7` | this SRD; ADR-040 §2.9 "the run, moment by moment" |
+| `83c81b6d` | M1 — `data.WithInputs`/`WithOutputs`, the `Process` carrier, the namespace validation (T-1…T-3) |
+| `879ebdc7` | M2 — snapshot carriage, the launch binding with type check and both refusals, `thresher.WithStartInputs`/`WithStartInput`, the event-born rule (T-4…T-9) |
+| `0cfa5b34` | M3 — completion reading, the required-output fault, `Outputs()` on instance and handle, `ProcessCall.Outputs` + the invoker check (T-10…T-14, T-19) |
+| `2fc757af` | M4 — `<ioSpecification>` under `<process>` imports; `buildParamSpecs` extracted; the #330 refusal retired (T-15…T-18) |
+| `582e3507` | M5 — `examples/process-io/`, the index and README rows |
+| `5c8f2ccb` | M5a — `Created` announced only after a launch is accepted (T-20) |
+| `7f6ea9af` | M6 — review follow-ups: the empty-result boundary, the unproduced optional output that does not flow, outputs bound through their declaration, the strict empty `<ioSpecification/>`, the racy assertion, T-21…T-25 |
+| `b5ed89bb` | doc-sync — the #330 register row consumed, ADR-011 v.8, ADR-023 v.4, conformance-status, CHANGELOG (written against ADR-038 v.3; master retired ADR-038 into ADR-024 v.6 §2.16 the same day, and the merge that followed re-pointed the register references to it and dropped the row from the import-coverage guide) |
+| `dbd9a683` | merge of `origin/master` (#350: ADR-038 retired into ADR-024 v.6 §2.16) |
+| `2b1fba2a` | M6a — the re-audit's NFR-4 sweep: four reachable blocks pinned in their own package, two invariant branches marked (T-26…T-28) |
+
+Departures from the plan as written, all recorded above: the option pair
+was renamed from the drafted `WithIOParameters(dir, …)` to
+`WithInputs`/`WithOutputs` before M1 (§3.1); M5a and M6 were not planned —
+the first came out of the example's own run log, the second out of the
+landing audit and the independent review (§7). NFR-4 is restated to the
+gate's criterion rather than a per-function figure. Nothing was deferred
+to a later document.
 
 ## Open questions
 
