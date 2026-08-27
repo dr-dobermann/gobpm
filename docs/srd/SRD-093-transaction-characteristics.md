@@ -256,10 +256,10 @@ two refusals and one `Dropped` entry retired.
 | T-2 | `TestTransactionOptions` | default is compensate with no protocol; method and protocol carried; blank method refused; blank protocol refused; each error names the option | FR-1, FR-2, NFR-1 |
 | T-3 | `TestTransactionMarkerAndShapeRules` (extended) | `Transaction()` nil on plain/event, non-nil with `WithTransaction()`; clone shares the characteristics; existing sub-tests unchanged | FR-3, FR-7 |
 | T-4 | `TestValidateTransactionCoverage` | compensate registers; `##Store` refused naming the transaction and the method; two offenders sorted; a nested plain sub-process is walked | FR-4 |
-| T-5 | `TestTransactionBindingDrivesAbort` | a Cancel inside a compensate transaction aborts as before, and the thrown fact carries `method=compensate`; a scope whose binding is not compensate reports an invariant violation | FR-5, FR-7 |
+| T-5 | `TestBindTransaction`, `TestForeignBindingAbortsWithoutCompensating`, and the method assertion added to `TestTransactionCancelAbort` | only a Transaction yields a binding and an unbound entry defaults to compensate; a Cancel inside a compensate transaction aborts as before and the thrown fact carries `transaction_method=compensate`; an instance built directly around a `##Store` transaction runs no handler, reports a Failed compensation naming the method, and still exits via the Cancel boundary | FR-5, FR-7 |
 | T-6 | `TestTransactionMethodDispositions` (rewritten) | absent, `compensate`, `##Compensate` import as compensate; `store`, `image`, `##Store`, `rollback` **import** carrying the value; none reported | FR-6 |
 | T-7 | `TestTransactionProtocolIsCarried` (replaces `…IsReported`) | `protocol="wsat"` lands on `Transaction().Protocol()`, `Dropped` empty | FR-6 |
-| T-8 | `TestRefusalsSayWhichKindTheyAre` (row retired) | the `transaction method=store` row is removed — it is no longer an import refusal; `TestStoreIsRefusedAtRegistration` pins the wording at its new site | FR-4, FR-6 |
+| T-8 | `TestRefusalsSayWhichKindTheyAre` (row retired) | the `transaction method=store` row is removed — it is no longer an import refusal; the "refused by name" subtest of `TestValidateTransactionCoverage` pins the wording at its new site | FR-4, FR-6 |
 | T-9 | SRD-061 transaction tests, e2e cancel/compensation, `examples/transaction-sub-process` in the run sweep | unchanged and green | FR-7 |
 
 ## §7 Milestones
@@ -300,7 +300,49 @@ No downward references.
 
 ## §10 Implementation summary
 
-_Filled at landing._
+### §10.1 Milestones as landed (branch `feat/transaction-protocol`)
+
+| M | Commit | Landed |
+|---|---|---|
+| doc | `874cc09d` | ADR-028 v.2 |
+| doc | `2b885d58` | this document |
+| M1 | `4ba577b3` | `pkg/model/activities/transaction.go`; `WithTransaction(opts...)`; `SubProcess.tx` / `Transaction()`; T-1, T-2, T-3 |
+| M2 | `7b5602d3` | `pkg/thresher/transaction_validation.go`, wired at `thresher.go:1048`; T-4 |
+| M3 | `8f436079` | `internal/instance/transaction_binding.go`; `scopeEntry.tx` at the three creation sites; `cancelTransaction` dispatch; `observability.AttrTransactionMethod`; T-5 |
+| M4 | `04fa51f0` | `transactionOptions` rewritten, table and refusals retired; T-6, T-7, T-8 |
+| M3a | `c0a86e68` | `transaction_method` registered in ADR-022 §2.5's descriptive list — the vocabulary gate (`internal/lintcfg`) refused the new constant on the first full gate run |
+
+### §10.2 Where reality diverged from the draft
+
+- **T-5 is three tests, not one.** The bind half (`TestBindTransaction`) and
+  the invariant half (`TestForeignBindingAbortsWithoutCompensating`) are
+  separate, and the compensate case is an assertion added to the existing
+  `TestTransactionCancelAbort` rather than a new test. The invariant case is
+  reachable only by building an instance directly (registration refuses the
+  method), which is what the test does.
+- **The foreign-binding abort still exits through the Cancel boundary.** The
+  draft said "torn down without a sweep"; the landing keeps the whole
+  finalize — teardown *and* the boundary exit — so the process does not
+  hang on a scope the abort could not compensate.
+- **`TestStoreIsRefusedAtRegistration` does not exist**; the wording is
+  pinned by the "refused by name" subtest of `TestValidateTransactionCoverage`.
+- **ADR-022 needed a row.** Not foreseen: the observability vocabulary is
+  gated by test, and a new `Attr*` constant must be listed in ADR-022 §2.5.
+  Descriptive, so no bump (M3a).
+- `buildSubProcess` stays at 90.9%: its remaining branch is `buildLaneSets`
+  failing, which no document can trigger (lane ids are trimmed at parse and
+  `WithID` refuses only a blank one). Defensive, pre-existing, unreachable.
+- `NewSubProcess` had an uncovered lane-option error path; M1 covered it
+  (`TestNewSubProcessPropagatesLaneOptionErrors`).
+
+### §10.3 Verification
+
+`make ci` at `c0a86e68`: **PASS — 14/14 steps** (`.ci/last-run.json`,
+2026-08-27T04:53:51Z), race tests green, diff-coverage **100.0% of 116
+changed coverable lines** (min 95%), govulncheck clean, every example
+(including `examples/transaction-sub-process`) executed end-to-end in the
+run sweep. `make lock-sweep`: no host call inside a critical section. Every
+touched function at 100% except the unreachable branch noted above.
 
 ## Open questions
 
