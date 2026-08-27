@@ -14,11 +14,10 @@ type (
 	endOption func(*endConfig) error
 
 	endConfig struct {
-		props      map[string]*data.Property
-		dataInputs map[string]*data.Parameter
-		name       string
-		baseOpts   []options.Option
-		defs       []flow.EventDefinition
+		props    map[string]*data.Property
+		name     string
+		baseOpts []options.Option
+		defs     []flow.EventDefinition
 	}
 )
 
@@ -87,10 +86,6 @@ func (ec *endConfig) endEvent() (*EndEvent, error) {
 		return nil, err
 	}
 
-	if len(ec.dataInputs) > 0 {
-		te.dataInputs = ec.dataInputs
-	}
-
 	return &EndEvent{
 		throwEvent: *te,
 	}, nil
@@ -145,32 +140,11 @@ func (ec *endConfig) setEscalation(eed *EscalationEventDefinition) error {
 	return nil
 }
 
-// setMessage implements messageAdder for the endConfig.
+// setMessage implements messageAdder for the endConfig. The message
+// payload's data input is declared by newThrowEvent from the definition,
+// with every other item-bearing trigger's (p217).
 func (ec *endConfig) setMessage(med *MessageEventDefinition) error {
 	ec.defs = append(ec.defs, med)
-
-	if id := med.Message().Item(); id != nil {
-		ds := data.ReadyDataState
-		if id.Structure() == nil {
-			ds = data.UndefinedSrcState
-		}
-
-		iae, err := data.NewItemAwareElement(id, ds)
-		if err != nil {
-			return err
-		}
-
-		di, err := data.NewParameter(
-			fmt.Sprintf("message %q(%s) input",
-				med.Message().Name(),
-				med.Message().ID()),
-			iae)
-		if err != nil {
-			return err
-		}
-
-		ec.dataInputs[id.ID()] = di
-	}
 
 	return nil
 }

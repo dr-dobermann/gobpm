@@ -124,7 +124,11 @@ and flow from. A parameter that pairs with no definition is refused: an
 event's data comes from what triggered it (§10.4.2), a parameter nothing
 fills is a modelling error said at construction, not a silent empty.
 Timer, Conditional, Cancel, Compensation, Terminate carry no item and
-accept no parameter.
+accept no parameter — and so does an item-bearing definition whose item
+has **no structure**: it has no value to carry, "if absent, payload does
+not flow" (p217), so it declares nothing and pairs with nothing (the
+pre-landing Undefined-state message parameter, which could never be
+instantiated at run time, goes with it).
 
 **FR-3 — the event copy path routes through scope (SRD-063 FR-5).**
 `catchEvent.UploadData` pushes each output association the way

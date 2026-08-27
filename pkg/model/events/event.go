@@ -3,9 +3,9 @@ package events
 import (
 	"context"
 	"errors"
-	"fmt"
-	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
+
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
@@ -277,7 +277,11 @@ func (e Event) NodeType() flow.NodeType {
 // *****************************************************************************
 
 type catchEvent struct {
-	dataOutputs map[string]*data.Parameter
+	// dataOutputs are the parameters the triggering element's payload lands
+	// in, one per item-bearing definition IN DEFINITION ORDER (p217) — the
+	// event's association sources (§10.4.2). Immutable configuration,
+	// shared by reference across per-instance clones.
+	dataOutputs []*data.Parameter
 	// iterCorr is the declared iteration-correlation pair (SRD-085
 	// FR-3, ADR-006 v.5 §2.9.3): immutable configuration, shared by
 	// reference across per-instance clones; nil when the catch declares
@@ -361,36 +365,6 @@ func (ce *catchEvent) ProcessEvent(
 	return nil
 }
 
-// addMessagePayloadOutput registers a data output for med's message item, so a
-// received payload has an output to land in (and flow through associations).
-// Mirrors the message dataOutput a start event gets via WithMessageTrigger.
-// It errors instead of panicking when the output cannot be built (FIX-026).
-func (ce *catchEvent) addMessagePayloadOutput(med *MessageEventDefinition) error {
-	item := med.Message().Item()
-
-	ds := data.ReadyDataState
-	if item.Structure() == nil {
-		ds = data.UndefinedSrcState
-	}
-
-	iae, err := data.NewItemAwareElement(item, ds)
-	if err != nil {
-		return msgOutputErr(med, err)
-	}
-
-	output, err := data.NewParameter(
-		fmt.Sprintf("message %q(%s) output",
-			med.Message().Name(), med.Message().ID()),
-		iae)
-	if err != nil {
-		return msgOutputErr(med, err)
-	}
-
-	ce.dataOutputs[item.ID()] = output
-
-	return nil
-}
-
 // msgOutputErr classifies a message payload output build failure (FIX-026).
 func msgOutputErr(med *MessageEventDefinition, err error) error {
 	return errs.New(
@@ -428,10 +402,18 @@ func newCatchEvent(
 		return nil, err
 	}
 
+	// the payload parameters first — one per item-bearing definition, in
+	// order — so a catch option that declares them explicitly has the
+	// definitions to pair with (p217).
+	outputs, err := autoParameters(defs, data.Output)
+	if err != nil {
+		return nil, err
+	}
+
 	ce := &catchEvent{
 		Event:              *e,
 		outputAssociations: []*data.Association{},
-		dataOutputs:        map[string]*data.Parameter{},
+		dataOutputs:        outputs,
 		parallelMultiple:   e.triggers.Count() > 1 && parallel,
 	}
 
@@ -478,12 +460,7 @@ func (ce catchEvent) IsParallelMultiple() bool {
 // triggering event delivered) and fills all outputAssociations from those
 // instances.
 func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
-	defs := make([]*data.Parameter, 0, len(ce.dataOutputs))
-	for _, def := range ce.dataOutputs {
-		defs = append(defs, def)
-	}
-
-	if err := f.InstantiateOutputs(defs); err != nil {
+	if err := f.InstantiateOutputs(ce.dataOutputs); err != nil {
 		return errs.New(
 			errs.M("couldn't instantiate outputs of event %q", ce.Name()),
 			errs.C(errorClass, errs.OperationFailed),
@@ -579,28 +556,65 @@ func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
 // throwing of a trigger MAY be either implicit as defined by this standard or
 // an extension to it or explicit by a throw Event.
 type throwEvent struct {
-	dataInputs map[string]*data.Parameter
+	// dataInputs are the parameters the input associations fill when the
+	// event fires and the thrown element is copied from, one per
+	// item-bearing definition IN DEFINITION ORDER (p217) — the event's
+	// association targets (§10.4.2). Immutable configuration, shared by
+	// reference across per-instance clones.
+	dataInputs []*data.Parameter
 	Event
 	inputAssociations []*data.Association
 }
 
-// NewThrowEvent creates a new throwEvent and returns its pointer.
+// NewThrowEvent creates a new throwEvent and returns its pointer. Throw-level
+// options apply to the built throwEvent after its payload parameters exist;
+// everything else rides down to newEvent.
 func newThrowEvent(
 	name string,
 	props []*data.Property,
 	defs []flow.EventDefinition,
 	baseOpts ...options.Option,
 ) (*throwEvent, error) {
-	e, err := newEvent(name, props, defs, baseOpts...)
+	throwOpts := make([]ThrowOption, 0, len(baseOpts))
+	eventOpts := make([]options.Option, 0, len(baseOpts))
+
+	for _, o := range baseOpts {
+		if to, ok := o.(ThrowOption); ok {
+			throwOpts = append(throwOpts, to)
+
+			continue
+		}
+
+		eventOpts = append(eventOpts, o)
+	}
+
+	e, err := newEvent(name, props, defs, eventOpts...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &throwEvent{
+	inputs, err := autoParameters(defs, data.Input)
+	if err != nil {
+		return nil, err
+	}
+
+	te := &throwEvent{
 		Event:             *e,
 		inputAssociations: []*data.Association{},
-		dataInputs:        map[string]*data.Parameter{},
-	}, nil
+		dataInputs:        inputs,
+	}
+
+	for _, to := range throwOpts {
+		if err := to(te); err != nil {
+			return nil, errs.New(
+				errs.M("newThrowEvent: couldn't apply a throw option to "+
+					"event %q", name),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+		}
+	}
+
+	return te, nil
 }
 
 // clone returns a per-instance copy of the throwEvent: the embedded Event is
@@ -625,12 +639,7 @@ func (te *throwEvent) clone() (throwEvent, error) {
 // execution frame and fills the input instances from the incoming data
 // associations.
 func (te *throwEvent) LoadData(ctx context.Context, f exec.Frame) error {
-	defs := make([]*data.Parameter, 0, len(te.dataInputs))
-	for _, def := range te.dataInputs {
-		defs = append(defs, def)
-	}
-
-	if err := f.InstantiateInputs(defs); err != nil {
+	if err := f.InstantiateInputs(te.dataInputs); err != nil {
 		return errs.New(
 			errs.M("couldn't instantiate inputs of event %q", te.Name()),
 			errs.C(errorClass, errs.OperationFailed),
@@ -651,12 +660,7 @@ func (te *throwEvent) LoadData(ctx context.Context, f exec.Frame) error {
 
 	// an input gates the event firing unless it is optional or while-executing
 	// (ADR-011 v.2 §2.2-§2.3); events never wait on data.
-	inDefs := make([]*data.Parameter, 0, len(te.dataInputs))
-	for _, d := range te.dataInputs {
-		inDefs = append(inDefs, d)
-	}
-
-	gating := data.RequiredItemIDs(inDefs)
+	gating := data.RequiredItemIDs(te.dataInputs)
 
 	ee := []error{}
 

@@ -5,8 +5,10 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/stretchr/testify/require"
 )
@@ -36,6 +38,28 @@ func dataParam(
 	return p
 }
 
+// msgDef builds a message definition whose payload item has id and carries
+// val — the item-bearing definition an event's data parameter pairs with.
+func msgDef(t *testing.T, id string, val any) *MessageEventDefinition {
+	t.Helper()
+
+	return MustMessageEventDefinition(
+		bpmncommon.MustMessage("msg-"+id,
+			data.MustItemDefinition(values.NewVariable(val),
+				foundation.WithID(id))),
+		nil)
+}
+
+// bareMsgDef builds a message definition over an item with no structure.
+func bareMsgDef(t *testing.T, id string) *MessageEventDefinition {
+	t.Helper()
+
+	return MustMessageEventDefinition(
+		bpmncommon.MustMessage("msg-"+id,
+			data.MustItemDefinition(nil, foundation.WithID(id))),
+		nil)
+}
+
 // frameFor builds a fresh plane + frame for node nodeID.
 func frameFor(t *testing.T, nodeID string) *scope.Frame {
 	t.Helper()
@@ -49,9 +73,35 @@ func frameFor(t *testing.T, nodeID string) *scope.Frame {
 	return f
 }
 
+// inputAssoc builds an input association onto the item-1 target from a
+// source over srcID, in the given states.
+func inputAssoc(
+	t *testing.T, targetID, srcID string, targetSt, srcSt *data.SrcState,
+) *data.Association {
+	t.Helper()
+
+	target := data.MustItemAwareElement(
+		data.MustItemDefinition(values.NewVariable(""),
+			foundation.WithID(targetID)),
+		targetSt)
+
+	ia, err := data.NewAssociation(
+		target,
+		data.WithSource(
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable(""),
+					foundation.WithID(srcID)),
+				srcSt)))
+	require.NoError(t, err)
+
+	return ia
+}
+
 // TestThrowEventLoadData covers the throw-side consumer role (SRD-007
 // FR-6): input/property instantiation in the frame and the association
-// fill of the frame instances, including the Ready flip.
+// fill of the frame instances, including the Ready flip. The inputs are
+// declared and the associations bound through the public surface
+// (SRD-094 T-18).
 func TestThrowEventLoadData(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -64,11 +114,10 @@ func TestThrowEventLoadData(t *testing.T) {
 					data.MustItemDefinition(values.NewVariable(7)),
 					data.ReadyDataState),
 			},
-			nil)
+			[]flow.EventDefinition{msgDef(t, "item-1", "")},
+			WithDataInputs(
+				dataParam(t, "in-1", "item-1", "", data.UnavailableDataState)))
 		require.NoError(t, err)
-
-		te.dataInputs["item-1"] =
-			dataParam(t, "in-1", "item-1", "", data.UnavailableDataState)
 
 		return te
 	}
@@ -77,19 +126,7 @@ func TestThrowEventLoadData(t *testing.T) {
 		func(t *testing.T) {
 			te := newThrow(t)
 
-			target := data.MustItemAwareElement(
-				data.MustItemDefinition(values.NewVariable(""),
-					foundation.WithID("item-1")),
-				nil)
-
-			ia, err := data.NewAssociation(
-				target,
-				data.WithSource(
-					data.MustItemAwareElement(
-						data.MustItemDefinition(values.NewVariable(""),
-							foundation.WithID("src-1")),
-						nil)))
-			require.NoError(t, err)
+			ia := inputAssoc(t, "item-1", "src-1", nil, nil)
 
 			// the upstream producer primes the association (UpdateSource
 			// fills the source and flips the target Ready — the IsReady
@@ -99,7 +136,7 @@ func TestThrowEventLoadData(t *testing.T) {
 					foundation.WithID("src-1")),
 				data.Recalculate))
 
-			te.inputAssociations = append(te.inputAssociations, ia)
+			require.NoError(t, te.BindIncoming(ia))
 
 			f := frameFor(t, te.ID())
 			require.NoError(t, te.LoadData(ctx, f))
@@ -116,43 +153,30 @@ func TestThrowEventLoadData(t *testing.T) {
 			require.Equal(t, 7, p.Value().Get(ctx))
 
 			// the DEFINITION input stays untouched (per-frame instances).
-			require.Equal(t, "",
-				te.dataInputs["item-1"].Value().Get(ctx))
+			require.Equal(t, "", te.dataInputs[0].Value().Get(ctx))
 		})
 
 	t.Run("not-ready association fails", func(t *testing.T) {
 		te := newThrow(t)
 
-		target := data.MustItemAwareElement(
-			data.MustItemDefinition(values.NewVariable(""),
-				foundation.WithID("item-1")),
-			data.UnavailableDataState)
-
-		ia, err := data.NewAssociation(
-			target,
-			data.WithSource(
-				data.MustItemAwareElement(
-					data.MustItemDefinition(values.NewVariable(""),
-						foundation.WithID("src-1")),
-					data.UnavailableDataState)))
-		require.NoError(t, err)
-
-		te.inputAssociations = append(te.inputAssociations, ia)
+		require.NoError(t, te.BindIncoming(inputAssoc(t, "item-1", "src-1",
+			data.UnavailableDataState, data.UnavailableDataState)))
 
 		require.Error(t, te.LoadData(ctx, frameFor(t, te.ID())))
 	})
 
-	t.Run("under-specified input definition fails instantiation",
+	t.Run("an input over a structure-less item is refused at construction",
 		func(t *testing.T) {
-			te, err := newThrowEvent("thr-bad-in", nil, nil)
-			require.NoError(t, err)
-
-			te.dataInputs["bad"] = data.MustParameter("bad-in",
-				data.MustItemAwareElement(
-					data.MustItemDefinition(nil, foundation.WithID("bad")),
-					data.ReadyDataState))
-
-			require.Error(t, te.LoadData(ctx, frameFor(t, te.ID())))
+			// the definition's item carries no value, so it is not
+			// item-bearing (p217: the payload does not flow) — a parameter
+			// declared for it pairs with nothing
+			_, err := newThrowEvent("thr-bad-in", nil,
+				[]flow.EventDefinition{bareMsgDef(t, "bad")},
+				WithDataInputs(data.MustParameter("bad-in",
+					data.MustItemAwareElement(
+						data.MustItemDefinition(nil, foundation.WithID("bad")),
+						data.ReadyDataState))))
+			require.ErrorContains(t, err, "a parameter nothing fills")
 		})
 
 	t.Run("failing association evaluation is reported", func(t *testing.T) {
@@ -175,8 +199,7 @@ func TestThrowEventLoadData(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NoError(t, target.UpdateState(data.ReadyDataState))
-
-		te.inputAssociations = append(te.inputAssociations, ia)
+		require.NoError(t, te.BindIncoming(ia))
 
 		require.Error(t, te.LoadData(ctx, frameFor(t, te.ID())))
 	})
@@ -203,7 +226,7 @@ func TestThrowEventLoadData(t *testing.T) {
 				foundation.WithID("src-2")),
 			data.Recalculate))
 
-		te.inputAssociations = append(te.inputAssociations, ia)
+		require.NoError(t, te.BindIncoming(ia))
 
 		require.Error(t, te.LoadData(ctx, frameFor(t, te.ID())))
 	})
@@ -219,42 +242,28 @@ func TestThrowEventStartGate(t *testing.T) {
 
 	t.Run("optional input with a not-ready association is allowed",
 		func(t *testing.T) {
-			te, err := newThrowEvent("thr-opt", nil, nil)
+			te, err := newThrowEvent("thr-opt", nil,
+				[]flow.EventDefinition{msgDef(t, "opt-1", "")},
+				WithDataInputs(data.MustParameter("opt-in",
+					data.MustItemAwareElement(
+						data.MustItemDefinition(values.NewVariable(""),
+							foundation.WithID("opt-1")),
+						data.UnavailableDataState), data.Optional())))
 			require.NoError(t, err)
 
-			te.dataInputs["opt-1"] = data.MustParameter("opt-in",
-				data.MustItemAwareElement(
-					data.MustItemDefinition(values.NewVariable(""),
-						foundation.WithID("opt-1")),
-					data.UnavailableDataState), data.Optional())
-
-			target := data.MustItemAwareElement(
-				data.MustItemDefinition(values.NewVariable(""),
-					foundation.WithID("opt-1")),
-				data.UnavailableDataState)
-
-			ia, err := data.NewAssociation(target,
-				data.WithSource(data.MustItemAwareElement(
-					data.MustItemDefinition(values.NewVariable(""),
-						foundation.WithID("src-x")),
-					data.UnavailableDataState)))
-			require.NoError(t, err)
-
-			te.inputAssociations = append(te.inputAssociations, ia)
+			require.NoError(t, te.BindIncoming(inputAssoc(t, "opt-1", "src-x",
+				data.UnavailableDataState, data.UnavailableDataState)))
 
 			require.NoError(t, te.LoadData(ctx, frameFor(t, te.ID())))
 		})
 
 	t.Run("required input with no association fails",
 		func(t *testing.T) {
-			te, err := newThrowEvent("thr-req", nil, nil)
+			te, err := newThrowEvent("thr-req", nil,
+				[]flow.EventDefinition{msgDef(t, "req-1", "")},
+				WithDataInputs(
+					dataParam(t, "req-in", "req-1", "", data.UnavailableDataState)))
 			require.NoError(t, err)
-
-			te.dataInputs["req-1"] = data.MustParameter("req-in",
-				data.MustItemAwareElement(
-					data.MustItemDefinition(values.NewVariable(""),
-						foundation.WithID("req-1")),
-					data.UnavailableDataState))
 
 			require.Error(t, te.LoadData(ctx, frameFor(t, te.ID())))
 		})
@@ -269,11 +278,10 @@ func TestCatchEventUploadDataBranches(t *testing.T) {
 	ctx := context.Background()
 
 	newCatch := func(t *testing.T, st *data.SrcState) *catchEvent {
-		ce, err := newCatchEvent("cth", nil, nil, false)
+		ce, err := newCatchEvent("cth", nil,
+			[]flow.EventDefinition{msgDef(t, "item-1", "caught")}, false,
+			WithDataOutputs(dataParam(t, "out-1", "item-1", "caught", st)))
 		require.NoError(t, err)
-
-		ce.dataOutputs["item-1"] =
-			dataParam(t, "out-1", "item-1", "caught", st)
 
 		return ce
 	}
@@ -295,7 +303,7 @@ func TestCatchEventUploadDataBranches(t *testing.T) {
 					data.UnavailableDataState)))
 		require.NoError(t, err)
 
-		ce.outputAssociations = append(ce.outputAssociations, oa)
+		require.NoError(t, ce.BindOutgoing(oa))
 
 		return oa
 	}
@@ -348,23 +356,29 @@ func TestCatchEventUploadDataBranches(t *testing.T) {
 						data.UnavailableDataState)))
 			require.NoError(t, err)
 
-			ce.outputAssociations = append(ce.outputAssociations, oa)
+			require.NoError(t, ce.BindOutgoing(oa))
 
 			require.Error(t, ce.UploadData(ctx, frameFor(t, ce.ID())))
 		})
 
-	t.Run("under-specified output definition fails instantiation",
+	t.Run("an output over a structure-less item is refused at construction",
 		func(t *testing.T) {
-			ce, err := newCatchEvent("cth-bad", nil, nil, false)
-			require.NoError(t, err)
-
-			ce.dataOutputs["bad"] = data.MustParameter("bad-out",
-				data.MustItemAwareElement(
-					data.MustItemDefinition(nil, foundation.WithID("bad")),
-					data.ReadyDataState))
-
-			require.Error(t, ce.UploadData(ctx, frameFor(t, ce.ID())))
+			_, err := newCatchEvent("cth-bad", nil,
+				[]flow.EventDefinition{bareMsgDef(t, "bad")}, false,
+				WithDataOutputs(data.MustParameter("bad-out",
+					data.MustItemAwareElement(
+						data.MustItemDefinition(nil, foundation.WithID("bad")),
+						data.ReadyDataState))))
+			require.ErrorContains(t, err, "a parameter nothing fills")
 		})
+
+	t.Run("a structure-less payload declares no output", func(t *testing.T) {
+		ce, err := newCatchEvent("cth-bare", nil,
+			[]flow.EventDefinition{bareMsgDef(t, "bare")}, false)
+		require.NoError(t, err)
+		require.Empty(t, ce.Outputs())
+		require.NoError(t, ce.UploadData(ctx, frameFor(t, ce.ID())))
+	})
 }
 
 // TestCatchEventUploadDataLoadsProperties covers FIX-018 3.2.3: catchEvent.
