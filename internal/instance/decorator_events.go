@@ -219,26 +219,42 @@ func (es *eventSubs) parking(ord int) {
 	// a completion that arrived before this box existed is handed over now,
 	// which is the moment there is somewhere to put it. The box is buffered,
 	// and this instance is the only reader, so the send cannot block.
+
 	if def, waiting := es.staged[ord]; waiting {
 		delete(es.staged, ord)
 		es.boxes[ord] <- def
 	}
 }
 
-// stage keeps a completion for an instance that has no box yet, to be handed
-// over when it parks. Reports false when the instance is already parked and
-// the caller should send to its box directly.
-func (es *eventSubs) stage(ord int, def flow.EventDefinition) bool {
+// deliver hands instance ord its completion and closes out its capability
+// wait, in ONE step under the lock.
+//
+// The two cannot be separate calls. Dropping the wait releases the instance's
+// delivery box, and the loop's release raced the instance's park: the box was
+// created and the envelope pushed into it, and the release then deleted the
+// box WITH the envelope inside. The instance fell back to the track's channel
+// and waited forever for a completion someone had already performed.
+//
+// The box is deliberately not dropped here — the envelope is in it and the
+// instance is about to read it. It goes when the decorator does, which is the
+// end of the activity's run either way.
+func (es *eventSubs) deliver(ord int, def flow.EventDefinition) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
-	if _, open := es.boxes[ord]; open {
-		return false
+	delete(es.capParked, ord)
+
+	// NOT PARKED YET: a restored fan-out is rebuilt by the very action being
+	// applied to it, so a completion can arrive before its instance has
+	// anywhere to receive it. Held until parking hands it over.
+	box, open := es.boxes[ord]
+	if !open {
+		es.staged[ord] = def
+
+		return
 	}
 
-	es.staged[ord] = def
-
-	return true
+	box <- def
 }
 
 // taskIDFor returns instance ord's parked-work identity, minting one on first
@@ -336,20 +352,6 @@ func (es *eventSubs) dropTaskID(ord int) {
 	defer es.mu.Unlock()
 
 	delete(es.taskIDs, ord)
-}
-
-// unparked records that instance ord's capability wait is over — its task was
-// completed, withdrawn or canceled — and drops its box once it waits on
-// nothing at all.
-func (es *eventSubs) unparked(ord int) {
-	es.mu.Lock()
-	defer es.mu.Unlock()
-
-	delete(es.capParked, ord)
-
-	if !es.waitsAnywhereLocked(ord) {
-		delete(es.boxes, ord)
-	}
 }
 
 // stopped records that instance ord is no longer parked on def, and reports
@@ -490,13 +492,12 @@ type activitySubscriber interface {
 	// delivery.
 	boxFor(ord int) chan flow.EventDefinition
 
-	// parking and unparked bracket a CAPABILITY wait — one addressed by a
+	// parking and deliver bracket a CAPABILITY wait — one addressed by a
 	// task identity rather than an event definition. They exist separately
 	// from awaiting/stopped because such a wait has no definition to hang a
 	// delivery box off, and a box opened only as a side effect of
 	// subscribing is a box a human task never gets.
 	parking(ord int)
-	unparked(ord int)
 
 	// delivering and delivered bracket the handoff of a completion, so the
 	// loop can tell a fully parked activity from one with work in flight.
@@ -504,8 +505,8 @@ type activitySubscriber interface {
 	delivered()
 	busy() bool
 
-	// stage holds a completion whose instance has not parked yet.
-	stage(ord int, def flow.EventDefinition) bool
+	// deliver hands one instance its completion and ends its capability wait.
+	deliver(ord int, def flow.EventDefinition)
 
 	// taskIDFor, adoptTaskID and dropTaskID own the parked-work identity of
 	// one instance (ADR-020 §2.12); taskIDSnapshot hands the set to the

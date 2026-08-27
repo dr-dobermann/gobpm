@@ -258,6 +258,7 @@ func (ls *loopState) completeTask(
 	// Record WHO performed the work before resuming. It is written here, past every
 	// rejectable stage, so only an accepted completion leaves a record (ADR-020 v.2
 	// §2.4.2).
+
 	ls.inst.recordCompletedBy(entry.node, req.actor)
 
 	// A task in the registry is always still parked: onTaskWaiting adds it to both
@@ -309,19 +310,20 @@ func (ls *loopState) deliverCompletion(
 		return
 	}
 
-	// this instance's work is done: its identity names nothing from here, and
-	// a later pass of the same activity mints its own.
-	owner.dropTaskID(entry.ord)
-	owner.unparked(entry.ord)
-
 	// BEFORE the handover: from here until the instance takes it, the
 	// activity must not read as fully parked, or the loop's next dehydration
 	// takes the track away with this completion still undelivered.
 	owner.delivering()
 
-	if !owner.stage(entry.ord, completion) {
-		owner.boxFor(entry.ord) <- completion
-	}
+	// The handover and the end of the wait are ONE step — see eventSubs.deliver.
+	//
+	// The identity is not dropped here: the instance has not finished, and its
+	// recorded state does not become `completed` until the barrier accounts
+	// for the report (took). Dropping it now would leave a window in which a
+	// checkpoint records that instance as RUNNING WITH NO IDENTITY, and a
+	// restore would mint a fresh one for work whose handle its holder is
+	// still carrying.
+	owner.deliver(entry.ord, completion)
 
 	// the track leaves the parked set only when NO instance still holds work.
 	if !owner.anyWaiting() {

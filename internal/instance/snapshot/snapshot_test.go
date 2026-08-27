@@ -556,7 +556,7 @@ func TestOnlyTheAmbiguousIteratedWaitIsRefused(t *testing.T) {
 					"something is")
 		})
 
-	t.Run("a PARALLEL MI over a User Task is refused for now", func(t *testing.T) {
+	t.Run("a PARALLEL MI over a User Task builds", func(t *testing.T) {
 		mi, err := activities.NewMultiInstance(
 			activities.WithInputCollection("items", "item"))
 		require.NoError(t, err)
@@ -567,13 +567,13 @@ func TestOnlyTheAmbiguousIteratedWaitIsRefused(t *testing.T) {
 			activities.WithoutParams(), activities.WithLoop(mi))
 		require.NoError(t, err)
 
-		err = build(t, "wl-ut-par", ut)
-		require.ErrorContains(t, err, "do not yet survive a dehydration",
-			"the refusal names what is still missing — the identities "+
-				"surviving a restore — rather than the per-instance parking "+
-				"and announcement this slice already built")
-		require.ErrorContains(t, err, "sequential",
-			"and the shape that does work")
+		require.NoError(t, build(t, "wl-ut-par", ut),
+			"a human fan-out builds: each instance classifies and parks its "+
+				"own node, mints its own identity and is completed on it "+
+				"(ADR-025 §2.15, ADR-020 §2.12). It was refused while the "+
+				"instances shared ONE identity, because N of them then "+
+				"announced a single task and the rest completed without "+
+				"anyone doing the work")
 	})
 
 	t.Run("a SEQUENTIAL MI over a User Task builds", func(t *testing.T) {

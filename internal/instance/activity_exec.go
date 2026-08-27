@@ -858,6 +858,12 @@ func (b *parallelBarrier) took(
 	b.completed++
 	b.run.states[ord] = instanceCompleted
 
+	// ACCOUNTED FOR, so the identity can go: this ordinal now records as
+	// completed, and a later pass of the same activity mints its own. Held
+	// until here so the two never disagree in a checkpoint (deliverCompletion
+	// says the same from the other side).
+	b.d.dropTaskID(ord)
+
 	b.run.collectOutput(ord)
 
 	if err := b.run.outs.stage(ctx, b.d.t.miState, ord); err != nil {
