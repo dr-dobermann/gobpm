@@ -61,7 +61,7 @@ different BPMN kind instead:
 | Option | When you reach for it |
 |---|---|
 | *(none)* | the ordinary embedded Sub-Process — a nested scope you fill with `Add`. |
-| `WithTransaction()` | make it a [Transaction Sub-Process](transaction.md) — Cancel End / boundary enabled, ACID-like abort. |
+| `WithTransaction(opts...)` | make it a [Transaction Sub-Process](transaction.md) — Cancel End / boundary enabled, ACID-like abort. |
 | `WithTriggeredByEvent()` | make it an [Event Sub-Process](../events/event-subprocess.md) — a handler entered by its triggered start, not by a flow. |
 
 The options come from two typed families — **sub-process options**
@@ -70,7 +70,7 @@ options** (any activity):
 
 | Sub-process option | Effect |
 |---|---|
-| `WithTransaction()` | mark it a Transaction Sub-Process (BPMN §10.7); permits Cancel (End + boundary) and names the scope a Cancel aborts. Mutually exclusive with `WithTriggeredByEvent`. |
+| `WithTransaction(opts...)` | mark it a Transaction Sub-Process (BPMN §10.7); permits Cancel (End + boundary) and names the scope a Cancel aborts. Mutually exclusive with `WithTriggeredByEvent`. |
 | `WithTriggeredByEvent()` | mark it an Event Sub-Process (BPMN §13.5.4); entered only by its single triggered Start Event, not by a sequence flow. |
 
 | Activity option | Effect |

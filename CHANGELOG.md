@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A Transaction carries its `method` and `protocol`, and binds its abort
+  to a coordinator** (ADR-028 v.2 / SRD-095, part of #324). The
+  `isTransaction` flag becomes `activities.TransactionCharacteristics` —
+  `WithTransaction(opts...)` (source-compatible) with
+  `WithTransactionMethod`/`WithTransactionProtocol`, read back through
+  `SubProcess.Transaction()`. `method` is an open identifier
+  (`TransactionMethod`): `compensate` is built in and the default, the
+  model reads both the metamodel spelling and the schema token
+  `##Compensate`, and `RegisterProcess` refuses any method no coordinator
+  performs — the same moment a script format nothing claims is. The
+  instance runtime binds a Transaction scope to its coordinator when the
+  scope opens (fresh and restored alike) and dispatches the Cancel abort on
+  the binding; the abort's Thrown fact carries `transaction_method`. The
+  BPMN importer maps both attributes verbatim, retiring its private value
+  table — which read only the lowercase spellings and refused a schema-valid
+  `method="##Compensate"` — and the `protocol` `Dropped` report; a
+  `<transaction method="##Store">` now imports and is refused at
+  registration. Export of a Sub-Process, and so re-emission of the two, still
+  waits on ADR-024's export slice.
+- **The examples run sweep runs in parallel** (`scripts/run-examples.sh`,
+  `EXAMPLE_JOBS`): 49 modules in ~30s instead of 1m20s, each example's
+  output buffered and printed in its own group fold in module order, a
+  failure showing its log and status.
 - **Events carry data — and the process's own Start/End events fill its
   contract** (ADR-040 v.2 §2.7 / SRD-094, closes #329). A catch event
   (Start, Intermediate catch, Boundary) has data outputs and output
@@ -166,6 +189,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serialization.
 
 ### Fixed
+
+- **A checkpoint taken at a wait no longer drops the previous activity's
+  compensation-ledger entry** (SRD-095 FR-8). The track declared a wait —
+  a checkpoint trigger — before emitting the move that ledgers the activity
+  it had just completed, so a document written at that wait was one entry
+  short, and a Transaction restored from it aborted without compensating
+  that activity. The move is now emitted first; a restore from a wait
+  checkpoint compensates exactly as a resident abort does.
 
 - **Claiming a human task no longer lapses when the instance wakes**
   (ADR-020 §2.1, §2.4.1). Hydrating a released instance re-parks its

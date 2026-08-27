@@ -30,11 +30,10 @@ func TestRefusalsSayWhichKindTheyAre(t *testing.T) {
 			standing: true,
 			wants:    []string{"Router", "programmatically"},
 		},
-		"transaction method=store": {
-			doc:      variantDoc(`<bpmn:transaction id="sub" name="C" method="store">`),
-			standing: true,
-			wants:    []string{"ADR-028", "compensate"},
-		},
+		// A transaction's method=store is no longer an import refusal: the
+		// model carries any method and registration refuses one no
+		// coordinator performs (SRD-095 FR-4/FR-6; pinned by
+		// pkg/thresher TestValidateTransactionCoverage).
 		"foreign calledElement": {
 			doc: callDoc(
 				`<bpmn:callActivity id="ca" name="F" calledElement="other:Proc"/>`),

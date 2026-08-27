@@ -48,19 +48,19 @@ type SubProcess struct {
 	// its routing configuration: nil on every other variant. Its inner
 	// activities carry no fixed order — the Router replaces sequence-flow
 	// succession inside the container. Mutually exclusive with triggered and
-	// isTransaction.
+	// tx.
 	adHoc *adHocSpec
+	// tx holds the transaction characteristics (BPMN §10.7, ADR-028 §2.1):
+	// plain Sub-Process semantics plus the Cancel abort, with the abort method
+	// and coordination protocol the document stated. nil on every other
+	// variant. Immutable configuration shared by clones, like adHoc.
+	tx *TransactionCharacteristics
 	activity
 	// triggered marks an Event Sub-Process (triggeredByEvent, BPMN §13.5.4):
 	// a scope-armed handler entered by its triggered start, not a token
 	// (ADR-023 v.2 §2.10, SRD-052). A plain (embedded) Sub-Process leaves it
 	// false and keeps the §2.3 None-start / flow-less shape.
 	triggered bool
-	// isTransaction marks a Transaction Sub-Process (BPMN §10.7, ADR-028 §2.1):
-	// plain Sub-Process semantics plus the Cancel abort. It only permits Cancel
-	// (End + boundary) and names the scope a cancel aborts; mutually exclusive
-	// with triggered.
-	isTransaction bool
 }
 
 // NewSubProcess creates an empty embedded Sub-Process. Inner elements are
@@ -92,7 +92,7 @@ func NewSubProcess(
 		}
 	}
 
-	if cfg.triggered && cfg.isTransaction {
+	if cfg.triggered && cfg.tx != nil {
 		return nil, errs.New(
 			errs.M("NewSubProcess: WithTransaction and WithTriggeredByEvent are "+
 				"mutually exclusive — an Event Sub-Process handler is not a "+
@@ -103,7 +103,7 @@ func NewSubProcess(
 	// The three variants name three different entry contracts — a token, a
 	// trigger, and a Router — so no Sub-Process can be two of them at once
 	// (ADR-035 v.1 §2.1).
-	if cfg.adHoc != nil && (cfg.triggered || cfg.isTransaction) {
+	if cfg.adHoc != nil && (cfg.triggered || cfg.tx != nil) {
 		return nil, errs.New(
 			errs.M("NewSubProcess: WithAdHoc is mutually exclusive with "+
 				"WithTriggeredByEvent and WithTransaction — an ad-hoc container "+
@@ -120,7 +120,7 @@ func NewSubProcess(
 		ElementsContainer: flow.NewElementsContainer(),
 		activity:          *a,
 		triggered:         cfg.triggered,
-		isTransaction:     cfg.isTransaction,
+		tx:                cfg.tx,
 		adHoc:             cfg.adHoc,
 		dataObjects:       map[string]*dataobjects.DataObject{},
 		dataStoreRefs:     map[string]*datastores.DataStoreReference{},
@@ -187,11 +187,20 @@ func (sp *SubProcess) AdHoc() AdHocSpec {
 	return sp.adHoc
 }
 
+// Transaction returns the transaction characteristics (ADR-028 §2.1) — the
+// abort method and the stated protocol — or nil when this Sub-Process is not
+// a Transaction. The runtime binds a Transaction scope to its coordinator by
+// them; execution never reads the protocol.
+func (sp *SubProcess) Transaction() *TransactionCharacteristics {
+	return sp.tx
+}
+
 // IsTransaction reports whether this Sub-Process is a Transaction Sub-Process
-// (BPMN §10.7, ADR-028 §2.1). The runtime uses it to resolve a Cancel abort to
-// this scope; the model uses it to gate Cancel End/boundary placement (§2.6).
+// (BPMN §10.7, ADR-028 §2.1), i.e. whether it carries transaction
+// characteristics. The runtime uses it to resolve a Cancel abort to this
+// scope; the model uses it to gate Cancel End/boundary placement (§2.6).
 func (sp *SubProcess) IsTransaction() bool {
-	return sp.isTransaction
+	return sp.tx != nil
 }
 
 // ActivityType returns the SubProcess activity type.
@@ -371,7 +380,7 @@ func (sp *SubProcess) Validate() error {
 	// only directly inside a Transaction (the shared, container-agnostic rule);
 	// a nested Transaction is out of scope.
 	if err := events.ValidateCancelEndPlacement(
-		sp.Nodes(), sp.isTransaction); err != nil {
+		sp.Nodes(), sp.tx != nil); err != nil {
 		ee = append(ee, err)
 	}
 
@@ -389,7 +398,7 @@ func (sp *SubProcess) Validate() error {
 // this container's DIRECT children; a Transaction inside a plain Sub-Process (or
 // at the top level) is legal.
 func (sp *SubProcess) validateTransactionRules(ee *[]error) {
-	if !sp.isTransaction {
+	if sp.tx == nil {
 		return
 	}
 
@@ -636,7 +645,7 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 		ElementsContainer: inner,
 		activity:          a,
 		triggered:         sp.triggered,
-		isTransaction:     sp.isTransaction,
+		tx:                sp.tx,
 		// The Ad-Hoc spec is immutable configuration (the Router and its
 		// rules), so every instance shares the one the modeler built — like
 		// the Data Store References below, and unlike the Data Objects, which

@@ -429,7 +429,7 @@ func parseContainerElem(p *parser, asm *assembly, se xml.StartElement) error {
 // two the author "meant" would be the converter holding a second copy of
 // a model rule (SRD-089.E §4.4).
 func buildSubProcess(
-	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
 	opts := body.opts(id)
 
@@ -447,12 +447,7 @@ func buildSubProcess(
 	}
 
 	if se.Name.Local == tagTransaction {
-		txOpts, err := transactionOptions(p, se, id)
-		if err != nil {
-			return nil, err
-		}
-
-		opts = append(opts, txOpts...)
+		opts = append(opts, transactionOptions(se))
 	}
 
 	return activities.NewSubProcess(fallbackName(id, name), opts...)
@@ -489,64 +484,25 @@ func buildCallActivity(
 	return activities.NewCallActivity(fallbackName(id, name), key, body.opts(id)...)
 }
 
-// transactionMethods says, per BPMN Transaction `method` value, whether
-// this engine realizes that abort protocol (ADR-028 §2.7). The empty key
-// is the absent attribute: BPMN's default is compensate.
-//
-// A table rather than a switch because it is a fixed classification, and
-// because the one thing a reader needs from it — which values are in and
-// which are out — should be readable in one glance.
-var transactionMethods = map[string]bool{
-	"":           true,
-	"compensate": true,
-	"store":      false,
-	"image":      false,
-}
-
-// transactionOptions reads a <transaction>'s own attributes.
-//
-// `method` is not a lost datum, it is the abort semantics: importing
-// store or image as compensate would hand back a process that undoes by
-// running handlers where the document said the resource managers roll
-// back, and a report calling that a dropped attribute would understate it
-// (SRD-089.E §4.5). So the two the engine does not realize are refused,
-// and the one it does is silent — reporting the value the engine
-// implements would train a host to ignore the report.
-//
-// `protocol` names the coordinator those two would have needed, so with
-// the only supported method nothing executable depends on it: reported,
-// and the transaction imports without it.
-func transactionOptions(
-	p *parser, se xml.StartElement, id string,
-) ([]options.Option, error) {
-	method := strings.TrimSpace(attrValue(se, attrTransactionMethod))
-
-	realized, known := transactionMethods[method]
-	if !known {
-		return nil, errs.New(
-			errs.M("bpmn: transaction %q: method %q is not one of BPMN's "+
-				"compensate, store or image (§10.7)", id, method),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	if !realized {
-		return nil, errs.New(
-			errs.M("bpmn: transaction %q: method %q selects resource-manager "+
-				"coordination this engine does not implement and has decided "+
-				"not to (ADR-028 §2.7) — only compensate, undo by compensation "+
-				"handlers, is a process-level mechanism it can realize. Model "+
-				"the undo as compensation handlers", id, method),
-			errs.C(errorClass, errs.InvalidParameter))
+// transactionOptions reads a <transaction>'s own attributes onto the model
+// verbatim (ADR-028 §2.7, SRD-095 FR-6). `method` is read by the model's
+// own parser — the schema token ##Compensate, the metamodel spelling
+// compensate and the absent attribute all denote the built-in coordinator,
+// and any other identifier is carried for registration to judge — so the
+// converter keeps no value table of its own (ADR-024 §2.16). `protocol` is
+// carried as stated: nothing in the engine reads it, and a document that
+// states it round-trips whole.
+func transactionOptions(se xml.StartElement) options.Option {
+	opts := []activities.TransactionOption{
+		activities.WithTransactionMethod(activities.ParseTransactionMethod(
+			attrValue(se, attrTransactionMethod))),
 	}
 
 	if proto := strings.TrimSpace(attrValue(se, attrTransactionProto)); proto != "" {
-		p.report(id, attrTransactionProto,
-			"names a coordination protocol, which only means something for "+
-				"the store and image methods this engine does not implement "+
-				"(ADR-028 §2.7); the transaction imports without it")
+		opts = append(opts, activities.WithTransactionProtocol(proto))
 	}
 
-	return []options.Option{activities.WithTransaction()}, nil
+	return activities.WithTransaction(opts...)
 }
 
 // parseNodeElem builds one flow node and records it in the assembly.

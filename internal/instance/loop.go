@@ -608,8 +608,8 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		ls.compensationTrackEnded(ctx, ev.track, true)
 		ls.applyFailed(ctx, ev)
 
-	case evWaiting, evTaskWaiting, evJobWaiting, evCallWaiting, evDeliver,
-		evDataCommit, evDehydrated:
+	case evWaiting, evWaitArmed, evTaskWaiting, evJobWaiting, evCallWaiting,
+		evDeliver, evDataCommit, evDehydrated:
 		// the wait/deliver plane — parks, deliveries, and the signals that
 		// re-evaluate or resume them; sub-dispatched to keep apply under the
 		// complexity limit (the applyParked precedent).
@@ -675,6 +675,10 @@ func (ls *loopState) applyWaitPlane(ctx context.Context, ev trackEvent) {
 
 	case evWaiting:
 		ls.onWaiting(ctx, ev)
+
+	case evWaitArmed:
+		// the parked track's holders are registered — nothing to apply; the
+		// loop tail's maybeDehydrate is what this event is for (SRD-095 FR-8).
 
 	case evTaskWaiting:
 		// a UserTask parked as a human task — register + announce it (SRD-034).
