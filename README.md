@@ -393,7 +393,10 @@ Sub-Process** (`WithTransaction`) is a Sub-Process variant that aborts
 atomically on a **Cancel End Event** — it compensates the completed activities
 (reverse completion order, as an ACID-like barrier), terminates the rest, and
 hands control out through its interrupting **Cancel boundary** (a Transaction
-with no Cancel boundary ends there) —
+with no Cancel boundary ends there); `WithTransaction` takes the BPMN
+`method` (`WithTransactionMethod`, compensate built in and the default — any
+other coordinator is refused at registration until a host can register one)
+and carries `protocol` (`WithTransactionProtocol`) untouched —
 [`examples/transaction-sub-process/`](examples/transaction-sub-process/). An
 **Ad-Hoc Sub-Process** (`WithAdHoc`) is a Sub-Process variant whose inner
 activities carry **no sequence flows**: what runs next is answered at runtime by

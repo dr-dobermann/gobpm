@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
-| Date | 2026-08-26 |
+| Status | Accepted |
+| Date | 2026-08-27 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-028 v.2](../design/ADR-028-transaction-sub-process.md) §2.1 (characteristics composed into the Sub-Process; the bind step), §2.7 (open `method`, carried `protocol`, refusal at registration), §2.8 (the seam stays deferred) |
 | Upstream | [ADR-024](../design/ADR-024-process-interchange-converters.md) §2.16 (a converter keeps no second copy of a model rule), §7 (export waits on slice 3); [ADR-025](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.1 (the characteristics shape); [ADR-026](../design/ADR-026-compensation-events.md) §2.2/§2.4 (the ledger the built-in coordinator acts on); [ADR-002](../design/ADR-002-extension-architecture.md) (registration-time coverage checks) |
@@ -122,6 +122,22 @@ format is.
 **FR-7 — Nothing about the abort changes.** Every SRD-061 transaction test and
 the compensation/cancel e2e paths pass unchanged.
 
+**FR-8 — A wait checkpoint carries its predecessor's ledger entry** (found
+by the review's restore test, fixed here under the no-pre-existing-errors
+rule). When a track advances onto a wait node, `checkFlows`
+(`internal/instance/track.go`) emits the `evMoved` that ledgers the completed
+predecessor **before** `checkNodeType` declares the wait and emits
+`evWaiting` — a checkpoint trigger. Before, the order was reversed and a
+checkpoint taken at a wait right after a compensable activity omitted that
+activity's ledger entry, so a Transaction restored from it aborted without
+compensating it. The reorder alone breaks dehydration: `evMoved` — emitted
+after the wait's holders were registered — was the event whose loop-tail
+pass found the holder in place, so removing it from that position left the
+first (too early) dehydration check as the last one. The track therefore
+emits a new no-op `evWaitArmed` once its holders are registered, and the
+loop tail re-runs `maybeDehydrate` on it. The restore-site binding test
+(T-5) depends on the entry being there; without FR-8 it is vacuous.
+
 ### Non-functional
 
 **NFR-1 — API validation.** Every new public parameter is checked (blank
@@ -231,6 +247,30 @@ A `SubProcessOption` `WithTransactionProtocol` would be legal to pass without
 `WithTransaction`, forcing a post-hoc "protocol on a non-transaction" check
 in `NewSubProcess`. Nesting it makes the invalid combination unexpressible.
 
+### §4.5 Why `evMoved` moves ahead of the wait declaration (FR-8)
+
+The old order was justified by a window: declaring the wait and registering
+its hub waiters as one uninterrupted sequence, so a fired event could not
+arrive before its subscriber. The `evMoved` emit is a channel send onto the
+loop's queue, not a round trip — it returns as soon as the event is queued
+and the wait is declared immediately after, so nothing about the window
+changes. What does change is the loop's queue order: `evMoved` (with the
+ledger entry) now precedes `evWaiting` (the checkpoint), and the document
+written at the wait is complete. The deferred `evCompensate` a
+wait-for-completion throw parks in `checkNodeType` still goes out after both,
+as SRD-059 FR-6 requires.
+
+The order was load-bearing in one more way nobody had written down. The
+dehydration check runs at the loop tail after every event; `evWaiting` is
+emitted *before* the holders are registered (a synchronously fired event must
+find the track recorded as parked), so the check that follows it can run
+before the wait is holdable and answer "stay resident". Under the old order
+`evMoved` arrived next — after registration — and its tail pass found the
+holder. With `evMoved` moved ahead, thirteen dehydration tests hung: the
+instance never re-checked. `evWaitArmed` makes that second pass explicit
+instead of accidental: the track emits it right after `armWaiters`, the loop
+applies nothing for it, and the tail does what it always did.
+
 ### §4.4 Why `ParseTransactionMethod` carries unknown values
 
 The schema's `tTransactionMethod` is a union with `anyURI`; the model cannot
@@ -261,6 +301,9 @@ two refusals and one `Dropped` entry retired.
 | T-7 | `TestTransactionProtocolIsCarried` (replaces `…IsReported`) | `protocol="wsat"` lands on `Transaction().Protocol()`, `Dropped` empty | FR-6 |
 | T-8 | `TestRefusalsSayWhichKindTheyAre` (row retired) | the `transaction method=store` row is removed — it is no longer an import refusal; the "refused by name" subtest of `TestValidateTransactionCoverage` pins the wording at its new site | FR-4, FR-6 |
 | T-9 | SRD-061 transaction tests, e2e cancel/compensation, `examples/transaction-sub-process` in the run sweep | unchanged and green | FR-7 |
+| T-10 | `TestWaitCheckpointCarriesPredecessorLedger` | the document captured at a wait after `reserve` holds its ledger entry; a restore then compensates on the Cancel; fails with the `track.go` reorder reverted | FR-8 |
+| T-11 | `TestForeignBindingSurvivesRestore` | on the same shape with `##Store`: the entry is present, the restored abort runs no handler, reports `Failed` naming the method, and exits via the Cancel boundary; fails with a restore-site binding reverted | FR-5, FR-8 |
+| T-12 | `TestRunExamplesScript` | the parallel runner on a pass / exit-3 / hang fixture: folds in order, the failure's log and status inside its fold, the hang named, the summary counts, exit 1; all-passing exits 0; no dirs is a usage error | M5 |
 
 ## §7 Milestones
 
@@ -271,6 +314,9 @@ two refusals and one `Dropped` entry retired.
 | M3 | Runtime: scope binding, `cancelTransaction` dispatch, `AttrTransactionMethod`; T-5 | one |
 | M4 | Importer: `transactionOptions` rewrite, table and refusals retired; T-6…T-8 | one |
 | M5 | Build infrastructure, added at the gate: the examples run sweep executes the modules in parallel (`scripts/run-examples.sh`, `EXAMPLE_JOBS`), each example's output buffered and printed in its own group fold in module order | one |
+| M6 | `examples/transaction-sub-process` states its protocol, prints the read-back, and shows the registration refusal | one |
+| M7 | Review follow-ups: the runner's `mktemp` guard and its test (T-12); the `PhaseCanceled` assertion on the foreign abort | one |
+| M8 | FR-8: `evMoved` before the wait declaration; T-10 and T-11 | one |
 
 Doc sync (ADR-024 §2.16's transaction example, the import-coverage guide's
 standing row, `converters.md`, CHANGELOG, README sweep) follows as its own
@@ -313,6 +359,11 @@ No downward references.
 | M4 | `04fa51f0` | `transactionOptions` rewritten, table and refusals retired; T-6, T-7, T-8 |
 | M3a | `c0a86e68` | `transaction_method` registered in ADR-022 §2.5's descriptive list — the vocabulary gate (`internal/lintcfg`) refused the new constant on the first full gate run |
 | M5 | `0eb63629` | `scripts/run-examples.sh` + the `run-examples` target: 49 modules in 29s at `jobs=8` against 1m20s serial; a failing example prints its log and status inside its fold, a hang is cut at `EXAMPLE_RUN_TIMEOUT` and named, exit 1 on any failure |
+| — | `361e6ab8` | master merged (PR #351, the Process I/O contract) — no conflicts |
+| — | `c2ddd74a` | this document renumbered SRD-093 → SRD-094 (master had landed its own SRD-093) |
+| M6 | `0fc9e301` | `examples/transaction-sub-process` states `protocol`, prints the read-back, shows the registration refusal; `main.go` split per the 80-line rule |
+| M7 | `cad114c5` | the runner's `mktemp` guard; `scripts/run_examples_test.go` (T-12) |
+| M8 | `0ca7347f` | FR-8: `evMoved` before the wait declaration, `evWaitArmed` for the dehydration re-check; T-10, T-11; the `PhaseCanceled` assertion |
 
 ### §10.2 Where reality diverged from the draft
 
@@ -336,15 +387,37 @@ No downward references.
   `WithID` refuses only a blank one). Defensive, pre-existing, unreachable.
 - `NewSubProcess` had an uncovered lane-option error path; M1 covered it
   (`TestNewSubProcessPropagatesLaneOptionErrors`).
+- **FR-8 was not in the draft.** The review's restore test could not be
+  written non-vacuously: a checkpoint taken at a wait after `reserve`
+  carried no ledger entry at all, and a restore from it aborted without
+  compensating — a pre-existing defect in the `evMoved`/`evWaiting` order,
+  fixed here (§4.5). The first fix attempt (the reorder alone) hung thirteen
+  dehydration tests, which is how the second, undocumented dependency on
+  that order surfaced; `evWaitArmed` is its explicit replacement.
+- **The examples sweep and its runner** (M5, M7) were added at the gate on
+  request — build infrastructure, not part of the ADR — and are recorded
+  here because they ride this branch.
+
+### §10.2a The independent-review round (M7, M8)
+
+Three lenses (agy / gemini-3.1-pro-high), doc-blind. API & contract: no
+notes. Tests & coverage: three — the untested restore-site binding (→ T-11,
+and the FR-8 discovery), the untested runner (→ T-12), the missing
+`PhaseCanceled` assertion (→ added). Correctness: one — the unchecked
+`mktemp -d` (→ guarded). Agreed 4, rejected 0, out of scope 0.
 
 ### §10.3 Verification
 
-`make ci` at `c0a86e68`: **PASS — 14/14 steps** (`.ci/last-run.json`,
-2026-08-27T04:53:51Z), race tests green, diff-coverage **100.0% of 116
-changed coverable lines** (min 95%), govulncheck clean, every example
-(including `examples/transaction-sub-process`) executed end-to-end in the
-run sweep. `make lock-sweep`: no host call inside a critical section. Every
-touched function at 100% except the unreachable branch noted above.
+`make ci` at `0ca7347f` (the last code commit): **PASS — 14/14 steps**
+(`.ci/last-run.json`), race tests green, diff-coverage **100.0% of 143
+changed coverable lines** (min 95%), govulncheck clean, every example — 50
+modules, `examples/transaction-sub-process` among them — executed
+end-to-end by the parallel run sweep (34s under the gate driver, 1m20s
+serial before M5). `make lock-sweep`: no host call inside a critical
+section. Every touched function at 100% except `buildSubProcess`'s
+unreachable defensive branch (§10.2). The two FR-8 regression tests fail
+with the `track.go` reorder reverted and pass with it; the dehydration
+suite passes with `evWaitArmed` and hangs without it.
 
 ## Open questions
 

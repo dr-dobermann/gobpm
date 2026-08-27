@@ -18,8 +18,9 @@ Every refused construct is one of two kinds ([ADR-024 §2.16](../../design/ADR-0
   has decided against the mechanism. The refusal says what to do instead
   and never says "yet".
 
-The unit is the construct, not the tag: a `<transaction>` imports, and
-only its `method="store"` does not.
+The unit is the construct, not the tag: a `<transaction>` imports whole,
+and what its `method` names is judged at registration, not at import — see
+the note under the standing table.
 
 ## Capability-blocked
 
@@ -42,10 +43,17 @@ Not defects; do not file them.
 |---|---|---|
 | `<complexGateway>` | BPMN activates it by an `activationCondition` expression; the engine by per-incoming-flow token counts. Recovering counts from an arbitrary Boolean is not mechanical, and guessing changes *when* the gateway fires | build it programmatically with `WithActivationThreshold` or the activation triples |
 | `<adHocSubProcess>` | entered by a host-supplied `adhoc.Router` — a Go value deciding which activities run and in what order (ADR-035 §2.1); a file carries only a completion condition | build it programmatically with `activities.WithAdHoc` |
-| `<transaction method="store">` / `"image"` (and `protocol`) | resource-manager coordination the project declined (ADR-028 §2.7); only `compensate` is a process-level mechanism the engine realizes. `protocol` means something only for those two methods — it is reported and the transaction imports without it | model the undo as compensation handlers |
 | a second `<inputSet>` / `<outputSet>` per direction | the engine models one set per direction | one set; several flavours of I/O are several tasks |
 | a collection `<itemDefinition>` whose `structureRef` does not resolve | the element type comes from an external XSD/WSDL the converter neither has nor fetches; a collection of an unknown type is a shape, not a value — the item imports as a single empty record and the loss is reported | build the collection's item in Go if it matters |
 | the Choreography and Conversation families | separate conformance classes: a Choreography is not a Process, and dropping one silently would import a different diagram than the one drawn | model the process each participant runs |
+
+**Not a refusal at all: a transaction's `method` and `protocol`.** Both
+import verbatim onto the model (`Transaction().Method()` / `.Protocol()`);
+`compensate`, `##Compensate` and the absent attribute all mean the built-in
+coordinator, and any other value — `store`, `image`, a URI — is carried and
+then refused by `RegisterProcess` as *no transaction coordinator is
+registered for this method*, the same moment a script format nothing claims
+is (ADR-028 §2.7). Model the undo as compensation handlers.
 
 ## Reading a refusal
 
