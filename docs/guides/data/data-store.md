@@ -109,6 +109,7 @@ difference between a writer and a reader:
 |---|---|---|
 | `AssociateSource(n, sourceIDs, transformation)` | Node → DataStore | binds node `n`'s output (by source id) **into** the store — a `DataOutputAssociation`. |
 | `AssociateTarget(n, transformation)` | DataStore → Node | binds the store **into** node `n`'s input — a `DataInputAssociation`. |
+| `AssociateTargetInput(n, inputID, transformation)` | DataStore → Node | the same, naming the input by its **id** — for a throw event ([Event data](event-data.md)). |
 
 Both take an optional `data.FormalExpression` transformation (`nil` for a
 straight copy). Introspection: `DataStoreRef()`, `Name()`, `ID()`, `EType()`.

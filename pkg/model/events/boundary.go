@@ -140,12 +140,6 @@ func NewBoundaryEvent(
 		return nil, err
 	}
 
-	if med, ok := def.(*MessageEventDefinition); ok {
-		if err := ce.addMessagePayloadOutput(med); err != nil {
-			return nil, err
-		}
-	}
-
 	b := &BoundaryEvent{
 		catchEvent:     *ce,
 		cancelActivity: cancelActivity,

@@ -71,6 +71,7 @@ Every example runs end-to-end in CI and asserts its own outcome; the list below 
 | [`message-intermediate-events/`](message-intermediate-events/) | Throw / catch intermediate message events. |
 | [`inter-instance-correlation/`](inter-instance-correlation/) | A message **instantiates** a handler process and **correlates** by a key derived from the payload (one instance per distinct order). |
 | [`conversation-routing/`](conversation-routing/) | A follow-up message **routes back** to the specific handler instance whose conversation it belongs to; two conversations stay isolated. |
+| [`event-data/`](event-data/) | **Event data attachment** — a message Start Event's output association fills a **declared process input** from the payload (and a data object), a message End Event's input association sources a **declared process output** — the standard's Start/End special case (§10.4.2), so the message route reaches the same contract a Call Activity binds (ADR-040 v.2 §2.7 / SRD-094). |
 
 ## Signals
 

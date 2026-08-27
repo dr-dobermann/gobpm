@@ -99,9 +99,9 @@ The first distinction is the standard's own (§13 animates, §8/§10 supply). Th
 | DataStore | `DataStore` | External persistent data |
 | DataStoreReference | `DataStoreReference` | Reference to a DataStore |
 | Property | `Property` | Process / activity local variable |
-| DataInput / DataOutput | `DataInput`, `DataOutput` | Activity I/O variables |
-| DataInputAssociation | `DataInputAssociation` | Data flow into activity |
-| DataOutputAssociation | `DataOutputAssociation` | Data flow out of activity |
+| DataInput / DataOutput | `DataInput`, `DataOutput` | Activity I/O variables; a throw event's inputs and a catch event's outputs (§10.4.2); the process's declared contract (ADR-040) |
+| DataInputAssociation | `DataInputAssociation` | Data flow into an activity or a throw event; a process output into an End event |
+| DataOutputAssociation | `DataOutputAssociation` | Data flow out of an activity or a catch event; a Start event into a process input |
 | InputSet / OutputSet | `InputSet`, `OutputSet` | I/O grouping with optional / while-executing semantics |
 | InputOutputSpecification | `InputOutputSpecification` | Activity I/O contract |
 | InputOutputBinding | `InputOutputBinding` | Binds one InputSet + one OutputSet to an `Operation`. **Realized implicitly, with no named type** — gobpm declares a single InputSet and a single OutputSet ([SAD-001](../design/SAD-001-vision-and-architecture.md) §14.1), so there is no pair to select and the binding is the `Operation` contract itself (`BindInputOnly` in, `Execute` out). Absence of the type is a consequence of that deviation, not a gap. |

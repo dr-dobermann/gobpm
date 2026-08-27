@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
+
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/dataflow"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -274,10 +276,19 @@ func (e Event) NodeType() flow.NodeType {
 	return flow.EventNodeType
 }
 
+// owner labels the event in the shared copy path's errors.
+func (e Event) owner() string {
+	return fmt.Sprintf("event %q[%s]", e.Name(), e.ID())
+}
+
 // *****************************************************************************
 
 type catchEvent struct {
-	dataOutputs map[string]*data.Parameter
+	// dataOutputs are the parameters the triggering element's payload lands
+	// in, one per item-bearing definition IN DEFINITION ORDER (p217) — the
+	// event's association sources (§10.4.2). Immutable configuration,
+	// shared by reference across per-instance clones.
+	dataOutputs []*data.Parameter
 	// iterCorr is the declared iteration-correlation pair (SRD-085
 	// FR-3, ADR-006 v.5 §2.9.3): immutable configuration, shared by
 	// reference across per-instance clones; nil when the catch declares
@@ -361,36 +372,6 @@ func (ce *catchEvent) ProcessEvent(
 	return nil
 }
 
-// addMessagePayloadOutput registers a data output for med's message item, so a
-// received payload has an output to land in (and flow through associations).
-// Mirrors the message dataOutput a start event gets via WithMessageTrigger.
-// It errors instead of panicking when the output cannot be built (FIX-026).
-func (ce *catchEvent) addMessagePayloadOutput(med *MessageEventDefinition) error {
-	item := med.Message().Item()
-
-	ds := data.ReadyDataState
-	if item.Structure() == nil {
-		ds = data.UndefinedSrcState
-	}
-
-	iae, err := data.NewItemAwareElement(item, ds)
-	if err != nil {
-		return msgOutputErr(med, err)
-	}
-
-	output, err := data.NewParameter(
-		fmt.Sprintf("message %q(%s) output",
-			med.Message().Name(), med.Message().ID()),
-		iae)
-	if err != nil {
-		return msgOutputErr(med, err)
-	}
-
-	ce.dataOutputs[item.ID()] = output
-
-	return nil
-}
-
 // msgOutputErr classifies a message payload output build failure (FIX-026).
 func msgOutputErr(med *MessageEventDefinition, err error) error {
 	return errs.New(
@@ -428,10 +409,18 @@ func newCatchEvent(
 		return nil, err
 	}
 
+	// the payload parameters first — one per item-bearing definition, in
+	// order — so a catch option that declares them explicitly has the
+	// definitions to pair with (p217).
+	outputs, err := autoParameters(defs, data.Output)
+	if err != nil {
+		return nil, err
+	}
+
 	ce := &catchEvent{
 		Event:              *e,
 		outputAssociations: []*data.Association{},
-		dataOutputs:        map[string]*data.Parameter{},
+		dataOutputs:        outputs,
 		parallelMultiple:   e.triggers.Count() > 1 && parallel,
 	}
 
@@ -478,12 +467,7 @@ func (ce catchEvent) IsParallelMultiple() bool {
 // triggering event delivered) and fills all outputAssociations from those
 // instances.
 func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
-	defs := make([]*data.Parameter, 0, len(ce.dataOutputs))
-	for _, def := range ce.dataOutputs {
-		defs = append(defs, def)
-	}
-
-	if err := f.InstantiateOutputs(defs); err != nil {
+	if err := f.InstantiateOutputs(ce.dataOutputs); err != nil {
 		return errs.New(
 			errs.M("couldn't instantiate outputs of event %q", ce.Name()),
 			errs.C(errorClass, errs.OperationFailed),
@@ -540,22 +524,12 @@ func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
 				continue
 			}
 
-			if out.State().Name() != data.ReadyDataState.Name() {
-				ee = append(ee,
-					errs.New(
-						errs.M("output #%s isn't ready"),
-						errs.C(errorClass, errs.InvalidState)))
-
-				continue
-			}
-
-			if err := oa.UpdateSource(
-				ctx, out.ItemDefinition(), data.NoRecalculate); err != nil {
-				ee = append(ee,
-					errs.New(
-						errs.M("couldn't update association #%s source #%s",
-							oa.ID(), sid),
-						errs.E(err)))
+			// the shared copy path (SRD-094 FR-3): the association is read
+			// for its target name, THIS instance's datum is updated; an
+			// output not Ready — a payload that did not arrive — simply
+			// does not flow (ADR-011 §2.5)
+			if err := dataflow.PushOutput(ctx, f, oa, out, ce.owner()); err != nil {
+				ee = append(ee, err)
 			}
 		}
 	}
@@ -579,28 +553,77 @@ func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
 // throwing of a trigger MAY be either implicit as defined by this standard or
 // an extension to it or explicit by a throw Event.
 type throwEvent struct {
-	dataInputs map[string]*data.Parameter
+	// dataInputs are the parameters the input associations fill when the
+	// event fires and the thrown element is copied from, one per
+	// item-bearing definition IN DEFINITION ORDER (p217) — the event's
+	// association targets (§10.4.2). Immutable configuration, shared by
+	// reference across per-instance clones.
+	dataInputs []*data.Parameter
+	// autoInputs are the item ids of the inputs newThrowEvent declared from
+	// the definitions and no option re-declared. An auto input is a slot
+	// for an association to fill: it is instantiated in the frame only when
+	// one targets it, so an untargeted one never shadows the scope datum
+	// the thrown element binds from by item id (SRD-094 FR-2).
+	autoInputs map[string]bool
 	Event
 	inputAssociations []*data.Association
 }
 
-// NewThrowEvent creates a new throwEvent and returns its pointer.
+// NewThrowEvent creates a new throwEvent and returns its pointer. Throw-level
+// options apply to the built throwEvent after its payload parameters exist;
+// everything else rides down to newEvent.
 func newThrowEvent(
 	name string,
 	props []*data.Property,
 	defs []flow.EventDefinition,
 	baseOpts ...options.Option,
 ) (*throwEvent, error) {
-	e, err := newEvent(name, props, defs, baseOpts...)
+	throwOpts := make([]ThrowOption, 0, len(baseOpts))
+	eventOpts := make([]options.Option, 0, len(baseOpts))
+
+	for _, o := range baseOpts {
+		if to, ok := o.(ThrowOption); ok {
+			throwOpts = append(throwOpts, to)
+
+			continue
+		}
+
+		eventOpts = append(eventOpts, o)
+	}
+
+	e, err := newEvent(name, props, defs, eventOpts...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &throwEvent{
+	inputs, err := autoParameters(defs, data.Input)
+	if err != nil {
+		return nil, err
+	}
+
+	auto := make(map[string]bool, len(inputs))
+	for _, in := range inputs {
+		auto[in.ItemDefinition().ID()] = true
+	}
+
+	te := &throwEvent{
 		Event:             *e,
 		inputAssociations: []*data.Association{},
-		dataInputs:        map[string]*data.Parameter{},
-	}, nil
+		dataInputs:        inputs,
+		autoInputs:        auto,
+	}
+
+	for _, to := range throwOpts {
+		if err := to(te); err != nil {
+			return nil, errs.New(
+				errs.M("newThrowEvent: couldn't apply a throw option to "+
+					"event %q", name),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+		}
+	}
+
+	return te, nil
 }
 
 // clone returns a per-instance copy of the throwEvent: the embedded Event is
@@ -615,8 +638,31 @@ func (te *throwEvent) clone() (throwEvent, error) {
 	return throwEvent{
 		Event:             e,
 		dataInputs:        te.dataInputs,
+		autoInputs:        te.autoInputs,
 		inputAssociations: te.inputAssociations,
 	}, nil
+}
+
+// activeInputs are the inputs an execution instantiates: every declared
+// one, and an auto-declared one only when an input association targets it
+// — an untargeted auto input is not in the frame, so the thrown element
+// binds from the scope by item id exactly as it did before the event
+// could carry data.
+func (te *throwEvent) activeInputs() []*data.Parameter {
+	targeted := make(map[string]bool, len(te.inputAssociations))
+	for _, ia := range te.inputAssociations {
+		targeted[ia.TargetItemDefID()] = true
+	}
+
+	active := make([]*data.Parameter, 0, len(te.dataInputs))
+
+	for _, in := range te.dataInputs {
+		if id := in.ItemDefinition().ID(); !te.autoInputs[id] || targeted[id] {
+			active = append(active, in)
+		}
+	}
+
+	return active
 }
 
 // ---------------- exec.NodeDataConsumer interface ----------------------------
@@ -625,12 +671,9 @@ func (te *throwEvent) clone() (throwEvent, error) {
 // execution frame and fills the input instances from the incoming data
 // associations.
 func (te *throwEvent) LoadData(ctx context.Context, f exec.Frame) error {
-	defs := make([]*data.Parameter, 0, len(te.dataInputs))
-	for _, def := range te.dataInputs {
-		defs = append(defs, def)
-	}
+	active := te.activeInputs()
 
-	if err := f.InstantiateInputs(defs); err != nil {
+	if err := f.InstantiateInputs(active); err != nil {
 		return errs.New(
 			errs.M("couldn't instantiate inputs of event %q", te.Name()),
 			errs.C(errorClass, errs.OperationFailed),
@@ -651,31 +694,11 @@ func (te *throwEvent) LoadData(ctx context.Context, f exec.Frame) error {
 
 	// an input gates the event firing unless it is optional or while-executing
 	// (ADR-011 v.2 §2.2-§2.3); events never wait on data.
-	inDefs := make([]*data.Parameter, 0, len(te.dataInputs))
-	for _, d := range te.dataInputs {
-		inDefs = append(inDefs, d)
-	}
-
-	gating := data.RequiredItemIDs(inDefs)
+	gating := data.RequiredItemIDs(active)
 
 	ee := []error{}
 
 	for _, ia := range te.inputAssociations {
-		if !ia.IsReady() {
-			// a required input that can't be filled is a fail-fast error —
-			// gobpm never waits for data. An optional / while-executing input
-			// may stay Unavailable.
-			if gating[ia.TargetItemDefID()] {
-				ee = append(ee,
-					errs.New(
-						errs.M("required input of association #%s is unavailable "+
-							"(gobpm does not wait for data)", ia.ID()),
-						errs.C(errorClass, errs.ConditionFailed)))
-			}
-
-			continue
-		}
-
 		in, ok := ins[ia.TargetItemDefID()]
 		if !ok {
 			ee = append(ee,
@@ -687,37 +710,13 @@ func (te *throwEvent) LoadData(ctx context.Context, f exec.Frame) error {
 			continue
 		}
 
-		val, err := ia.Value(ctx)
-		if err != nil {
-			ee = append(ee,
-				errs.New(
-					errs.M("couldn't get association #%s value", ia.ID()),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.E(err)))
-
-			continue
-		}
-
-		if err := in.Value().Update(ctx, val.Structure().Get(ctx)); err != nil {
-			ee = append(ee,
-				errs.New(
-					errs.M("node %q[%s] input #%s update failed",
-						te.Name(), te.ID(), in.ItemDefinition().ID()),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.E(err)))
-
-			continue
-		}
-
-		// a DataInput filled by its association becomes available (BPMN
-		// §10.4.2) — the state flip targets the frame instance only.
-		if err := in.UpdateState(data.ReadyDataState); err != nil {
-			ee = append(ee,
-				errs.New(
-					errs.M("node %q[%s] input #%s state update failed",
-						te.Name(), te.ID(), in.ItemDefinition().ID()),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.E(err)))
+		// the shared copy path (SRD-094 FR-3): the association is read for
+		// its source name, THIS instance's datum fills the frame input; a
+		// required input that can't be filled fails fast — gobpm never
+		// waits for data — an optional one may stay Unavailable
+		if err := dataflow.FillInput(
+			ctx, f, ia, in, gating, te.owner()); err != nil {
+			ee = append(ee, err)
 		}
 	}
 
@@ -779,8 +778,13 @@ func (te *throwEvent) emitDefinition(
 ) error {
 	if med, ok := ed.(*MessageEventDefinition); ok {
 		// Throw-event correlation keys are not yet wired (ADR-016 phase-2c);
-		// the throw publishes name-keyed only.
-		return msgflow.Send(ctx, re, med.Message(), nil)
+		// the throw publishes name-keyed only. The payload is what the
+		// execution resolves for the message item — the input an association
+		// filled (frame-first), else the scope datum of that id; with
+		// nothing to bind, the message goes with its own item value: "sent
+		// without payload data" (§10.4.1 p216, the engine's reading for a
+		// throw — SRD-094 FR-2).
+		return msgflow.SendResolved(ctx, re, med.Message(), nil)
 	}
 
 	if eed, ok := ed.(*EscalationEventDefinition); ok {
