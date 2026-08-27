@@ -259,20 +259,27 @@ Validation happens **after** the triggers were folded (the definitions
 must be known to pair): the constructors already apply options in order,
 so the sinks record and the constructor's tail validates.
 
-### §3.2 `pkg/model/data` — the shared copy path
+### §3.2 `pkg/model/dataflow` — the shared copy path
 
 ```go
-// pushOutput copies one Ready output instance into the association's
-// scope-resident target (or store) — task.UploadData's body, shared.
-func PushOutputAssociation(ctx, f exec.Frame, oa *Association, out *Parameter, owner string) error
-// fillInput fills one frame input from the association's scope-resident
-// source (or store), flipping it Ready — task.loadFromScope, shared.
-func FillInputAssociation(ctx, f exec.Frame, ia *Association, in *Parameter, owner string) error
+// FillInput fills the frame input dst from its association's source — the
+// per-instance datum by name (SRD-063 FR-5) or the Data Store the
+// association names (SRD-068 FR-4) — flipping it Ready; a required input
+// it cannot fill fails fast, an optional one stays Unavailable.
+func FillInput(ctx, f exec.Frame, ia *data.Association, dst *data.Parameter, gating map[string]bool, owner string) error
+// PushOutput copies the Ready output instance src into its association's
+// target — the per-instance datum by name, or the Data Store; a not-Ready
+// src pushes nothing.
+func PushOutput(ctx, f exec.Frame, oa *data.Association, src *data.Parameter, owner string) error
 ```
 
-Exact home and names settle at M2; the requirement is one implementation
-for tasks and events (FR-3). `exec.Frame` already offers everything used
-(`GetData`, `RecordDataMovement`, `Inputs`, `Outputs`).
+The package is its own because `exec` imports `data` (a helper in `data`
+would cycle), and the bodies are the task's `loadFromScope` /
+`loadFromStore` / `uploadToStore` and the DataObject branch of its
+`UploadData`, moved whole; `owner` labels the errors (`task "x"[id]`,
+`event "y"[id]`). One implementation for tasks and events (FR-3);
+`exec.Frame` already offers everything used (`GetData`,
+`RecordDataMovement`, `DataStores`).
 
 ### §3.3 `pkg/model/process` — the process-parameter ends
 
@@ -396,7 +403,7 @@ real broker, which is where the Start/End case earns its keep.
 | `events.EndEvent`, `IntermediateThrowEvent` | implement `flow.AssociationTarget` |
 | `events.WithDataOutputs`, `events.WithDataInputs` | new `EventOption`s (FR-2) |
 | `process.Process.AssociateInput`, `AssociateOutput` | new (FR-4) |
-| `data.PushOutputAssociation`, `data.FillInputAssociation` (names at M2) | new shared copy path (FR-3); `task` delegates |
+| `dataflow.FillInput`, `dataflow.PushOutput` (new package `pkg/model/dataflow`) | the shared copy path (FR-3); `task` delegates |
 | `internal/instance.seedInitialData` | runs the born start's output associations (FR-5) |
 | `pkg/convert/bpmn` | events wire and declare; two refusals replaced |
 
@@ -465,5 +472,5 @@ All additive; `exec.Frame`, `data.Association`, the mocks unchanged.
 1. FR-2's "extra parameter refused" (§4.4) vs. keeping the static-output
    path for a catch: the draft refuses. If a static output has a use the
    author knows of, it becomes an engine choice the other way.
-2. Names in §3.2 — exported helpers in `data`, or an unexported package
-   `pkg/model/data/assocflow`? Settled at M2.
+2. ~~Names in §3.2~~ — settled at M2: `pkg/model/dataflow`, `FillInput`
+   and `PushOutput` (§3.2; `data` cannot host them, `exec` imports it).

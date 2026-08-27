@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/observability"
@@ -11,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/dataflow"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -274,6 +276,11 @@ func (e Event) NodeType() flow.NodeType {
 	return flow.EventNodeType
 }
 
+// owner labels the event in the shared copy path's errors.
+func (e Event) owner() string {
+	return fmt.Sprintf("event %q[%s]", e.Name(), e.ID())
+}
+
 // *****************************************************************************
 
 type catchEvent struct {
@@ -517,22 +524,12 @@ func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
 				continue
 			}
 
-			if out.State().Name() != data.ReadyDataState.Name() {
-				ee = append(ee,
-					errs.New(
-						errs.M("output #%s isn't ready"),
-						errs.C(errorClass, errs.InvalidState)))
-
-				continue
-			}
-
-			if err := oa.UpdateSource(
-				ctx, out.ItemDefinition(), data.NoRecalculate); err != nil {
-				ee = append(ee,
-					errs.New(
-						errs.M("couldn't update association #%s source #%s",
-							oa.ID(), sid),
-						errs.E(err)))
+			// the shared copy path (SRD-094 FR-3): the association is read
+			// for its target name, THIS instance's datum is updated; an
+			// output not Ready — a payload that did not arrive — simply
+			// does not flow (ADR-011 §2.5)
+			if err := dataflow.PushOutput(ctx, f, oa, out, ce.owner()); err != nil {
+				ee = append(ee, err)
 			}
 		}
 	}
@@ -665,21 +662,6 @@ func (te *throwEvent) LoadData(ctx context.Context, f exec.Frame) error {
 	ee := []error{}
 
 	for _, ia := range te.inputAssociations {
-		if !ia.IsReady() {
-			// a required input that can't be filled is a fail-fast error —
-			// gobpm never waits for data. An optional / while-executing input
-			// may stay Unavailable.
-			if gating[ia.TargetItemDefID()] {
-				ee = append(ee,
-					errs.New(
-						errs.M("required input of association #%s is unavailable "+
-							"(gobpm does not wait for data)", ia.ID()),
-						errs.C(errorClass, errs.ConditionFailed)))
-			}
-
-			continue
-		}
-
 		in, ok := ins[ia.TargetItemDefID()]
 		if !ok {
 			ee = append(ee,
@@ -691,37 +673,13 @@ func (te *throwEvent) LoadData(ctx context.Context, f exec.Frame) error {
 			continue
 		}
 
-		val, err := ia.Value(ctx)
-		if err != nil {
-			ee = append(ee,
-				errs.New(
-					errs.M("couldn't get association #%s value", ia.ID()),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.E(err)))
-
-			continue
-		}
-
-		if err := in.Value().Update(ctx, val.Structure().Get(ctx)); err != nil {
-			ee = append(ee,
-				errs.New(
-					errs.M("node %q[%s] input #%s update failed",
-						te.Name(), te.ID(), in.ItemDefinition().ID()),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.E(err)))
-
-			continue
-		}
-
-		// a DataInput filled by its association becomes available (BPMN
-		// §10.4.2) — the state flip targets the frame instance only.
-		if err := in.UpdateState(data.ReadyDataState); err != nil {
-			ee = append(ee,
-				errs.New(
-					errs.M("node %q[%s] input #%s state update failed",
-						te.Name(), te.ID(), in.ItemDefinition().ID()),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.E(err)))
+		// the shared copy path (SRD-094 FR-3): the association is read for
+		// its source name, THIS instance's datum fills the frame input; a
+		// required input that can't be filled fails fast — gobpm never
+		// waits for data — an optional one may stay Unavailable
+		if err := dataflow.FillInput(
+			ctx, f, ia, in, gating, te.owner()); err != nil {
+			ee = append(ee, err)
 		}
 	}
 
