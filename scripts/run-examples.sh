@@ -33,7 +33,14 @@ if [ -z "${EXAMPLE_JOBS:-}" ]; then
 	[ "$EXAMPLE_JOBS" -gt 8 ] && EXAMPLE_JOBS=8
 fi
 
-work="$(mktemp -d)"
+# Without set -e (the summary must run even when a job failed) the one
+# command whose failure would misdirect every worker's output needs its own
+# check: an empty $work would send the logs to /<slug>.log.
+work="$(mktemp -d)" || exit 1
+if [ -z "$work" ] || [ ! -d "$work" ]; then
+	echo "run-examples: mktemp -d failed" >&2
+	exit 1
+fi
 trap 'rm -rf "$work"' EXIT
 
 # A module dir maps to one log and one status file; the slug keeps them flat.
@@ -45,7 +52,8 @@ slug() { printf '%s' "$1" | tr '/.' '__'; }
 run_one() {
 	dir="$1"
 	s="$(slug "$dir")"
-	(cd "$dir" && "$EXAMPLE_TIMEOUT" "$EXAMPLE_RUN_TIMEOUT" "$GO" run . </dev/null) \
+	(cd "$dir" &&
+		"$EXAMPLE_TIMEOUT" "$EXAMPLE_RUN_TIMEOUT" "$GO" run . </dev/null) \
 		>"$work/$s.log" 2>&1
 	echo "$?" >"$work/$s.status"
 }
