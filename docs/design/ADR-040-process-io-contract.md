@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.2 |
-| Date | 2026-08-26 (v.1 accepted 2026-08-26; v.2 drafted 2026-08-26) |
+| Date | 2026-08-27 (v.1 accepted 2026-08-26; v.2 accepted 2026-08-27) |
 | Owner | Ruslan Gabitov |
-| Refines | [ADR-011 v.8](ADR-011-process-data-flow.md) §2.5 (the scheduled process-level Start/End data path — this record delivers its carrier half), [ADR-023 v.4](ADR-023-sub-process-and-call-activity.md) (the Call Activity's direct I/O mapping — this record supplies the callee side it names), [SAD-001 v.1.2](SAD-001-vision-and-architecture.md) §14.1 (the single-set deviation and the identity `ioBinding`, both of which extend here) |
+| Refines | [ADR-011 v.9](ADR-011-process-data-flow.md) §2.5 (the scheduled process-level Start/End data path — this record delivers its carrier half), [ADR-023 v.4](ADR-023-sub-process-and-call-activity.md) (the Call Activity's direct I/O mapping — this record supplies the callee side it names), [SAD-001 v.1.2](SAD-001-vision-and-architecture.md) §14.1 (the single-set deviation and the identity `ioBinding`, both of which extend here) |
 
 > **Scope.** A BPMN `Process` is a `CallableElement` and may declare an
 > `InputOutputSpecification` — process-level data inputs and outputs, the
@@ -46,7 +46,7 @@ DataAssociation**"* (§10.4.1 p216).
 
 ### 1.2 Where the engine stands
 
-[ADR-011 v.8](ADR-011-process-data-flow.md) §2.5 scheduled exactly this:
+[ADR-011 v.9](ADR-011-process-data-flow.md) §2.5 scheduled exactly this:
 the process-level Start/End special case is *"part of the conception and
 lands with the messaging/call-activity work that needs it."* The
 call-activity work has since landed — and its decision record already
@@ -123,7 +123,7 @@ no result surface.
 
 A declared parameter is a named, typed item-aware element, so anything
 the model's value family expresses can cross the boundary: a scalar, a
-record, a list, a map ([ADR-011 v.8](ADR-011-process-data-flow.md)'s
+record, a list, a map ([ADR-011 v.9](ADR-011-process-data-flow.md)'s
 structural data), including values lifted from host-native structs
 through the adapter tier.
 
@@ -135,10 +135,10 @@ root-scope data is what the existing data associations already target:
   the process output — the common case;
 - a **data object's** or a **property's** value publishes the same way,
   copied out by an activity that touches it;
-- once the event attachment capability lands (§2.7), an **End Event's
-  input associations** become the standard's dedicated gathering point
-  (§10.4.2) — until then the mid-flow copies serve, and they are
-  conformant: the §10.4.2 path is *available*, not exclusive.
+- an **End Event's input associations** are the standard's dedicated
+  gathering point (§10.4.2), wired per §2.7; the mid-flow copies serve
+  just as well, and they are conformant: the §10.4.2 path is
+  *available*, not exclusive.
 
 **The engine's runtime variables publish by mapping, never by
 declaration.** `STARTED_AT`, `STATE`, `TRACKS_CNT`, `COMPLETED_BY` live
@@ -231,7 +231,7 @@ invoking a Process from both a Call Activity and via Message Flow"*: a
 Start Event's output associations may target the **enclosing process's
 `DataInput`s**, an End Event's input associations may source its
 **`DataOutput`s**. It flows through event data associations, which
-[ADR-011 v.8](ADR-011-process-data-flow.md) §2.5 already gives their
+[ADR-011 v.9](ADR-011-process-data-flow.md) §2.5 already gives their
 semantics — a throw's input associations fill its inputs when it fires,
 a catch's output associations push the triggering element's data out,
 never waiting — and which the attachment capability
@@ -389,15 +389,15 @@ None. v.1's one deferral — the event-association wiring — is decided in
 
 ## 6. References
 
-- [ADR-011 v.8](ADR-011-process-data-flow.md) §2.5 — the scheduled
+- [ADR-011 v.9](ADR-011-process-data-flow.md) §2.5 — the scheduled
   conception this delivers the carrier for.
 - [ADR-023 v.4](ADR-023-sub-process-and-call-activity.md) — the call
   contract whose callee side this supplies.
 - [ADR-019 v.1](ADR-019-definition-versioning.md) — latest-at-launch,
   which fixes the validation moment (§2.4).
 - [ADR-024 v.6](ADR-024-process-interchange-converters.md) §2.16 — the #330
-  register row this consumes, and the attachment-API row (#329) §2.7's
-  wiring reaches the contract through.
+  register row this consumes, and the attachment-API row §2.7's wiring
+  reaches the contract through.
 - [ADR-030 v.1](ADR-030-data-objects-and-store.md) §2.3 — the scope-routed
   copy path §2.7 makes an invariant for events.
 - [SAD-001 v.1.2](SAD-001-vision-and-architecture.md) §14.1 — the
@@ -416,4 +416,4 @@ None. v.1's one deferral — the event-association wiring — is decided in
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | v.1 | 2026-08-26 | Ruslan Gabitov | Initial decision. The Process gains a **single-set I/O contract** (SAD-001 §14.1's deviation extended to the callable): named, typed, required-or-optional parameters. **Inputs bind into the root scope at launch** — from the Call Activity's declared inputs (§10.4.1 p216 direct mapping, at last with a callee side) or from the host's start request; a required input unbound at launch refuses the launch, never waits. **Outputs are read from the root scope at normal completion** — committed to the caller or handed to the host; a required output unavailable at completion faults the instance; abnormal ends have no result surface. **Correspondence at the call boundary is by name** (engine note — the standard states no rule) and **validates at launch** (ADR-019's latest-at-launch makes earlier impossible). A process declaring **no contract keeps the permissive meaning** — strictness is the callee's opt-in. Properties stay distinct (one namespace, no implicit bridging; a name clash refuses at registration). §2.3a inventories the **publishing routes** — the ordinary copy machinery (activity output associations; data-object/property values via copies; the End-Event gathering once the attachment capability lands), the **runtime variables** published only by mapping the read-only `RUNTIME/…` reads (ADR-010 v.2 §2.7) through a task's associations or a Go operation's reader (never declared as outputs — they are not scope data), and the exclusions: data stores (engine-global), child-scope locals (copied out before the scope closes), and **aliasing** (an output is a committed copy, never a live view — the standard's own copy semantics). The **event-association wiring is deferred** to the attachment capability (§2.7); the converter maps `<ioSpecification>` on `<process>` once the carrier lands, consuming the #330 register row. §2.9 fixes the run's shape: the contract touches an instance at **exactly two moments** — launch (before any token) and normal completion (after the last) — and is invisible to every engine decision in between; refusal at launch leaves no instance behind, and an abnormal end never reaches the result step. **Accepted 2026-08-26** — landed whole via SRD-093 (the carrier, the launch binding, the completion reading, the call-boundary check, the importer row, `examples/process-io/`); the landing audit and an independent review folded into it (an unproduced optional output does not flow to the caller; outputs are bound through their declaration, so a type mismatch faults; an explicit empty `<ioSpecification/>` is a strict empty contract). Status flip; the register reference moved with ADR-038's retirement to ADR-024 v.6 §2.16. RU twin created. |
-| v.2 | 2026-08-26 | Ruslan Gabitov | **Draft** — §2.7 decided instead of deferred: the standard's Start/End special case reaches the contract through event data associations — a declared process input is a target of the process's Start Event's output associations, a declared output a source of its End Event's input associations; an event-born launch fills the contract through the born start's associations at the seed, before the inputs are checked (§2.9 item 2 re-tensed); the event copy path is the scope-routed one (ADR-030 §2.3) as an invariant; a data output/input pairing with no definition is refused (engine note). The Message-Flow route now reaches the same contract the call route binds directly. No change to §2.1–§2.6, §2.8. |
+| v.2 | 2026-08-26 | Ruslan Gabitov | **Draft** — §2.7 decided instead of deferred: the standard's Start/End special case reaches the contract through event data associations — a declared process input is a target of the process's Start Event's output associations, a declared output a source of its End Event's input associations; an event-born launch fills the contract through the born start's associations at the seed, before the inputs are checked (§2.9 item 2 re-tensed); the event copy path is the scope-routed one (ADR-030 §2.3) as an invariant; a data output/input pairing with no definition is refused (engine note). The Message-Flow route now reaches the same contract the call route binds directly. No change to §2.1–§2.6, §2.8. **Accepted 2026-08-27** — landed whole via SRD-094 (events as association ends, `WithDataOutputs`/`WithDataInputs`, the shared scope-routed copy path, `Process.AssociateInput`/`AssociateOutput`, the seed-time run of a born start's associations with Data Store writes deferred past the contract, the importer, `examples/event-data/`); the independent review folded in (process ends address the event's parameter by id; the importer checks the file's `itemSubjectRef`s against each other). ADR-011 re-pinned at v.9 (its §2.5 now points here). RU twin updated. |

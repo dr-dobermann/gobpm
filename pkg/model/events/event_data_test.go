@@ -172,7 +172,7 @@ func TestThrowEventLoadData(t *testing.T) {
 			require.Equal(t, 7, p.Value().Get(ctx))
 
 			// the DEFINITION input stays untouched (per-frame instances).
-			require.Equal(t, "", te.dataInputs[0].Value().Get(ctx))
+			require.Equal(t, "", te.Inputs()[0].Value().Get(ctx))
 		})
 
 	t.Run("a not-Ready source fails a required input", func(t *testing.T) {
@@ -469,7 +469,7 @@ func TestEventCopyPathIsPerInstance(t *testing.T) {
 			require.Equal(t, "B", db.Value().Get(ctx))
 
 			// the definition input and the association stay untouched
-			require.Equal(t, "", te.dataInputs[0].Value().Get(ctx))
+			require.Equal(t, "", te.Inputs()[0].Value().Get(ctx))
 			require.False(t, ia.IsReady())
 		})
 }

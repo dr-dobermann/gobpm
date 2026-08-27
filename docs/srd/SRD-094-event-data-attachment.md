@@ -2,17 +2,17 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-26 |
 | Owner | Ruslan Gabitov |
-| Implements | [ADR-011 v.8](../design/ADR-011-process-data-flow.md) §2.5 (events carry data without sets — the attachment surface it presumes), [ADR-040 v.2](../design/ADR-040-process-io-contract.md) §2.7 (the process-level Start/End data path and the event-born binding order) |
+| Implements | [ADR-011 v.9](../design/ADR-011-process-data-flow.md) §2.5 (events carry data without sets — the attachment surface it presumes), [ADR-040 v.2](../design/ADR-040-process-io-contract.md) §2.7 (the process-level Start/End data path and the event-born binding order) |
 | Upstream | [ADR-030 v.1](../design/ADR-030-data-objects-and-store.md) §2.3 (the scope-routed copy path); [ADR-010 v.2](../design/ADR-010-process-data-model.md) §2.3 (parameters as templates); [ADR-024 v.6](../design/ADR-024-process-interchange-converters.md) §2.16 (the #329 register row; capability first, converter row after); [SAD-001 v.1.2](../design/SAD-001-vision-and-architecture.md) §14.1 (never wait on data) |
-| Related | [SRD-063](SRD-063-dataobject-scope-integration.md) (FR-5, the copy path the tasks use), [SRD-089.G](SRD-089.G-bpmn-import-data-flow.md) (the association pass this extends), [SRD-093](SRD-093-process-io-contract.md) (the contract this path fills), [SRD-015](SRD-015-message-correlation-instantiation.md) (the born-from-event launch) |
+| Related | [SRD-063](SRD-063-dataobject-scope-integration.md) (FR-5, the copy path the tasks use), [SRD-089.G](SRD-089.G-bpmn-import-data-flow.md) (the association pass this extends), [SRD-093](SRD-093-process-io-contract.md) (the contract this path fills), [SRD-015 v.1](SRD-015-message-correlation-instantiation.md) (the born-from-event launch) |
 | Closes | [#329](https://github.com/dr-dobermann/gobpm/issues/329) |
 
 ## §1 Background
 
-[ADR-011 v.8](../design/ADR-011-process-data-flow.md) §2.5 decides the
+[ADR-011 v.9](../design/ADR-011-process-data-flow.md) §2.5 decides the
 event data model — a throw event's input associations fill its inputs when
 it fires, a catch event's output associations push the triggering
 element's data into the environment, and events never wait. The **runtime
@@ -526,25 +526,25 @@ All additive; `exec.Frame`, `data.Association`, the mocks unchanged.
 
 | M | Scope | Commit |
 |---|---|---|
-| M1 | The ends and the options: `Outputs/BindOutgoing`, `Inputs/BindIncoming`, `WithDataOutputs/WithDataInputs`, the p217 pairing, item-bearing triggers' auto-parameters (T-1…T-5, T-18) | one |
-| M2 | The shared copy path: the two helpers, `task` delegating, events routed through scope (T-6…T-8) | one |
-| M3 | The process ends and the seed-time run: `AssociateInput/AssociateOutput`, `runBornStartAssociations`, the `#329` refusal retired (T-9…T-12) | one |
-| M4 | Importer: events wire and declare, the refusals replaced, the guide row gone (T-13…T-16) | one |
-| M5 | `examples/event-data/` + index and README rows; the e2e test (T-17) | one |
-| M5a | Found by the gate's example sweep: a throw's auto-declared input, instantiated in the frame, shadowed the scope datum the message bound from by item id — `message-intermediate-events` published the input's zero value. An auto input is now association-only (`activeInputs`), a message with nothing Ready to bind goes with its own item value (`msgflow.SendResolved`); the FR-2 engine note (T-19…T-21) | one |
-| M6 | The independent review's follow-ups: Data Store writes at the seed deferred past the contract, placeholders staged for scope targets only and once per input, `AssociateInput`/`AssociateOutput` by element id, the importer's p217 `itemSubjectRef` check through the catalog's file refs; found on the way — `pushToScope` never marked the produced data object Ready, so a data object fed by an association could not be read back through an input association (T-22…T-26; the §3.3/§3.4 amendments) | one |
+| M1 | The ends and the options: `Outputs/BindOutgoing`, `Inputs/BindIncoming`, `WithDataOutputs/WithDataInputs`, the p217 pairing, item-bearing triggers' auto-parameters (T-1…T-5, T-18) | `68aeb445` |
+| M2 | The shared copy path: the two helpers, `task` delegating, events routed through scope (T-6…T-8) | `52056523` |
+| M3 | The process ends and the seed-time run: `AssociateInput/AssociateOutput`, `runBornStartAssociations`, the `#329` refusal retired (T-9…T-12) | `5c394acf` |
+| M4 | Importer: events wire and declare, the refusals replaced, the guide row gone (T-13…T-16) | `e5cd463c` |
+| M5 | `examples/event-data/` + index and README rows; the e2e test (T-17) | `f51d89f7` |
+| M5a | Found by the gate's example sweep: a throw's auto-declared input, instantiated in the frame, shadowed the scope datum the message bound from by item id — `message-intermediate-events` published the input's zero value. An auto input is now association-only (`activeInputs`), a message with nothing Ready to bind goes with its own item value (`msgflow.SendResolved`); the FR-2 engine note (T-19…T-21) | `ad8ec0f0` |
+| M6 | The independent review's follow-ups: Data Store writes at the seed deferred past the contract, placeholders staged for scope targets only and once per input, `AssociateInput`/`AssociateOutput` by element id, the importer's p217 `itemSubjectRef` check through the catalog's file refs; found on the way — `pushToScope` never marked the produced data object Ready, so a data object fed by an association could not be read back through an input association (T-22…T-26; the §3.3/§3.4 amendments) | `4e00a6e4` |
 
 ## §8 Cross-doc references
 
 | Direction | Doc | What |
 |---|---|---|
-| up | [ADR-011 v.8](../design/ADR-011-process-data-flow.md) §2.5 | the event data model this attaches to |
+| up | [ADR-011 v.9](../design/ADR-011-process-data-flow.md) §2.5 | the event data model this attaches to |
 | up | [ADR-040 v.2](../design/ADR-040-process-io-contract.md) §2.7, §2.9 | the Start/End path; the seed moment |
 | up | [ADR-030 v.1](../design/ADR-030-data-objects-and-store.md) §2.3 | the scope-routed copy path |
 | up | [ADR-010 v.2](../design/ADR-010-process-data-model.md) §2.3 | parameters as templates |
 | up | [ADR-024 v.6](../design/ADR-024-process-interchange-converters.md) §2.16 | the register row this consumes |
 | up | [SAD-001 v.1.2](../design/SAD-001-vision-and-architecture.md) §14.1 | never wait |
-| side | [SRD-063](SRD-063-dataobject-scope-integration.md), [SRD-089.G](SRD-089.G-bpmn-import-data-flow.md), [SRD-093](SRD-093-process-io-contract.md), [SRD-015](SRD-015-message-correlation-instantiation.md) | the paths this reuses |
+| side | [SRD-063](SRD-063-dataobject-scope-integration.md), [SRD-089.G](SRD-089.G-bpmn-import-data-flow.md), [SRD-093](SRD-093-process-io-contract.md), [SRD-015 v.1](SRD-015-message-correlation-instantiation.md) | the paths this reuses |
 
 ## §9 Definition of Done
 
@@ -557,7 +557,25 @@ All additive; `exec.Frame`, `data.Association`, the mocks unchanged.
 
 ## §10 Implementation summary
 
-*Post-landing placeholder.*
+Landed on `feat/event-data-attachment`, eight commits: the design
+(`a51f1359` — ADR-040 v.2, this SRD), M1…M5 as planned (§7), M5a from the
+gate's example sweep, M6 from the independent review. What differs from
+the draft, all amended in place: the options are a `CatchOption` and a
+`ThrowOption` rather than `EventOption`s (§3.1); the process ends address
+the event's parameter by element id (§3.3); the seed stages placeholders
+for scope-targeted inputs and defers Data Store writes past the contract
+(§3.4); an event's bare parameter always adopts its definition's item and
+the importer checks the file's `itemSubjectRef`s against each other
+(FR-7); a throw's auto-declared input is association-only and a message
+with nothing Ready to bind carries its item's own value (FR-2's engine
+note). One defect found on the way and fixed here: `pushToScope` never
+marked a produced Data Object Ready (T-26).
+
+Gate: `make ci` green; diff-coverage 96.6% of 745 changed lines (min 95%);
+`examples/event-data` under `run-examples`. Guides: a new
+`docs/guides/data/event-data.md`, linked from the data and events indexes;
+`AssociateTargetInput` rows in the Data Object and Data Store guides; the
+conformance rows for `DataInput`/`DataOutput` and the two associations.
 
 ## Open questions
 
