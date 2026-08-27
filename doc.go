@@ -9,7 +9,7 @@ Package gobpm provides Business Processes Management system
 which allows to load, create, save and run BPMN v.2 compliant
 business processes.
 
-Package consists two sub-pacages:
+Package consists two sub-packages:
 
 - model -- for loading, creating from scratch and saving business
 process models.

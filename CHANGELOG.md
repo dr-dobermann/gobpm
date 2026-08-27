@@ -32,6 +32,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EXAMPLE_JOBS`): 49 modules in ~30s instead of 1m20s, each example's
   output buffered and printed in its own group fold in module order, a
   failure showing its log and status.
+- **Events carry data — and the process's own Start/End events fill its
+  contract** (ADR-040 v.2 §2.7 / SRD-094, closes #329). A catch event
+  (Start, Intermediate catch, Boundary) has data outputs and output
+  associations; a throw event (End, Intermediate throw) has data inputs
+  and input associations — the standard's §10.4.2 halves, which the
+  runtime already ran but nothing could wire to. An item-bearing trigger
+  (a message, a signal or escalation with a structure) declares its
+  payload parameter itself; `events.WithDataOutputs` / `WithDataInputs`
+  declare more, paired with the definitions in order (p217). Every event
+  is a `flow.AssociationSource` / `AssociationTarget`, so a Data Object or
+  Data Store wires to it the way it wires to a task
+  (`AssociateSource` by item; the new `AssociateTargetInput` by the input's
+  id). The process's own ends reach its contract: `Process.AssociateInput`
+  targets a declared input from a Start event's output,
+  `Process.AssociateOutput` sources a declared output into an End event's
+  input; a message-born launch fills the contract from the payload at the
+  seed — Data Store writes deferred until the contract accepted the
+  launch — and the End event throws the declared result. Tasks and events
+  share one copy path (`pkg/model/dataflow`), which now also marks a
+  produced Data Object Ready so a downstream input association can read
+  it. The importer wires `<dataInput>`/`<dataOutput>` and the associations
+  on events, including a `<dataStoreReference>` into an event's input, and
+  refuses a parameter whose `itemSubjectRef` differs from its definition's
+  (p217). `examples/event-data/` runs the message route end to end: the
+  order message fills the contract, the quote message carries the total.
 
 - **A process declares its own I/O contract** (ADR-040 v.1 / SRD-093,
   closes #330). `process.New` takes `data.WithInputs`/`data.WithOutputs`
@@ -44,9 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `StartProcess`/`StartLatest`/`StartVersion`, a Call Activity through its
   parameters, each value type-checked against its declaration. A required
   input left unbound, or a datum the contract does not name, refuses the
-  launch before the instance exists — the process never waits for data —
-  and an event-born launch cannot fill a required input until #329 lands,
-  so it is refused naming that row. Declared outputs are read from the root
+  launch before the instance exists — the process never waits for data.
+  Declared outputs are read from the root
   scope at normal completion and bound through their declaration: a
   required one missing, or a value the declared item cannot carry, faults
   the instance (`Terminated`, `LastErr()` naming the output); an optional

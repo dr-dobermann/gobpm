@@ -1,4 +1,3 @@
-// Package flow provides BPMN flow elements and node definitions.
 package flow
 
 // ActivityType represents different types of BPMN activities.

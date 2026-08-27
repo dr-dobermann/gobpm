@@ -9,12 +9,12 @@
 //	    }
 //
 // ApplicationError implements Error interface and could be used whenever
-// error is expecting as a result.
+// error is expected as a result.
 //
 // errs provides some standard error classes plus every module could have
-// itsown errorClass as package variable to indicate error source.
+// its own errorClass as package variable to indicate error source.
 //
-// not all fields of ApplicationError aren't demaded by default.
+// not all fields of ApplicationError are demanded by default.
 // Only Message and Classes should be filled to present enough information
 // about an error.
 package errs

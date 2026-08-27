@@ -66,6 +66,7 @@ association's target; `AssociateSource` builds that link:
 |---|---|
 | `AssociateSource(n flow.AssociationSource, sourceIDs []string, transformation data.FormalExpression) error` | make node `n`'s outputs (named by `sourceIDs`) the source; the DataObject is the target. The common case. |
 | `AssociateTarget(n flow.AssociationTarget, transformation data.FormalExpression) error` | the reverse — feed the DataObject's value into node `n`'s input. |
+| `AssociateTargetInput(n flow.AssociationTarget, inputID string, transformation data.FormalExpression) error` | the reverse, naming the input by its **id** — for a throw event, whose input carries its definition's item ([Event data](event-data.md)). |
 | `Update(ctx context.Context) error` | recompute the object's state. |
 
 ```go

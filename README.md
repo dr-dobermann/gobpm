@@ -192,7 +192,12 @@ a message **instantiates** a handler process and **correlates** by a key derived
 from the payload (one handler instance per distinct order) ·
 [`examples/conversation-routing/`](examples/conversation-routing/) — a follow-up
 message **routes back** to the specific handler instance whose conversation it
-belongs to (keyed in-instance receivers; two conversations stay isolated).
+belongs to (keyed in-instance receivers; two conversations stay isolated) ·
+[`examples/event-data/`](examples/event-data/) — **events carry data**: a
+message Start Event's output association fills a declared process input from
+the payload, a message End Event's input association sources a declared
+process output — the standard's Start/End special case, so the message route
+reaches the same contract a Call Activity binds.
 
 For signal events (broadcast, no correlation), see
 [`examples/signal-broadcast/`](examples/signal-broadcast/) — one throw reaches

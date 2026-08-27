@@ -21,14 +21,14 @@
 //
 // Instance runtime environment (IRE) holds Data Scope objects which holds actual
 // accessible data objects: Properties, DataObjects, ...
-// Scope could dinamically expand and shring according to executing nodes.
+// Scope could dynamically expand and sharing according to executing nodes.
 // Scope tracks data objects updates and generates appropriate notification events.
 //
 // IRE also have instance's Event Processor.
 // Event Processor accept all external and internal events and process them
 // according to their types.
 // Event Processor supports Message Correlation for incoming and outgoing
-// insance Messages.
+// instance Messages.
 
 // Package thresher provides the main BPMN process execution engine.
 package thresher

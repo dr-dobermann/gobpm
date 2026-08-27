@@ -5,7 +5,7 @@
 //
 // Track starts execution from a start node.
 //
-//   - If node awaits an evenet to continue, then it event definition
+//   - If node awaits an event to continue, then it event definition
 //     registered in instance and track state becomes to TrackAwaitEvent.
 //     Once event sent to track via ProcessEvent, then track continues.
 //
@@ -13,7 +13,7 @@
 //     incoming data, runs the node's Exec, and uploads its outgoing data. On
 //     success Exec returns a list of outgoing flows.
 //
-// If number of outgouing flows is not zero, then they processed as followed:
+// If number of outgoing flows is not zero, then they processed as followed:
 //
 //   - first flow becomes the next step of the track.
 //     If there is a cyclic flow to node itself, then the first of them would
@@ -27,11 +27,11 @@
 //     assign to the track itself in next step, and the rest of them will
 //     be set to the others child tracks.
 //
-// if there is no outgouing flows, then track ends and token died.
+// if there is no outgoing flows, then track ends and token died.
 //
 // ## Human interaction
 //
-// If node nedds to interacto with the human, then it should support
+// If node needs to interact with the human, then it should support
 //
 
 package instance

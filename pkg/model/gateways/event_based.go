@@ -1,4 +1,3 @@
-// Package gateways provides BPMN gateway implementations.
 package gateways
 
 import (

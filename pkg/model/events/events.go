@@ -1,3 +1,4 @@
+// Package events provides BPMN event implementations.
 package events
 
 import (
