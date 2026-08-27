@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A parallel Multi-Instance over a User Task** (SRD-090.D FR-10, ADR-025
+  §2.15/§2.15a, ADR-020 §2.12, part of #340). Three approvals offered at once
+  are three addressable tasks: each is announced, claimed and completed on its
+  own identity — the identity its holder keeps across a dehydration — and the
+  activity finishes only when every one of them has actually been done.
+
+  The decorator is the node to everything outside it. It holds the N waits and
+  applies their completions **serially, on its own goroutine**: the instances
+  are state it owns rather than goroutines running a node they share. That is
+  what keeps one approver's outputs out of another instance's frame, and it is
+  the arrangement ADR-025 §2.15a prescribes — the race is removed rather than
+  synchronised.
+
+  A fan-out that holds no wait is unaffected: a Script or Service Task
+  instance does its work rather than waiting for somebody, and those passes
+  still overlap.
+
 - **An iterating activity publishes which instance is running** (SRD-090.D,
   ADR-025 §2.9.2, part of #340). Beside BPMN's `loopCounter`, every instance
   of a Standard Loop or Multi-Instance now reads `ITERATION_NUMBER`, its
@@ -65,13 +82,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a mechanism. A **parallel** fan-out over a Message catch with no
   `WithIterationCorrelation` is ambiguous by construction — a message is
   point-to-point, so nothing says which envelope belongs to which of N
-  waiting instances. A **parallel** fan-out over work that parks outside
-  the event system — a User Task, an external-worker Service Task — would
-  have its instances share one parked-work identity, so only one would be
-  addressable and the rest would complete without anyone doing them; make
-  it sequential, or model N tasks. ADR-025 §2.15 and ADR-020 §2.12 decide
-  what that fan-out means, and the refusal lifts when each instance owns
-  its identity.
+  waiting instances. A **parallel** fan-out over an **external-worker**
+  Service Task would have its instances share one job identity — a job is
+  keyed to the track, with no ordinal — so a single report would complete
+  work nobody performed; make it sequential, or model N tasks.
+
+  The User Task half of that second refusal has since lifted, now that each
+  instance owns its identity — see below.
 - **BPMN import covers the loop characteristics** (SRD-089.H, part of
   #284). `<standardLoopCharacteristics>` maps onto `NewStandardLoop` —
   condition, `testBefore`, `loopMaximum` — and

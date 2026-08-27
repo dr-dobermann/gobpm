@@ -252,13 +252,14 @@ Two shapes are still refused at `snapshot.New`, and for different reasons:
   says which envelope belongs to which. Declare
   `activities.WithIterationCorrelation` (see *Events in a parallel body*)
   and it builds; leave it out and any choice would be a coin toss.
-- **A parallel fan-out over work that parks outside the event system** — a
-  User Task or an external-worker Service Task. Those park on a capability
-  rather than a subscription, and the identity that addresses the parked
-  work is one slot on the host track, so N instances would announce a single
-  task between them: the rest would complete without anyone doing them.
-  Make it **sequential** — one instance parks at a time and each pass is
-  completed on its own — or model N tasks.
+- **A parallel fan-out over an external-worker Service Task.** Its instances
+  would share one job identity — a job is keyed to the track it belongs to,
+  with no ordinal — so a single worker report would complete work nobody
+  performed. Make it **sequential** — one instance dispatches at a time and
+  each pass is reported on its own — or model N tasks.
+
+A parallel fan-out over a **User Task** used to be refused for the same
+reason, and no longer is: every instance now owns its parked identity.
 
 ```go
 // works: one message consumed per pass
@@ -270,16 +271,33 @@ recv, _ := activities.NewReceiveTask("collect", msg,
     activities.WithoutParams(), activities.WithLoop(parallelMI),
     activities.WithIterationCorrelation("iterKey", iterExpr))
 
-// refused: a parallel fan-out over a User Task
+// works: three approvals offered at once, each completed on its own
 ut, _ := activities.NewUserTask("approve",
     activities.WithCandidateUsers("alice"),
     activities.WithoutParams(), activities.WithLoop(parallelMI))
 ```
 
-The parallel human fan-out is designed — [ADR-025](../../design/ADR-025-activity-iteration-loop-and-multi-instance.md)
-§2.15 and [ADR-020](../../design/ADR-020-human-interaction-execution-model.md)
-§2.12 decide what it means — and the refusal lifts when each instance owns
-its parked identity.
+## A parallel fan-out over human work
+
+Three instances over a collection of three offer **three tasks at once** —
+each announced to the distributor with its own identity, each claimed and
+completed by itself. The activity leaves only when every one of them has
+actually been done: completing two of three does not finish it.
+
+Those identities are what somebody's inbox is holding, so they survive the
+instance being released and rebuilt. An approval can sit for days, the engine
+holding no goroutine for it, and the task still completes on the handle it was
+announced under.
+
+Inside, the decorator holds the N waits and applies their completions **one at
+a time, on its own goroutine**. The concurrency the construct exists for is
+external — N people acting at the same time — and the instances are state the
+decorator owns rather than parallel executions of the node they share. You do
+not see this from a model; it is why two approvers' outputs cannot cross.
+
+[ADR-025](../../design/ADR-025-activity-iteration-loop-and-multi-instance.md)
+§2.15/§2.15a and [ADR-020](../../design/ADR-020-human-interaction-execution-model.md)
+§2.12 decide what the construct means.
 
 ## Events in a parallel body
 
