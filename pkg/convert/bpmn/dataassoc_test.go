@@ -504,26 +504,6 @@ func TestAssignmentRefused(t *testing.T) {
 	}
 }
 
-// TestEventAssociationRefused is T-18 (§4.7, #329): BPMN allows the
-// shape; the model has no attachment for it.
-func TestEventAssociationRefused(t *testing.T) {
-	_, err := importEventDoc(t, propDoc(
-		`  <bpmn:signal id="sig1" name="Cancelled"/>`,
-		`    <bpmn:dataObject id="do1" name="order"/>
-    <bpmn:intermediateThrowEvent id="ev1">
-      <bpmn:signalEventDefinition signalRef="sig1"/>
-      <bpmn:dataInputAssociation id="dia1">
-        <bpmn:sourceRef>do1</bpmn:sourceRef>
-        <bpmn:targetRef>din1</bpmn:targetRef>
-      </bpmn:dataInputAssociation>
-    </bpmn:intermediateThrowEvent>
-    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="ev1"/>
-    <bpmn:sequenceFlow id="f3" sourceRef="ev1" targetRef="e1"/>`))
-	if err == nil || !strings.Contains(err.Error(), "#329") {
-		t.Fatalf("error = %v, want the event refusal naming #329", err)
-	}
-}
-
 // TestGatewayAssociationRefused: outside both the tasks and the events —
 // the association's activity end is a task's parameter, and the refusal
 // says where to move it.

@@ -45,23 +45,26 @@ type EndEvent struct {
 //   - events.WithEscalationTrigger
 //   - events.WithMessageTrigger
 //   - events.WithSignalTrigger
+//   - events.WithDataInputs (the parameters the input associations fill,
+//     one per item-bearing trigger, in trigger order — §10.4.2 p217)
 func NewEndEvent(
 	name string,
 	endEventOptions ...options.Option,
 ) (*EndEvent, error) {
 	ec := endConfig{
-		name:       name,
-		props:      map[string]*data.Property{},
-		baseOpts:   []options.Option{},
-		defs:       []flow.EventDefinition{},
-		dataInputs: map[string]*data.Parameter{},
+		name:     name,
+		props:    map[string]*data.Property{},
+		baseOpts: []options.Option{},
+		defs:     []flow.EventDefinition{},
 	}
 
 	ee := []error{}
 
 	for _, opt := range endEventOptions {
 		switch so := opt.(type) {
-		case foundation.BaseOption:
+		case foundation.BaseOption, ThrowOption:
+			// a ThrowOption applies to the built throw event, after its
+			// payload parameters exist — newThrowEvent's job
 			ec.baseOpts = append(ec.baseOpts, opt)
 
 		case endOption:

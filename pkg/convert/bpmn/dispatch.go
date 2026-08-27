@@ -583,6 +583,8 @@ var nodeChildParsers = func() map[string]nodeChildParser {
 		tagScript:          parseScriptElem,
 		tagProperty:        parsePropertyElem,
 		tagIOSpecification: parseIOSpecElem,
+		tagDataInput:       parseEventParamElem,
+		tagDataOutput:      parseEventParamElem,
 		tagDataInputAssoc:  parseDataAssocElem,
 		tagDataOutputAssoc: parseDataAssocElem,
 		tagStandardLoop:    parseLoopElem,
@@ -701,9 +703,9 @@ var nodeBuilders = map[string]nodeBuilder{
 // so the definitions arrive through the trigger each builder produced,
 // and one the model has no trigger for is refused there rather than here.
 func buildStartEvent(
-	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
-	opts, err := eventOptions(asm, se, id, body)
+	opts, err := eventOptions(p, asm, se, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -713,9 +715,9 @@ func buildStartEvent(
 
 // buildEndEvent builds an end event, typed by its definitions.
 func buildEndEvent(
-	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
-	opts, err := eventOptions(asm, se, id, body)
+	opts, err := eventOptions(p, asm, se, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -724,9 +726,10 @@ func buildEndEvent(
 }
 
 // eventOptions renders a node body as the options an event constructor
-// takes: its id, its documentation, and its definitions as triggers.
+// takes: its id, its documentation, its definitions as triggers, and its
+// bare parameters as its data (§10.4.2, SRD-094 FR-7).
 func eventOptions(
-	asm *assembly, se xml.StartElement, id string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id string, body nodeBody,
 ) ([]options.Option, error) {
 	owner := se.Name.Local + " " + strconv.Quote(id)
 
@@ -740,35 +743,68 @@ func eventOptions(
 		return nil, err
 	}
 
-	return append(body.opts(id), triggers...), nil
+	raw := make([]flow.EventDefinition, 0, len(defs))
+	for _, d := range defs {
+		raw = append(raw, d.def)
+	}
+
+	dataOpts, err := eventDataOptions(p, asm, se, id, raw, body.defs, body.params)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(append(body.opts(id), triggers...), dataOpts...), nil
+}
+
+// soleEventOptions renders the body of an event built around one
+// positional definition: its id, documentation and data (SRD-094 FR-7).
+func soleEventOptions(
+	p *parser, asm *assembly, se xml.StartElement, id string,
+	def flow.EventDefinition, body nodeBody,
+) ([]options.Option, error) {
+	dataOpts, err := eventDataOptions(p, asm, se, id,
+		[]flow.EventDefinition{def}, body.defs, body.params)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(body.opts(id), dataOpts...), nil
 }
 
 // buildIntermediateCatch builds an intermediate catch event around the
 // single definition it waits for.
 func buildIntermediateCatch(
-	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
 	def, err := soleDefinition(asm, se, id, body)
 	if err != nil {
 		return nil, err
 	}
 
-	return events.NewIntermediateCatchEvent(
-		fallbackName(id, name), def, body.opts(id)...)
+	opts, err := soleEventOptions(p, asm, se, id, def, body)
+	if err != nil {
+		return nil, err
+	}
+
+	return events.NewIntermediateCatchEvent(fallbackName(id, name), def, opts...)
 }
 
 // buildIntermediateThrow builds an intermediate throw event around the
 // single definition it throws.
 func buildIntermediateThrow(
-	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
 	def, err := soleDefinition(asm, se, id, body)
 	if err != nil {
 		return nil, err
 	}
 
-	return events.NewIntermediateThrowEvent(
-		fallbackName(id, name), def, body.opts(id)...)
+	opts, err := soleEventOptions(p, asm, se, id, def, body)
+	if err != nil {
+		return nil, err
+	}
+
+	return events.NewIntermediateThrowEvent(fallbackName(id, name), def, opts...)
 }
 
 // buildSendTask builds a send task around the message it sends.
@@ -859,7 +895,7 @@ func taskMessage(
 // converter passes the definition and reports the refusal with the file's
 // element id attached, which is the one thing the model cannot do (§4.3).
 func buildBoundaryEvent(
-	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
 	owner := se.Name.Local + " " + strconv.Quote(id)
 
@@ -879,9 +915,9 @@ func buildBoundaryEvent(
 	// for the pair, including the isForCompensation check on the handler,
 	// whose message names the option a modeler's file is missing.
 	if def.Type() == flow.TriggerCompensation {
-		handler, err := compensationHandler(asm, owner, id)
-		if err != nil {
-			return nil, err
+		handler, herr := compensationHandler(asm, owner, id)
+		if herr != nil {
+			return nil, herr
 		}
 
 		ced, ok := def.(*events.CompensationEventDefinition)
@@ -896,12 +932,17 @@ func buildBoundaryEvent(
 			fallbackName(id, name), host, ced, handler, body.opts(id)...)
 	}
 
+	opts, err := soleEventOptions(p, asm, se, id, def, body)
+	if err != nil {
+		return nil, err
+	}
+
 	return events.NewBoundaryEvent(
 		fallbackName(id, name), host, def,
 		// The standard's default is interrupting
 		// (elements/events.md:252).
 		attrBool(se, "cancelActivity", true),
-		body.opts(id)...)
+		opts...)
 }
 
 // attachedActivity resolves a boundary event's attachedToRef.

@@ -313,12 +313,12 @@ func TestMissingRequiredOutputFaults(t *testing.T) {
 	})
 }
 
-// TestEventBornLaunchWithRequiredInputRefused — SRD-093 T-9: an event-born
-// launch cannot fill a process input until the attachment capability lands,
-// so a REQUIRED input refuses the launch naming #329; an optional one lets
-// the instance run.
+// TestEventBornLaunchWithRequiredInputRefused — SRD-093 T-9, re-tensed by
+// SRD-094 FR-5: an event-born launch whose start is wired to nothing leaves
+// a REQUIRED input unbound and refuses with the plain words — no capability
+// to wait for any more; an optional one lets the instance run.
 func TestEventBornLaunchWithRequiredInputRefused(t *testing.T) {
-	t.Run("a required input refuses the launch naming #329",
+	t.Run("a required input nothing fills refuses the launch",
 		func(t *testing.T) {
 			s, start, fired := contractedMsgStart(t, intInput("subtotal"))
 
@@ -331,7 +331,7 @@ func TestEventBornLaunchWithRequiredInputRefused(t *testing.T) {
 				failEventProducer{}, nil, start.ID(), fired, "", "")
 			require.Error(t, err)
 			require.ErrorContains(t, err, `required input "subtotal"`)
-			require.ErrorContains(t, err, "#329")
+			require.NotContains(t, err.Error(), "#329")
 			require.False(t, sink.has(observability.PhaseCreated),
 				"a refused launch announced Created")
 		})
