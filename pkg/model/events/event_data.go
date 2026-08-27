@@ -185,6 +185,13 @@ func WithDataInputs(params ...*data.Parameter) ThrowOption {
 			return err
 		}
 
+		// a declared input is instantiated whether or not an association
+		// targets it — its state and gating are the caller's; only the auto
+		// slots stay association-only
+		for _, p := range params {
+			delete(te.autoInputs, p.ItemDefinition().ID())
+		}
+
 		te.dataInputs = pp
 
 		return nil

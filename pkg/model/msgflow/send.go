@@ -6,6 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
@@ -57,6 +58,58 @@ func Send(
 		payload = item.Structure().Get(ctx)
 	}
 
+	return publish(ctx, re, msg, key, payload)
+}
+
+// SendResolved is Send for a throw event (SRD-094 FR-2): the payload is
+// what the execution resolves for the message item — the data input an
+// association filled (frame-first), else the scope datum of that id — and,
+// when there is nothing Ready to bind, the message's own item value: the
+// message is "sent without payload data" (§10.4.1 p216, the engine's
+// reading for a throw) rather than the throw failing. A message that
+// carries no item is published with a nil payload.
+func SendResolved(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+	msg *bpmncommon.Message,
+	key *bpmncommon.CorrelationKey,
+) error {
+	if re == nil {
+		return errs.New(
+			errs.M("msgflow.SendResolved: a nil RuntimeEnvironment isn't allowed"),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if msg == nil {
+		return errs.New(
+			errs.M("msgflow.SendResolved: a nil Message isn't allowed"),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	var payload any
+
+	if item := msg.Item(); item != nil {
+		payload = item.Structure().Get(ctx)
+
+		if d, err := re.GetDataByID(item.ID()); err == nil &&
+			d.State().Name() == data.ReadyDataState.Name() {
+			payload = d.Value().Get(ctx)
+		}
+	}
+
+	return publish(ctx, re, msg, key, payload)
+}
+
+// publish derives the correlation key and hands the envelope to the broker
+// — the half of the send that does not depend on where the payload came
+// from.
+func publish(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+	msg *bpmncommon.Message,
+	key *bpmncommon.CorrelationKey,
+	payload any,
+) error {
 	var corrKey string
 	if key != nil {
 		// An underivable key (ok=false) stays empty — name-match only — rather

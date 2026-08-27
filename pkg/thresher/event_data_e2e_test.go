@@ -97,6 +97,66 @@ func quoteProcess(t *testing.T, wire bool) *process.Process {
 	return p
 }
 
+// TestThrowBindsFromScopeWithoutAssociation pins the shape
+// examples/message-intermediate-events runs — a message intermediate throw
+// with NO association publishes the scope datum of its item id, as it did
+// before events could carry data: the auto-declared input is a slot for an
+// association, never a shadow over the scope (SRD-094 FR-2, engine note).
+func TestThrowBindsFromScopeWithoutAssociation(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("thrower",
+		data.WithProperties(data.MustProperty("order_out",
+			data.MustItemDefinition(values.NewVariable("ORD-42"),
+				foundation.WithID("order_out")),
+			data.ReadyDataState)))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	throw, err := events.NewIntermediateThrowEvent("throw",
+		events.MustMessageEventDefinition(bpmncommon.MustMessage("order placed",
+			data.MustItemDefinition(values.NewVariable(""),
+				foundation.WithID("order_out"))), nil))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, throw, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, throw)
+	link(t, throw, end)
+
+	broker := membroker.New()
+
+	th, err := thresher.New("throw-scope", thresher.WithMessageBroker(broker))
+	require.NoError(t, err)
+
+	_, err = th.RegisterProcess(p)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, th.Run(ctx))
+
+	sub, err := broker.Subscribe(ctx, "order placed")
+	require.NoError(t, err)
+
+	_, err = th.StartLatest(p.ID())
+	require.NoError(t, err)
+
+	select {
+	case env := <-sub.C():
+		require.Equal(t, "ORD-42", env.Payload, "the scope property, not the item's zero")
+	case <-time.After(5 * time.Second):
+		t.Fatal("no message arrived")
+	}
+}
+
 // TestEventDataRoundTrip — SRD-094 T-17: on a real engine and broker, the
 // message route reaches the contract the call route binds directly: the
 // start's payload fills the declared input, the end's throw carries the

@@ -559,6 +559,12 @@ type throwEvent struct {
 	// association targets (§10.4.2). Immutable configuration, shared by
 	// reference across per-instance clones.
 	dataInputs []*data.Parameter
+	// autoInputs are the item ids of the inputs newThrowEvent declared from
+	// the definitions and no option re-declared. An auto input is a slot
+	// for an association to fill: it is instantiated in the frame only when
+	// one targets it, so an untargeted one never shadows the scope datum
+	// the thrown element binds from by item id (SRD-094 FR-2).
+	autoInputs map[string]bool
 	Event
 	inputAssociations []*data.Association
 }
@@ -595,10 +601,16 @@ func newThrowEvent(
 		return nil, err
 	}
 
+	auto := make(map[string]bool, len(inputs))
+	for _, in := range inputs {
+		auto[in.ItemDefinition().ID()] = true
+	}
+
 	te := &throwEvent{
 		Event:             *e,
 		inputAssociations: []*data.Association{},
 		dataInputs:        inputs,
+		autoInputs:        auto,
 	}
 
 	for _, to := range throwOpts {
@@ -626,8 +638,31 @@ func (te *throwEvent) clone() (throwEvent, error) {
 	return throwEvent{
 		Event:             e,
 		dataInputs:        te.dataInputs,
+		autoInputs:        te.autoInputs,
 		inputAssociations: te.inputAssociations,
 	}, nil
+}
+
+// activeInputs are the inputs an execution instantiates: every declared
+// one, and an auto-declared one only when an input association targets it
+// — an untargeted auto input is not in the frame, so the thrown element
+// binds from the scope by item id exactly as it did before the event
+// could carry data.
+func (te *throwEvent) activeInputs() []*data.Parameter {
+	targeted := make(map[string]bool, len(te.inputAssociations))
+	for _, ia := range te.inputAssociations {
+		targeted[ia.TargetItemDefID()] = true
+	}
+
+	active := make([]*data.Parameter, 0, len(te.dataInputs))
+
+	for _, in := range te.dataInputs {
+		if id := in.ItemDefinition().ID(); !te.autoInputs[id] || targeted[id] {
+			active = append(active, in)
+		}
+	}
+
+	return active
 }
 
 // ---------------- exec.NodeDataConsumer interface ----------------------------
@@ -636,7 +671,9 @@ func (te *throwEvent) clone() (throwEvent, error) {
 // execution frame and fills the input instances from the incoming data
 // associations.
 func (te *throwEvent) LoadData(ctx context.Context, f exec.Frame) error {
-	if err := f.InstantiateInputs(te.dataInputs); err != nil {
+	active := te.activeInputs()
+
+	if err := f.InstantiateInputs(active); err != nil {
 		return errs.New(
 			errs.M("couldn't instantiate inputs of event %q", te.Name()),
 			errs.C(errorClass, errs.OperationFailed),
@@ -657,7 +694,7 @@ func (te *throwEvent) LoadData(ctx context.Context, f exec.Frame) error {
 
 	// an input gates the event firing unless it is optional or while-executing
 	// (ADR-011 v.2 §2.2-§2.3); events never wait on data.
-	gating := data.RequiredItemIDs(te.dataInputs)
+	gating := data.RequiredItemIDs(active)
 
 	ee := []error{}
 
@@ -741,8 +778,13 @@ func (te *throwEvent) emitDefinition(
 ) error {
 	if med, ok := ed.(*MessageEventDefinition); ok {
 		// Throw-event correlation keys are not yet wired (ADR-016 phase-2c);
-		// the throw publishes name-keyed only.
-		return msgflow.Send(ctx, re, med.Message(), nil)
+		// the throw publishes name-keyed only. The payload is what the
+		// execution resolves for the message item — the input an association
+		// filled (frame-first), else the scope datum of that id; with
+		// nothing to bind, the message goes with its own item value: "sent
+		// without payload data" (§10.4.1 p216, the engine's reading for a
+		// throw — SRD-094 FR-2).
+		return msgflow.SendResolved(ctx, re, med.Message(), nil)
 	}
 
 	if eed, ok := ed.(*EscalationEventDefinition); ok {

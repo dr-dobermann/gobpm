@@ -214,6 +214,54 @@ func TestThrowEventLoadData(t *testing.T) {
 	})
 }
 
+// TestThrowAutoInputIsAssociationOnly — SRD-094 FR-2's engine note: an
+// auto-declared throw input is instantiated only when an input association
+// targets it, so an untargeted one never shadows the scope datum the thrown
+// element binds from by item id; a declared input is always instantiated.
+func TestThrowAutoInputIsAssociationOnly(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	t.Run("untargeted auto input stays out of the frame", func(t *testing.T) {
+		te, err := newThrowEvent("thr", nil,
+			[]flow.EventDefinition{msgDef(t, "item-1", "")})
+		require.NoError(t, err)
+		require.Len(t, te.Inputs(), 1, "declared on the event")
+
+		f := frameFor(t, te.ID(), scopeDatum(t, "item-1", "from scope", data.ReadyDataState))
+		require.NoError(t, te.LoadData(ctx, f))
+		require.Empty(t, f.Inputs(), "not instantiated")
+
+		d, err := f.GetDataByID("item-1")
+		require.NoError(t, err)
+		require.Equal(t, "from scope", d.Value().Get(ctx),
+			"the scope datum is what the throw resolves")
+	})
+
+	t.Run("a targeted auto input is instantiated and filled", func(t *testing.T) {
+		te, err := newThrowEvent("thr", nil,
+			[]flow.EventDefinition{msgDef(t, "item-1", "")})
+		require.NoError(t, err)
+		require.NoError(t, te.BindIncoming(inputAssoc(t, "src", "item-1")))
+
+		f := frameFor(t, te.ID(), scopeDatum(t, "src", "filled", data.ReadyDataState))
+		require.NoError(t, te.LoadData(ctx, f))
+		require.Len(t, f.Inputs(), 1)
+		require.Equal(t, "filled", f.Inputs()[0].Value().Get(ctx))
+	})
+
+	t.Run("a declared input is always instantiated", func(t *testing.T) {
+		te, err := newThrowEvent("thr", nil,
+			[]flow.EventDefinition{msgDef(t, "item-1", "")},
+			WithDataInputs(dataParam(t, "in-1", "item-1", "", data.UnavailableDataState)))
+		require.NoError(t, err)
+
+		// required and unfilled: the never-wait gate says so
+		require.Error(t, te.LoadData(ctx, frameFor(t, te.ID())))
+	})
+}
+
 // TestThrowEventStartGate covers the SRD-009 start-gate in throwEvent.LoadData:
 // a required input that can't be filled fails fast (gobpm never waits for data,
 // ADR-011 v.2 §2.3), while an optional input may stay unavailable.

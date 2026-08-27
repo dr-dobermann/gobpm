@@ -130,6 +130,23 @@ not flow" (p217), so it declares nothing and pairs with nothing (the
 pre-landing Undefined-state message parameter, which could never be
 instantiated at run time, goes with it).
 
+**Engine note — a throw's auto-declared input is association-only.** A
+throw event's message binds its item from the execution by item id,
+frame-first (`msgflow.Send` → `service.BindInput`). An auto-declared input
+instantiated in the frame would therefore shadow the scope datum the
+message bound from before this landing (the message-intermediate-events
+example caught exactly that: the throw published the input's zero value
+instead of the process property). So an auto-declared throw input is
+**instantiated only when an input association targets it**
+(`throwEvent.activeInputs`); untargeted, it stays out of the frame and the
+message resolves as before. An input declared through `WithDataInputs` is
+always instantiated — its state and gating are the caller's. And a message
+throw with nothing Ready to bind — no input, no scope datum — publishes
+the message's own item value rather than failing: the message is "sent
+without payload data" (§10.4.1 p216's rule for a SendTask, read here for a
+throw; `msgflow.SendResolved`). The end event had the shadow too, since
+its message input was Ready from construction; it now binds the same way.
+
 **FR-3 — the event copy path routes through scope (SRD-063 FR-5).**
 `catchEvent.UploadData` pushes each output association the way
 `task.UploadData` does: resolve the target by name from the frame
@@ -467,6 +484,9 @@ All additive; `exec.Frame`, `data.Association`, the mocks unchanged.
 | T-16 | `TestRefusalsSayWhichKindTheyAre` (rows) | the `#329` rows leave `refusalwording_test.go`; nothing names #329 | FR-7 |
 | T-17 | e2e `TestEventDataRoundTrip` (thresher) | the §3.6 path on a real engine and broker | FR-5, FR-6, FR-8 |
 | T-18 | `event_data_test.go` rewritten | the four fixtures attach through the public surface, not the fields | NFR-1 |
+| T-19 | `TestThrowAutoInputIsAssociationOnly` | an untargeted auto input stays out of the frame and the scope datum resolves; a targeted one is instantiated and filled; a declared one is always instantiated | FR-2 |
+| T-20 | `TestThrowBindsFromScopeWithoutAssociation` (thresher) | a message intermediate throw with no association publishes the scope datum of its item id — the `message-intermediate-events` shape | FR-2, NFR-1 |
+| T-21 | `TestSendResolved`; `TestEndEventMessageThrowWithoutPayload`; the throw's "nothing to bind" case | a Ready datum is the payload, nothing Ready → the item's own value; the nil guards | FR-2 |
 
 ## §7 Milestones
 
@@ -477,6 +497,7 @@ All additive; `exec.Frame`, `data.Association`, the mocks unchanged.
 | M3 | The process ends and the seed-time run: `AssociateInput/AssociateOutput`, `runBornStartAssociations`, the `#329` refusal retired (T-9…T-12) | one |
 | M4 | Importer: events wire and declare, the refusals replaced, the guide row gone (T-13…T-16) | one |
 | M5 | `examples/event-data/` + index and README rows; the e2e test (T-17) | one |
+| M5a | Found by the gate's example sweep: a throw's auto-declared input, instantiated in the frame, shadowed the scope datum the message bound from by item id — `message-intermediate-events` published the input's zero value. An auto input is now association-only (`activeInputs`), a message with nothing Ready to bind goes with its own item value (`msgflow.SendResolved`); the FR-2 engine note (T-19…T-21) | one |
 
 ## §8 Cross-doc references
 

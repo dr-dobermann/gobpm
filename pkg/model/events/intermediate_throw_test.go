@@ -7,6 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
+	"github.com/dr-dobermann/gobpm/pkg/messaging"
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -157,6 +158,33 @@ func TestIntermediateThrowEventExec(t *testing.T) {
 			require.True(t, propagated)
 		})
 
+	t.Run("nothing to bind: the message goes with its own item value",
+		func(t *testing.T) {
+			ite, err := events.NewIntermediateThrowEvent("send",
+				throwMessageDef(t))
+			require.NoError(t, err)
+
+			broker := membroker.New()
+			sub, err := broker.Subscribe(ctx, "order placed")
+			require.NoError(t, err)
+
+			re := mockrenv.NewMockRuntimeEnvironment(t)
+			re.EXPECT().
+				GetDataByID("order_out").
+				Return(nil, fmt.Errorf("not in scope"))
+			re.EXPECT().MessageBroker().Return(broker)
+
+			_, err = ite.Exec(ctx, re)
+			require.NoError(t, err)
+
+			select {
+			case env := <-sub.C():
+				require.Equal(t, "order placed", env.Name)
+			default:
+				t.Fatal("no envelope published to the broker")
+			}
+		})
+
 	t.Run("a failed publish is reported",
 		func(t *testing.T) {
 			ite, err := events.NewIntermediateThrowEvent("send",
@@ -166,9 +194,23 @@ func TestIntermediateThrowEventExec(t *testing.T) {
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().
 				GetDataByID("order_out").
-				Return(nil, fmt.Errorf("not in scope"))
+				Return(throwReadyParam("order_out", "ORD-9"), nil)
+			re.EXPECT().MessageBroker().Return(refusingBroker{})
 
 			_, err = ite.Exec(ctx, re)
 			require.Error(t, err)
 		})
+}
+
+// refusingBroker refuses every publish — the broker-down path.
+type refusingBroker struct{}
+
+func (refusingBroker) Publish(context.Context, messaging.Envelope) error {
+	return fmt.Errorf("broker down")
+}
+
+func (refusingBroker) Subscribe(
+	context.Context, string, ...string,
+) (messaging.Subscription, error) {
+	return nil, fmt.Errorf("broker down")
 }
