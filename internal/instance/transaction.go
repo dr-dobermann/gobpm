@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
@@ -22,6 +23,16 @@ import (
 // sweep consumes, so it must run last. The scope is flagged aborting so a
 // residual track draining to zero mid-sweep does not resume the host normally
 // (decScope); the finalize owns the teardown, driven off the sweep's completion.
+//
+// The abort is dispatched on the scope's transaction binding (ADR-028 §2.1,
+// SRD-093 FR-5): the compensate binding — the engine's own coordinator, and
+// the one a scope bound to nothing defaults to — runs the sweep below; any
+// other binding is an invariant violation, since registration refuses a
+// method no coordinator performs (validateTransactionCoverage), and is
+// reported as a Failed compensation naming the method, after which the scope
+// is torn down WITHOUT a sweep — silently compensating where the document
+// asked for another coordinator is the one outcome the binding exists to
+// prevent.
 func (ls *loopState) cancelTransaction(ctx context.Context, t *track) {
 	entry, ok := ls.scopes[t.scopePath]
 	if !ok {
@@ -30,18 +41,38 @@ func (ls *loopState) cancelTransaction(ctx context.Context, t *track) {
 
 	entry.aborting = true
 
-	ls.inst.report(observability.Fact{
-		Kind:  observability.KindCompensation,
-		Phase: observability.PhaseThrown,
-		Details: map[string]string{
-			observability.AttrScopePath: string(t.scopePath),
-		},
-	})
-
+	method := boundMethod(entry)
 	sweep := &compSweep{
 		path:   t.scopePath,
 		txHost: entry.host,
 	}
+
+	if method != activities.TransactionCompensate {
+		ls.inst.report(observability.Fact{
+			Kind:  observability.KindCompensation,
+			Phase: observability.PhaseFailed,
+			Details: map[string]string{
+				observability.AttrScopePath:         string(t.scopePath),
+				observability.AttrTransactionMethod: string(method),
+				observability.AttrError: "the scope is bound to a method no " +
+					"coordinator performs; the abort tears the scope down " +
+					"without compensating",
+			},
+		})
+		ls.finishSweep(ctx, sweep)
+
+		return
+	}
+
+	ls.inst.report(observability.Fact{
+		Kind:  observability.KindCompensation,
+		Phase: observability.PhaseThrown,
+		Details: map[string]string{
+			observability.AttrScopePath:         string(t.scopePath),
+			observability.AttrTransactionMethod: string(method),
+		},
+	})
+
 	sweep.queue = ls.collectCompensation(t.scopePath, "")
 
 	if len(sweep.queue) == 0 {

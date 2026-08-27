@@ -26,11 +26,12 @@ import (
 // process.
 func buildCancelTx(
 	t *testing.T, reserved *atomic.Int32, seq, undoOrder *atomic.Int64,
-	compensable bool,
+	compensable bool, txOpts ...activities.TransactionOption,
 ) *activities.SubProcess {
 	t.Helper()
 
-	tx, err := activities.NewSubProcess("book", activities.WithTransaction())
+	tx, err := activities.NewSubProcess("book",
+		activities.WithTransaction(txOpts...))
 	require.NoError(t, err)
 
 	sStart, err := events.NewStartEvent("s-start")
@@ -118,6 +119,12 @@ func TestTransactionCancelAbort(t *testing.T) {
 	comps := compFacts(rec, observability.PhaseCompensating)
 	require.Len(t, comps, 1)
 	require.Equal(t, "reserve", comps[0].NodeName)
+
+	// SRD-093 FR-5: the abort's Thrown fact names the bound coordinator.
+	thrown := compFacts(rec, observability.PhaseThrown)
+	require.Len(t, thrown, 1)
+	require.Equal(t, string(activities.TransactionCompensate),
+		thrown[0].Details[observability.AttrTransactionMethod])
 
 	// FR-7 (Option A): the Transaction scope reports Canceled at teardown.
 	require.True(t, rec.phasesOf(observability.KindScope)[observability.PhaseCanceled],

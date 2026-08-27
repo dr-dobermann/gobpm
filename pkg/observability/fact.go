@@ -257,6 +257,10 @@ const (
 	AttrBackoff     = "backoff"
 	AttrDataPath    = "data_path"
 	AttrScopePath   = "scope_path"
+	// AttrTransactionMethod (SRD-093): the abort coordinator a Transaction
+	// scope is bound to (ADR-028 §2.1), on the abort's Thrown fact — and on
+	// the Failed fact a scope bound to no coordinator reports instead.
+	AttrTransactionMethod = "transaction_method"
 
 	// A Data Object / Data Store movement (SRD-063 / SRD-068). AttrDataName is
 	// the association's item name (the Data Object's scope name, or the Data
