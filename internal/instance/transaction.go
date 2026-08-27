@@ -25,7 +25,7 @@ import (
 // (decScope); the finalize owns the teardown, driven off the sweep's completion.
 //
 // The abort is dispatched on the scope's transaction binding (ADR-028 §2.1,
-// SRD-093 FR-5): the compensate binding — the engine's own coordinator, and
+// SRD-094 FR-5): the compensate binding — the engine's own coordinator, and
 // the one a scope bound to nothing defaults to — runs the sweep below; any
 // other binding is an invariant violation, since registration refuses a
 // method no coordinator performs (validateTransactionCoverage), and is

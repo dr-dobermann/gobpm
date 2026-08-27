@@ -485,7 +485,7 @@ func buildCallActivity(
 }
 
 // transactionOptions reads a <transaction>'s own attributes onto the model
-// verbatim (ADR-028 §2.7, SRD-093 FR-6). `method` is read by the model's
+// verbatim (ADR-028 §2.7, SRD-094 FR-6). `method` is read by the model's
 // own parser — the schema token ##Compensate, the metamodel spelling
 // compensate and the absent attribute all denote the built-in coordinator,
 // and any other identifier is carried for registration to judge — so the

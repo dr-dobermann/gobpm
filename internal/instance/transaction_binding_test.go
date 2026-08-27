@@ -14,7 +14,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
-// TestBindTransaction is SRD-093 T-5's bind half: only a Transaction
+// TestBindTransaction is SRD-094 T-5's bind half: only a Transaction
 // Sub-Process yields a binding, and a scope without one aborts as compensate.
 func TestBindTransaction(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
@@ -42,7 +42,7 @@ func TestBindTransaction(t *testing.T) {
 		boundMethod(&scopeEntry{tx: b}))
 }
 
-// TestForeignBindingAbortsWithoutCompensating is SRD-093 T-5's invariant
+// TestForeignBindingAbortsWithoutCompensating is SRD-094 T-5's invariant
 // half. Registration refuses a method no coordinator performs, so a scope
 // bound to one can only be reached by building the instance directly — which
 // this test does. The abort must then NOT compensate on the document's

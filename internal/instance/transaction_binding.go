@@ -5,7 +5,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
-// bindTransaction is the executing unit's bind step (ADR-028 §2.1, SRD-093
+// bindTransaction is the executing unit's bind step (ADR-028 §2.1, SRD-094
 // FR-5): when a scope opens under node, it returns the transaction
 // characteristics the scope is bound to — nil for every node that is not a
 // Transaction Sub-Process. One helper for the three places a scope entry is

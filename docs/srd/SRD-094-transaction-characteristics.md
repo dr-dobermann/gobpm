@@ -1,4 +1,4 @@
-# SRD-093 — Transaction characteristics: model, bind, registration check, BPMN import
+# SRD-094 — Transaction characteristics: model, bind, registration check, BPMN import
 
 | Field | Value |
 |---|---|
@@ -312,7 +312,7 @@ No downward references.
 | M3 | `8f436079` | `internal/instance/transaction_binding.go`; `scopeEntry.tx` at the three creation sites; `cancelTransaction` dispatch; `observability.AttrTransactionMethod`; T-5 |
 | M4 | `04fa51f0` | `transactionOptions` rewritten, table and refusals retired; T-6, T-7, T-8 |
 | M3a | `c0a86e68` | `transaction_method` registered in ADR-022 §2.5's descriptive list — the vocabulary gate (`internal/lintcfg`) refused the new constant on the first full gate run |
-| M5 | _(below)_ | `scripts/run-examples.sh` + the `run-examples` target: 49 modules in 29s at `jobs=8` against 1m20s serial; a failing example prints its log and status inside its fold, a hang is cut at `EXAMPLE_RUN_TIMEOUT` and named, exit 1 on any failure |
+| M5 | `0eb63629` | `scripts/run-examples.sh` + the `run-examples` target: 49 modules in 29s at `jobs=8` against 1m20s serial; a failing example prints its log and status inside its fold, a hang is cut at `EXAMPLE_RUN_TIMEOUT` and named, exit 1 on any failure |
 
 ### §10.2 Where reality diverged from the draft
 
