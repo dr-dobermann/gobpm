@@ -224,3 +224,38 @@ func TestCancellingAnInstanceEndsAnOutstandingFanOut(t *testing.T) {
 
 	require.Equal(t, Terminated, inst.State())
 }
+
+// TestAParkedFanOutReleasesItsGoroutines (SRD-071 FR-1): three approvals
+// outstanding hold no goroutine.
+//
+// The waits belong to the distributor's inbox, not to the engine — an activity
+// that sits for days waiting on people must not pin a process instance in
+// memory for them. The decorator unwinds on the release and the instance
+// resumes from its recorded position when somebody acts (ADR-007 v.2.1).
+func TestAParkedFanOutReleasesItsGoroutines(t *testing.T) {
+	s := fanOutSnapshot(t, "cr-fan-rel")
+
+	dist := &countingDist{}
+	rt := cpRuntime(t)
+
+	// a holder is what makes the release possible at all: a released wait
+	// must be held by something outside the instance, or nothing could ever
+	// wake it (SRD-071 FR-3a).
+	inst, err := New(s, scope.EmptyDataPath, rt, laxEP(t), dist,
+		WithCheckpointing("engine-A", "engine-A", time.Minute),
+		WithWaitHolders(newFakeHolders()))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	require.Eventually(t, func() bool { return len(dist.announced()) == 3 },
+		5*time.Second, 10*time.Millisecond,
+		"three approvals offered at once")
+
+	require.Eventually(t, func() bool { return inst.State() == Dehydrated },
+		5*time.Second, 10*time.Millisecond,
+		"and then released — the decorator holds N waits, and a wait nobody "+
+			"is working on is not a reason to stay resident")
+}

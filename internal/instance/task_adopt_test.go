@@ -89,3 +89,29 @@ func TestRegisteringNothingIsNotATask(t *testing.T) {
 	require.Empty(t, ls.tasks)
 	require.Empty(t, dist.announced())
 }
+
+// TestATrackWithNoCurrentStepIsSkipped: the adoption runs over every restored
+// track at loop start, before anything has been validated for it — so a track
+// that cannot say which node it stands on is passed over rather than taken as
+// a fan-out over nothing.
+func TestATrackWithNoCurrentStepIsSkipped(t *testing.T) {
+	ls, _, _ := fanOutTrack(t)
+	ls.inst.td = &countingDist{}
+
+	stepless := &track{
+		instance: ls.inst,
+		steps:    []*stepInfo{nil},
+		iterSeed: &checkpoint.IterationRecord{
+			N: 1,
+			Instances: []checkpoint.IterationInstance{
+				{Ordinal: 0, State: instanceRunning, TaskID: "orphan"},
+			},
+		},
+	}
+
+	require.NotPanics(t, func() {
+		ls.adoptRestoredTasks(context.Background(), []*track{stepless})
+	})
+
+	require.Empty(t, ls.tasks)
+}
