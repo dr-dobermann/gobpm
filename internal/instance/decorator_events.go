@@ -28,6 +28,13 @@ type iterSubscription struct {
 	waiting []int
 }
 
+// instanceDelivery is one delivery waiting to be applied, and the instance it
+// belongs to.
+type instanceDelivery struct {
+	def flow.EventDefinition
+	ord int
+}
+
 // eventSubs is the decorator's half of the EventProcessor contract, embedded
 // by every decorator that can hold waiting instances.
 //
@@ -95,26 +102,31 @@ type eventSubs struct {
 	// the activity waited forever for an instance nobody could complete
 	// again.
 	//
-	// Held here rather than retried because the loop must not block: the
-	// instance is moments away from parking, and parking is what hands it
-	// over.
-	staged map[int]flow.EventDefinition
-
-	// boxes is each waiting instance's own delivery channel, keyed by
-	// ordinal (SRD-090.B M5b).
-	//
-	// Per INSTANCE rather than per definition: an instance waits on one node
-	// at a time, however many arms that node carries. And per instance
-	// rather than per track, for the reason M3b gave the composite drain —
-	// "the host track's evtCh could only ever serve one waiter, so a second
-	// instance of the same activity would have consumed the first one's".
-	// A broadcast has to reach N of them, and an ordinal-ordered dispatch
-	// has to choose WHICH, neither of which one shared channel can express.
-	boxes map[int]chan flow.EventDefinition
+	// ready is the doorbell. Buffered by one and rung without blocking: the
+	// LOOP is the sender and must never stall on an activity's goroutine.
+	ready chan struct{}
 
 	// id is "<instance>/<node>": stable across the activity's passes and
 	// across a restore, distinct per process instance.
 	id string
+
+	// pending is the deliveries the decorator has yet to apply, each naming
+	// the instance it belongs to.
+	//
+	// ONE queue for the activity, not a channel per instance, because the
+	// DECORATOR applies them — serially, on its own goroutine (ADR-025
+	// §2.15a). The instances are state it owns, not goroutines with mailboxes
+	// of their own, so what an arriving delivery needs is an ordinal and a
+	// place to wait its turn.
+	//
+	// It also removes a whole class of ordering bug by construction. While
+	// each instance owned a channel, a delivery could arrive before that
+	// channel existed (a restored fan-out is rebuilt by the very action being
+	// applied to it) or after it was released, and either way it was silently
+	// dropped: the work was marked performed and the activity waited forever
+	// for an approval nobody could give again. A queue owned by the decorator
+	// has no such window — it exists for as long as the activity does.
+	pending []instanceDelivery
 
 	// mu guards subs. The HUB's goroutine reads through ProcessEvent while
 	// the decorator's own goroutine arms and disarms.
@@ -130,10 +142,9 @@ func newEventSubs(instanceID, nodeID string) eventSubs {
 	return eventSubs{
 		id:        instanceID + "/" + nodeID,
 		subs:      map[string]*iterSubscription{},
-		boxes:     map[int]chan flow.EventDefinition{},
 		capParked: map[int]bool{},
-		staged:    map[int]flow.EventDefinition{},
 		taskIDs:   map[int]string{},
+		ready:     make(chan struct{}, 1),
 	}
 }
 
@@ -173,8 +184,6 @@ func (es *eventSubs) awaiting(def flow.EventDefinition, ord int) bool {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
-	es.openBoxLocked(ord)
-
 	s, ok := es.subs[def.ID()]
 	if !ok {
 		es.subs[def.ID()] = &iterSubscription{def: def, waiting: []int{ord}}
@@ -192,15 +201,6 @@ func (es *eventSubs) awaiting(def flow.EventDefinition, ord int) bool {
 	return false
 }
 
-// openBoxLocked gives instance ord its delivery channel if it has none. The
-// single place a box is created, so every way of parking gets one alike.
-// Caller holds mu.
-func (es *eventSubs) openBoxLocked(ord int) {
-	if _, open := es.boxes[ord]; !open {
-		es.boxes[ord] = make(chan flow.EventDefinition, eventBufferDepth)
-	}
-}
-
 // parking records that instance ord is parked on a CAPABILITY — a human task
 // awaiting a completion, an external-worker task awaiting a report — and opens
 // its delivery box.
@@ -213,49 +213,47 @@ func (es *eventSubs) parking(ord int) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
-	es.openBoxLocked(ord)
 	es.capParked[ord] = true
+}
 
-	// a completion that arrived before this box existed is handed over now,
-	// which is the moment there is somewhere to put it. The box is buffered,
-	// and this instance is the only reader, so the send cannot block.
+// deliver queues instance ord's completion for the decorator to apply, and
+// closes out that instance's capability wait.
+//
+// It never blocks and never drops. The LOOP is the caller, so blocking it on
+// an activity's goroutine would stall every other track in the instance; and
+// a delivery that arrives before the decorator is applying — the ordinary case
+// for a restored fan-out, which is rebuilt by the action being applied to it —
+// simply waits its turn in the queue.
+func (es *eventSubs) deliver(ord int, def flow.EventDefinition) {
+	es.queue(instanceDelivery{ord: ord, def: def})
+}
 
-	if def, waiting := es.staged[ord]; waiting {
-		delete(es.staged, ord)
-		es.boxes[ord] <- def
+// queue appends a delivery and rings the doorbell.
+func (es *eventSubs) queue(d instanceDelivery) {
+	es.mu.Lock()
+	delete(es.capParked, d.ord)
+	es.pending = append(es.pending, d)
+	es.mu.Unlock()
+
+	select {
+	case es.ready <- struct{}{}:
+	default: // already rung; the decorator drains everything it finds
 	}
 }
 
-// deliver hands instance ord its completion and closes out its capability
-// wait, in ONE step under the lock.
-//
-// The two cannot be separate calls. Dropping the wait releases the instance's
-// delivery box, and the loop's release raced the instance's park: the box was
-// created and the envelope pushed into it, and the release then deleted the
-// box WITH the envelope inside. The instance fell back to the track's channel
-// and waited forever for a completion someone had already performed.
-//
-// The box is deliberately not dropped here — the envelope is in it and the
-// instance is about to read it. It goes when the decorator does, which is the
-// end of the activity's run either way.
-func (es *eventSubs) deliver(ord int, def flow.EventDefinition) {
+// takeDeliveries hands the decorator everything queued since it last looked.
+func (es *eventSubs) takeDeliveries() []instanceDelivery {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
-	delete(es.capParked, ord)
+	held := es.pending
+	es.pending = nil
 
-	// NOT PARKED YET: a restored fan-out is rebuilt by the very action being
-	// applied to it, so a completion can arrive before its instance has
-	// anywhere to receive it. Held until parking hands it over.
-	box, open := es.boxes[ord]
-	if !open {
-		es.staged[ord] = def
-
-		return
-	}
-
-	box <- def
+	return held
 }
+
+// deliveries is the doorbell the decorator selects on.
+func (es *eventSubs) deliveries() <-chan struct{} { return es.ready }
 
 // taskIDFor returns instance ord's parked-work identity, minting one on first
 // ask and returning the same value while the instance stays parked.
@@ -317,7 +315,7 @@ func (es *eventSubs) busy() bool {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
-	return es.inFlight > 0
+	return es.inFlight > 0 || len(es.pending) > 0
 }
 
 // taskIDSnapshot copies the live parked-work identities, keyed by ordinal, for
@@ -372,10 +370,6 @@ func (es *eventSubs) stopped(def flow.EventDefinition, ord int) bool {
 		s.waiting = append(s.waiting[:idx], s.waiting[idx+1:]...)
 	}
 
-	if !es.waitsAnywhereLocked(ord) {
-		delete(es.boxes, ord)
-	}
-
 	if len(s.waiting) > 0 {
 		return false
 	}
@@ -385,8 +379,18 @@ func (es *eventSubs) stopped(def flow.EventDefinition, ord int) bool {
 	return true
 }
 
-// waitsAnywhereLocked reports whether ord is still parked on ANY definition —
-// the condition for keeping its delivery box open. Caller holds mu.
+// waitingFor reports whether instance ord holds a wait — on a definition or a
+// capability. An instance that holds none has nothing to be delivered and is
+// simply run.
+func (es *eventSubs) waitingFor(ord int) bool {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	return es.waitsAnywhereLocked(ord)
+}
+
+// waitsAnywhereLocked reports whether ord still holds a wait of any kind — a
+// capability, or any definition it subscribed to. Caller holds mu.
 func (es *eventSubs) waitsAnywhereLocked(ord int) bool {
 	if es.capParked[ord] {
 		return true
@@ -402,37 +406,33 @@ func (es *eventSubs) waitsAnywhereLocked(ord int) bool {
 	return false
 }
 
-// boxFor returns instance ord's delivery channel — what its unit blocks on
-// instead of the track's shared one.
-func (es *eventSubs) boxFor(ord int) chan flow.EventDefinition {
-	es.mu.Lock()
-	defer es.mu.Unlock()
-
-	return es.boxes[ord]
-}
-
 // deliverTo hands eDef to instance ord, reporting whether it landed. False
 // means the instance is no longer waiting — a losing arm, or a sibling that
 // completed while the delivery was in flight — which is a drop, not an error
 // (SRD-027 FR-4's rule at iteration granularity).
-//
-// Non-blocking: the box is buffered exactly as the track's channel is, and
-// the LOOP is the sender, so a full box must never stall the single writer.
 func (es *eventSubs) deliverTo(ord int, eDef flow.EventDefinition) bool {
 	es.mu.Lock()
-	box, ok := es.boxes[ord]
+	_, waiting := es.capParked[ord]
+
+	if !waiting {
+		for _, sub := range es.subs {
+			if idx := sort.SearchInts(sub.waiting, ord); idx < len(sub.waiting) &&
+				sub.waiting[idx] == ord {
+				waiting = true
+
+				break
+			}
+		}
+	}
 	es.mu.Unlock()
 
-	if !ok {
+	if !waiting {
 		return false
 	}
 
-	select {
-	case box <- eDef:
-		return true
-	default:
-		return false
-	}
+	es.queue(instanceDelivery{ord: ord, def: eDef})
+
+	return true
 }
 
 // anyWaiting reports whether ANY instance of this activity is parked on any
@@ -488,25 +488,20 @@ type activitySubscriber interface {
 	// activity's rather than one instance's.
 	anyWaiting() bool
 
-	// boxFor is the channel instance ord's unit blocks on for its own
-	// delivery.
-	boxFor(ord int) chan flow.EventDefinition
-
-	// parking and deliver bracket a CAPABILITY wait — one addressed by a
-	// task identity rather than an event definition. They exist separately
-	// from awaiting/stopped because such a wait has no definition to hang a
-	// delivery box off, and a box opened only as a side effect of
-	// subscribing is a box a human task never gets.
+	// parking records a CAPABILITY wait — one addressed by a task identity
+	// rather than an event definition. It is stated separately from
+	// awaiting/stopped because such a wait has no definition to register.
 	parking(ord int)
 
-	// delivering and delivered bracket the handoff of a completion, so the
-	// loop can tell a fully parked activity from one with work in flight.
+	// deliver queues one instance's completion for the decorator to apply,
+	// and ends that instance's capability wait.
+	deliver(ord int, def flow.EventDefinition)
+
+	// delivering and delivered bracket the handoff, so the loop can tell a
+	// fully parked activity from one with work in flight.
 	delivering()
 	delivered()
 	busy() bool
-
-	// deliver hands one instance its completion and ends its capability wait.
-	deliver(ord int, def flow.EventDefinition)
 
 	// taskIDFor, adoptTaskID and dropTaskID own the parked-work identity of
 	// one instance (ADR-020 §2.12); taskIDSnapshot hands the set to the

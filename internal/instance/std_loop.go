@@ -248,6 +248,13 @@ func (d *loopDecorator) iterKind() string {
 
 // subscriber: see iterDecorator.subscriber — one subscription for the
 // activity, held across its passes (SRD-090.B FR-1/FR-2).
+// deliverTo hands the occurrence to the pass that is parked on it. A Standard
+// Loop runs ONE pass at a time, so the track's channel is that pass's — see
+// iterDecorator.deliverTo.
+func (d *loopDecorator) deliverTo(_ int, eDef flow.EventDefinition) bool {
+	return d.t.offerToPass(eDef)
+}
+
 func (d *loopDecorator) subscriber() activitySubscriber { return d }
 
 // runPass runs one pass as its own instance: the executor opens that pass's

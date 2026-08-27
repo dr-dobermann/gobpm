@@ -253,40 +253,44 @@ func TestTheHoldSpansDefinitions(t *testing.T) {
 	require.False(t, es.anyWaiting())
 }
 
-// TestAnInstanceTakesDeliveryOnItsOwnBox (SRD-090.B M5b): a waiting instance
-// has its own delivery channel, opened when it parks and closed when it stops.
+// TestADeliveryNamesTheInstanceItIsFor (ADR-025 §2.15a): a delivery carries
+// the ordinal it belongs to, and waits in the DECORATOR's queue until the
+// decorator applies it.
 //
-// Per instance rather than per track, for the reason M3b recorded for the
-// composite drain: one shared channel can neither say which instance an
-// envelope was meant for nor reach more than one of them.
-func TestAnInstanceTakesDeliveryOnItsOwnBox(t *testing.T) {
+// One queue for the activity rather than a channel per instance, because the
+// decorator is what executes them — the instances are state it owns, not
+// goroutines with mailboxes of their own. What an arriving delivery needs is
+// an ordinal and a place to wait its turn.
+func TestADeliveryNamesTheInstanceItIsFor(t *testing.T) {
 	es := newEventSubs("inst", "node")
 	def := sigDefN(t, "sig")
 
-	require.Nil(t, es.boxFor(0), "an instance that has not parked has no box")
+	require.False(t, es.deliverTo(0, def),
+		"an instance that is not waiting takes no delivery")
 
 	es.awaiting(def, 0)
 	es.awaiting(def, 1)
 
-	box0, box1 := es.boxFor(0), es.boxFor(1)
-	require.NotNil(t, box0)
-	require.NotNil(t, box1)
-	require.NotEqual(t, box0, box1, "one box per instance, never shared")
-
 	require.True(t, es.deliverTo(1, def))
-	require.Same(t, def, <-box1)
-	require.Empty(t, box0, "instance 0's box is untouched by 1's delivery")
+
+	held := es.takeDeliveries()
+	require.Len(t, held, 1)
+	require.Equal(t, 1, held[0].ord, "instance 1's, and nobody else's")
+	require.Same(t, def, held[0].def)
+
+	require.Empty(t, es.takeDeliveries(),
+		"taken once — the decorator that took it is applying it")
 
 	es.stopped(def, 1)
-	require.Nil(t, es.boxFor(1), "the box closes with the wait")
 	require.False(t, es.deliverTo(1, def),
 		"a delivery to an instance that stopped waiting is dropped, not an "+
 			"error — a losing arm, or a sibling that completed in flight")
 }
 
-// TestABoxSurvivesWhileTheInstanceWaitsOnAnyDefinition: an instance parked on
-// two definitions keeps its box until it has stopped waiting on both.
-func TestABoxSurvivesWhileTheInstanceWaitsOnAnyDefinition(t *testing.T) {
+// TestAnInstanceStaysDeliverableWhileItWaitsOnAnyDefinition: an instance
+// parked on two definitions takes deliveries until it has stopped waiting on
+// both — an Event-Based Gateway races its arms this way.
+func TestAnInstanceStaysDeliverableWhileItWaitsOnAnyDefinition(t *testing.T) {
 	es := newEventSubs("inst", "node")
 	a, b := sigDefN(t, "sig-a"), sigDefN(t, "sig-b")
 
@@ -294,31 +298,34 @@ func TestABoxSurvivesWhileTheInstanceWaitsOnAnyDefinition(t *testing.T) {
 	es.awaiting(b, 0)
 
 	es.stopped(a, 0)
-	require.NotNil(t, es.boxFor(0),
-		"still parked on b — an Event-Based Gateway races its arms this way")
+	require.True(t, es.deliverTo(0, b), "still parked on b")
 
 	es.stopped(b, 0)
-	require.Nil(t, es.boxFor(0))
+	require.False(t, es.deliverTo(0, b), "and now on nothing")
 }
 
-// TestAFullBoxDropsRatherThanStalls: the LOOP is the sender, so a box that
-// cannot take another occurrence must never block the single writer.
-func TestAFullBoxDropsRatherThanStalls(t *testing.T) {
+// TestTheLoopNeverStallsOnADecorator: the LOOP is the sender, so queuing a
+// delivery must never block on the activity's goroutine — however far behind
+// the decorator is.
+//
+// Nothing is dropped for want of room either. A dropped completion is work
+// somebody performed that the engine then waits forever for, which is the
+// failure the per-instance channels kept producing at their edges.
+func TestTheLoopNeverStallsOnADecorator(t *testing.T) {
 	es := newEventSubs("inst", "node")
 	def := sigDefN(t, "sig")
 
 	es.awaiting(def, 0)
 
-	delivered := 0
-	for range eventBufferDepth + 2 {
-		if es.deliverTo(0, def) {
-			delivered++
-		}
+	const many = eventBufferDepth + 2
+
+	for range many {
+		require.True(t, es.deliverTo(0, def),
+			"the queue takes it and the loop moves on")
 	}
 
-	require.Equal(t, eventBufferDepth, delivered,
-		"the box takes what it can hold and the rest drop — the loop never "+
-			"stalls on a runner that is not reading")
+	require.Len(t, es.takeDeliveries(), many,
+		"every one is there for the decorator to apply")
 }
 
 // TestTheDecoratorsDoorbellEmitsToTheLoop (ADR-006 §2.9.5): ProcessEvent runs
@@ -522,9 +529,14 @@ func TestArmingRegistersTheDecoratorOncePerActivity(t *testing.T) {
 		"the sibling joins — one subscription, two waiters")
 }
 
-// TestAPassParksOnItsOwnBox (SRD-090.B M5b): a pass of an iterated activity
-// blocks on the box its ordinal owns, not on the track's shared channel.
-func TestAPassParksOnItsOwnBox(t *testing.T) {
+// TestAPassTakesItsDeliveryFromTheDecorator (ADR-025 §2.15a): a pass of an
+// iterated activity takes the delivery the DECORATOR routed to it.
+//
+// A sequential activity runs ONE pass at a time, so that pass is parked on the
+// track's own channel and the decorator routes there. A parallel fan-out is
+// the shape that cannot: N instances share one node, so their deliveries are
+// queued and applied serially instead (TestADeliveryNamesTheInstanceItIsFor).
+func TestAPassTakesItsDeliveryFromTheDecorator(t *testing.T) {
 	_, tr, d, def := decoratedWaiter(t, 1)
 
 	en, ok := tr.currentStep().node.(flow.EventNode)
@@ -540,7 +552,6 @@ func TestAPassParksOnItsOwnBox(t *testing.T) {
 		done <- err
 	}()
 
-	// delivered to ordinal 1's box — the track's own channel is untouched.
 	require.Eventually(t, func() bool { return d.deliverTo(1, def) },
 		2*time.Second, 5*time.Millisecond)
 
@@ -548,11 +559,10 @@ func TestAPassParksOnItsOwnBox(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(3 * time.Second):
-		t.Fatal("the pass never took the delivery from its own box")
+		t.Fatal("the pass never took the delivery the decorator routed to it")
 	}
 
-	require.Empty(t, tr.evtCh,
-		"nothing was routed through the track's shared channel")
+	require.Empty(t, tr.evtCh, "and it was consumed, not left sitting there")
 }
 
 // TestTheWithdrawalNamesTheOrdinal (SRD-090.B FR-2): a pass finishing

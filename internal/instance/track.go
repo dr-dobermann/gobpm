@@ -311,6 +311,24 @@ type track struct {
 	// Written by dehydrateTrack and read by the capture, both on the loop
 	// goroutine, so it needs no lock of its own.
 	parkedTaskIDs map[int]string
+
+	// pendingCompletions are completions that arrived for an iterated
+	// activity whose decorator is not running yet, keyed by ordinal.
+	//
+	// A restored fan-out is rebuilt by the very action being applied to it,
+	// and the loop is serving requests before the track's goroutine has
+	// reached its step — so the ordinary case is that the first completion
+	// arrives with no executor to receive it. It cannot be refused (the
+	// instance is resident, so there is no hydration to replay after) and it
+	// cannot be resolved lazily either: that builds an executor nobody runs
+	// and loses the completion inside it.
+	//
+	// Held here, on the TRACK, which outlives every decorator run, and taken
+	// by the decorator when it starts.
+	//
+	// Guarded by iterMu: the LOOP writes it (deliverCompletion) while the
+	// TRACK's own goroutine takes it (the decorator, as it starts).
+	pendingCompletions map[int]flow.EventDefinition
 	// compScopeSeed, on a compensation event-sub handler host, is the snapshot
 	// committed into the handler's fresh child scope at open (shadowing
 	// reads). Set by the loop before spawn.
@@ -324,7 +342,12 @@ type track struct {
 	timerCycles   int
 	loopCounter   int
 	m             sync.RWMutex
-	stopIt        atomic.Bool
+
+	// iterMu guards the fan-out registers below (parkedTaskIDs,
+	// pendingCompletions). Its own lock rather than m, because the capture
+	// reads them while holding m's read lock.
+	iterMu sync.Mutex
+	stopIt atomic.Bool
 	// held is set at arm time when this track's wait registered an engine-level
 	// holder that can wake a released instance (SRD-071 FR-3): a dehydratable
 	// timer whose deadline the engine timer service accepted. It gates the idle
@@ -883,23 +906,88 @@ func (t *track) instancesBusy() bool {
 	return d.busyInstances()
 }
 
-// keepTaskIDs snapshots the parked-work identities of an iterated activity's
-// instances while the executor that holds them is still live, for the capture
-// that follows the release to record (ADR-020 §2.12).
+// holdCompletion keeps a completion for an iterated activity that is not
+// running its instances yet — see track.pendingCompletions.
+func (t *track) holdCompletion(ord int, def flow.EventDefinition) {
+	t.iterMu.Lock()
+	defer t.iterMu.Unlock()
+
+	if t.pendingCompletions == nil {
+		t.pendingCompletions = map[int]flow.EventDefinition{}
+	}
+
+	t.pendingCompletions[ord] = def
+}
+
+// takePendingCompletions hands the held completions to the decorator that is
+// starting, and forgets them: they belong to its instances from here.
+func (t *track) takePendingCompletions() map[int]flow.EventDefinition {
+	t.iterMu.Lock()
+	defer t.iterMu.Unlock()
+
+	held := t.pendingCompletions
+	t.pendingCompletions = nil
+
+	return held
+}
+
+// offerToPass hands an occurrence to the single pass parked on this track,
+// reporting whether it landed.
 //
-// Called from dehydrateTrack, which is the last moment they can be read: the
-// track goroutine is parked inside executeStep, so its `defer t.exec.Store(nil)`
-// has not run yet. A plain node has no owner and no ids, and leaves the field
-// nil.
-func (t *track) keepTaskIDs() {
-	owner := t.ownerIfResolved()
-	if owner == nil {
+// Non-blocking: the LOOP is the sender, so a channel that cannot take another
+// occurrence must never stall the single writer (SRD-027 FR-4's rule).
+func (t *track) offerToPass(eDef flow.EventDefinition) bool {
+	select {
+	case t.evtCh <- eDef:
+		return true
+	default:
+		return false
+	}
+}
+
+// rememberTaskID records instance ord's parked-work identity as it is minted
+// or adopted, so the checkpoint records what each instance was announced under
+// (ADR-020 §2.12).
+func (t *track) rememberTaskID(ord int, id string) {
+	if id == "" {
 		return
 	}
 
-	if ids := owner.taskIDSnapshot(); len(ids) > 0 {
-		t.parkedTaskIDs = ids
+	t.iterMu.Lock()
+	defer t.iterMu.Unlock()
+
+	if t.parkedTaskIDs == nil {
+		t.parkedTaskIDs = map[int]string{}
 	}
+
+	t.parkedTaskIDs[ord] = id
+}
+
+// forgetTaskID drops instance ord's identity once it is accounted for: a later
+// pass of the same activity mints its own rather than reusing a handle that
+// now names nothing.
+func (t *track) forgetTaskID(ord int) {
+	t.iterMu.Lock()
+	defer t.iterMu.Unlock()
+
+	delete(t.parkedTaskIDs, ord)
+}
+
+// taskIDRegister copies the live identities for the capture to record.
+func (t *track) taskIDRegister() map[int]string {
+	t.iterMu.Lock()
+	defer t.iterMu.Unlock()
+
+	if len(t.parkedTaskIDs) == 0 {
+		return nil
+	}
+
+	out := make(map[int]string, len(t.parkedTaskIDs))
+	for k, v := range t.parkedTaskIDs {
+		out[k] = v
+	}
+
+	return out
 }
 
 func (t *track) ownerIfResolved() activitySubscriber {
@@ -1282,7 +1370,10 @@ func (t *track) humanTaskIdentity(e *nodeExec) (string, int) {
 	owner.adoptTaskID(ord, recorded)
 	owner.parking(ord)
 
-	return owner.taskIDFor(ord), ord
+	id := owner.taskIDFor(ord)
+	t.rememberTaskID(ord, id)
+
+	return id, ord
 }
 
 // parkServiceTask parks a worker-dispatched ServiceTask as an external-worker
@@ -1366,23 +1457,6 @@ func (t *track) currentState() trackState {
 	return t.state
 }
 
-// classifyForInstance lets a CONCURRENT instance classify its own node before
-// it parks on it.
-//
-// The activity was classified once when the token arrived, which marked the
-// TRACK and announced ONE task; each instance of a fan-out needs its own park,
-// its own identity and its own announcement (ADR-020 §2.12).
-//
-// A no-op for everything else: a sequential pass is re-classified by its
-// decorator, and a plain node was classified on arrival.
-func (t *track) classifyForInstance(step *stepInfo, e *nodeExec) error {
-	if e == nil || !e.concurrent {
-		return nil
-	}
-
-	return t.checkNodeTypeFor(e, step.node, false)
-}
-
 // currentStep returns current step of the track.
 func (t *track) currentStep() *stepInfo {
 	t.m.RLock()
@@ -1435,51 +1509,25 @@ var errRedispatch = errors.New("the delivery moved this token")
 func (t *track) parkForDelivery(
 	ctx context.Context, step *stepInfo, e *nodeExec,
 ) (*data.ItemDefinition, error) {
-	// A CONCURRENT instance asks ITSELF whether it is parked. The track's
-	// state is its siblings' as much as its own, so a sibling that parked
-	// would make this one wait for a delivery meant for nobody — and one
-	// that did not park would let this one run past its own wait.
-	concurrent := e != nil && e.concurrent
-
-	if concurrent {
-		if !e.parked.Load() {
-			return nil, nil
-		}
-	} else if !t.inState(TrackWaitForEvent) {
+	// AN INSTANCE OF A FAN-OUT DOES NOT WAIT HERE. Its wait is the
+	// DECORATOR's, which holds every instance's and applies their
+	// completions serially on its own goroutine (ADR-025 §2.15a) — by the
+	// time this runs, the delivery has already arrived and is being applied.
+	//
+	// It waited here while each instance was a goroutine of its own, and
+	// that is the arrangement the ADR rules out: the node, the step list and
+	// the track's own fields are the TOKEN's, not an instance's, and N
+	// goroutines traversing them is a race with no natural owner.
+	if e != nil && e.concurrent {
 		return nil, nil
 	}
 
-	// An instance of an iterated activity blocks on ITS OWN box, not on the
-	// track's shared channel (SRD-090.B M5b): N of them can wait at once,
-	// and one channel can neither reach them all for a broadcast nor say
-	// which of them a point-to-point envelope was meant for.
-	box := t.evtCh
-
-	ord := t.execOrdinal()
-	if concurrent {
-		ord = e.ord
+	if !t.inState(TrackWaitForEvent) {
+		return nil, nil
 	}
 
-	owner := t.activityOwner()
-	if owner != nil {
-		if b := owner.boxFor(ord); b != nil {
-			box = b
-		}
-	}
-
-	if !t.awaitTrigger(ctx, box, concurrent) {
+	if !t.awaitTrigger(ctx, t.evtCh, e) {
 		return nil, errStopped
-	}
-
-	// THIS INSTANCE IS RUNNING AGAIN. Both halves matter: the handoff is
-	// over (the loop's in-flight count drops) and the executor is no longer
-	// parked, which is what the loop reads from here on.
-	if concurrent {
-		e.parked.Store(false)
-
-		if owner != nil {
-			owner.delivered()
-		}
 	}
 
 	if cur := t.currentStep(); cur != nil && cur.node != step.node {
@@ -1510,8 +1558,10 @@ func (t *track) parkForDelivery(
 // goroutine must return — setting the terminal state (Canceled / Dehydrated /
 // Failed) accordingly.
 func (t *track) awaitTrigger(
-	ctx context.Context, box chan flow.EventDefinition, concurrent bool,
+	ctx context.Context, box chan flow.EventDefinition, e *nodeExec,
 ) (proceed bool) {
+	concurrent := e != nil && e.concurrent
+
 	select {
 	case <-ctx.Done():
 		t.updateState(TrackCanceled)
@@ -1548,7 +1598,7 @@ func (t *track) awaitTrigger(
 			return false
 		}
 
-		return t.applyTrigger(ctx, eDef)
+		return t.applyTrigger(ctx, eDef, e)
 
 	// THE TRACK'S OWN CHANNEL STAYS LIVE alongside the instance's box.
 	// Only a delivery the DECORATOR routed lands in the box (SRD-090.B
@@ -1568,16 +1618,16 @@ func (t *track) awaitTrigger(
 			return false
 		}
 
-		return t.applyTrigger(ctx, eDef)
+		return t.applyTrigger(ctx, eDef, e)
 	}
 }
 
 // applyTrigger delivers a fired definition on the track's own goroutine,
 // reporting whether the run loop continues.
 func (t *track) applyTrigger(
-	ctx context.Context, eDef flow.EventDefinition,
+	ctx context.Context, eDef flow.EventDefinition, e *nodeExec,
 ) (proceed bool) {
-	if err := t.deliver(ctx, eDef); err != nil {
+	if err := t.deliver(ctx, eDef, e); err != nil {
 		t.lastErr = err
 		t.updateState(TrackFailed)
 
@@ -1873,16 +1923,16 @@ func (t *track) executeNodeAs(
 	// Ahead of the frame open, because the delivery's payload is captured
 	// INTO that frame (ADR-006 §2.9.1): the receiving execution binds its own
 	// item, so it must have received it by the time the frame exists.
-	if cerr := t.classifyForInstance(step, ai.exec); cerr != nil {
-		return nil, cerr
-	}
-
 	received, err := t.parkForDelivery(ctx, step, ai.exec)
 	if err != nil {
 		return nil, err
 	}
 
-	ai.received = received
+	// a fan-out's instance arrives with its payload already in hand: the
+	// decorator took the delivery and is applying it (ADR-025 §2.15a).
+	if received != nil {
+		ai.received = received
+	}
 
 	ne, ok := step.node.(exec.NodeExecutor)
 	if !ok {
@@ -2115,7 +2165,8 @@ func (t *track) finalizeNodeExecution(
 	// their own; the track field survives only for the paths that stage an
 	// item without parking — an Event-Based Gateway's winning arm, whose
 	// upload is this call on the ARM's step.
-	if ai.received == nil && t.receivedItem != nil {
+	if ai.received == nil && (ai.exec == nil || !ai.exec.concurrent) &&
+		t.receivedItem != nil {
 		f.SetReceived(t.receivedItem)
 		t.receivedItem = nil
 	}
@@ -2369,6 +2420,7 @@ func (t *track) ProcessEvent(
 func (t *track) deliver(
 	ctx context.Context,
 	eDef flow.EventDefinition,
+	e *nodeExec,
 ) error {
 	if ctx == nil {
 		ctx = t.ctx
@@ -2393,7 +2445,16 @@ func (t *track) deliver(
 	// THIS delivery's payload is captured by the receiving execution —
 	// never by the shared node (ADR-006 v.5 §2.9.1, SRD-085 FR-1). The
 	// node's ProcessEvent stays a notification seam.
-	t.receivedItem = msgflow.CaptureItem(eDef)
+	//
+	// A CONCURRENT instance takes it on ITSELF. The track's slot is one
+	// field shared by N instances of the same activity, each delivered to on
+	// its own goroutine: two of them writing it is a data race, and one
+	// taking the other's payload binds an approval to the wrong instance.
+	if e != nil && e.concurrent {
+		e.received = msgflow.CaptureItem(eDef)
+	} else {
+		t.receivedItem = msgflow.CaptureItem(eDef)
+	}
 
 	if err := ep.ProcessEvent(ctx, eDef); err != nil {
 		return err

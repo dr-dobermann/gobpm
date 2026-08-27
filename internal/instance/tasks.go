@@ -302,7 +302,23 @@ func (ls *loopState) completeTask(
 func (ls *loopState) deliverCompletion(
 	entry taskEntry, completion flow.EventDefinition,
 ) {
-	owner := entry.track.activityOwner()
+	owner := entry.track.ownerIfResolved()
+
+	// AN ITERATED ACTIVITY THAT IS NOT RUNNING ITS INSTANCES YET holds the
+	// completion on its track until its decorator starts (SRD-090.B FR-3).
+	//
+	// Resolving an executor lazily here — which is what asking the track for
+	// its owner used to do — builds one nobody runs and hands the completion
+	// to it: the work is marked performed, the task withdrawn, and the
+	// activity waits forever for an approval nobody can give again. It is the
+	// ordinary case rather than a rare one, because a restored fan-out is
+	// rebuilt by the very action being applied to it.
+	if owner == nil && fansOut(entry.node) {
+		entry.track.holdCompletion(entry.ord, completion)
+
+		return
+	}
+
 	if owner == nil {
 		ls.flipNotParked(entry.track)
 		entry.track.evtCh <- completion

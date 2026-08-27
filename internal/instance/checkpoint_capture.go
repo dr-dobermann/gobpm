@@ -548,22 +548,10 @@ func withTaskIDs(
 		return insts
 	}
 
-	// read-only: the capture runs on the LOOP, and resolving an executor
-	// here would store it on a track another goroutine is driving.
-	//
-	// A RELEASED track has no executor left to ask — and that is exactly the
-	// capture whose ids matter, the one a restore reads. It falls back to the
-	// set the loop kept when it released the track (track.keepTaskIDs).
-	var ids map[int]string
-
-	if owner := t.ownerIfResolved(); owner != nil {
-		ids = owner.taskIDSnapshot()
-	}
-
-	if len(ids) == 0 {
-		ids = t.parkedTaskIDs
-	}
-
+	// from the TRACK's live register rather than the executor: a released
+	// track has none left to ask, and that is exactly the capture whose ids
+	// matter — the one a restore reads (track.rememberTaskID).
+	ids := t.taskIDRegister()
 	if len(ids) == 0 {
 		return insts
 	}

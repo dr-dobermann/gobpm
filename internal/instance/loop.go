@@ -1351,10 +1351,6 @@ func (ls *loopState) applyDehydrated(_ *track) {
 // TrackDehydrated. Called only on the loop goroutine. The track record and its
 // wait registries are left intact; the goroutine's return emits evDehydrated.
 func (ls *loopState) dehydrateTrack(t *track) {
-	// BEFORE the release, while the executor that holds them still exists
-	// (ADR-020 §2.12) — see track.keepTaskIDs.
-	t.keepTaskIDs()
-
 	close(t.dehydrateCh)
 }
 

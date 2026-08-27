@@ -576,6 +576,27 @@ func TestOnlyTheAmbiguousIteratedWaitIsRefused(t *testing.T) {
 				"anyone doing the work")
 	})
 
+	t.Run("a PARALLEL MI over an external-worker task is refused",
+		func(t *testing.T) {
+			mi, err := activities.NewMultiInstance(
+				activities.WithInputCollection("items", "item"))
+			require.NoError(t, err)
+
+			st, err := activities.NewServiceTask("dispatch",
+				service.MustOperation("op", nil, nil, nil),
+				activities.WithWorker("topic"),
+				activities.WithoutParams(), activities.WithLoop(mi))
+			require.NoError(t, err)
+
+			err = build(t, "wl-sw-par", st)
+			require.ErrorContains(t, err, "share one job identity",
+				"a worker job is keyed to the TRACK, so N instances would "+
+					"dispatch a single job and a single report would "+
+					"complete work nobody performed")
+			require.ErrorContains(t, err, "sequential",
+				"and the refusal names the shape that does work")
+		})
+
 	t.Run("a SEQUENTIAL MI over a User Task builds", func(t *testing.T) {
 		mi, err := activities.NewMultiInstance(activities.WithSequential(),
 			activities.WithInputCollection("items", "item"))

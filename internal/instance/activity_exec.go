@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"errors"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -117,6 +118,14 @@ type nodeExec struct {
 	// capture takes this instance's declared output while it is still the
 	// instance's own — see activityInstance.capture.
 	capture func(f *scope.Frame) error
+
+	// received is THIS delivery's payload, taken here rather than on the
+	// track for the same reason `local` is: the track's slot is one field
+	// shared by N instances delivered to on N goroutines (see track.deliver).
+	//
+	// Written and read by this instance's own goroutine — the delivery it
+	// woke on and the binding that follows — so it needs no lock.
+	received *data.ItemDefinition
 
 	// local is this instance's own data, bound frame-local so a concurrent
 	// sibling cannot overwrite it (SRD-090.A FR-4). nil for the single
@@ -477,21 +486,10 @@ func (d *iterDecorator) refuseIfParked(i int) error {
 // busyInstances reports whether any instance of a fanned-out activity is
 // executing rather than parked (ADR-025 §2.13b.1e, from the residency side).
 func (d *iterDecorator) busyInstances() bool {
-	if d.busy() {
-		return true // a completion handed over, not yet taken
-	}
-
-	d.fannedMu.Lock()
-	fanned := d.fanned
-	d.fannedMu.Unlock()
-
-	for _, e := range fanned {
-		if !e.parked.Load() && !e.finished.Load() {
-			return true
-		}
-	}
-
-	return false
+	// THE DECORATOR ANSWERS FOR ITS INSTANCES, because it is the one
+	// executing them (ADR-025 §2.15a). Busy means a delivery is queued or
+	// being applied; a released track cannot be taken away underneath it.
+	return d.busy()
 }
 
 func (d *iterDecorator) awaits() awaitKind {
@@ -547,6 +545,27 @@ func (d *iterDecorator) state() instanceState {
 
 // subscriber: the decorator holds ONE subscription per definition for the
 // whole activity, across every pass (ADR-006 §2.9.5, SRD-090.B FR-1/FR-2).
+// deliverTo routes an occurrence to the instance it is for.
+//
+// THE DECORATOR DECIDES, because it is what executes the instances (ADR-025
+// §2.15a). A parallel fan-out queues the delivery and applies it serially on
+// its own goroutine — the instances are state it owns, and the node they share
+// is the token's. Every other shape runs ONE pass at a time, and that pass is
+// parked on the track's own channel, which is where its delivery goes.
+func (d *iterDecorator) deliverTo(ord int, eDef flow.EventDefinition) bool {
+	if d.fansOutLeaves() {
+		return d.eventSubs.deliverTo(ord, eDef)
+	}
+
+	return d.t.offerToPass(eDef)
+}
+
+// fansOutLeaves reports whether this run holds N instances of one shared node
+// at once — the only shape whose deliveries are applied serially.
+func (d *iterDecorator) fansOutLeaves() bool {
+	return !d.composite && d.mi != nil && !d.mi.IsSequential()
+}
+
 func (d *iterDecorator) subscriber() activitySubscriber { return d }
 
 // runParallel drives every instance of a parallel leaf activity at once and
@@ -593,6 +612,13 @@ func (d *iterDecorator) runParallel(
 		for _, inst := range d.seed.Instances {
 			d.adoptTaskID(inst.Ordinal, inst.TaskID)
 		}
+	}
+
+	// a completion that arrived before this run existed belongs to one of the
+	// instances about to be built — taken here, where the track's goroutine
+	// owns both sides, and handed over when that instance parks.
+	for ord, def := range d.t.takePendingCompletions() {
+		d.deliver(ord, def)
 	}
 
 	insts := make(map[int]activityExec, n)
@@ -649,33 +675,54 @@ func (d *iterDecorator) runParallel(
 	d.setFanned(leaves)
 	defer d.setFanned(nil)
 
-	for ord, e := range insts {
-		go func(ord int, e activityExec) {
-			_, err := e.run(runCtx)
-
-			if le, leaf := e.(*nodeExec); leaf {
-				le.finished.Store(true)
-			}
-
-			// the report is outstanding until the barrier has ACCOUNTED for
-			// it, not merely received it: the activity's recorded position
-			// advances in took, and a release between the two would persist
-			// a checkpoint that has not heard about this instance.
-			d.delivering()
-
-			done <- instanceDone{ord: ord, err: err}
-		}(ord, e)
-	}
-
-	return d.awaitParallel(ctx, it, parallelRun{
+	run := parallelRun{
 		n:          n,
 		done:       done,
 		outs:       outs,
 		caps:       caps,
+		execs:      insts,
 		cancelRest: cancelRest,
 		states:     states,
 		launched:   len(insts),
-	}, step)
+	}
+
+	// A COMPOSITE's instances are child SCOPES with tracks of their own, so
+	// they run concurrently and report — §2.15a's claim is about the decorated
+	// NODE, which a composite instance does not share.
+	if d.composite {
+		d.launchAll(runCtx, run)
+
+		return d.awaitParallel(ctx, it, run, step)
+	}
+
+	// THE DECORATOR PARKS EVERY INSTANCE'S WAIT ITSELF, before any of them is
+	// applied, so all N are outstanding at once — which is what "parallel"
+	// means for a Multi-Instance holding work.
+	parked, err := d.parkInstances(insts, step)
+	if err != nil {
+		return nil, err
+	}
+
+	// A FAN-OUT THAT HOLDS NO WAIT genuinely runs at once — a Script or
+	// Service Task instance does its work rather than waiting for somebody,
+	// and §2.15a's rule is about the one that APPLIES a delivery.
+
+	if len(parked) == 0 {
+		d.launchAll(runCtx, run)
+
+		return d.awaitParallel(ctx, it, run, step)
+	}
+
+	// A FAN-OUT THAT HOLDS N WAITS applies their completions SERIALLY, on
+	// this goroutine (ADR-025 §2.15a).
+	//
+	// The concurrency it exists for is external — N people acting at the same
+	// time, in the distributor's inbox. Inside, applying one completion is
+	// small and bounded, and a goroutine per instance made the node they
+	// share mutable state with no natural owner: two approvers' outputs could
+	// cross, because the node buffers the completion it was handed
+	// (activities.UserTask.completedOutputs).
+	return d.applyParallel(ctx, it, run, step)
 }
 
 // instanceDone is one parallel instance reporting its ordinal and verdict.
@@ -690,6 +737,10 @@ type instanceDone struct {
 type parallelRun struct {
 	done chan instanceDone
 	outs *instanceOutputs
+	// execs is the instance set, by ordinal. The decorator applies a
+	// delivery by looking its instance up here — the instances are state it
+	// owns, not goroutines with mailboxes of their own (ADR-025 §2.15a).
+	execs map[int]activityExec
 	// caps holds a COMPOSITE instance's output cell, filled loop-side
 	// before its scope closed and read here once it reports. Empty for a
 	// leaf fan-out, whose instances capture through their own frames.
@@ -863,6 +914,7 @@ func (b *parallelBarrier) took(
 	// until here so the two never disagree in a checkpoint (deliverCompletion
 	// says the same from the other side).
 	b.d.dropTaskID(ord)
+	b.d.t.forgetTaskID(ord)
 
 	b.run.collectOutput(ord)
 
@@ -899,6 +951,170 @@ func (b *parallelBarrier) took(
 		// return, for the same reason fail exists.
 		b.err = b.d.stopRemaining(ctx, b.run)
 	}
+}
+
+// parkInstances parks every instance's wait, one at a time on the decorator's
+// own goroutine, and reports which of them ended up holding one.
+//
+// All N are parked BEFORE any is applied, because that is what "parallel"
+// means for a Multi-Instance holding work: every instance is outstanding at
+// once — N tasks in the distributor's inbox, N people able to act.
+func (d *iterDecorator) parkInstances(
+	insts map[int]activityExec, step *stepInfo,
+) (map[int]bool, error) {
+	parked := map[int]bool{}
+
+	for _, ord := range sortedOrdinals(insts) {
+		le, leaf := insts[ord].(*nodeExec)
+		if !leaf {
+			continue
+		}
+
+		if err := d.t.checkNodeTypeFor(le, step.node, false); err != nil {
+			return nil, err
+		}
+
+		// asked of the EXECUTION, which owns its own wait (ADR-025 §2.13),
+		// and of the subscription set for an event wait — never of anything
+		// a delivery can clear underneath us.
+		if le.parked.Load() || d.waitingFor(ord) {
+			parked[ord] = true
+		}
+	}
+
+	return parked, nil
+}
+
+// launchAll runs every instance on a goroutine of its own — the shape for
+// instances that hold no wait, and for a composite's child scopes.
+func (d *iterDecorator) launchAll(ctx context.Context, run parallelRun) {
+	for ord, e := range run.execs {
+		go func(ord int, e activityExec) {
+			_, err := e.run(ctx)
+
+			// the report is outstanding until the barrier has ACCOUNTED for
+			// it, not merely received it: the activity's recorded position
+			// advances in took, and a release between the two would persist a
+			// checkpoint that has not heard about this instance.
+			d.delivering()
+
+			run.done <- instanceDone{ord: ord, err: err}
+		}(ord, e)
+	}
+}
+
+// sortedOrdinals returns the instance set's ordinals in ascending order, so a
+// fan-out parks and announces its tasks in a reproducible order — two runs of
+// one model must not disagree about which instance was offered first.
+func sortedOrdinals(insts map[int]activityExec) []int {
+	ords := make([]int, 0, len(insts))
+	for ord := range insts {
+		ords = append(ords, ord)
+	}
+
+	sort.Ints(ords)
+
+	return ords
+}
+
+// applyParallel is the leaf fan-out's N-of-N barrier, run as SERIAL
+// APPLICATION on the decorator's goroutine (ADR-025 §2.15a).
+//
+// It waits for deliveries, and applies each one where it arrives: bind the
+// payload into that instance's frame, run its node, record its output. One at
+// a time, so the node — which is the token's, shared by every instance — is
+// only ever touched by one execution.
+//
+// A RELEASE is not a failure: the loop taking the track away leaves every
+// outstanding approval where it is, in the distributor's inbox, and the
+// activity resumes from its recorded position when the instance comes back.
+func (d *iterDecorator) applyParallel(
+	ctx context.Context, it miIterator, run parallelRun, step *stepInfo,
+) ([]*flow.SequenceFlow, error) {
+	t := d.t
+	b := &parallelBarrier{d: d, run: run, completed: run.n - run.launched}
+	outstanding := run.launched
+
+	for outstanding > 0 {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+
+		case <-t.dehydrateCh:
+			t.updateState(TrackDehydrated)
+
+			return nil, errStopped
+
+		case <-d.deliveries():
+			for _, dlv := range d.takeDeliveries() {
+				e, leaf := run.execs[dlv.ord].(*nodeExec)
+				if !leaf {
+					continue // an ordinal nothing is running — a late drop
+				}
+
+				if err := d.applyOne(ctx, it, b, step, e, dlv); err != nil {
+					return nil, err
+				}
+
+				outstanding--
+			}
+		}
+
+		if b.err != nil {
+			return nil, b.err
+		}
+	}
+
+	return d.finishParallel(it, run, b, step)
+}
+
+// applyOne applies ONE instance's completion, start to finish, before any
+// other is looked at.
+func (d *iterDecorator) applyOne(
+	ctx context.Context,
+	it miIterator,
+	b *parallelBarrier,
+	step *stepInfo,
+	e *nodeExec,
+	dlv instanceDelivery,
+) error {
+	t := d.t
+
+	// the node is handed the delivery and then run for THIS instance, with
+	// nothing in between — which is what makes the buffer it keeps for the
+	// completion safe (activities.UserTask.completedOutputs).
+	d.delivering()
+	defer d.delivered()
+
+	if err := t.deliver(ctx, dlv.def, e); err != nil {
+		b.fail(ctx, err)
+
+		return nil
+	}
+
+	_, err := t.executeNodeAs(ctx, step, activityInstance{
+		exec:     e,
+		local:    e.local,
+		capture:  e.capture,
+		received: e.received,
+	})
+
+	e.received = nil
+	e.finished.Store(true)
+
+	if err != nil {
+		if errors.Is(err, errStopped) || errors.Is(err, errDehydrated) {
+			return err
+		}
+
+		b.fail(ctx, err)
+
+		return nil
+	}
+
+	b.took(ctx, it, dlv.ord)
+
+	return nil
 }
 
 func (d *iterDecorator) awaitParallel(
@@ -972,6 +1188,17 @@ func (d *iterDecorator) awaitParallel(
 	if released {
 		return nil, errStopped
 	}
+
+	return d.finishParallel(it, run, b, step)
+}
+
+// finishParallel settles the activity once every instance is accounted for:
+// the §2.9 counts, the durable account, the assembled output, and the one
+// traversal of the activity's outgoing flow.
+func (d *iterDecorator) finishParallel(
+	it miIterator, run parallelRun, b *parallelBarrier, step *stepInfo,
+) ([]*flow.SequenceFlow, error) {
+	t := d.t
 
 	// the terminated count is only whole once every instance has reported,
 	// so the §2.9 attributes settle here (the parallel counterpart of the
