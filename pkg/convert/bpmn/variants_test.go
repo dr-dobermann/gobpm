@@ -125,7 +125,7 @@ func TestTransactionAndEventSubProcessIsTheModelsRefusal(t *testing.T) {
 	}
 }
 
-// TestTransactionMethodDispositions is SRD-094 T-6: the absent attribute
+// TestTransactionMethodDispositions is SRD-095 T-6: the absent attribute
 // and both standard spellings read as compensate, every other identifier is
 // carried verbatim for registration to judge, and nothing is reported —
 // the converter keeps no value table of its own (ADR-024 §2.16).
@@ -245,7 +245,7 @@ func TestCancelBecomesReachable(t *testing.T) {
 	})
 }
 
-// TestTransactionProtocolIsCarried is SRD-094 T-7: the protocol lands on
+// TestTransactionProtocolIsCarried is SRD-095 T-7: the protocol lands on
 // the model as stated and is no longer reported as dropped.
 func TestTransactionProtocolIsCarried(t *testing.T) {
 	t.Run("stated", func(t *testing.T) {

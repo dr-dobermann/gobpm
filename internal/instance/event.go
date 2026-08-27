@@ -224,7 +224,7 @@ const (
 	// checkpoint (the persistence slice wires it into checkpointTransitions).
 	evIncident
 	// evWaitArmed: a parked track finished registering its wait's waiters and
-	// holders (SRD-094 FR-8). Applied as a no-op; it exists so the loop tail
+	// holders (SRD-095 FR-8). Applied as a no-op; it exists so the loop tail
 	// re-runs maybeDehydrate AFTER the holder is in place. evWaiting must
 	// precede that registration (a synchronously fired event has to find the
 	// track recorded as parked), so the loop's first dehydration check can

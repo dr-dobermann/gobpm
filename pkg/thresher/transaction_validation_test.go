@@ -72,7 +72,7 @@ func txSubProcess(
 	return fillContainer(t, sp)
 }
 
-// TestValidateTransactionCoverage is SRD-094 T-4: registration accepts the
+// TestValidateTransactionCoverage is SRD-095 T-4: registration accepts the
 // compensate method and refuses every other, naming each offender.
 func TestValidateTransactionCoverage(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())

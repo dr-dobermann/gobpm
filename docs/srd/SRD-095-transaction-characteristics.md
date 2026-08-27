@@ -1,4 +1,4 @@
-# SRD-094 — Transaction characteristics: model, bind, registration check, BPMN import
+# SRD-095 — Transaction characteristics: model, bind, registration check, BPMN import
 
 | Field | Value |
 |---|---|
@@ -360,7 +360,7 @@ No downward references.
 | M3a | `c0a86e68` | `transaction_method` registered in ADR-022 §2.5's descriptive list — the vocabulary gate (`internal/lintcfg`) refused the new constant on the first full gate run |
 | M5 | `0eb63629` | `scripts/run-examples.sh` + the `run-examples` target: 49 modules in 29s at `jobs=8` against 1m20s serial; a failing example prints its log and status inside its fold, a hang is cut at `EXAMPLE_RUN_TIMEOUT` and named, exit 1 on any failure |
 | — | `361e6ab8` | master merged (PR #351, the Process I/O contract) — no conflicts |
-| — | `c2ddd74a` | this document renumbered SRD-093 → SRD-094 (master had landed its own SRD-093) |
+| — | `c2ddd74a` | this document renumbered SRD-093 → SRD-095 (master had landed its own SRD-093) |
 | M6 | `0fc9e301` | `examples/transaction-sub-process` states `protocol`, prints the read-back, shows the registration refusal; `main.go` split per the 80-line rule |
 | M7 | `cad114c5` | the runner's `mktemp` guard; `scripts/run_examples_test.go` (T-12) |
 | M8 | `0ca7347f` | FR-8: `evMoved` before the wait declaration, `evWaitArmed` for the dehydration re-check; T-10, T-11; the `PhaseCanceled` assertion |

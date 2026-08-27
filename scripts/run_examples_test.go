@@ -28,7 +28,7 @@ func writeModule(t *testing.T, root, name, body string) string {
 
 // TestRunExamplesScript exercises scripts/run-examples.sh the way the gate
 // does — several modules at once — on a fixture with one passing, one
-// failing and one hanging module (SRD-094 M7): the folds come out in the
+// failing and one hanging module (SRD-095 M7): the folds come out in the
 // given order, a failure prints its log and status inside its fold, a hang
 // is cut at the ceiling and named, the summary counts both, and the exit
 // code is 1. A second run with only passing modules exits 0.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run-examples.sh — execute every example module end-to-end, in parallel, and
 # report each one as its own folded group in the original order (FIX-029,
-# SRD-094 M5).
+# SRD-095 M5).
 #
 # The sweep used to be a serial loop: 49 modules, each `go run .` under a
 # timeout, one after another. The examples are independent processes, so they

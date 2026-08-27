@@ -482,7 +482,7 @@ EXAMPLE_RUN_TIMEOUT := 90s
 # macOS/Homebrew. Prefer the native name, then the Homebrew-prefixed fallback;
 # retain `timeout` as the final value so the guard below gives a useful error.
 EXAMPLE_TIMEOUT ?= $(shell command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || printf '%s' timeout)
-# How many examples run at once (SRD-094 M5). Unset = the CPU count, capped at
+# How many examples run at once (SRD-095 M5). Unset = the CPU count, capped at
 # 8; the examples are independent processes, and a 2-core runner gets 2.
 EXAMPLE_JOBS ?=
 

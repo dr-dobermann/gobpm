@@ -120,7 +120,7 @@ func TestTransactionCancelAbort(t *testing.T) {
 	require.Len(t, comps, 1)
 	require.Equal(t, "reserve", comps[0].NodeName)
 
-	// SRD-094 FR-5: the abort's Thrown fact names the bound coordinator.
+	// SRD-095 FR-5: the abort's Thrown fact names the bound coordinator.
 	thrown := compFacts(rec, observability.PhaseThrown)
 	require.Len(t, thrown, 1)
 	require.Equal(t, string(activities.TransactionCompensate),

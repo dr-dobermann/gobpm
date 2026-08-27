@@ -656,7 +656,7 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	}
 
 	// The wait is now holdable: tell the loop, so its dehydration check runs
-	// once more with the holder in place (SRD-094 FR-8). Same gating as the
+	// once more with the holder in place (SRD-095 FR-8). Same gating as the
 	// evWaiting emit above — at construction the loop is not draining yet,
 	// and a fork-born track's checkNodeType runs on the loop goroutine.
 	if !atConstruction && t.instance.State() == Active {
@@ -1986,7 +1986,7 @@ func (t *track) advance(succs []successor) error {
 	// loop never reads currentStep cross-goroutine. Reached only from run()
 	// (instance Active), so no construction gating.
 	//
-	// Emitted BEFORE checkNodeType, and the order is load-bearing (SRD-094
+	// Emitted BEFORE checkNodeType, and the order is load-bearing (SRD-095
 	// FR-8). For a wait node checkNodeType declares the wait and emits
 	// evWaiting, which is a checkpoint trigger; the completed predecessor's
 	// ledger entry rides on THIS evMoved, so an evWaiting queued ahead of it

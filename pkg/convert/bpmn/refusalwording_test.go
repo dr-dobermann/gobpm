@@ -32,7 +32,7 @@ func TestRefusalsSayWhichKindTheyAre(t *testing.T) {
 		},
 		// A transaction's method=store is no longer an import refusal: the
 		// model carries any method and registration refuses one no
-		// coordinator performs (SRD-094 FR-4/FR-6; pinned by
+		// coordinator performs (SRD-095 FR-4/FR-6; pinned by
 		// pkg/thresher TestValidateTransactionCoverage).
 		"foreign calledElement": {
 			doc: callDoc(

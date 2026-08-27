@@ -8,7 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 )
 
-// TestParseTransactionMethod is SRD-094 T-1: the absent attribute and both
+// TestParseTransactionMethod is SRD-095 T-1: the absent attribute and both
 // standard spellings read as compensate; anything else is carried as is.
 func TestParseTransactionMethod(t *testing.T) {
 	tests := map[string]struct {
@@ -33,7 +33,7 @@ func TestParseTransactionMethod(t *testing.T) {
 	}
 }
 
-// TestTransactionOptions is SRD-094 T-2: the defaults, the two carried
+// TestTransactionOptions is SRD-095 T-2: the defaults, the two carried
 // values, and the refusals — each naming the option that refused.
 func TestTransactionOptions(t *testing.T) {
 	t.Run("no options means compensate and no protocol", func(t *testing.T) {

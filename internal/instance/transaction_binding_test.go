@@ -19,7 +19,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
-// TestBindTransaction is SRD-094 T-5's bind half: only a Transaction
+// TestBindTransaction is SRD-095 T-5's bind half: only a Transaction
 // Sub-Process yields a binding, and a scope without one aborts as compensate.
 func TestBindTransaction(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
@@ -47,7 +47,7 @@ func TestBindTransaction(t *testing.T) {
 		boundMethod(&scopeEntry{tx: b}))
 }
 
-// TestForeignBindingAbortsWithoutCompensating is SRD-094 T-5's invariant
+// TestForeignBindingAbortsWithoutCompensating is SRD-095 T-5's invariant
 // half. Registration refuses a method no coordinator performs, so a scope
 // bound to one can only be reached by building the instance directly — which
 // this test does. The abort must then NOT compensate on the document's
@@ -176,7 +176,7 @@ func atHold(d *checkpoint.Document) bool {
 	return len(d.Scopes) == 2 && len(d.Tracks) == 2
 }
 
-// TestWaitCheckpointCarriesPredecessorLedger is SRD-094 FR-8's regression:
+// TestWaitCheckpointCarriesPredecessorLedger is SRD-095 FR-8's regression:
 // a checkpoint written at a wait right after a compensable activity carries
 // that activity's ledger entry, so a restore from it still compensates on a
 // Cancel. Before the fix the track declared the wait — and the loop

@@ -257,7 +257,7 @@ const (
 	AttrBackoff     = "backoff"
 	AttrDataPath    = "data_path"
 	AttrScopePath   = "scope_path"
-	// AttrTransactionMethod (SRD-094): the abort coordinator a Transaction
+	// AttrTransactionMethod (SRD-095): the abort coordinator a Transaction
 	// scope is bound to (ADR-028 §2.1), on the abort's Thrown fact — and on
 	// the Failed fact a scope bound to no coordinator reports instead.
 	AttrTransactionMethod = "transaction_method"

@@ -92,7 +92,7 @@ type scopeEntry struct {
 	// every other scope: the per-activity completed/running counts the Router
 	// decides on, and whether routing has already stopped.
 	adHoc *adHocProgress
-	// tx is the transaction binding (ADR-028 §2.1, SRD-094 FR-5): the
+	// tx is the transaction binding (ADR-028 §2.1, SRD-095 FR-5): the
 	// characteristics the executing unit bound this scope to when it opened,
 	// nil for every scope that is not a Transaction's. cancelTransaction
 	// dispatches the abort on it.

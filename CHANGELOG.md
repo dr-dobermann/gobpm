@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **A Transaction carries its `method` and `protocol`, and binds its abort
-  to a coordinator** (ADR-028 v.2 / SRD-094, part of #324). The
+  to a coordinator** (ADR-028 v.2 / SRD-095, part of #324). The
   `isTransaction` flag becomes `activities.TransactionCharacteristics` —
   `WithTransaction(opts...)` (source-compatible) with
   `WithTransactionMethod`/`WithTransactionProtocol`, read back through
@@ -191,7 +191,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **A checkpoint taken at a wait no longer drops the previous activity's
-  compensation-ledger entry** (SRD-094 FR-8). The track declared a wait —
+  compensation-ledger entry** (SRD-095 FR-8). The track declared a wait —
   a checkpoint trigger — before emitting the move that ledgers the activity
   it had just completed, so a document written at that wait was one entry
   short, and a Transaction restored from it aborted without compensating

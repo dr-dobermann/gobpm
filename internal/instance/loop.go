@@ -678,7 +678,7 @@ func (ls *loopState) applyWaitPlane(ctx context.Context, ev trackEvent) {
 
 	case evWaitArmed:
 		// the parked track's holders are registered — nothing to apply; the
-		// loop tail's maybeDehydrate is what this event is for (SRD-094 FR-8).
+		// loop tail's maybeDehydrate is what this event is for (SRD-095 FR-8).
 
 	case evTaskWaiting:
 		// a UserTask parked as a human task — register + announce it (SRD-034).
