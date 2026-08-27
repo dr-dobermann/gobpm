@@ -458,18 +458,34 @@ func (p *parser) parseIOSpecChild(io *ioSpec, se xml.StartElement) error {
 	return p.settle(ctxData, se)
 }
 
-// parseIOParam reads one <dataInput> or <dataOutput>.
+// parseIOParam reads one <dataInput> or <dataOutput> of an ioSpecification.
 func (p *parser) parseIOParam(
 	io *ioSpec, dir data.Direction, se xml.StartElement,
 ) error {
-	id, err := requiredID(se)
+	spec, err := p.parseParamSpec(dir, se)
 	if err != nil {
 		return err
 	}
 
+	io.params = append(io.params, spec)
+
+	return nil
+}
+
+// parseParamSpec reads one <dataInput> or <dataOutput> wherever it stands
+// — inside an ioSpecification, or bare on an event (§10.4.2) — claiming
+// its id and returning its spec.
+func (p *parser) parseParamSpec(
+	dir data.Direction, se xml.StartElement,
+) (paramSpec, error) {
+	id, err := requiredID(se)
+	if err != nil {
+		return paramSpec{}, err
+	}
+
 	err = p.claimID(id, se.Name.Local)
 	if err != nil {
-		return err
+		return paramSpec{}, err
 	}
 
 	// A parameter's content model is a data element's: documentation and
@@ -489,7 +505,7 @@ func (p *parser) parseIOParam(
 	p.owner = outer
 
 	if err != nil {
-		return err
+		return paramSpec{}, err
 	}
 
 	if carrier.state != "" {
@@ -498,15 +514,13 @@ func (p *parser) parseIOParam(
 
 	p.reportUnmappedAttrs(se, id, nil)
 
-	io.params = append(io.params, paramSpec{
+	return paramSpec{
 		id:      carrier.id,
 		name:    carrier.name,
 		itemRef: carrier.itemRef,
 		dir:     dir,
 		docs:    carrier.docs,
-	})
-
-	return nil
+	}, nil
 }
 
 // parseIOSet reads one <inputSet> or <outputSet>: the single set the

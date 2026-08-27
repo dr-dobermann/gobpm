@@ -68,12 +68,12 @@ func (p *Process) AssociateInput(
 // AssociateOutput wires the process's declared output named outputName into
 // an End Event's data input — the process DataOutputs are sources of its
 // End Event's input associations (§10.4.2 p224). to must be an End Event of
-// this process; its input is the one over the output's item (the
-// DataObject rule). The association's source is named after the output —
-// its root-scope name — so the run-time copy reads what the flow left there
-// (SRD-094 FR-4, FR-6).
+// this process and targetID one of its data inputs (the mirror of
+// AssociateInput's sourceID). The association's source is named after the
+// output — its root-scope name — so the run-time copy reads what the flow
+// left there (SRD-094 FR-4, FR-6).
 func (p *Process) AssociateOutput(
-	outputName string, to flow.AssociationTarget,
+	outputName string, to flow.AssociationTarget, targetID string,
 ) error {
 	out, err := p.contractParam(data.Output, outputName)
 	if err != nil {
@@ -89,15 +89,14 @@ func (p *Process) AssociateOutput(
 	}
 
 	inputs := to.Inputs()
-	itemID := out.ItemDefinition().ID()
 
 	idx := slices.IndexFunc(inputs, func(iae *data.ItemAwareElement) bool {
-		return iae.ItemDefinition().ID() == itemID
+		return iae.ID() == targetID
 	})
 	if idx == -1 {
 		return errs.New(
-			errs.M("AssociateOutput: end event %q has no data input over the "+
-				"item %q of output %q", to.Name(), itemID, outputName),
+			errs.M("AssociateOutput: end event %q has no data input %q for "+
+				"output %q", to.Name(), targetID, outputName),
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 

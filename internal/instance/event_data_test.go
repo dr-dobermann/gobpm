@@ -244,7 +244,7 @@ func outputToEnd(t *testing.T, wire bool) *snapshot.Snapshot {
 	require.NoError(t, err)
 
 	if wire {
-		require.NoError(t, p.AssociateOutput("total", end))
+		require.NoError(t, p.AssociateOutput("total", end, end.Inputs()[0].ID()))
 	}
 
 	s, err := snapshot.New(p)

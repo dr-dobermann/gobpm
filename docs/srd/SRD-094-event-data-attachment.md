@@ -157,9 +157,11 @@ func (p *Process) AssociateInput(inputName string, from flow.AssociationSource, 
 // AssociateOutput wires the process's declared output named outputName
 // into an End Event's input (process DataOutputs are SOURCES of the End
 // Event's input associations). The event must be an EndEvent of this
-// process; the target is the event's data input whose item equals the
-// output's.
-func (p *Process) AssociateOutput(outputName string, to flow.AssociationTarget) error
+// process; targetID names one of its data inputs — the mirror of
+// AssociateInput's sourceID (the importer hands the file's targetRef
+// through; an item-based pick could not, since an imported definition's
+// item is the converter's placeholder, §3.5).
+func (p *Process) AssociateOutput(outputName string, to flow.AssociationTarget, targetID string) error
 ```
 
 Both build a `data.Association` whose process-side end is the declared
@@ -206,12 +208,24 @@ through the `Associate*` path: a `DataObject` end as for tasks; an end
 whose id is a **process parameter** (the enclosing process's
 `<ioSpecification>` input for a start's output association, output for an
 end's input association) through FR-4; a `<property>` end stays #331. A
-bare `<dataInput>`/`<dataOutput>` on an event maps to FR-2's options
-(adopting the paired definition's item when it names none, SRD-089.G
-§4.3's adoption rule); a `<dataInputAssociation>` on a catch or a
+bare `<dataInput>`/`<dataOutput>` on an event maps to FR-2's options,
+**always carrying the item of the definition it pairs with by position**
+(p217): the converter builds every definition's payload item as a
+placeholder rather than resolving the file's `itemRef` (`catalog.go`'s
+`emptyItem`), and the engine binds a delivery by that item — so a file's
+`itemSubjectRef` on an event parameter is checked for existence and kept
+as the **file-level** identity §10.4.1's match compares when an
+association joins the parameter to a data element (`paramItemRef`); a
+parameter that names none is not compared. For the same reason an
+event's input is addressed **by id** when a data element is wired into it
+— `DataObject.AssociateTargetInput` / `DataStoreReference.AssociateTargetInput`,
+the id-addressed siblings of `AssociateTarget` — where a task's input is
+addressed by item, as before. A `<dataInputAssociation>` on a catch or a
 `<dataOutputAssociation>` on a throw is refused as the position the
-standard reserves (§10.4.2, one set per event). The two refusals retire
-and the guide row leaves.
+standard reserves (§10.4.2, one set per event); a bare parameter on a
+task is refused pointing inside its `<ioSpecification>`, on any other
+owner under the containment rule. The two refusals retire and the guide
+row leaves.
 
 **FR-8 — a runnable example.** `examples/event-data/`: a message-started
 process with a declared input filled by the start's output association
@@ -318,18 +332,28 @@ seed owns. `unboundInput` loses its event-born branch.
 
 ### §3.5 Importer
 
-- `eventNodeTags` moves from "refuse" to "wire": `wireDataAssoc` resolves
-  the non-event end as today (data object / data store / property→#331)
-  and, when the end id is a process parameter, through `AssociateInput`/
-  `AssociateOutput`.
+- `eventNodeTags` moves from "refuse" to "wire" (`eventdata.go`):
+  `wireDataAssoc` checks the association's direction against the event's
+  (`eventAssocDirection`), resolves the non-event end as today (data
+  object / data store / property→#331) and, when the end id is a process
+  parameter (`processParam`, the process spec's `io.params`), wires
+  through `AssociateInput`/`AssociateOutput` (`bindProcessEnd`) — the
+  process's own Start/End Events only. `bindAssoc` needs the one
+  interface the direction uses and, on an event, wires a data element
+  into the input **by id** (`AssociateTargetInput`).
 - `nodeBody` gains `params []paramSpec` for an event's bare
-  `<dataInput>`/`<dataOutput>` children (the `ioSpec` machinery is a
-  task's; an event has no sets), rendered by `eventOptions` into
-  `WithDataOutputs`/`WithDataInputs` with item adoption from the paired
-  definition.
+  `<dataInput>`/`<dataOutput>` children (`parseEventParamElem`, over the
+  extracted `parseParamSpec`), rendered by `eventOptions` /
+  `soleEventOptions` into `WithDataOutputs`/`WithDataInputs`
+  (`eventDataOptions`): the other direction refused, every parameter
+  carrying its paired definition's item (`adoptedItems`), one past the
+  item-bearing definitions refused. A bare parameter on a non-event owner
+  is refused at build (`bareParamMisplaced`).
 - `dataParamNote` drops its event clause; the association-on-event
   refusal is replaced by the one-set-per-direction refusal; the coverage
-  guide row leaves.
+  guide row leaves and the converters guide names the events' data.
+- The exporter is untouched (SRD scope: the importer); an event's data
+  does not round-trip yet.
 
 ### §3.6 Worked example — the whole data path
 

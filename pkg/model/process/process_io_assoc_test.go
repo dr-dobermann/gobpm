@@ -153,14 +153,15 @@ func TestAssociateOutputValidates(t *testing.T) {
 	t.Run("an undeclared output", func(t *testing.T) {
 		p, _, end := contracted(t)
 
-		require.ErrorContains(t, p.AssociateOutput("sum", end),
+		require.ErrorContains(t, p.AssociateOutput("sum", end, "x"),
 			`declares no output named "sum"`)
 	})
 
 	t.Run("a foreign end and a wrong kind", func(t *testing.T) {
 		p, _, _ := contracted(t)
 
-		require.ErrorContains(t, p.AssociateOutput("total", msgEnd(t, "alien", "total-item")),
+		require.ErrorContains(t,
+			p.AssociateOutput("total", msgEnd(t, "alien", "total-item"), "x"),
 			"isn't a node of process")
 
 		throw, err := events.NewIntermediateThrowEvent("t",
@@ -171,25 +172,22 @@ func TestAssociateOutputValidates(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, p.Add(throw))
 
-		require.ErrorContains(t, p.AssociateOutput("total", throw),
+		require.ErrorContains(t, p.AssociateOutput("total", throw, "x"),
 			"isn't an End Event")
 	})
 
-	t.Run("an end with no input over the output's item", func(t *testing.T) {
-		p, _, _ := contracted(t)
+	t.Run("an end without the named input", func(t *testing.T) {
+		p, _, end := contracted(t)
 
-		other := msgEnd(t, "other", "elsewhere")
-		require.NoError(t, p.Add(other))
-
-		require.ErrorContains(t, p.AssociateOutput("total", other),
-			"has no data input over the item")
+		require.ErrorContains(t, p.AssociateOutput("total", end, "nope"),
+			`has no data input "nope"`)
 	})
 
 	t.Run("a good pair binds on the end, sourced by the output's name",
 		func(t *testing.T) {
 			p, _, end := contracted(t)
 
-			require.NoError(t, p.AssociateOutput("total", end))
+			require.NoError(t, p.AssociateOutput("total", end, end.Inputs()[0].ID()))
 
 			aa := end.InputAssociations()
 			require.Len(t, aa, 1)
