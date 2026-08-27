@@ -67,6 +67,39 @@ type eventSubs struct {
 	// act on), and drops it when its work is done.
 	taskIDs map[int]string
 
+	// inFlight counts deliveries the loop has handed to an instance that has
+	// not woken to take them yet.
+	//
+	// It exists because the loop's `waiting` entry is ONE entry standing for
+	// N waiters, so it cannot say "this activity is parked, except for the
+	// instance now being handed its completion". Between the send and the
+	// instance waking, the activity looks fully parked from the loop — and a
+	// dehydration there takes the track away mid-delivery: the instance wakes
+	// on dehydrateCh instead of its box, its completion is lost, and the
+	// person who did the work is asked to do it again.
+	//
+	// Raised by the loop before the send, dropped by the instance once it has
+	// the envelope, after which its own `parked` flag carries the fact.
+	//
+	// Declared after the maps so the struct's pointer fields stay contiguous
+	// (govet fieldalignment).
+	// staged holds a completion that arrived BEFORE its instance had a box to
+	// receive it, keyed by ordinal.
+	//
+	// A restored fan-out is rebuilt by the very action being applied to it: a
+	// person completes a task, that hydrates the instance, and the decorator
+	// then re-launches its instances on their own goroutines. The completion
+	// can therefore reach the loop while the instance it belongs to has not
+	// parked yet — and a delivery to a box that does not exist yet was
+	// silently dropped, so the work was marked done, the task withdrawn, and
+	// the activity waited forever for an instance nobody could complete
+	// again.
+	//
+	// Held here rather than retried because the loop must not block: the
+	// instance is moments away from parking, and parking is what hands it
+	// over.
+	staged map[int]flow.EventDefinition
+
 	// boxes is each waiting instance's own delivery channel, keyed by
 	// ordinal (SRD-090.B M5b).
 	//
@@ -86,6 +119,10 @@ type eventSubs struct {
 	// mu guards subs. The HUB's goroutine reads through ProcessEvent while
 	// the decorator's own goroutine arms and disarms.
 	mu sync.Mutex
+
+	// declared last, with mu, so the struct's pointer-bearing fields stay
+	// contiguous (govet fieldalignment).
+	inFlight int
 }
 
 // newEventSubs builds the subscription set for one iterated activity.
@@ -95,6 +132,7 @@ func newEventSubs(instanceID, nodeID string) eventSubs {
 		subs:      map[string]*iterSubscription{},
 		boxes:     map[int]chan flow.EventDefinition{},
 		capParked: map[int]bool{},
+		staged:    map[int]flow.EventDefinition{},
 		taskIDs:   map[int]string{},
 	}
 }
@@ -177,6 +215,30 @@ func (es *eventSubs) parking(ord int) {
 
 	es.openBoxLocked(ord)
 	es.capParked[ord] = true
+
+	// a completion that arrived before this box existed is handed over now,
+	// which is the moment there is somewhere to put it. The box is buffered,
+	// and this instance is the only reader, so the send cannot block.
+	if def, waiting := es.staged[ord]; waiting {
+		delete(es.staged, ord)
+		es.boxes[ord] <- def
+	}
+}
+
+// stage keeps a completion for an instance that has no box yet, to be handed
+// over when it parks. Reports false when the instance is already parked and
+// the caller should send to its box directly.
+func (es *eventSubs) stage(ord int, def flow.EventDefinition) bool {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	if _, open := es.boxes[ord]; open {
+		return false
+	}
+
+	es.staged[ord] = def
+
+	return true
 }
 
 // taskIDFor returns instance ord's parked-work identity, minting one on first
@@ -211,6 +273,35 @@ func (es *eventSubs) adoptTaskID(ord int, id string) {
 	defer es.mu.Unlock()
 
 	es.taskIDs[ord] = id
+}
+
+// delivering records that a completion is on its way to instance ord. Called
+// by the LOOP, before the send.
+func (es *eventSubs) delivering() {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	es.inFlight++
+}
+
+// delivered records that instance ord has taken its envelope and is executing
+// again. Called by the INSTANCE, once awaitTrigger has returned it.
+func (es *eventSubs) delivered() {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	if es.inFlight > 0 {
+		es.inFlight--
+	}
+}
+
+// busy reports whether any instance of this activity is executing rather than
+// parked — either mid-handoff, or already awake and running its node.
+func (es *eventSubs) busy() bool {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	return es.inFlight > 0
 }
 
 // taskIDSnapshot copies the live parked-work identities, keyed by ordinal, for
@@ -406,6 +497,15 @@ type activitySubscriber interface {
 	// subscribing is a box a human task never gets.
 	parking(ord int)
 	unparked(ord int)
+
+	// delivering and delivered bracket the handoff of a completion, so the
+	// loop can tell a fully parked activity from one with work in flight.
+	delivering()
+	delivered()
+	busy() bool
+
+	// stage holds a completion whose instance has not parked yet.
+	stage(ord int, def flow.EventDefinition) bool
 
 	// taskIDFor, adoptTaskID and dropTaskID own the parked-work identity of
 	// one instance (ADR-020 §2.12); taskIDSnapshot hands the set to the

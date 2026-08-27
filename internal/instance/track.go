@@ -296,6 +296,21 @@ type track struct {
 	// instance is exactly what FR-7 forbids. Consumed once, by the
 	// activity the track was restored on (takeIterSeed).
 	iterSeed *checkpoint.IterationRecord
+
+	// parkedTaskIDs are the fan-out's parked-work identities as they stood
+	// at the moment the loop released the track, keyed by ordinal
+	// (ADR-020 §2.12).
+	//
+	// The capture cannot read them off the executor, because there is none
+	// left to read: the executor is cleared when executeStep returns, which
+	// for a dehydration is BEFORE the cut that records the wait. Every
+	// capture taken mid-run therefore saw the ids, and the one that mattered
+	// — the persisted one — saw nothing, so a restored fan-out minted fresh
+	// ids and every handle the distributor was holding named nothing.
+	//
+	// Written by dehydrateTrack and read by the capture, both on the loop
+	// goroutine, so it needs no lock of its own.
+	parkedTaskIDs map[int]string
 	// compScopeSeed, on a compensation event-sub handler host, is the snapshot
 	// committed into the handler's fresh child scope at open (shadowing
 	// reads). Set by the loop before spawn.
@@ -819,6 +834,74 @@ func (t *track) activityOwner() activitySubscriber {
 // handle — which once handed an advancing track the previous node's executor
 // and re-ran a node. A reader that only wants to know whether an activity
 // owns waits must not be able to cause that.
+// seededTaskIDs returns the parked-work identities a RESTORED fan-out recorded
+// for the instances that still hold work, keyed by ordinal (ADR-020 §2.12).
+//
+// Read from the seed rather than from an executor because there is none yet:
+// this runs on the loop goroutine before the track's own starts. The seed is
+// still in place — the decorator takes it later, on the track's goroutine.
+//
+// A COMPLETED instance is skipped: its task was withdrawn when it was done,
+// and re-registering it would offer work nobody can do.
+func (t *track) seededTaskIDs() map[int]string {
+	if t.iterSeed == nil {
+		return nil
+	}
+
+	ids := map[int]string{}
+
+	for _, in := range t.iterSeed.Instances {
+		if in.TaskID == "" || in.State == instanceCompleted {
+			continue
+		}
+
+		ids[in.Ordinal] = in.TaskID
+	}
+
+	return ids
+}
+
+// instancesBusy reports whether an iterated activity on this track has an
+// instance executing rather than parked — one being handed a completion, or
+// one already awake and running its node.
+//
+// The loop asks before releasing a track for dehydration. The track's own
+// state cannot answer: it reads WaitForEvent because its OTHER instances are
+// parked, and its single `waiting` entry stands for all N, so neither can say
+// that one of them is working.
+func (t *track) instancesBusy() bool {
+	h := t.exec.Load()
+	if h == nil {
+		return false
+	}
+
+	d, iterated := h.e.(*iterDecorator)
+	if !iterated {
+		return false
+	}
+
+	return d.busyInstances()
+}
+
+// keepTaskIDs snapshots the parked-work identities of an iterated activity's
+// instances while the executor that holds them is still live, for the capture
+// that follows the release to record (ADR-020 §2.12).
+//
+// Called from dehydrateTrack, which is the last moment they can be read: the
+// track goroutine is parked inside executeStep, so its `defer t.exec.Store(nil)`
+// has not run yet. A plain node has no owner and no ids, and leaves the field
+// nil.
+func (t *track) keepTaskIDs() {
+	owner := t.ownerIfResolved()
+	if owner == nil {
+		return
+	}
+
+	if ids := owner.taskIDSnapshot(); len(ids) > 0 {
+		t.parkedTaskIDs = ids
+	}
+}
+
 func (t *track) ownerIfResolved() activitySubscriber {
 	h := t.exec.Load()
 	if h == nil {
@@ -1377,14 +1460,26 @@ func (t *track) parkForDelivery(
 		ord = e.ord
 	}
 
-	if owner := t.activityOwner(); owner != nil {
+	owner := t.activityOwner()
+	if owner != nil {
 		if b := owner.boxFor(ord); b != nil {
 			box = b
 		}
 	}
 
-	if !t.awaitTrigger(ctx, box) {
+	if !t.awaitTrigger(ctx, box, concurrent) {
 		return nil, errStopped
+	}
+
+	// THIS INSTANCE IS RUNNING AGAIN. Both halves matter: the handoff is
+	// over (the loop's in-flight count drops) and the executor is no longer
+	// parked, which is what the loop reads from here on.
+	if concurrent {
+		e.parked.Store(false)
+
+		if owner != nil {
+			owner.delivered()
+		}
 	}
 
 	if cur := t.currentStep(); cur != nil && cur.node != step.node {
@@ -1415,12 +1510,25 @@ func (t *track) parkForDelivery(
 // goroutine must return — setting the terminal state (Canceled / Dehydrated /
 // Failed) accordingly.
 func (t *track) awaitTrigger(
-	ctx context.Context, box chan flow.EventDefinition,
+	ctx context.Context, box chan flow.EventDefinition, concurrent bool,
 ) (proceed bool) {
 	select {
 	case <-ctx.Done():
 		t.updateState(TrackCanceled)
-		t.lastErr = ctx.Err()
+
+		// lastErr IS THE TRACK GOROUTINE'S, and N instances of one activity
+		// park here on N goroutines (SRD-090.B M5b) — a cancellation wakes
+		// every one of them at once, so writing it from an instance is a
+		// data race on a field whose own contract says it has a single
+		// writer. It costs nothing to skip: the instance's stop travels back
+		// as errStopped, and the track goroutine records the cause when the
+		// decorator returns.
+		//
+		// The same reasoning as receivedItem above, on the other terminal
+		// path; updateState is mutex-guarded and idempotent, so it stays.
+		if !concurrent {
+			t.lastErr = ctx.Err()
+		}
 
 		return false
 

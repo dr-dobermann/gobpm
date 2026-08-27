@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -140,6 +141,16 @@ type nodeExec struct {
 	// an event wait is the only kind a leaf can hold — it opens no scope and
 	// owns no child instance.
 	parked atomic.Bool
+
+	// finished marks an instance whose run has returned, however it ended.
+	//
+	// It is what separates the two ways of not being parked. An instance
+	// EXECUTING its node is doing work and its track must stay resident; an
+	// instance that has FINISHED is doing nothing, and treating the two alike
+	// would pin the process instance for as long as its remaining approvals
+	// take — the residency bug ADR-007 v.2.1 exists to prevent, reintroduced
+	// one level down.
+	finished atomic.Bool
 
 	// concurrent marks an instance of a PARALLEL fan-out — one of N running
 	// at the same time on one track.
@@ -463,6 +474,26 @@ func (d *iterDecorator) refuseIfParked(i int) error {
 // awaits reports what the decorator's live instance awaits — the conjunction
 // is trivial while at most one instance runs (ADR-025 §2.13's
 // releasability rule takes its general form when parallel instances arrive).
+// busyInstances reports whether any instance of a fanned-out activity is
+// executing rather than parked (ADR-025 §2.13b.1e, from the residency side).
+func (d *iterDecorator) busyInstances() bool {
+	if d.busy() {
+		return true // a completion handed over, not yet taken
+	}
+
+	d.fannedMu.Lock()
+	fanned := d.fanned
+	d.fannedMu.Unlock()
+
+	for _, e := range fanned {
+		if !e.parked.Load() && !e.finished.Load() {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (d *iterDecorator) awaits() awaitKind {
 	// a PARALLEL run: the activity awaits whatever ANY instance still
 	// awaits. The conjunction is the point — with N instances sharing a
@@ -621,6 +652,17 @@ func (d *iterDecorator) runParallel(
 	for ord, e := range insts {
 		go func(ord int, e activityExec) {
 			_, err := e.run(runCtx)
+
+			if le, leaf := e.(*nodeExec); leaf {
+				le.finished.Store(true)
+			}
+
+			// the report is outstanding until the barrier has ACCOUNTED for
+			// it, not merely received it: the activity's recorded position
+			// advances in took, and a release between the two would persist
+			// a checkpoint that has not heard about this instance.
+			d.delivering()
+
 			done <- instanceDone{ord: ord, err: err}
 		}(ord, e)
 	}
@@ -863,16 +905,44 @@ func (d *iterDecorator) awaitParallel(
 	// §2.9 attributes must not report them as still to come.
 	b := &parallelBarrier{d: d, run: run, completed: run.n - run.launched}
 
+	released := false
+
 	for range run.launched {
 		res := <-run.done
 
 		if res.err != nil {
+			// THE LOOP RELEASED THE ACTIVITY (SRD-071 FR-1). Every instance
+			// is being taken away, not failing: the release already set
+			// TrackDehydrated, each wait is externalized to its holder, and
+			// the parked work stays in the distributor's inbox.
+			//
+			// Failing here instead would cancel the instances that had not
+			// woken yet, and a canceled instance takes awaitTrigger's
+			// ctx.Done() branch — which sets TrackCanceled OVER the
+			// TrackDehydrated the first one set. The track then ends as
+			// evEnded rather than evDehydrated, and cleanupTask withdraws
+			// every task the fan-out had announced: N people lose the work
+			// in their inbox because the engine put the instance to sleep.
+			//
+			// The state is what distinguishes a release from a cancellation
+			// — errStopped alone cannot, since it covers both.
+			if errors.Is(res.err, errStopped) &&
+				t.inState(TrackDehydrated) {
+				released = true
+
+				d.delivered()
+
+				continue
+			}
+
 			// an instance WE stopped is terminated, not failed: it reports
 			// the cancellation of the context this decorator closed. A
 			// cancellation from above is the caller's, and faults like any
 			// other error.
 			if b.stopping && ctx.Err() == nil {
 				b.terminated++
+
+				d.delivered()
 
 				continue
 			}
@@ -883,10 +953,18 @@ func (d *iterDecorator) awaitParallel(
 		}
 
 		b.took(ctx, it, res.ord)
+		d.delivered()
 	}
 
 	if b.err != nil {
 		return nil, b.err
+	}
+
+	// a released activity publishes nothing and settles no counts: it is
+	// mid-flight and stays that way durably. run() unwinds on errStopped
+	// without faulting the track.
+	if released {
+		return nil, errStopped
 	}
 
 	// the terminated count is only whole once every instance has reported,

@@ -314,8 +314,13 @@ func (ls *loopState) deliverCompletion(
 	owner.dropTaskID(entry.ord)
 	owner.unparked(entry.ord)
 
-	if box := owner.boxFor(entry.ord); box != nil {
-		box <- completion
+	// BEFORE the handover: from here until the instance takes it, the
+	// activity must not read as fully parked, or the loop's next dehydration
+	// takes the track away with this completion still undelivered.
+	owner.delivering()
+
+	if !owner.stage(entry.ord, completion) {
+		owner.boxFor(entry.ord) <- completion
 	}
 
 	// the track leaves the parked set only when NO instance still holds work.
@@ -352,6 +357,36 @@ func performerKey(node flow.Node) string {
 	return node.ID()
 }
 
+// registerTask records the routing entry for a parked UserTask and returns the
+// announcement built for it, WITHOUT announcing. Splitting the two is what lets
+// a restored fan-out re-register tasks already sitting in the distributor's
+// inbox (adoptRestoredTasks). Nil means there was nothing to register.
+//
+// Resolve the triad once, here, and keep the snapshot on the registry entry:
+// every later check reads it instead of re-resolving (ADR-020 v.2 §2.7).
+func (ls *loopState) registerTask(
+	ctx context.Context,
+	taskID string,
+	tr *track,
+	node flow.Node,
+	ord int,
+) *interactor.TaskInfo {
+	if taskID == "" {
+		return nil // not a human task — nothing to register
+	}
+
+	info := ls.inst.buildTaskInfo(ctx, taskID, node)
+
+	ls.tasks[taskID] = taskEntry{
+		track:    tr,
+		node:     node,
+		ord:      ord,
+		eligible: info.Eligible,
+	}
+
+	return &info
+}
+
 // addTask records a parked UserTask in the loop-owned registry and announces it
 // to the TaskDistributor. Called on the loop goroutine (evTaskWaiting / spawn).
 func (ls *loopState) addTask(
@@ -361,22 +396,13 @@ func (ls *loopState) addTask(
 	node flow.Node,
 	ord int,
 ) {
-	if taskID == "" {
-		return // not a human task — nothing to register
+	built := ls.registerTask(ctx, taskID, tr, node, ord)
+	if built == nil {
+		return
 	}
 
+	info := *built
 	inst := ls.inst
-
-	// Resolve the triad once, here, and keep the snapshot on the registry entry:
-	// every later check reads it instead of re-resolving (ADR-020 v.2 §2.7).
-	info := inst.buildTaskInfo(ctx, taskID, node)
-
-	ls.tasks[taskID] = taskEntry{
-		track:    tr,
-		node:     node,
-		ord:      ord,
-		eligible: info.Eligible,
-	}
 
 	dctx, cancel := context.WithTimeout(ctx, distributorTimeout)
 	defer cancel()
@@ -394,6 +420,50 @@ func (ls *loopState) addTask(
 		NodeName: node.Name(),
 		Details:  map[string]string{observability.AttrTaskID: taskID},
 	})
+}
+
+// adoptRestoredTasks re-registers a restored FAN-OUT's parked-work identities,
+// one per instance that still holds work (ADR-020 §2.12). Runs at loop start,
+// on the loop goroutine, before the loop serves its first request.
+//
+// The timing is the whole point. What hydrates a dehydrated instance is
+// usually an action ON one of these tasks, and that action is answered out of
+// ls.tasks. A fan-out's instances re-park on their own goroutines when the
+// decorator runs, which is far too late: the registry is still empty when the
+// request arrives, and a Complete on a task somebody is holding in their inbox
+// comes back "not found or already completed".
+//
+// Only a fan-out is adopted here. A track carrying no iteration seed has no
+// per-instance identities to restore, and its own wait re-registers on the
+// path it always did.
+func (ls *loopState) adoptRestoredTasks(ctx context.Context, initial []*track) {
+	for _, t := range initial {
+		ids := t.seededTaskIDs()
+		if len(ids) == 0 {
+			continue
+		}
+
+		step := t.currentStep()
+		if step == nil {
+			continue
+		}
+
+		// only a HUMAN task has a parked-work identity to re-register; an
+		// iterated activity over anything else records no task ids at all.
+		if _, human := step.node.(interactor.HumanTask); !human {
+			continue
+		}
+
+		for ord, id := range ids {
+			// REGISTERED, not announced. The task is already in the
+			// distributor's inbox — announced when its instance first parked
+			// and never withdrawn, which is the point of a wait that outlives
+			// its instance's residency (ADR-020 §2.1.1). Re-announcing says
+			// nothing new, and the instances announce for themselves when
+			// they re-park.
+			ls.registerTask(ctx, id, t, step.node, ord)
+		}
+	}
 }
 
 // recordBornWaiter registers a track that begins already parked (a wait node or

@@ -180,6 +180,13 @@ func (inst *Instance) adoptRestored(
 		err = ls.adoptRestoredCalls(ctx)
 	}
 
+	// after the scopes: registering a task resolves its eligibility triad,
+	// which reads process data through the scope chain the adoption above
+	// rebuilt.
+	if err == nil {
+		ls.adoptRestoredTasks(ctx, initial)
+	}
+
 	if err != nil {
 		// fail() is phase-only; the loop is exiting without running, so
 		// the lifecycle must land terminal too — a stuck Active instance
@@ -1344,6 +1351,10 @@ func (ls *loopState) applyDehydrated(_ *track) {
 // TrackDehydrated. Called only on the loop goroutine. The track record and its
 // wait registries are left intact; the goroutine's return emits evDehydrated.
 func (ls *loopState) dehydrateTrack(t *track) {
+	// BEFORE the release, while the executor that holds them still exists
+	// (ADR-020 §2.12) — see track.keepTaskIDs.
+	t.keepTaskIDs()
+
 	close(t.dehydrateCh)
 }
 
@@ -1478,6 +1489,20 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 			// loop-owned Conditional watch is never holdable and correctly
 			// keeps its instance resident.
 			if !ls.boundariesHeld(t.ID()) {
+				return nil
+			}
+
+			// AN INSTANCE OF A FAN-OUT IS WORKING. The track reads
+			// WaitForEvent because its other instances are parked, and its
+			// single `waiting` entry stands for all N — so neither says that
+			// one of them has just been handed a completion and is running.
+			//
+			// It cannot leave `waiting` to signal this the way a lone
+			// dispatch does: that entry is what later deliveries are gated
+			// on, and dropping it on the first would drop every one after
+			// (dispatchToInstances states the same rule from the other side).
+
+			if t.instancesBusy() {
 				return nil
 			}
 

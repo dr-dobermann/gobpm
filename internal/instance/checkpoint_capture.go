@@ -544,14 +544,26 @@ func recordIteration(
 func withTaskIDs(
 	t *track, insts []checkpoint.IterationInstance,
 ) []checkpoint.IterationInstance {
-	// read-only: the capture runs on the LOOP, and resolving an executor
-	// here would store it on a track another goroutine is driving.
-	owner := t.ownerIfResolved()
-	if owner == nil || len(insts) == 0 {
+	if len(insts) == 0 {
 		return insts
 	}
 
-	ids := owner.taskIDSnapshot()
+	// read-only: the capture runs on the LOOP, and resolving an executor
+	// here would store it on a track another goroutine is driving.
+	//
+	// A RELEASED track has no executor left to ask — and that is exactly the
+	// capture whose ids matter, the one a restore reads. It falls back to the
+	// set the loop kept when it released the track (track.keepTaskIDs).
+	var ids map[int]string
+
+	if owner := t.ownerIfResolved(); owner != nil {
+		ids = owner.taskIDSnapshot()
+	}
+
+	if len(ids) == 0 {
+		ids = t.parkedTaskIDs
+	}
+
 	if len(ids) == 0 {
 		return insts
 	}

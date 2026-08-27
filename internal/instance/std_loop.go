@@ -102,11 +102,6 @@ func (t *track) awaits() awaitKind {
 // scope, or an execution of the node — the same one difference iterDecorator
 // carries, leaking in the same three places and named where each occurs.
 type loopDecorator struct {
-	// eventSubs makes the decorator the hub's subscriber for this activity's
-	// waits — see iterDecorator (ADR-006 §2.9.5, SRD-090.B FR-1). A Standard
-	// Loop holds one pass at a time, so its waiting set never exceeds one.
-	eventSubs
-
 	t    *track
 	step *stepInfo
 	sl   standardLoop
@@ -125,6 +120,14 @@ type loopDecorator struct {
 	// pass are the activity's; a composite re-runs its node once on exit
 	// instead (exitFlows).
 	lastFlows []*flow.SequenceFlow
+
+	// eventSubs makes the decorator the hub's subscriber for this activity's
+	// waits — see iterDecorator (ADR-006 §2.9.5, SRD-090.B FR-1). A Standard
+	// Loop holds one pass at a time, so its waiting set never exceeds one.
+	//
+	// Embedded LAST: it ends in non-pointer fields, so the pointers declared
+	// after it would not be contiguous (govet fieldalignment).
+	eventSubs
 
 	composite bool
 }

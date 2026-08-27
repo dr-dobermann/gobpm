@@ -470,6 +470,35 @@ func (inst *Instance) continuationTrack(
 		}
 	}
 
+	// A WOKEN ITERATED ACTIVITY keeps its executor set, exactly as a track
+	// restored the ordinary way does (SRD-090.A FR-7). Without it the
+	// decorator resumes from zero — re-running instances a restore had
+	// already found complete — and, for a fan-out over human work, every
+	// instance mints a fresh parked-work identity, so the task handles the
+	// distributor is holding name nothing (ADR-020 §2.12).
+	//
+	// It is easy to miss here because a continuation is built from the wake
+	// rather than from the record, and everything else it needs travels on
+	// the trigger.
+	t.iterSeed = rec.Iteration
+
+	// NOT t.taskID. That is the track's SINGLE slot, and humanTaskIdentity
+	// hands it to adoptTaskID for every ordinal — so seeding it here would
+	// make all N instances of a fan-out adopt ONE identity, which is the
+	// defect this work exists to remove. A fan-out's per-instance ids come
+	// back through rec.Iteration.Instances instead.
+
+	if rec.Iteration != nil {
+		t.miSeed = &checkpoint.MIRecord{
+			N:            rec.Iteration.N,
+			Completed:    rec.Iteration.Completed,
+			ConditionMet: rec.Iteration.ConditionMet,
+			Staging:      rec.Iteration.Staging,
+		}
+	} else {
+		t.miSeed = rec.MI
+	}
+
 	if pending.EDef == nil {
 		return nil, errs.New(
 			errs.M("Restore: a wake needs a trigger definition"),
