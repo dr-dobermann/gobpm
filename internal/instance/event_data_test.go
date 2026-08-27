@@ -65,7 +65,7 @@ func wiredMsgStart(
 	require.NoError(t, err)
 
 	if wire {
-		require.NoError(t, p.AssociateInput("order", start, "order_in"))
+		require.NoError(t, p.AssociateInput("order", start, start.Outputs()[0].ID()))
 	}
 
 	s, err := snapshot.New(p)

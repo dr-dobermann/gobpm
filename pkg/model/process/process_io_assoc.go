@@ -15,7 +15,9 @@ import (
 // case: the process DataInputs are targets of its Start Event's output
 // associations (§10.4.2 p224), so a Message-Flow-triggered launch fills the
 // same contract a Call Activity binds directly (ADR-040 v.2 §2.7). from must
-// be a Start Event of this process and sourceID one of its data outputs.
+// be a Start Event of this process and sourceID the id of one of its data
+// outputs — the element, not its item, since two definitions may share an
+// item; the mirror of AssociateOutput's targetID.
 // The association's target is named after the input — its root-scope name
 // — so the run-time copy lands where the contract reads (SRD-094 FR-4).
 func (p *Process) AssociateInput(
@@ -37,12 +39,12 @@ func (p *Process) AssociateInput(
 	outputs := from.Outputs()
 
 	idx := slices.IndexFunc(outputs, func(iae *data.ItemAwareElement) bool {
-		return iae.ItemDefinition().ID() == sourceID
+		return iae.ID() == sourceID
 	})
 	if idx == -1 {
 		return errs.New(
-			errs.M("AssociateInput: start event %q has no data output over "+
-				"item %q", from.Name(), sourceID),
+			errs.M("AssociateInput: start event %q has no data output %q",
+				from.Name(), sourceID),
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 

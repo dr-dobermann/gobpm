@@ -258,18 +258,22 @@ func TestPushOutput(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("a Ready output updates the named datum in place", func(t *testing.T) {
-		f := frame(t, nil, datum(t, "sink", "", data.ReadyDataState))
-		out := instantiated(t, f,
-			param(t, "out", "out", "produced", data.ReadyDataState), false)
+	t.Run("a Ready output updates the named datum in place and marks it Ready",
+		func(t *testing.T) {
+			// a Data Object fed by an association starts Unavailable
+			f := frame(t, nil, datum(t, "sink", "", data.UnavailableDataState))
+			out := instantiated(t, f,
+				param(t, "out", "out", "produced", data.ReadyDataState), false)
 
-		require.NoError(t, dataflow.PushOutput(ctx, f,
-			outputAssoc(t, "out", "sink"), out, owner))
+			require.NoError(t, dataflow.PushOutput(ctx, f,
+				outputAssoc(t, "out", "sink"), out, owner))
 
-		d, err := f.GetData("sink")
-		require.NoError(t, err)
-		require.Equal(t, "produced", d.Value().Get(ctx))
-	})
+			d, err := f.GetData("sink")
+			require.NoError(t, err)
+			require.Equal(t, "produced", d.Value().Get(ctx))
+			require.Equal(t, data.ReadyDataState.Name(), d.State().Name(),
+				"produced now: readable through an input association")
+		})
 
 	t.Run("a not-Ready output pushes nothing", func(t *testing.T) {
 		f := frame(t, nil, datum(t, "sink", "before", data.ReadyDataState))

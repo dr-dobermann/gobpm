@@ -176,9 +176,19 @@ func fill(ctx context.Context, dst *data.Parameter, datum data.Data) error {
 	return dst.UpdateState(data.ReadyDataState)
 }
 
+// stateful is a datum that can be marked Ready once it is produced — an
+// ItemAwareElement, which a Data Object and a Property both are.
+type stateful interface {
+	UpdateState(*data.SrcState) error
+}
+
 // pushToScope is PushOutput's scope half: the association is read for its
 // target name, and THIS instance's datum of that name is updated in place —
-// scope holds it by reference, so the write is visible to by-name reads.
+// scope holds it by reference, so the write is visible to by-name reads —
+// and marked Ready: a Data Object fed by an association is Unavailable
+// until its producer writes it (data.NewAssociation marks its target so),
+// and only a Ready datum fills an input association downstream, so the
+// flip is what makes the object readable through one.
 // (A transformation/assignment is a noted follow-up — SRD-063 §10.3.)
 func pushToScope(
 	ctx context.Context,
@@ -200,6 +210,14 @@ func pushToScope(
 	// in the form the coverage gate reads.
 	if err := datum.Value().Update(ctx, src.Value().Get(ctx)); err != nil {
 		return opErr("couldn't update DataObject "+oa.TargetName()+" value for "+owner, err)
+	}
+
+	// An ItemAwareElement refuses no state it knows; said in the form the
+	// coverage gate reads.
+	if st, ok := datum.(stateful); ok {
+		if err := st.UpdateState(data.ReadyDataState); err != nil {
+			return opErr("couldn't mark DataObject "+oa.TargetName()+" Ready for "+owner, err)
+		}
 	}
 
 	// SRD-063: the produced value was written into a per-instance Data

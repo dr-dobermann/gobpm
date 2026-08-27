@@ -116,14 +116,14 @@ func TestAssociateInputValidates(t *testing.T) {
 		p, start, _ := contracted(t)
 
 		require.ErrorContains(t, p.AssociateInput("order", start, "nope"),
-			"has no data output")
+			`has no data output "nope"`)
 	})
 
 	t.Run("a good pair binds on the start, named after the input",
 		func(t *testing.T) {
 			p, start, _ := contracted(t)
 
-			require.NoError(t, p.AssociateInput("order", start, "order_in"))
+			require.NoError(t, p.AssociateInput("order", start, start.Outputs()[0].ID()))
 
 			aa := start.OutputAssociations()
 			require.Len(t, aa, 1)

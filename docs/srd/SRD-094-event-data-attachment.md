@@ -24,7 +24,8 @@ and lets the importer follow.
 
 **What exists today** (verified against the working tree):
 
-- The catch side: `catchEvent` holds `dataOutputs map[string]*data.Parameter`
+- The catch side: `catchEvent` held `dataOutputs map[string]*data.Parameter`
+  (a slice since M1, §3.1)
   and `outputAssociations []*data.Association`
   (`pkg/model/events/event.go:280-288`); `UploadData` (`:480-570`)
   instantiates the outputs in the frame, binds the received payload into
@@ -111,8 +112,8 @@ inherits it: `StartEvent`, `IntermediateCatchEvent`, `BoundaryEvent`
 
 **FR-2 — the data is declared by option, under the standard's binding
 rule.** `events.WithDataOutputs(params ...*data.Parameter)` (catch kinds)
-and `events.WithDataInputs(params ...*data.Parameter)` (throw kinds) are
-`EventOption`s. Validation at construction (p217): with *n* item-bearing
+and `events.WithDataInputs(params ...*data.Parameter)` (throw kinds) are a
+`CatchOption` and a `ThrowOption` (§3.1). Validation at construction (p217): with *n* item-bearing
 definitions on the event, the declared parameters pair with them **in
 order**, and a paired parameter's item **must equal** the definition's
 item (same `ItemDefinition` id) — a mismatch is refused naming both. A
@@ -286,17 +287,20 @@ func (ce *catchEvent) BindOutgoing(oa *data.Association) error
 func (te *throwEvent) Inputs() []*data.ItemAwareElement
 func (te *throwEvent) BindIncoming(ia *data.Association) error
 
-// options (event_options.go); each config's sink pairs the parameters
-// with its item-bearing definitions in order and validates the items
-func WithDataOutputs(params ...*data.Parameter) EventOption // catch kinds
-func WithDataInputs(params ...*data.Parameter) EventOption  // throw kinds
+// options (event_data.go); each pairs the parameters with the event's
+// item-bearing definitions in order and validates the items
+func WithDataOutputs(params ...*data.Parameter) CatchOption // catch kinds
+func WithDataInputs(params ...*data.Parameter) ThrowOption  // throw kinds
 ```
 
-The `eventConfig` interface gains `setDataOutputs`/`setDataInputs`; the
-start config accepts outputs and rejects inputs, the end config the
-reverse; the intermediate and boundary constructors (which take a sole
-definition positionally and `baseOpts`) accept the matching option among
-their base options, the way they take `foundation.WithID`.
+`CatchOption` is the existing catch-side option type; `ThrowOption` is
+its new throw-side twin. Each constructor's option switch accepts the
+option of its side — a start and an intermediate/boundary catch take
+`WithDataOutputs`, an end and an intermediate throw take `WithDataInputs`
+— so the other direction is a type error at the call site rather than a
+runtime refusal. The intermediate and boundary constructors (which take a
+sole definition positionally and `baseOpts`) accept it among their base
+options, the way they take `foundation.WithID`.
 
 Validation happens **after** the triggers were folded (the definitions
 must be known to pair): the constructors already apply options in order,
@@ -328,24 +332,49 @@ would cycle), and the bodies are the task's `loadFromScope` /
 
 `AssociateInput` / `AssociateOutput` per FR-4. Validation reads
 `p.IOSpec()`; membership uses the process's node table; the event's
-declared parameter is found by item equality (`Outputs()` /`Inputs()`),
-mirroring `DataObject.AssociateSource`'s lookup by id.
+declared parameter is found by **element id** among `Outputs()` /
+`Inputs()` — `AssociateInput(inputName, from, sourceID)` and
+`AssociateOutput(outputName, to, targetID)` take the parameter's own id,
+as a file's association names it — the way
+`DataObject.AssociateTargetInput` addresses an event's input. (Amended at
+M6: the draft looked the parameter up by item id, which two parameters
+over one item cannot tell apart.)
 
 ### §3.4 `internal/instance` — the seed-time run
 
 `seedInitialData` gains, between `bindRootData` and `bindContract`:
 
 ```go
+flush := noFlush
 if bornStart != nil {
-    if err := inst.runBornStartAssociations(ctx, bornStart); err != nil { … }
+    flush, err = inst.runBornStartAssociations(bornStart, cfg)
+    …
 }
+… bindContract …
+if err := flush(); err != nil { … "couldn't write the Data Stores" }
 ```
 
-`runBornStartAssociations` opens a root-scope frame, instantiates the
-start's outputs, binds the received payload (the fired definition's
-items, already in scope by id), and pushes the output associations
-through FR-3 — the body of `catchEvent.UploadData` with the frame the
-seed owns. `unboundInput` loses its event-born branch.
+`runBornStartAssociations` opens a root-scope frame, stages the received
+payload (the fired definition's item) on it, and runs the start's
+`UploadData` — the shared copy path of FR-3 with the frame the seed owns.
+Three targets, three treatments:
+
+- a **data object** is already in the root scope and is updated in place;
+- a **declared process input** is not there yet — the contract binds it
+  after this — so the seed first commits a *placeholder* under the
+  input's name (a Ready parameter over a fresh copy of the declaration's
+  item, one per targeted input however many associations name it) for
+  the copy to land in, then appends the placeholders to `cfg.rootData`,
+  and the contract binds the value the message filled exactly as a
+  host-supplied one, type check included;
+- a **Data Store** is engine-global and the contract may still refuse
+  the launch, so the seed frame sees a *deferring* registry — reads go
+  through, writes are recorded — and the recorded writes are replayed by
+  the returned `flush` once `bindContract` accepted. A refused launch
+  leaves the stores untouched. A store reference is not a scope target,
+  so one named like an input stages no placeholder.
+
+`unboundInput` loses its event-born branch.
 
 ### §3.5 Importer
 
@@ -454,7 +483,7 @@ real broker, which is where the Start/End case earns its keep.
 |---|---|
 | `events.StartEvent`, `IntermediateCatchEvent`, `BoundaryEvent` | implement `flow.AssociationSource` |
 | `events.EndEvent`, `IntermediateThrowEvent` | implement `flow.AssociationTarget` |
-| `events.WithDataOutputs`, `events.WithDataInputs` | new `EventOption`s (FR-2) |
+| `events.WithDataOutputs`, `events.WithDataInputs` | new `CatchOption` / `ThrowOption` (FR-2) |
 | `process.Process.AssociateInput`, `AssociateOutput` | new (FR-4) |
 | `dataflow.FillInput`, `dataflow.PushOutput` (new package `pkg/model/dataflow`) | the shared copy path (FR-3); `task` delegates |
 | `internal/instance.seedInitialData` | runs the born start's output associations (FR-5) |
@@ -471,10 +500,10 @@ All additive; `exec.Frame`, `data.Association`, the mocks unchanged.
 | T-3 | `TestWithDataOutputsPairsWithDefinitions` | in-order pairing, item mismatch refused naming both, extra parameter refused, message trigger's auto-parameter kept | FR-2 |
 | T-4 | `TestWithDataInputsOnThrows` | same for throws; a timer/conditional catch refuses the option | FR-2 |
 | T-5 | `TestSignalPayloadHasAnOutput` | a signal-triggered catch declares the signal item's output the way a message does | FR-2 |
-| T-6 | `TestCatchUploadRoutesThroughScope` | two instances of one snapshot, a catch's output association each — values do not cross; the model association untouched | FR-3, NFR-2 |
-| T-7 | `TestThrowLoadRoutesThroughScope` | the mirror on a throw's input association; required-unavailable faults the node | FR-3, NFR-3 |
-| T-8 | `TestTaskAndEventShareTheCopyPath` | `task.UploadData`/`LoadData` call the shared helpers (existing task tests stay green) | FR-3 |
-| T-9 | `TestAssociateInputValidates` | contract-less process, undeclared name, foreign event, unknown source id, item mismatch — each refused naming the part | FR-4 |
+| T-6 | `TestEventCopyPathIsPerInstance` | two instances of one snapshot, a catch's output association each — values do not cross; the model association untouched | FR-3, NFR-2 |
+| T-7 | `TestEventCopyPathIsPerInstance`, `TestThrowEventLoadData` | the mirror on a throw's input association; required-unavailable faults the node | FR-3, NFR-3 |
+| T-8 | — (structural) | `task.UploadData`/`LoadData` are one call each into `dataflow.PushOutput`/`FillInput`; the existing task tests and `TestPushOutput`/`TestFillInput*` (§3.2) cover the shared path, no separate test | FR-3 |
+| T-9 | `TestAssociateInputValidates`, `TestAssociateOutputValidates` | contract-less process, undeclared name, foreign event, unknown source/target id — each refused naming the part | FR-4 |
 | T-10 | `TestAssociateOutputValidates` | the mirror | FR-4 |
 | T-11 | `TestBornStartFillsProcessInput` (instance package) | a message-born launch with a required input wired from the start: bound, type-checked, instance runs; the same without the wiring refuses with the plain message and no `#329` | FR-5 |
 | T-12 | `TestEndEventSourcesProcessOutput` | the end's input fills from the root-scope output; the published message carries it | FR-6 |
@@ -487,6 +516,11 @@ All additive; `exec.Frame`, `data.Association`, the mocks unchanged.
 | T-19 | `TestThrowAutoInputIsAssociationOnly` | an untargeted auto input stays out of the frame and the scope datum resolves; a targeted one is instantiated and filled; a declared one is always instantiated | FR-2 |
 | T-20 | `TestThrowBindsFromScopeWithoutAssociation` (thresher) | a message intermediate throw with no association publishes the scope datum of its item id — the `message-intermediate-events` shape | FR-2, NFR-1 |
 | T-21 | `TestSendResolved`; `TestEndEventMessageThrowWithoutPayload`; the throw's "nothing to bind" case | a Ready datum is the payload, nothing Ready → the item's own value; the nil guards | FR-2 |
+| T-22 | `TestBornStartDefersStoreWrites` (instance) | an accepted launch finds the store written after the contract bound; a refused one leaves it untouched; a store reference named like an input stages no placeholder; two associations to one input stage it once; an unregistered store and a refusing store each fail the launch naming the start | FR-5 |
+| T-23 | `TestImportEventIOPairing` (importer) | two definitions and two bare parameters pair by position; a parameter's `itemSubjectRef` other than its definition's file item is refused (p217); a duplicate parameter id is refused; a `<dataStoreReference>` wires into an end's input by id | FR-7 |
+| T-24 | `TestEventAssociationAccessors` (events) | `OutputAssociations`/`InputAssociations` return what was bound, in order; a catch whose association's target the frame cannot resolve reports it from `UploadData` | FR-1, NFR-4 |
+| T-25 | `TestCatchAndThrowThroughDataObjects` (thresher) | on a running engine an intermediate message catch fills a data object and an intermediate message throw's input is fed from it through `AssociateTargetInput` — the relayed message carries the caught value | FR-3, FR-7 |
+| T-26 | `TestPushOutput` "marks it Ready" (dataflow) | a data object fed by an association is Unavailable until produced; the push marks it Ready, so an input association downstream can read it | FR-3 |
 
 ## §7 Milestones
 
@@ -498,6 +532,7 @@ All additive; `exec.Frame`, `data.Association`, the mocks unchanged.
 | M4 | Importer: events wire and declare, the refusals replaced, the guide row gone (T-13…T-16) | one |
 | M5 | `examples/event-data/` + index and README rows; the e2e test (T-17) | one |
 | M5a | Found by the gate's example sweep: a throw's auto-declared input, instantiated in the frame, shadowed the scope datum the message bound from by item id — `message-intermediate-events` published the input's zero value. An auto input is now association-only (`activeInputs`), a message with nothing Ready to bind goes with its own item value (`msgflow.SendResolved`); the FR-2 engine note (T-19…T-21) | one |
+| M6 | The independent review's follow-ups: Data Store writes at the seed deferred past the contract, placeholders staged for scope targets only and once per input, `AssociateInput`/`AssociateOutput` by element id, the importer's p217 `itemSubjectRef` check through the catalog's file refs; found on the way — `pushToScope` never marked the produced data object Ready, so a data object fed by an association could not be read back through an input association (T-22…T-26; the §3.3/§3.4 amendments) | one |
 
 ## §8 Cross-doc references
 

@@ -67,7 +67,7 @@ func buildQuote() (*process.Process, error) {
 
 	// the three wirings: start → process input, start → data object,
 	// process output → end
-	if err := p.AssociateInput("order", start, "order_in"); err != nil {
+	if err := p.AssociateInput("order", start, start.Outputs()[0].ID()); err != nil {
 		return nil, fmt.Errorf("wire the start into the input: %w", err)
 	}
 

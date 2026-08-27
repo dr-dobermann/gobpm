@@ -748,7 +748,7 @@ func eventOptions(
 		raw = append(raw, d.def)
 	}
 
-	dataOpts, err := eventDataOptions(p, asm, se, id, raw, body.params)
+	dataOpts, err := eventDataOptions(p, asm, se, id, raw, body.defs, body.params)
 	if err != nil {
 		return nil, err
 	}
@@ -763,7 +763,7 @@ func soleEventOptions(
 	def flow.EventDefinition, body nodeBody,
 ) ([]options.Option, error) {
 	dataOpts, err := eventDataOptions(p, asm, se, id,
-		[]flow.EventDefinition{def}, body.params)
+		[]flow.EventDefinition{def}, body.defs, body.params)
 	if err != nil {
 		return nil, err
 	}

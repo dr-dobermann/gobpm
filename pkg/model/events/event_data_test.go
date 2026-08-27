@@ -368,6 +368,40 @@ func TestCatchEventUploadDataBranches(t *testing.T) {
 	})
 }
 
+// TestEventAssociationAccessors pins OutputAssociations/InputAssociations:
+// copies of what BindOutgoing/BindIncoming took, in order, and a catch
+// whose push cannot resolve its target reports it.
+func TestEventAssociationAccessors(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	ce, err := newCatchEvent("cth", nil,
+		[]flow.EventDefinition{msgDef(t, "item-1", "caught")}, false)
+	require.NoError(t, err)
+	require.Empty(t, ce.OutputAssociations())
+
+	oa := outputAssoc(t, "item-1", "sink")
+	require.NoError(t, ce.BindOutgoing(oa))
+
+	got := ce.OutputAssociations()
+	require.Len(t, got, 1)
+	require.Same(t, oa, got[0])
+
+	// the sink is not in this frame's scope: the push cannot resolve it
+	require.ErrorContains(t, ce.UploadData(ctx, frameFor(t, ce.ID())),
+		"couldn't resolve")
+
+	te, err := newThrowEvent("thr", nil,
+		[]flow.EventDefinition{msgDef(t, "item-1", "")})
+	require.NoError(t, err)
+	require.Empty(t, te.InputAssociations())
+
+	ia := inputAssoc(t, "src", "item-1")
+	require.NoError(t, te.BindIncoming(ia))
+	require.Same(t, ia, te.InputAssociations()[0])
+}
+
 // TestEventCopyPathIsPerInstance — SRD-094 T-6/T-7, NFR-2: one catch
 // event and one throw event shared by two planes (two instances of one
 // snapshot); the values never cross, and the association's own elements

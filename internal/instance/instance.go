@@ -666,8 +666,12 @@ func (inst *Instance) seedInitialData(cfg *newConfig) (flow.Node, error) {
 	// standard's route from a message payload into the process inputs or a
 	// data object (§10.4.2's Start/End case) — run here, before the contract
 	// is checked (ADR-040 v.2 §2.7, SRD-094 FR-5).
+	flush := noFlush
+
 	if bornStart != nil {
-		if err := inst.runBornStartAssociations(bornStart, cfg); err != nil {
+		var err error
+
+		if flush, err = inst.runBornStartAssociations(bornStart, cfg); err != nil {
 			return nil, err
 		}
 	}
@@ -677,6 +681,12 @@ func (inst *Instance) seedInitialData(cfg *newConfig) (flow.Node, error) {
 	// §2.9); a contract-less process is untouched.
 	if err := inst.bindContract(cfg); err != nil {
 		return nil, err
+	}
+
+	// the launch is accepted: what the born start wrote outside the
+	// instance — the engine-global Data Stores — is written now
+	if err := flush(); err != nil {
+		return nil, inst.seedErr(bornStart, "couldn't write the Data Stores", err)
 	}
 
 	return bornStart, nil

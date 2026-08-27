@@ -68,7 +68,7 @@ func bareParamMisplaced(s *nodeSpec) error {
 // nothing is refused here, with the same words the model uses.
 func eventDataOptions(
 	p *parser, asm *assembly, se xml.StartElement, id string,
-	defs []flow.EventDefinition, params []paramSpec,
+	defs []flow.EventDefinition, specs []defSpec, params []paramSpec,
 ) ([]options.Option, error) {
 	if len(params) == 0 {
 		return nil, nil
@@ -88,7 +88,7 @@ func eventDataOptions(
 		}
 	}
 
-	adopted, err := adoptedItems(owner, defs, params)
+	adopted, err := adoptedItems(owner, asm, defs, specs, params)
 	if err != nil {
 		return nil, err
 	}
@@ -123,17 +123,34 @@ func eventDataOptions(
 	return []options.Option{events.WithDataInputs(byDir[data.Input]...)}, nil
 }
 
+// bearingDef is an item-bearing definition as built and as the file wrote
+// its payload type.
+type bearingDef struct {
+	item    *data.ItemDefinition
+	fileRef string
+}
+
 // adoptedItems pairs each parameter with the item of the definition at
 // its position — the standard's correspondence is by order (p217) — and
-// refuses one past the item-bearing definitions.
+// refuses one past the item-bearing definitions. A parameter that names an
+// itemSubjectRef must name the one its definition's element named in the
+// file (a message's itemRef, an escalation's structureRef): the model
+// carries a placeholder for both, so the file's two references are the
+// only pair p217's MUST can be checked on.
 func adoptedItems(
-	owner string, defs []flow.EventDefinition, params []paramSpec,
+	owner string, asm *assembly, defs []flow.EventDefinition,
+	specs []defSpec, params []paramSpec,
 ) (map[string]*data.ItemDefinition, error) {
-	bearing := make([]*data.ItemDefinition, 0, len(defs))
+	bearing := make([]bearingDef, 0, len(defs))
 
-	for _, def := range defs {
+	for i, def := range defs {
 		if items := def.GetItemsList(); len(items) > 0 && items[0].Structure() != nil {
-			bearing = append(bearing, items[0])
+			var fileRef string
+			if i < len(specs) {
+				fileRef = asm.cat.itemRefs[specs[i].ref]
+			}
+
+			bearing = append(bearing, bearingDef{item: items[0], fileRef: fileRef})
 		}
 	}
 
@@ -149,7 +166,17 @@ func adoptedItems(
 				errs.C(errorClass, errs.InvalidObject))
 		}
 
-		adopted[params[i].id] = bearing[i]
+		if ref := params[i].itemRef; ref != "" && bearing[i].fileRef != "" &&
+			ref != bearing[i].fileRef {
+			return nil, errs.New(
+				errs.M("bpmn: %s declares <%s> %q over item %q, but the "+
+					"definition it pairs with carries %q; §10.4.2 p217 makes "+
+					"them the same itemDefinition — give both one itemSubjectRef",
+					owner, params[i].local(), params[i].id, ref, bearing[i].fileRef),
+				errs.C(errorClass, errs.InvalidObject))
+		}
+
+		adopted[params[i].id] = bearing[i].item
 	}
 
 	return adopted, nil
@@ -239,7 +266,7 @@ func bindProcessEnd(
 	switch {
 	case a.dir == data.Output && kind == tagStartEvent && ps.dir == data.Input:
 		src, _ := node.(flow.AssociationSource)
-		err = asm.proc.AssociateInput(name, src, paramItemID)
+		err = asm.proc.AssociateInput(name, src, a.paramRef)
 
 	case a.dir == data.Input && kind == tagEndEvent && ps.dir == data.Output:
 		trg, _ := node.(flow.AssociationTarget)

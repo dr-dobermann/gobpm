@@ -32,6 +32,13 @@ type catalog struct {
 	// document, and the four maps alone could not see a collision between
 	// two of them.
 	kinds map[string]string
+	// itemRefs records the payload type reference each element named in
+	// the file (a message's itemRef, an escalation's structureRef, …), ""
+	// for none. The model gets a placeholder for it (§4.1), so this is the
+	// only place §10.4.2 p217's match — an event's data parameter carries
+	// the item of the definition it pairs with — can be checked as the
+	// file wrote both sides (SRD-094 FR-7).
+	itemRefs map[string]string
 }
 
 // newCatalog builds the empty catalog the parser fills.
@@ -42,6 +49,7 @@ func newCatalog() *catalog {
 		errors:      map[string]*bpmncommon.Error{},
 		escalations: map[string]*events.Escalation{},
 		kinds:       map[string]string{},
+		itemRefs:    map[string]string{},
 	}
 }
 
@@ -167,6 +175,7 @@ func (p *parser) parseCatalogElement(se xml.StartElement) error {
 	}
 
 	p.cat.kinds[id] = local
+	p.cat.itemRefs[id] = spec.structure
 
 	return nil
 }

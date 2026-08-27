@@ -240,6 +240,87 @@ func TestImportStartToProcessInput(t *testing.T) {
 	})
 }
 
+// TestImportEventIOPairing — SRD-094 T-15's order and identity rules: two
+// item-bearing definitions on one event pair with two bare parameters by
+// position; a bare parameter's itemSubjectRef must be the one its
+// definition's element named; a duplicate parameter id is refused by the
+// document's id ledger.
+func TestImportEventIOPairing(t *testing.T) {
+	decls := eventDataDecls + `
+  <bpmn:itemDefinition id="idInt" structureRef="xsd:int"/>
+  <bpmn:message id="m2" name="order paid" itemRef="idInt"/>`
+
+	t.Run("two definitions, two parameters, in order", func(t *testing.T) {
+		res, err := importEventDoc(t, propDoc(decls, `    <bpmn:startEvent id="s2">
+      <bpmn:messageEventDefinition messageRef="m1"/>
+      <bpmn:messageEventDefinition messageRef="m2"/>
+      <bpmn:dataOutput id="o-placed"/>
+      <bpmn:dataOutput id="o-paid"/>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="s2" targetRef="e1"/>`))
+		if err != nil {
+			t.Fatalf("import: %v", err)
+		}
+
+		s, _ := nodeByID(t, res, "s2").(*events.StartEvent)
+		outs := s.Outputs()
+		defs := s.Definitions()
+
+		if len(outs) != 2 || outs[0].ID() != "o-placed" || outs[1].ID() != "o-paid" ||
+			outs[0].ItemDefinition().ID() != defs[0].GetItemsList()[0].ID() ||
+			outs[1].ItemDefinition().ID() != defs[1].GetItemsList()[0].ID() {
+			t.Fatalf("the parameters did not pair by position: %v", outs)
+		}
+	})
+
+	t.Run("an itemSubjectRef other than the definition's is refused",
+		func(t *testing.T) {
+			_, err := importEventDoc(t, propDoc(decls, `    <bpmn:startEvent id="s2">
+      <bpmn:messageEventDefinition messageRef="m1"/>
+      <bpmn:dataOutput id="o-placed" itemSubjectRef="idInt"/>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="s2" targetRef="e1"/>`))
+			if err == nil || !strings.Contains(err.Error(), "makes them the same itemDefinition") {
+				t.Fatalf("error = %v, want the p217 refusal", err)
+			}
+		})
+
+	t.Run("a duplicate parameter id is refused", func(t *testing.T) {
+		_, err := importEventDoc(t, eventDataDoc(`    <bpmn:startEvent id="s2">
+      <bpmn:messageEventDefinition messageRef="m1"/>
+      <bpmn:dataOutput id="do1"/>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="s2" targetRef="e1"/>`))
+		if err == nil || !strings.Contains(err.Error(), "do1") {
+			t.Fatalf("error = %v, want the duplicate-id refusal", err)
+		}
+	})
+
+	t.Run("a data store reference wires into an end's input by id", func(t *testing.T) {
+		res, err := importEventDoc(t, propDoc(eventDataDecls+`
+  <bpmn:dataStore id="S" name="orders"/>`,
+			`    <bpmn:dataStoreReference id="dsr1" name="orders" dataStoreRef="S" itemSubjectRef="idStr"/>
+    <bpmn:endEvent id="e2">
+      <bpmn:messageEventDefinition messageRef="m1"/>
+      <bpmn:dataInput id="e2-in" itemSubjectRef="idStr"/>
+      <bpmn:dataInputAssociation id="ia1">
+        <bpmn:sourceRef>dsr1</bpmn:sourceRef>
+        <bpmn:targetRef>e2-in</bpmn:targetRef>
+      </bpmn:dataInputAssociation>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="e2"/>`))
+		if err != nil {
+			t.Fatalf("import: %v", err)
+		}
+
+		e, _ := nodeByID(t, res, "e2").(*events.EndEvent)
+		if e == nil || len(e.InputAssociations()) != 1 ||
+			e.InputAssociations()[0].DataStoreRef() != "S" {
+			t.Fatalf("the end's association does not carry the store ref")
+		}
+	})
+}
+
 // TestImportBareEventIO — SRD-094 T-15: a bare parameter on an event
 // declares its data — adopting the definition's item when it names none;
 // the wrong direction, a parameter pairing with no definition, and a

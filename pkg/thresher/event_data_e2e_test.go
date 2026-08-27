@@ -11,6 +11,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -90,7 +91,7 @@ func quoteProcess(t *testing.T, wire bool) *process.Process {
 	link(t, price, end)
 
 	if wire {
-		require.NoError(t, p.AssociateInput("order", start, "order_in"))
+		require.NoError(t, p.AssociateInput("order", start, start.Outputs()[0].ID()))
 		require.NoError(t, p.AssociateOutput("total", end, end.Inputs()[0].ID()))
 	}
 
@@ -155,6 +156,92 @@ func TestThrowBindsFromScopeWithoutAssociation(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("no message arrived")
 	}
+}
+
+// TestCatchAndThrowThroughDataObjects — a non-start catch and a throw on a
+// running engine (the review's gap): an intermediate message catch pushes
+// its payload into a data object when it fires, and an intermediate
+// message throw's input is filled from a data object through the
+// id-addressed AssociateTargetInput — the message it publishes carries the
+// data object's value.
+func TestCatchAndThrowThroughDataObjects(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("relay")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	catch, err := events.NewIntermediateCatchEvent("catch",
+		events.MustMessageEventDefinition(bpmncommon.MustMessage("order placed",
+			data.MustItemDefinition(values.NewVariable(""),
+				foundation.WithID("order_in"))), nil))
+	require.NoError(t, err)
+
+	throw, err := events.NewIntermediateThrowEvent("throw",
+		events.MustMessageEventDefinition(bpmncommon.MustMessage("order relayed",
+			data.MustItemDefinition(values.NewVariable(""),
+				foundation.WithID("order_relay"))), nil))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	held, err := dataobjects.New("held",
+		data.MustItemDefinition(values.NewVariable(""), foundation.WithID("held-item")),
+		data.ReadyDataState)
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, catch, throw, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	require.NoError(t, p.Add(held))
+	link(t, start, catch)
+	link(t, catch, throw)
+	link(t, throw, end)
+
+	// catch → data object (by item), data object → throw's input (by id)
+	require.NoError(t, held.AssociateSource(catch, []string{"order_in"}, nil))
+	require.NoError(t, held.AssociateTargetInput(throw, throw.Inputs()[0].ID(), nil))
+
+	broker := membroker.New()
+
+	th, err := thresher.New("relay", thresher.WithMessageBroker(broker))
+	require.NoError(t, err)
+
+	_, err = th.RegisterProcess(p)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, th.Run(ctx))
+
+	sub, err := broker.Subscribe(ctx, "order relayed")
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(p.ID())
+	require.NoError(t, err)
+
+	awaitParked(t, h, 1)
+	require.NoError(t, broker.Publish(ctx,
+		messaging.Envelope{Name: "order placed", Payload: "ORD-77"}))
+
+	select {
+	case env := <-sub.C():
+		require.Equal(t, "ORD-77", env.Payload,
+			"the data object's value, filled by the catch, thrown by the throw")
+	case <-time.After(5 * time.Second):
+		t.Fatal("no relayed message arrived")
+	}
+
+	wctx, wc := context.WithTimeout(ctx, 5*time.Second)
+	defer wc()
+
+	state, err := h.WaitCompletion(wctx)
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, state)
 }
 
 // TestEventDataRoundTrip — SRD-094 T-17: on a real engine and broker, the
