@@ -1,4 +1,3 @@
-// Package foundation provides base BPMN element types and interfaces.
 package foundation
 
 import (
