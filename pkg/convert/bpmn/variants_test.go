@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dr-dobermann/gobpm/pkg/convert"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 )
 
 // variantDoc builds a process holding one container element, written
@@ -125,49 +125,51 @@ func TestTransactionAndEventSubProcessIsTheModelsRefusal(t *testing.T) {
 	}
 }
 
-// TestTransactionMethodDispositions is §4.5: three values, three
-// different answers, and the silent one is as deliberate as the loud
-// ones.
+// TestTransactionMethodDispositions is SRD-093 T-6: the absent attribute
+// and both standard spellings read as compensate, every other identifier is
+// carried verbatim for registration to judge, and nothing is reported —
+// the converter keeps no value table of its own (ADR-024 §2.16).
 func TestTransactionMethodDispositions(t *testing.T) {
 	tests := map[string]struct {
-		attr     string
-		imports  bool
-		reported bool
+		attr string
+		want activities.TransactionMethod
 	}{
-		"absent means compensate": {"", true, false},
-		"compensate":              {` method="compensate"`, true, false},
-		"store":                   {` method="store"`, false, false},
-		"image":                   {` method="image"`, false, false},
-		"not a BPMN value":        {` method="rollback"`, false, false},
+		"absent means compensate": {"", activities.TransactionCompensate},
+		"metamodel compensate": {
+			` method="compensate"`, activities.TransactionCompensate,
+		},
+		"schema ##Compensate": {
+			` method="##Compensate"`, activities.TransactionCompensate,
+		},
+		"store carried":           {` method="store"`, "store"},
+		"image carried":           {` method="image"`, "image"},
+		"schema ##Store carried":  {` method="##Store"`, "##Store"},
+		"a URI carried":           {` method="urn:acme:saga"`, "urn:acme:saga"},
+		"a non-BPMN word carried": {` method="rollback"`, "rollback"},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			res, err := importEventDoc(t,
 				variantDoc(`<bpmn:transaction id="sub" name="Charge"`+tc.attr+`>`))
-
-			if !tc.imports {
-				if err == nil {
-					t.Fatal("want a refusal, got a clean import")
-				}
-
-				if strings.Contains(err.Error(), "yet") {
-					t.Errorf("refusal %q says \"yet\" — this is a decided "+
-						"non-goal, and nothing is coming", err)
-				}
-
-				return
-			}
-
 			if err != nil {
 				t.Fatalf("Import: %v", err)
 			}
 
-			for _, d := range res.Dropped {
-				if strings.Contains(d.Construct, attrTransactionMethod) {
-					t.Errorf("method reported as dropped (%q) — the engine "+
-						"implements this value", d.Reason)
-				}
+			sub := containerOf(t, nodeByID(t, res, "sub"))
+
+			tx := sub.Transaction()
+			if tx == nil {
+				t.Fatal("Transaction() = nil for an imported <transaction>")
+			}
+
+			if tx.Method() != tc.want {
+				t.Errorf("Method() = %q, want %q", tx.Method(), tc.want)
+			}
+
+			if len(res.Dropped) != 0 {
+				t.Errorf("dropped = %v, want nothing — the method is mapped, "+
+					"not reported", res.Dropped)
 			}
 		})
 	}
@@ -243,38 +245,37 @@ func TestCancelBecomesReachable(t *testing.T) {
 	})
 }
 
-// TestTransactionProtocolIsReported is the other half of §4.5: the
-// element imports, minus a datum, and the host is told which.
-func TestTransactionProtocolIsReported(t *testing.T) {
-	res, err := importEventDoc(t, variantDoc(
-		`<bpmn:transaction id="sub" name="Charge" method="compensate" protocol="wsat">`))
-	if err != nil {
-		t.Fatalf("Import: %v", err)
-	}
-
-	var got *convert.Dropped
-
-	for i := range res.Dropped {
-		if res.Dropped[i].Construct == attrTransactionProto {
-			got = &res.Dropped[i]
+// TestTransactionProtocolIsCarried is SRD-093 T-7: the protocol lands on
+// the model as stated and is no longer reported as dropped.
+func TestTransactionProtocolIsCarried(t *testing.T) {
+	t.Run("stated", func(t *testing.T) {
+		res, err := importEventDoc(t, variantDoc(`<bpmn:transaction id="sub" `+
+			`name="Charge" method="compensate" protocol="wsat">`))
+		if err != nil {
+			t.Fatalf("Import: %v", err)
 		}
-	}
 
-	if got == nil {
-		t.Fatalf("dropped = %v, want the protocol reported", res.Dropped)
-	}
+		sub := containerOf(t, nodeByID(t, res, "sub"))
+		if got := sub.Transaction().Protocol(); got != "wsat" {
+			t.Errorf("Protocol() = %q, want wsat", got)
+		}
 
-	if got.Element != "sub" {
-		t.Errorf("protocol reported on %q, want the transaction", got.Element)
-	}
+		if len(res.Dropped) != 0 {
+			t.Errorf("dropped = %v, want nothing — the protocol is carried",
+				res.Dropped)
+		}
+	})
 
-	if got.Reason == "" {
-		t.Error("protocol reported with no reason")
-	}
+	t.Run("absent", func(t *testing.T) {
+		res, err := importEventDoc(t, variantDoc(
+			`<bpmn:transaction id="sub" name="Charge">`))
+		if err != nil {
+			t.Fatalf("Import: %v", err)
+		}
 
-	if len(res.Dropped) != 1 {
-		t.Errorf("dropped = %v, want protocol alone — method=compensate is "+
-			"implemented, and a construct is either mapped or reported",
-			res.Dropped)
-	}
+		sub := containerOf(t, nodeByID(t, res, "sub"))
+		if got := sub.Transaction().Protocol(); got != "" {
+			t.Errorf("Protocol() = %q, want none", got)
+		}
+	})
 }
