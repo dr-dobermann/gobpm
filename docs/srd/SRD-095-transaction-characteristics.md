@@ -419,6 +419,10 @@ unreachable defensive branch (§10.2). The two FR-8 regression tests fail
 with the `track.go` reorder reverted and pass with it; the dehydration
 suite passes with `evWaitArmed` and hangs without it.
 
+Re-verified after the second master merge (PRs #352/#353) and the SRD-095
+renumbering: `make ci` at `2f945d6e` — PASS 14/14, diff-coverage 100.0% of
+143 changed lines against the updated master.
+
 ## Open questions
 
 None.
