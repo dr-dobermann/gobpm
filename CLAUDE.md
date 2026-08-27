@@ -181,7 +181,10 @@ make ci
 
 On macOS, install GNU coreutils once with `brew install coreutils`;
 `run-examples` detects its `gtimeout` command automatically. Linux already
-provides `timeout`.
+provides `timeout`. The examples run in parallel — `EXAMPLE_JOBS` at a time,
+default the CPU count capped at 8 — with each example's output buffered and
+printed in its own group fold in module order once all have finished, so a
+failure is never interleaved with a neighbour's log (`scripts/run-examples.sh`).
 
 **Parity rules (do not break these — they exist because a silent local
 no-op once let broken code reach CI):**

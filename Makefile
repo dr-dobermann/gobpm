@@ -482,18 +482,21 @@ EXAMPLE_RUN_TIMEOUT := 90s
 # macOS/Homebrew. Prefer the native name, then the Homebrew-prefixed fallback;
 # retain `timeout` as the final value so the guard below gives a useful error.
 EXAMPLE_TIMEOUT ?= $(shell command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || printf '%s' timeout)
+# How many examples run at once (SRD-093 M5). Unset = the CPU count, capped at
+# 8; the examples are independent processes, and a 2-core runner gets 2.
+EXAMPLE_JOBS ?=
 
 # run-examples executes every example module end-to-end (FIX-029): a runtime
 # regression — deadlock, panic, model drift — fails the gate that `go build`
-# alone kept green (the FIX-002 class). Stdout is discarded (the examples
-# narrate); stderr stays visible inside the group fold.
+# alone kept green (the FIX-002 class). The modules run EXAMPLE_JOBS at a time;
+# each one's output is buffered and printed inside its own group fold, in
+# module order, once all have finished — a failed example shows its log, a
+# passing one only its markers (scripts/run-examples.sh).
 run-examples:
 	$(call require-command,$(EXAMPLE_TIMEOUT),On macOS install GNU coreutils with 'brew install coreutils' (provides gtimeout).)
-	@set -e; for dir in $(filter-out $(EXAMPLE_RUN_SKIP),$(EXAMPLE_MODULES)); do \
-		echo "::group::run $$dir"; \
-		(cd $$dir && "$(EXAMPLE_TIMEOUT)" $(EXAMPLE_RUN_TIMEOUT) $(GO) run . < /dev/null > /dev/null) || exit 1; \
-		echo "::endgroup::"; \
-	done
+	@GO="$(GO)" EXAMPLE_TIMEOUT="$(EXAMPLE_TIMEOUT)" \
+		EXAMPLE_RUN_TIMEOUT="$(EXAMPLE_RUN_TIMEOUT)" EXAMPLE_JOBS="$(EXAMPLE_JOBS)" \
+		./scripts/run-examples.sh $(filter-out $(EXAMPLE_RUN_SKIP),$(EXAMPLE_MODULES))
 .PHONY: run-examples
 
 # The examples sweep: tidy + lint + build + run over every examples/* module.
