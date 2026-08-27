@@ -49,6 +49,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression/lite"
@@ -1488,11 +1489,18 @@ func nsKeyFor(processID, key string) string {
 // reg — the receipt RegisterProcess returned — and returns its read-only
 // observation handle. A nil reg is rejected. To start by key instead, use
 // StartLatest (the newest version) or StartVersion (a specific one).
-func (t *Thresher) StartProcess(reg *ProcessRegistration) (*InstanceHandle, error) {
+func (t *Thresher) StartProcess(
+	reg *ProcessRegistration, opts ...StartOption,
+) (*InstanceHandle, error) {
 	if reg == nil {
 		return nil, errs.New(
 			errs.M("StartProcess: a nil ProcessRegistration isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	rootData, err := applyStartOptions("StartProcess", opts)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := t.ensureStarted(); err != nil {
@@ -1501,19 +1509,26 @@ func (t *Thresher) StartProcess(reg *ProcessRegistration) (*InstanceHandle, erro
 
 	// launchInstance re-acquires t.m, so reg.snapshot is read lock-free here: a
 	// registration handle is immutable, and its snapshot is frozen (ADR-019).
-	return t.launchInstance(reg.snapshot)
+	return t.launchInstance(reg.snapshot, rootData)
 }
 
 // StartLatest launches a new instance of the LATEST registered version of the
 // process key, returning its observation handle. It errors if the key is empty
 // or no version is registered for it. This is the "just run the current one"
 // path; hold a ProcessRegistration and use StartProcess to pin an exact version.
-func (t *Thresher) StartLatest(key string) (*InstanceHandle, error) {
+func (t *Thresher) StartLatest(
+	key string, opts ...StartOption,
+) (*InstanceHandle, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return nil, errs.New(
 			errs.M("StartLatest: empty process key isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	rootData, err := applyStartOptions("StartLatest", opts)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := t.ensureStarted(); err != nil {
@@ -1530,14 +1545,16 @@ func (t *Thresher) StartLatest(key string) (*InstanceHandle, error) {
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
-	return t.launchInstance(s)
+	return t.launchInstance(s, rootData)
 }
 
 // StartVersion launches a new instance of a SPECIFIC registered version (1-based)
 // of the process key, returning its observation handle. It errors if the key is
 // empty, the version is below 1, or no such key/version is registered. Use it to
 // re-run an older version by its (key, version) without holding its handle.
-func (t *Thresher) StartVersion(key string, version int) (*InstanceHandle, error) {
+func (t *Thresher) StartVersion(
+	key string, version int, opts ...StartOption,
+) (*InstanceHandle, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return nil, errs.New(
@@ -1549,6 +1566,11 @@ func (t *Thresher) StartVersion(key string, version int) (*InstanceHandle, error
 		return nil, errs.New(
 			errs.M("StartVersion: version must be >= 1, got %d", version),
 			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	rootData, err := applyStartOptions("StartVersion", opts)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := t.ensureStarted(); err != nil {
@@ -1565,7 +1587,7 @@ func (t *Thresher) StartVersion(key string, version int) (*InstanceHandle, error
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
-	return t.launchInstance(s)
+	return t.launchInstance(s, rootData)
 }
 
 // ensureStarted returns an InvalidState error unless the engine is Started — the
@@ -1624,11 +1646,21 @@ func (t *Thresher) instanceOptions(settled chan struct{}) []instance.Option {
 
 // launchInstance creates a new Instance from the Snapshot s, runs it, appends it
 // to the running instances of the Thresher, and returns its read-only handle.
-func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error) {
+func (t *Thresher) launchInstance(
+	s *snapshot.Snapshot, rootData []data.Data,
+) (*InstanceHandle, error) {
 	settled := make(chan struct{})
 
+	// The host's start request rides the same root-data door as a Call
+	// Activity's inputs (SRD-093 FR-6); the instance binds it through the
+	// declared contract, or commits it as is for a contract-less process.
+	opts := t.instanceOptions(settled)
+	if len(rootData) != 0 {
+		opts = append(opts, instance.WithRootData(rootData))
+	}
+
 	inst, err := instance.New(s, scope.EmptyDataPath, &t.cfg, t, t.taskDist,
-		t.instanceOptions(settled)...)
+		opts...)
 	if err != nil {
 		return nil, errs.New(
 			errs.M("couldn't create an Instance for process %q",

@@ -44,7 +44,11 @@ type Process struct {
 	// artifacts is ordered, not keyed: artifacts have no name, and
 	// declaration order is what a round-trip reproduces (ADR-039).
 	artifacts []artifacts.Artifact
-	name      string
+	// ioSpec is the process's declared I/O contract (ADR-040 §2.1): one
+	// input set, one output set, nil when the process declares none — the
+	// permissive, contract-less process (§2.5).
+	ioSpec *data.InputOutputSpecification
+	name   string
 	foundation.BaseElement
 	CorrelationSubscriptions []*bpmncommon.CorrelationSubscription
 }
@@ -54,6 +58,8 @@ type Process struct {
 //
 //	activities.WithRoles
 //	data.WithProperties
+//	data.WithInputs / data.WithOutputs
+//	lanes.WithLaneSets
 //	foundation.WithID
 //	foundation.WithDoc
 func New(
@@ -84,6 +90,9 @@ func New(
 			addErr(opt(&pc))
 
 		case lanes.LaneSetOption: // *processConfig implements lanes.LaneSetAdder
+			addErr(opt(&pc))
+
+		case data.IOSpecOption: // *processConfig implements data.IOSpecAdder
 			addErr(opt(&pc))
 
 		case foundation.BaseOption:
@@ -123,6 +132,13 @@ func (p *Process) Roles() []*hi.ResourceRole {
 // Lanes are carried and never executed (SRD-076).
 func (p *Process) LaneSets() []*lanes.LaneSet {
 	return slices.Clone(p.laneSets)
+}
+
+// IOSpec returns the process's declared I/O contract (ADR-040), or nil when
+// the process declares none — the permissive, contract-less process that
+// accepts whatever its caller delivers (ADR-040 §2.5).
+func (p *Process) IOSpec() *data.InputOutputSpecification {
+	return p.ioSpec
 }
 
 // AddArtifacts attaches artifacts to the process. Artifacts are model-only
@@ -417,11 +433,72 @@ func (p *Process) Validate() error {
 		ee = append(ee, err)
 	}
 
+	// The declared I/O contract shares the root scope's one namespace with
+	// the properties and data objects (ADR-040 §2.6), and the two directions
+	// share it with each other.
+	if err := p.validateIONames(); err != nil {
+		ee = append(ee, err)
+	}
+
 	if len(ee) > 0 {
 		return errors.Join(ee...)
 	}
 
 	return nil
+}
+
+// validateIONames refuses a declared parameter whose name collides with a
+// property, a data object, or a parameter of the other direction (ADR-040
+// §2.6 — one namespace), after the specification's own per-direction check.
+func (p *Process) validateIONames() error {
+	if p.ioSpec == nil {
+		return nil
+	}
+
+	if err := p.ioSpec.Validate(); err != nil {
+		return err
+	}
+
+	ee := []error{}
+	seen := map[string]data.Direction{}
+
+	for _, dir := range []data.Direction{data.Input, data.Output} {
+		// Parameters can't fail here: the direction is one of the two the
+		// specification holds, said in the form the coverage gate reads.
+		params, err := p.ioSpec.Parameters(dir)
+		if err != nil {
+			return errs.Invariant("parameters of %q: %w", dir, err)
+		}
+
+		for _, param := range params {
+			name := param.Name()
+
+			switch {
+			case p.properties[name] != nil:
+				ee = append(ee, ioClash(name, dir, "a process property"))
+
+			case p.dataObjects[name] != nil:
+				ee = append(ee, ioClash(name, dir, "a data object"))
+
+			case seen[name] != "":
+				ee = append(ee, ioClash(name, dir,
+					"the "+string(seen[name])+" parameter of the same name"))
+
+			default:
+				seen[name] = dir
+			}
+		}
+	}
+
+	return errors.Join(ee...)
+}
+
+// ioClash words the one-namespace refusal.
+func ioClash(name string, dir data.Direction, with string) error {
+	return errs.New(
+		errs.M("%s parameter %q collides with %s: the root scope has one "+
+			"namespace (ADR-040 §2.6)", dir, name, with),
+		errs.C(errorClass, errs.DuplicateObject))
 }
 
 // validateTopLevelStarts rejects a Conditional trigger on a top-level Start Event

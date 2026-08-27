@@ -545,3 +545,113 @@ func TestProcessArtifacts(t *testing.T) {
 		require.ErrorContains(t, err, "duplicate artifact id")
 	})
 }
+
+// ioParam builds a required int parameter for the I/O contract tests.
+func ioParam(
+	t *testing.T, name string, opts ...data.ParameterOption,
+) *data.Parameter {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	return data.MustParameter(name,
+		data.MustItemAwareElement(
+			data.MustItemDefinition(values.NewVariable(0)),
+			data.ReadyDataState),
+		opts...)
+}
+
+// TestProcessIOSpec — SRD-093 T-2: the declared parameters read back per
+// direction, in declaration order; a process declaring none is contract-less.
+func TestProcessIOSpec(t *testing.T) {
+	t.Run("declared parameters read back per direction", func(t *testing.T) {
+		p, err := process.New("pricing",
+			data.WithInputs(ioParam(t, "subtotal")),
+			data.WithInputs(ioParam(t, "discount", data.Optional())),
+			data.WithOutputs(ioParam(t, "total")))
+		require.NoError(t, err)
+
+		ios := p.IOSpec()
+		require.NotNil(t, ios)
+
+		ins := ios.InputSet()
+		require.Len(t, ins, 2)
+		require.Equal(t, "subtotal", ins[0].Name())
+		require.Equal(t, "discount", ins[1].Name())
+		require.True(t, ins[1].IsOptional())
+
+		outs := ios.OutputSet()
+		require.Len(t, outs, 1)
+		require.Equal(t, "total", outs[0].Name())
+
+		require.NoError(t, p.Validate())
+	})
+
+	t.Run("a process declaring no parameter is contract-less",
+		func(t *testing.T) {
+			p, err := process.New("plain")
+			require.NoError(t, err)
+			require.Nil(t, p.IOSpec())
+		})
+
+	t.Run("a nil parameter refuses construction", func(t *testing.T) {
+		_, err := process.New("bad", data.WithInputs(nil))
+		require.ErrorContains(t, err, "nil parameter")
+	})
+}
+
+// TestProcessIONameSpace — SRD-093 T-3: the root scope has one namespace
+// (ADR-040 §2.6) — a parameter named like a property, a data object, or a
+// parameter of the other direction fails Validate naming both parties.
+func TestProcessIONameSpace(t *testing.T) {
+	t.Run("a parameter named like a property", func(t *testing.T) {
+		require.NoError(t, data.CreateDefaultStates())
+
+		prop := data.MustProperty("total",
+			data.MustItemDefinition(values.NewVariable(0)), data.ReadyDataState)
+
+		p, err := process.New("clash",
+			data.WithProperties(prop),
+			data.WithOutputs(ioParam(t, "total")))
+		require.NoError(t, err)
+
+		err = p.Validate()
+		require.ErrorContains(t, err, `"total"`)
+		require.ErrorContains(t, err, "process property")
+	})
+
+	t.Run("a parameter named like a data object", func(t *testing.T) {
+		require.NoError(t, data.CreateDefaultStates())
+
+		do, err := dataobjects.New("order",
+			data.MustItemDefinition(values.NewVariable(1)), data.ReadyDataState)
+		require.NoError(t, err)
+
+		p, err := process.New("clash", data.WithInputs(ioParam(t, "order")))
+		require.NoError(t, err)
+		require.NoError(t, p.Add(do))
+
+		err = p.Validate()
+		require.ErrorContains(t, err, `"order"`)
+		require.ErrorContains(t, err, "data object")
+	})
+
+	t.Run("an input and an output of the same name", func(t *testing.T) {
+		p, err := process.New("clash",
+			data.WithInputs(ioParam(t, "amount")),
+			data.WithOutputs(ioParam(t, "amount")))
+		require.NoError(t, err)
+
+		err = p.Validate()
+		require.ErrorContains(t, err, `"amount"`)
+		require.ErrorContains(t, err, "INPUT parameter of the same name")
+	})
+
+	t.Run("two inputs of the same name — the specification's own check",
+		func(t *testing.T) {
+			p, err := process.New("clash",
+				data.WithInputs(ioParam(t, "x"), ioParam(t, "x")))
+			require.NoError(t, err)
+			require.Error(t, p.Validate())
+		})
+}

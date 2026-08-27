@@ -154,7 +154,7 @@ func TestHandleObserverSurvivesARebuild(t *testing.T) {
 	snap := th.latestSnapshotLocked(proc.ID())
 	require.NotNil(t, snap)
 
-	other, err := th.launchInstance(snap)
+	other, err := th.launchInstance(snap, nil)
 	require.NoError(t, err)
 
 	rebuilt, err := th.instanceByID(other.ID())

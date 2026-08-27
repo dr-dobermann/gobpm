@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.3 |
-| Date | 2026-07-16 (v.1 accepted 2026-07-17; v.2 accepted 2026-07-18; v.3 drafted 2026-07-22, accepted 2026-08-08) |
+| Version | v.4 |
+| Date | 2026-07-16 (v.1 accepted 2026-07-17; v.2 accepted 2026-07-18; v.3 drafted 2026-07-22, accepted 2026-08-08; v.4 2026-08-26) |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-010 v.2 Process Data Model](ADR-010-process-data-model.md) §2.2, [ADR-018 v.1 Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md) §2.2/§2.6, [ADR-006 v.3 Events & Subscriptions](ADR-006-events-and-subscriptions.md) §2.6/§2.7, [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning.md), [SAD-001 v.1](SAD-001-vision-and-architecture.md) §15.3 |
 
@@ -277,7 +277,10 @@ composition is by **reference**, not containment, so the execution unit is a
   scope at launch; outputs bind back into the caller's scope at completion.
   The child's data plane is **isolated** — no walk-up crosses the call
   boundary (the reuse contract: a called process must run identically
-  however it is reached).
+  however it is reached). The callee's side of that mapping — the process's
+  own declared inputs and outputs, what binds at its launch and what is
+  read at its completion, and the by-name check of the caller's parameters
+  against them at launch — is [ADR-040 v.1](ADR-040-process-io-contract.md).
 - **Cancel cascade — engine choice** (the standard is silent on
   caller-initiated termination): cancelling the caller's Call Activity —
   an interrupting boundary on it, a scoped Terminate of its scope, or
@@ -527,9 +530,11 @@ by making no ordering guarantee).
   call-started fact so operators can audit what actually ran.
 - **Contract testing.** A called process is an interface: its
   InputOutputSpecification is the contract the caller binds against.
-  Recommend registry-time validation that a pinned callable version
-  satisfies the Call Activity's declared I/O, and a documented deprecation
-  path for callables (register new version → migrate callers → retire).
+  [ADR-040 v.1](ADR-040-process-io-contract.md) §2.4 validates the Call
+  Activity's declared names against the resolved callable **at launch**
+  (latest-at-launch means the pair is only known then); a documented
+  deprecation path for callables (register new version → migrate callers →
+  retire) remains the recommendation.
 - **Sensitive data.** The call boundary is a data boundary: only declared
   inputs cross it. Document this as the isolation guarantee (no accidental
   parent-scope leakage into reusable processes).
@@ -581,3 +586,4 @@ None.
 | v.2 | 2026-07-18 | Ruslan Gabitov | **Accepted** — the interrupting Event Sub-Process landed (the accompanying SRD): the scope-armed handler, the cancel-and-run, the shared interrupting budget with boundary events, the Error scope-chain catch, and absorb. Non-interrupting handlers and Transaction/compensation remain sliced (#90). Status flip only, no conception change (no version bump). |
 | v.3 | 2026-07-22 | Ruslan Gabitov | **Draft** — §2.3 note firmed: `startQuantity`/`completionQuantity` ≠ 1 recharacterized from "existing deferral" to a **deliberate non-goal** (→ SAD-001 v.1 §4 N8) — implicit token multiplication/join with no diagram notation is opaque, Camunda does not support them, and an explicit Parallel Gateway covers the intent visibly; the runtime honours the default 1. Documentation-only; no execution-model change (§2.1–§2.10 unchanged). Extended in draft 2026-08-06 with §2.7's **restart contract** (an engine choice; the standard is silent on restarts): the child instance is durable in its own right, the caller's checkpoint records the in-flight call, recovery restores both ends and re-links them, and a missing counterpart record fails the restore loudly (no silent child re-launch, no orphaned child) — governed by ADR-033 v.4 §2.10. RU twin syncs at re-Accept. |
 | v.3 | 2026-08-08 | Ruslan Gabitov | **Accepted** — the restart contract landed via the accompanying SRD (#277): durable children with symmetric parent↔child linkage, recovery re-link (live, in-flight and terminal child shapes), loud refusal on a missing counterpart. Status flip; RU twin synced. |
+| v.4 | 2026-08-26 | Ruslan Gabitov | The callee's side of the §2.5 I/O mapping is now decided elsewhere and pointed to: the process's own declared inputs/outputs, launch binding, completion reading, and the launch-time by-name validation of the caller's parameters against the resolved callable — [ADR-040 v.1](ADR-040-process-io-contract.md). The "registry-time validation" recommendation of the contract-testing note is replaced by that launch-time check. Pointers only; no execution semantics of this ADR change. RU twin synced. |

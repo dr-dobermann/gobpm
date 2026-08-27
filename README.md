@@ -374,7 +374,14 @@ act on the scope as a unit) —
 Activity** invokes a separately registered process as an isolated **child
 instance** — the reuse boundary: declared I/O cloned across the boundary,
 latest-at-launch or pinned versioning, the output committed back —
-[`examples/call-activity/`](examples/call-activity/). An **Event Sub-Process**
+[`examples/call-activity/`](examples/call-activity/). A process can **declare
+its own I/O contract** (`data.WithInputs`/`WithOutputs`, or an
+`<ioSpecification>` under `<process>`): a host binds the inputs at launch with
+`thresher.WithStartInput`, a Call Activity through its parameters; a required
+input left unbound or a datum the contract does not name refuses the launch
+before the instance exists, and the declared outputs are collected at
+completion — `Outputs()` on the handle, or committed back to the caller —
+[`examples/process-io/`](examples/process-io/). An **Event Sub-Process**
 (`triggeredByEvent`) is a scope-armed handler: armed while its enclosing scope
 is open, an interrupting one fires a **cancel-and-run** — it cancels the
 scope's work, runs in the parent's data context, and absorbs the event so the

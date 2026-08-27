@@ -65,7 +65,12 @@ type ProcessCall struct {
 	ParentInstanceID string
 	CallNodeID       string
 	Inputs           []data.Data
-	Version          int
+	// Outputs are the caller's declared output names — what it will read
+	// back from the child. A callee declaring a contract validates them at
+	// launch (ADR-040 §2.4, SRD-093 FR-10); a contract-less callee ignores
+	// them here and serves whatever its root scope holds at completion.
+	Outputs []string
+	Version int
 }
 
 // ChildProcess is the caller loop's watch handle onto a launched child instance.
@@ -91,9 +96,12 @@ type ChildProcess interface {
 	// cancellation that carried no fault). Read after Done is closed.
 	Failed() error
 
-	// Outputs reads the named data from the child's root scope after
-	// completion — the declared Output parameters of the Call Activity, the
-	// call contract's return values. A missing name is a classified error.
+	// Outputs reads the named data after completion — the declared Output
+	// parameters of the Call Activity, the call contract's return values —
+	// in the order of names. A child with a declared contract serves its
+	// collected result, and a name it declared optional but never produced
+	// comes back as a nil slot (nothing flows); a contract-less child reads
+	// its root scope, where a missing name is a classified error.
 	Outputs(names []string) ([]data.Data, error)
 
 	// Terminate ends the child (the cancel cascade). Idempotent.

@@ -81,8 +81,8 @@ func TestRefusalsSayWhichKindTheyAre(t *testing.T) {
 
 // TestDataFamilyRefusalWordings replaces the T-24 staged sweep: after
 // SRD-089.G nothing in the family is staged — a task's family imports,
-// and every remaining refusal names either a capability row (#329,
-// #330) or the position the standard reserves. Never "yet".
+// and every remaining refusal names either the capability row (#329)
+// or the position the standard reserves. Never "yet".
 func TestDataFamilyRefusalWordings(t *testing.T) {
 	onTask := func(child string) string {
 		return propDoc("", `    <bpmn:task id="t1" name="T">
@@ -94,10 +94,6 @@ func TestDataFamilyRefusalWordings(t *testing.T) {
 		doc   string
 		wants []string
 	}{
-		"ioSpecification on a process": {
-			doc:   propDoc("", `    <bpmn:ioSpecification id="io1"/>`),
-			wants: []string{"#330", "ADR-011 §2.5"},
-		},
 		// A bare parameter or set outside an ioSpecification: on a task
 		// the note points inside the spec; the same note carries the
 		// event capability, since one settle path serves both owners.
