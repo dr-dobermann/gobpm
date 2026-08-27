@@ -29,6 +29,12 @@ func (ce *catchEvent) BindOutgoing(oa *data.Association) error {
 	return nil
 }
 
+// OutputAssociations returns the catch event's bound output associations —
+// what the engine runs at a born start's seed and the exporter writes.
+func (ce *catchEvent) OutputAssociations() []*data.Association {
+	return append([]*data.Association{}, ce.outputAssociations...)
+}
+
 // --------------------- flow.AssociationTarget --------------------------------
 
 // Inputs returns the throw event's data inputs — the targets its input
@@ -48,6 +54,11 @@ func (te *throwEvent) BindIncoming(ia *data.Association) error {
 	te.inputAssociations = aa
 
 	return nil
+}
+
+// InputAssociations returns the throw event's bound input associations.
+func (te *throwEvent) InputAssociations() []*data.Association {
+	return append([]*data.Association{}, te.inputAssociations...)
 }
 
 // -----------------------------------------------------------------------------

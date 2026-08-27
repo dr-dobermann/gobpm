@@ -662,6 +662,16 @@ func (inst *Instance) seedInitialData(cfg *newConfig) (flow.Node, error) {
 		return nil, err
 	}
 
+	// A born start never runs as a node, so its output associations — the
+	// standard's route from a message payload into the process inputs or a
+	// data object (§10.4.2's Start/End case) — run here, before the contract
+	// is checked (ADR-040 v.2 §2.7, SRD-094 FR-5).
+	if bornStart != nil {
+		if err := inst.runBornStartAssociations(bornStart, cfg); err != nil {
+			return nil, err
+		}
+	}
+
 	// The declared contract, if any, binds the delivered data through its
 	// input parameters — the one moment before any token exists (ADR-040
 	// §2.9); a contract-less process is untouched.

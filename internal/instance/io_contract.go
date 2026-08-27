@@ -51,7 +51,7 @@ func (inst *Instance) bindContract(cfg *newConfig) error {
 				continue
 			}
 
-			return inst.unboundInput(in.Name(), cfg.bornStartID != "")
+			return inst.unboundInput(in.Name())
 		}
 
 		p, err := bindDeclared(in, d)
@@ -100,18 +100,13 @@ func (inst *Instance) refuseUndeclared(
 	return nil
 }
 
-// unboundInput words the required-input refusal (ADR-040 §2.2). An
-// event-born launch says why nothing could fill it: the start payload
-// reaches a process input only with the event attachment capability.
-func (inst *Instance) unboundInput(name string, eventBorn bool) error {
-	msg := "process %q: required input %q is unbound at launch"
-	if eventBorn {
-		msg += " — an event-born launch cannot fill a process input until " +
-			"the event data attachment capability lands (#329)"
-	}
-
+// unboundInput words the required-input refusal (ADR-040 §2.2): the same
+// words for every launch — an event-born one had its chance through the born
+// start's output associations, run before this check (ADR-040 v.2 §2.7).
+func (inst *Instance) unboundInput(name string) error {
 	return errs.New(
-		errs.M(msg, inst.s.ProcessName, name),
+		errs.M("process %q: required input %q is unbound at launch",
+			inst.s.ProcessName, name),
 		errs.C(errorClass, errs.EmptyNotAllowed),
 		errs.D(observability.AttrProcessID, inst.s.ProcessID))
 }

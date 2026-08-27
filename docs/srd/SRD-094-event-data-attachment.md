@@ -168,7 +168,12 @@ the parameter's **name**, which is its root-scope name after ADR-040 —
 and bind it on the event (`BindOutgoing`/`BindIncoming`). Refused: a
 process with no contract, a name the contract does not declare, an event
 that is not this process's Start/End, a source id the event does not
-declare, an item mismatch between the two ends.
+declare. The two ends' items are not compared — `DataObject.Associate*`
+compares none either; an association copies a value, and a value the
+target cannot hold faults where it is copied, at run time. The process
+end is a fresh element over the declaration's item **named after the
+parameter** (`namedElement`), so the declaration itself is untouched
+(`NewAssociation` resets its target's state).
 
 **FR-5 — a born start's output associations run at seed time, before the
 contract binds.** In `seedInitialData`, after `bindEventPayload` and
@@ -176,7 +181,14 @@ contract binds.** In `seedInitialData`, after `bindEventPayload` and
 start that carries output associations, the instance runs them over the
 root scope — the payload items just committed are the sources, the
 declared process inputs (or data objects) the targets — through the same
-FR-3 path, with a root-scope frame. A required input filled this way then
+FR-3 path, with a root-scope frame (`runBornStartAssociations`). A data
+object target is already in the scope and is updated in place. A declared
+input is **not** there yet — the contract binds it after this — so the
+seed first commits a **placeholder** under each targeted input's name (a
+fresh copy of the declaration's item, Ready), lets the association fill
+it, and appends it to the launch's delivered data (`cfg.rootData`): the
+value the message filled then binds through the declaration exactly as a
+host-supplied one, type check included. A required input filled this way
 passes `bindContract`; one still unbound is refused with the existing
 message, which **no longer names #329** (`unboundInput`'s event-born
 branch collapses into the plain one). The host and call launches are
