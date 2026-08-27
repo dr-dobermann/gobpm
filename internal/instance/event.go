@@ -93,6 +93,7 @@ var trackEventKindNames = [...]string{
 	evTransactionCancel: "transactionCancel",
 	evDehydrated:        "dehydrated",
 	evIncident:          "incident",
+	evWaitArmed:         "waitArmed",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -222,4 +223,12 @@ const (
 	// SRD-079 §3.2) — the loop's own signal, used to gate the incident-raise
 	// checkpoint (the persistence slice wires it into checkpointTransitions).
 	evIncident
+	// evWaitArmed: a parked track finished registering its wait's waiters and
+	// holders (SRD-094 FR-8). Applied as a no-op; it exists so the loop tail
+	// re-runs maybeDehydrate AFTER the holder is in place. evWaiting must
+	// precede that registration (a synchronously fired event has to find the
+	// track recorded as parked), so the loop's first dehydration check can
+	// run before the wait is holdable — and, with evMoved now emitted before
+	// the wait is declared, nothing else would arrive to re-run it.
+	evWaitArmed
 )
