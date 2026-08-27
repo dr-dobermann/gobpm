@@ -1530,6 +1530,14 @@ func (t *track) parkForDelivery(
 		return nil, errStopped
 	}
 
+	// THIS EXECUTION IS RUNNING AGAIN. The flag is what a sequential
+	// decorator reads to refuse advancing past a waiting instance
+	// (refuseIfParked), so leaving it set after the delivery arrived would
+	// stop the iteration one pass in.
+	if e != nil {
+		e.parked.Store(false)
+	}
+
 	if cur := t.currentStep(); cur != nil && cur.node != step.node {
 		return nil, errRedispatch
 	}

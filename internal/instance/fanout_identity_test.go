@@ -26,10 +26,26 @@ import (
 func fanOutSnapshot(t *testing.T, key string) *snapshot.Snapshot {
 	t.Helper()
 
+	return miUserTaskSnapshot(t, key, false)
+}
+
+// miUserTaskSnapshot builds start → Multi-Instance User Task (three items) →
+// end, in whichever shape is asked for.
+func miUserTaskSnapshot(
+	t *testing.T, key string, sequential bool,
+) *snapshot.Snapshot {
+	t.Helper()
+
 	require.NoError(t, data.CreateDefaultStates())
 
-	mi, err := activities.NewMultiInstance(
-		activities.WithInputCollection("items", "item"))
+	opts := []activities.MultiInstanceOption{
+		activities.WithInputCollection("items", "item"),
+	}
+	if sequential {
+		opts = append(opts, activities.WithSequential())
+	}
+
+	mi, err := activities.NewMultiInstance(opts...)
 	require.NoError(t, err)
 
 	items := data.MustProperty("items",
@@ -258,4 +274,50 @@ func TestAParkedFanOutReleasesItsGoroutines(t *testing.T) {
 		5*time.Second, 10*time.Millisecond,
 		"and then released — the decorator holds N waits, and a wait nobody "+
 			"is working on is not a reason to stay resident")
+}
+
+// TestASequentialIteratedUserTaskIsCompletedPassByPass (ADR-025 §2.15): a
+// SEQUENTIAL Multi-Instance over a User Task offers ONE task at a time — the
+// shape the parallel fan-out was refused in favour of, and the one the
+// refusal's message still names.
+//
+// It parks on the track rather than in the decorator's queue, because one pass
+// runs at a time, so the decorator routes its completion there. A fan-out's
+// deliveries are queued and applied serially instead; both go through the
+// decorator, which is what makes it the node to everything outside it.
+func TestASequentialIteratedUserTaskIsCompletedPassByPass(t *testing.T) {
+	s := miUserTaskSnapshot(t, "cr-seq-ut", true)
+
+	dist := &countingDist{}
+
+	inst, err := New(s, scope.EmptyDataPath, cpRuntime(t), laxEP(t), dist)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	out := []data.Data{
+		data.MustParameter("result",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable("approved")),
+				data.ReadyDataState)),
+	}
+
+	alice := stubActor{id: "alice"}
+
+	for pass := 1; pass <= 3; pass++ {
+		require.Eventually(t, func() bool {
+			return len(dist.announced()) == pass
+		}, 5*time.Second, 10*time.Millisecond,
+			"pass %d offers its own task, and only its own", pass)
+
+		ids := dist.announced()
+		require.NoError(t, inst.Complete(ctx, ids[pass-1], alice, out),
+			"each pass is completed on the identity it was announced under")
+	}
+
+	require.Eventually(t, func() bool { return inst.State() == Completed },
+		5*time.Second, 10*time.Millisecond,
+		"three passes done, and the activity leaves")
 }

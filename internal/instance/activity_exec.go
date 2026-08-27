@@ -545,6 +545,25 @@ func (d *iterDecorator) state() instanceState {
 
 // subscriber: the decorator holds ONE subscription per definition for the
 // whole activity, across every pass (ADR-006 §2.9.5, SRD-090.B FR-1/FR-2).
+// completeInstance routes a COMPLETION to the instance whose work it is.
+//
+// Ungated, unlike deliverTo: an event may reach an instance that is no longer
+// waiting — a losing arm, a sibling that finished in flight — and dropping it
+// is correct. A completion is work somebody has already performed, and the
+// instance it belongs to routinely has not parked yet: a restored fan-out
+// registers its tasks before its decorator runs, so the first completion
+// arrives ahead of the instances. Dropping that marks the work done and waits
+// forever for it to be done again.
+func (d *iterDecorator) completeInstance(ord int, def flow.EventDefinition) {
+	if d.fansOutLeaves() {
+		d.deliver(ord, def)
+
+		return
+	}
+
+	d.t.offerToPass(def)
+}
+
 // deliverTo routes an occurrence to the instance it is for.
 //
 // THE DECORATOR DECIDES, because it is what executes the instances (ADR-025
@@ -1003,6 +1022,19 @@ func (d *iterDecorator) launchAll(ctx context.Context, run parallelRun) {
 	}
 }
 
+// classifyPass classifies the node for the execution running THIS pass, so a
+// waiting node parks as that pass rather than as the activity — see runPass.
+//
+// A composite instance is not a node execution and answers through its scope,
+// so only a leaf's executor is named.
+func (d *iterDecorator) classifyPass(e activityExec, step *stepInfo) error {
+	if le, leaf := e.(*nodeExec); leaf {
+		return d.t.checkNodeTypeFor(le, step.node, false)
+	}
+
+	return d.t.checkNodeType(step.node, false)
+}
+
 // sortedOrdinals returns the instance set's ordinals in ascending order, so a
 // fan-out parks and announces its tasks in a reproducible order — two runs of
 // one model must not disagree about which instance was offered first.
@@ -1100,6 +1132,10 @@ func (d *iterDecorator) applyOne(
 	})
 
 	e.received = nil
+
+	// its wait is over and its node has run: the instance is neither parked
+	// nor executing from here (see track.instancesBusy).
+	e.parked.Store(false)
 	e.finished.Store(true)
 
 	if err != nil {
@@ -1599,21 +1635,6 @@ func (d *iterDecorator) runPass(
 	// finalizeNodeExecution ended the previous pass. A composite executes
 	// its node ONCE, on exit, so its step is never re-armed — its
 	// instances open scopes rather than re-running it.
-	if !d.composite {
-		step.state = StepCreated
-
-		// re-classify the node for THIS pass (SRD-090.B FR-2). Arming and
-		// parking are keyed to a token arriving, and an in-place iteration
-		// arrives once — so without this the pass runs a waiting node
-		// without waiting, which is #313's defect. The decorator does it
-		// because the decorator is what re-runs the node; the subscription
-		// bookkeeping underneath is idempotent for an ordinal already
-		// recorded, so a node that does not wait pays nothing.
-		if err := d.t.checkNodeType(step.node, false); err != nil {
-			return nil, false, err
-		}
-	}
-
 	// runInstance stores the instance before calling this, and nothing else
 	// calls it — so the handle is always set here, where the two other
 	// Load sites guard because they answer the LOOP, which can ask between
@@ -1625,7 +1646,32 @@ func (d *iterDecorator) runPass(
 			"no live instance for %q at ordinal %d", d.step.node.Name(), i)
 	}
 
+	if !d.composite {
+		step.state = StepCreated
+
+		// re-classify the node for THIS pass (SRD-090.B FR-2). Arming and
+		// parking are keyed to a token arriving, and an in-place iteration
+		// arrives once — so without this the pass runs a waiting node
+		// without waiting, which is #313's defect. The decorator does it
+		// because the decorator is what re-runs the node; the subscription
+		// bookkeeping underneath is idempotent for an ordinal already
+		// recorded, so a node that does not wait pays nothing.
+		//
+		// FOR THIS PASS'S EXECUTION, not for the track. An iterated activity
+		// is parked by its instances rather than by the arrival that reaches
+		// it — the arrival happens once however many passes run — so a
+		// classification that named no execution would be skipped as that
+		// arrival, and the pass would run its waiting node without waiting.
+		// Naming the execution is also what gives each pass its own
+		// parked-work identity: three passes over a User Task are three
+		// offers, one at a time (ADR-020 §2.12).
+		if err := d.classifyPass(h.e, step); err != nil {
+			return nil, false, err
+		}
+	}
+
 	flows, err := h.e.run(ctx)
+
 	if err != nil {
 		return nil, false, err
 	}

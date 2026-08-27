@@ -493,9 +493,11 @@ type activitySubscriber interface {
 	// awaiting/stopped because such a wait has no definition to register.
 	parking(ord int)
 
-	// deliver queues one instance's completion for the decorator to apply,
-	// and ends that instance's capability wait.
-	deliver(ord int, def flow.EventDefinition)
+	// completeInstance hands one instance its completion. The DECORATOR
+	// decides where it goes: a fan-out queues it for serial application, and
+	// every other shape runs one pass at a time, which is parked on the
+	// track's own channel.
+	completeInstance(ord int, def flow.EventDefinition)
 
 	// delivering and delivered bracket the handoff, so the loop can tell a
 	// fully parked activity from one with work in flight.

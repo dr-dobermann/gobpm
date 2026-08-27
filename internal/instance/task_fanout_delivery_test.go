@@ -42,7 +42,10 @@ func fanOutTrack(t *testing.T) (*loopState, *track, *iterDecorator) {
 		evtCh:    make(chan flow.EventDefinition, eventBufferDepth),
 	}
 
-	d := &iterDecorator{t: tr, step: step, eventSubs: newEventSubs("inst", ut.ID())}
+	d := &iterDecorator{
+		t: tr, step: step, mi: mi,
+		eventSubs: newEventSubs("inst", ut.ID()),
+	}
 	tr.exec.Store(&execHandle{e: d, node: ut})
 
 	return newLoopState(inst), tr, d
