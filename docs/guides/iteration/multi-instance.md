@@ -256,7 +256,8 @@ Two shapes are still refused at `snapshot.New`, and for different reasons:
   would share one job identity — a job is keyed to the track it belongs to,
   with no ordinal — so a single worker report would complete work nobody
   performed. Make it **sequential** — one instance dispatches at a time and
-  each pass is reported on its own — or model N tasks.
+  each pass is reported on its own — or model N tasks. Lifting this is
+  [#355](https://github.com/dr-dobermann/gobpm/issues/355).
 
 A parallel fan-out over a **User Task** used to be refused for the same
 reason, and no longer is: every instance now owns its parked identity.

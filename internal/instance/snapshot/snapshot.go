@@ -454,6 +454,9 @@ func hasMessageTrigger(en flow.EventNode) bool {
 // maps a job id to a track, with no ordinal — so N instances of one activity
 // would share a single job and the rest would finish without anyone doing the
 // work.
+//
+// A deferral, not a limit: the mechanism the human fan-out landed is what this
+// path needs, one register down. Tracked by #355.
 func parksOnWorker(n flow.Node) bool {
 	ew, ok := n.(tasks.ExternalWorker)
 	if !ok {

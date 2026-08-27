@@ -85,7 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waiting instances. A **parallel** fan-out over an **external-worker**
   Service Task would have its instances share one job identity — a job is
   keyed to the track, with no ordinal — so a single report would complete
-  work nobody performed; make it sequential, or model N tasks.
+  work nobody performed; make it sequential, or model N tasks. That one is a
+  deferral rather than a limit, tracked by
+  [#355](https://github.com/dr-dobermann/gobpm/issues/355).
 
   The User Task half of that second refusal has since lifted, now that each
   instance owns its identity — see below.
