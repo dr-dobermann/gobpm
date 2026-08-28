@@ -960,6 +960,17 @@ func (t *track) recordIterationOwner(node flow.Node, ord int, owner string) {
 	t.instance.iterationOwners.record(node.ID(), ord, owner)
 }
 
+// iterationDataOf is the data an ITERATION carries of its own — the element it
+// was seeded with, and the engine's per-iteration names. Empty for a plain
+// node, which has nothing to distinguish.
+func iterationDataOf(e *nodeExec) []data.Data {
+	if e == nil {
+		return nil
+	}
+
+	return e.local
+}
+
 // rememberTaskID records instance ord's parked-work identity as it is minted
 // or adopted, so the checkpoint records what each instance was announced under
 // (ADR-020 §2.12).
@@ -1327,11 +1338,12 @@ func (t *track) parkHumanTask(e *nodeExec, node flow.Node) error {
 
 	if t.instance.State() == Active {
 		t.instance.emit(trackEvent{
-			kind:   evTaskWaiting,
-			track:  t,
-			node:   node,
-			taskID: taskID,
-			ord:    ord,
+			kind:      evTaskWaiting,
+			track:     t,
+			node:      node,
+			taskID:    taskID,
+			ord:       ord,
+			iterLocal: iterationDataOf(e),
 		})
 	}
 
@@ -1998,11 +2010,11 @@ func (t *track) executeNodeAs(
 		}
 	}
 
-	// ONE instance of an iterated activity carries its own data frame-local
-	// (ADR-025 §2.2, SRD-090.A FR-4): binding it at the shared container
-	// scope is safe only while a single instance runs at a time, and the
-	// instances of a parallel activity run at once. Bound before the node
-	// loads its inputs, which resolve frame-first through it.
+	// ONE ITERATION of an activity carries its own data frame-local (ADR-025
+	// §2.2, SRD-090.A FR-4): binding it at the shared container scope is safe
+	// only while one iteration runs at a time, and a parallel Multi-Instance
+	// runs them at once. Bound before the node loads its inputs, which
+	// resolve frame-first through it.
 	if len(ai.local) > 0 {
 		if berr := f.BindLocal(ai.local...); berr != nil {
 			return nil, berr

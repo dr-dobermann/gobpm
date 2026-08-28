@@ -389,12 +389,13 @@ func (ls *loopState) registerTask(
 	tr *track,
 	node flow.Node,
 	ord int,
+	iterLocal []data.Data,
 ) *interactor.TaskInfo {
 	if taskID == "" {
 		return nil // not a human task — nothing to register
 	}
 
-	info := ls.inst.buildTaskInfo(ctx, taskID, node)
+	info := ls.inst.buildTaskInfo(ctx, taskID, node, iterLocal)
 
 	ls.tasks[taskID] = taskEntry{
 		track:    tr,
@@ -414,8 +415,9 @@ func (ls *loopState) addTask(
 	tr *track,
 	node flow.Node,
 	ord int,
+	iterLocal []data.Data,
 ) {
-	built := ls.registerTask(ctx, taskID, tr, node, ord)
+	built := ls.registerTask(ctx, taskID, tr, node, ord, iterLocal)
 	if built == nil {
 		return
 	}
@@ -480,7 +482,10 @@ func (ls *loopState) adoptRestoredTasks(ctx context.Context, initial []*track) {
 			// its instance's residency (ADR-020 §2.1.1). Re-announcing says
 			// nothing new, and the instances announce for themselves when
 			// they re-park.
-			ls.registerTask(ctx, id, t, step.node, ord)
+			// no iteration data: a restored host re-announces nothing, and
+			// the eligibility on the entry is the one the announcement
+			// froze — its iterations resolve their own when they re-park.
+			ls.registerTask(ctx, id, t, step.node, ord, nil)
 		}
 	}
 }
@@ -578,7 +583,7 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 	// restored fan-out re-classifies per instance when its decorator runs.
 	taskID, ord := t.humanTaskIdentity(nil)
 
-	ls.addTask(ctx, taskID, t, node, ord)
+	ls.addTask(ctx, taskID, t, node, ord, nil)
 }
 
 // onTaskWaiting records a parked UserTask and announces it to the distributor,
@@ -591,7 +596,7 @@ func (ls *loopState) onTaskWaiting(ctx context.Context, ev trackEvent) {
 	}
 
 	ls.waiting[ev.track.ID()] = struct{}{}
-	ls.addTask(ctx, ev.taskID, ev.track, ev.node, ev.ord)
+	ls.addTask(ctx, ev.taskID, ev.track, ev.node, ev.ord, ev.iterLocal)
 }
 
 // withdrawAllTasks withdraws every parked task and clears the registry, used on
@@ -650,13 +655,14 @@ func (inst *Instance) buildTaskInfo(
 	ctx context.Context,
 	taskID string,
 	node flow.Node,
+	iterLocal []data.Data,
 ) interactor.TaskInfo {
 	ht, _ := node.(interactor.HumanTask)
 
 	return interactor.TaskInfo{
 		TaskRef:  inst.taskRef(taskID, node),
 		Roles:    ht.Roles(),
-		Eligible: inst.resolveEligibility(ctx, taskID, node),
+		Eligible: inst.resolveEligibility(ctx, taskID, node, iterLocal),
 		Priority: ht.TaskPriority(),
 	}
 }
@@ -674,6 +680,7 @@ func (inst *Instance) resolveEligibility(
 	ctx context.Context,
 	taskID string,
 	node flow.Node,
+	iterLocal []data.Data,
 ) interactor.Eligibility {
 	ht, _ := node.(interactor.HumanTask)
 
@@ -683,6 +690,20 @@ func (inst *Instance) resolveEligibility(
 	}
 
 	defer frame.Discard()
+
+	// AN ITERATION RESOLVES ITS OWN PERFORMER, in the data context it runs in
+	// (ADR-025 §2.15, SRD-090.D FR-10): the element it was seeded with is
+	// frame-local to it, so without this the expression reads the activity's
+	// scope, where that element is not visible.
+	//
+	// Bound rather than resolved later because eligibility is assessed ONCE,
+	// at the announcement — the verdict is frozen on the registry entry and
+	// every later check reads that snapshot (ADR-020 v.2 §2.7).
+	if len(iterLocal) > 0 {
+		if berr := frame.BindLocal(iterLocal...); berr != nil {
+			return inst.denyByResolutionFailure(taskID, node, berr)
+		}
+	}
 
 	return ht.ResolveEligibility(
 		ctx, newExecEnv(inst, frame, nil), inst.ExpressionEngine())

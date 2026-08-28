@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own identity — the identity its holder keeps across a dehydration — and the
   activity finishes only when every one of them has actually been done.
 
+  Each iteration resolves its OWN performer, in the data context it runs in:
+  an assignee expression reading the element that iteration was seeded with
+  names a different person per iteration. Eligibility is assessed once, at the
+  announcement, and checked from that snapshot afterwards.
+
   The decorator is the node to everything outside it. It holds the N waits and
   applies their completions **serially, on its own goroutine**: the instances
   are state it owns rather than goroutines running a node they share. That is

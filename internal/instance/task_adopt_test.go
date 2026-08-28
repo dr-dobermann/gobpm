@@ -82,9 +82,9 @@ func TestRegisteringNothingIsNotATask(t *testing.T) {
 	ls.inst.td = dist
 
 	require.Nil(t, ls.registerTask(
-		context.Background(), "", tr, tr.steps[0].node, 0))
+		context.Background(), "", tr, tr.steps[0].node, 0, nil))
 
-	ls.addTask(context.Background(), "", tr, tr.steps[0].node, 0)
+	ls.addTask(context.Background(), "", tr, tr.steps[0].node, 0, nil)
 
 	require.Empty(t, ls.tasks)
 	require.Empty(t, dist.announced())
