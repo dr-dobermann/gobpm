@@ -286,6 +286,13 @@ func (do *DataObject) ID() string {
 // ------------------------ flow.DataNode -------------------------------------
 
 // Update updates the DataObject state.
+//
+// The legacy flow.DataNode path: it recalculates the object from its
+// incoming association and pushes it into the outgoing ones. NOTHING in the
+// engine calls it — an executing process moves data through the execution
+// frame (pkg/model/dataflow, SRD-063/SRD-097) — so an association carrying
+// the assignment shape is refused here rather than silently mis-evaluated
+// (data.Association.calculate says why).
 func (do *DataObject) Update(ctx context.Context) error {
 	if do.incoming != nil {
 		if err := do.UpdateState(data.UnavailableDataState); err != nil {

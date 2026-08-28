@@ -147,12 +147,21 @@ which combine several sources through their own expressions just as a
 transformation does. Availability is unchanged — an unavailable source fails fast
 (§2.3), never waits, for every shape.
 
-**FR-6 — one evaluator, not two.** `Association.calculate`'s transformation
-branch is retired in favour of FR-3's dispatch: `Value`/`UpdateSource` route
-through the same evaluation, so `data_objects` and the live path cannot
-diverge (ADR-024 §2.16's rule, one layer down). Where `calculate` needs an
-engine it takes one; a `data_objects` call with none keeps today's behaviour
-for a plain association and fails fast for an expression-bearing one.
+**FR-6 — the second evaluator is bounded, not merged.** `Association.calculate`
+belongs to the legacy `flow.DataNode` path (`DataObject.Update`), which
+**has no runtime caller** — only its own two package tests. Routing it
+through FR-3's dispatch is impossible as first written: the dispatch reads
+the engine off the execution frame (FR-2) and that path has no frame. So
+the second evaluator is bounded instead: `calculate` keeps the
+transformation branch it can honestly evaluate (a `FormalExpression` over
+the association's own sources) and **refuses an assignment-bearing
+association**, because plain-copying one would silently discard a declared
+mapping and evaluating a different shape than the document declared is how
+two evaluators drift (ADR-024 §2.16, one layer down). `calculate`,
+`Value`, `UpdateSource` and `DataObject.Update` say in their doc comments
+which path they are and which one an executing process runs. Retiring the
+dead path outright is a public-interface removal (`flow.DataNode.Update`)
+and its own decision, filed rather than smuggled in here.
 
 **FR-7 — the importer maps all three constructs.** `<transformation>` and
 each `<assignment>`'s `<from>`/`<to>` are parsed for real (body + language,

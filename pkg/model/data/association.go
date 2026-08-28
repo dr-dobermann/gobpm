@@ -173,6 +173,9 @@ func NewAssociation(
 }
 
 // UpdateSource updates association source and target with a new value.
+//
+// Part of the legacy flow.DataNode path (see calculate): an executing
+// process fills and pushes associations through pkg/model/dataflow.
 func (a *Association) UpdateSource(
 	ctx context.Context,
 	iDef *ItemDefinition,
@@ -247,6 +250,9 @@ func (a *Association) IsReady() bool {
 }
 
 // Value returns recalculated IDef's value of the association's target.
+//
+// Part of the legacy flow.DataNode path (see calculate): an executing
+// process fills and pushes associations through pkg/model/dataflow.
 func (a *Association) Value(ctx context.Context) (*ItemDefinition, error) {
 	if a.target == nil {
 		return nil,
@@ -296,8 +302,31 @@ func (a *Association) HasSourceID(id string) bool {
 // associateion target state becomes Unavailable.
 // calculate returns error only if transformation or assignment are
 // failed.
+//
+// THIS IS THE LEGACY flow.DataNode PATH, not the one an executing process
+// runs. A running instance moves data through pkg/model/dataflow, which
+// evaluates BOTH expression shapes against the execution frame (ADR-011
+// §2.4, SRD-097). calculate reaches no frame, and therefore no expression
+// engine, so it can only evaluate what a FormalExpression evaluates on its
+// own — a transformation over the association's own sources.
+//
+// An assignment shape is REFUSED here rather than ignored. Doing the plain
+// copy instead would silently discard a declared mapping, which is the one
+// outcome the shapes exist to prevent; and quietly evaluating a different
+// shape than the document declared is how two evaluators drift (ADR-024
+// §2.16, one layer down). Nothing in the engine reaches this refusal —
+// flow.DataNode.Update has no runtime caller — and that is exactly why it
+// must not lie if something ever does.
 func (a *Association) calculate(ctx context.Context) error {
 	var srcV Value
+
+	if len(a.assignments) != 0 {
+		return fmt.Errorf(
+			"association #%s carries assignments, which this path does not "+
+				"evaluate: it has no expression engine (ADR-011 §2.4) — a "+
+				"running process moves data through the execution frame",
+			a.ID())
+	}
 
 	if a.transformation == nil {
 		if len(a.sources) == 0 {

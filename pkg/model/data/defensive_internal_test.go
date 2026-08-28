@@ -40,3 +40,21 @@ func TestAssocConfigValidateNilTarget(t *testing.T) {
 
 	require.ErrorContains(t, cfg.Validate(), "target isn't defined")
 }
+
+// TestCalculateRefusesAssignments covers the legacy path's refusal
+// (SRD-097 FR-6): calculate has no expression engine, so an association
+// carrying the assignment shape is refused rather than plain-copied, which
+// would silently discard the declared mapping. Reached white-box because
+// flow.DataNode.Update — the only caller — has no runtime caller of its own.
+func TestCalculateRefusesAssignments(t *testing.T) {
+	require.NoError(t, CreateDefaultStates())
+
+	a := &Association{
+		assignments: []*Assignment{{to: "target"}},
+		target:      &ItemAwareElement{},
+	}
+
+	err := a.calculate(context.Background())
+	require.ErrorContains(t, err, "assignments")
+	require.ErrorContains(t, err, "expression engine")
+}
