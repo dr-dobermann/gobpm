@@ -69,8 +69,30 @@ type Association struct {
 	transformation FormalExpression
 	sources        map[string]*ItemAwareElement
 	target         *ItemAwareElement
-	dataStoreRef   string
+	// assignments are the from→to mappings of the association's second
+	// expression shape (ADR-011 §2.4); empty unless the association
+	// declares them, and never populated together with transformation.
+	assignments  []*Assignment
+	dataStoreRef string
 	foundation.BaseElement
+}
+
+// Transformation returns the association's transformation expression, or nil
+// when it carries none. Its result REPLACES the target's value (§10.4.2
+// rule 1).
+func (a *Association) Transformation() FormalExpression {
+	return a.transformation
+}
+
+// Assignments returns the association's from→to mappings, in declaration
+// order — a copy, so a caller cannot reshape the association. Empty unless
+// the association declares them.
+func (a *Association) Assignments() []*Assignment {
+	if len(a.assignments) == 0 {
+		return nil
+	}
+
+	return append(make([]*Assignment, 0, len(a.assignments)), a.assignments...)
 }
 
 // DataStoreRef returns the engine Data Store id when the Association is backed
@@ -338,30 +360,3 @@ func (a *Association) Find(ctx context.Context, name string) (Data, error) {
 }
 
 // -----------------------------------------------------------------------------
-
-// ============================================================================
-//                          Assignment
-// ============================================================================
-
-// The Assignment class is used to specify a simple mapping of data elements
-// using a specified Expression language.
-// The default Expression language for all Expressions is specified in the
-// Definitions element, using the expressionLanguage attribute. It can also be
-// overridden on each individual Assignment using the same attribute.
-// type Assignment interface {
-// 	foundation.Identifyer
-// 	foundation.Documentator
-//
-// 	Assign(
-// 		ctx context.Context,
-// 		target *ItemAwareElement,
-// 		source Source,
-// 	) error
-//
-// 	// The Expression that evaluates the source of the Assignment.
-// 	From FormalExpression
-//
-// 	// The Expression that defines the actual Assignment operation and the
-// 	// target data element.
-// 	To FormalExpression
-// }

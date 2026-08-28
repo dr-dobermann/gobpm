@@ -88,8 +88,16 @@ func (a *Assignment) From() FormalExpression
 func (a *Assignment) To() string
 ```
 
-`from` must be non-nil, `to` non-blank and parseable by `data.ParsePath`
-(a step-less path is legal — it names the target itself). The commented-out
+`from` must be non-nil, `to` non-blank and parseable by `data.SplitPath`.
+
+**The `to` path is absolute, and its head names the association's target** —
+the scope datum on an output association, the activity's parameter on an
+input one — with the remaining steps addressing inside it. A head-only `to`
+("order") is the whole-value write; "order.status" writes one field.
+`Assignment.ToHead()` performs that split once, so the validator, the copy
+path and the converter all read one answer, and `values.SetPath` receives
+exactly the relative remainder it expects. A head naming anything but the
+target is a modelling error, refused where it is read. The commented-out
 interface is deleted. `WithAssignments(as ...*Assignment) options.Option`
 attaches them to an association; an association may carry a transformation
 **or** assignments, never both — ADR-011 §2.4's engine choice, not a rule of
@@ -133,7 +141,10 @@ transformation) is a whole-value `Value.Update`.
 **FR-5 — sources gate by shape, and the model says so.** With neither
 expression shape, exactly one source is legal (§10.4.2 rule 3): a second
 `WithSource` on a transformation-less, assignment-less association is refused
-at construction. Availability is unchanged — an unavailable source fails fast
+at construction. `asscConfig.Validate` (`pkg/model/data/data_options.go:184`)
+already enforces this for a transformation; the rule extends to assignments,
+which combine several sources through their own expressions just as a
+transformation does. Availability is unchanged — an unavailable source fails fast
 (§2.3), never waits, for every shape.
 
 **FR-6 — one evaluator, not two.** `Association.calculate`'s transformation
@@ -287,6 +298,16 @@ capability; that is the write contract ADR-011 §2.9.3 fixed. A document's
 path (FR-8) — the one place where a document's freedom meets the model's
 narrowing, and the place a refusal is honest. Keeping `to` a `FormalExpression`
 in the model would carry a body nothing evaluates.
+
+### §4.3a Why the head is the target rather than a free name
+
+An assignment could in principle write anywhere the frame can address, which
+is what §10.4.2's "any element in context" literally permits. Binding the head
+to the association's own target keeps one association responsible for one
+target: the availability gate, the `Dropped` report and the observability
+movement all name that target, and an assignment that wrote elsewhere would
+make each of them lie. A mapping that needs to write two data elements is two
+associations, which is also how a modeller draws it.
 
 ### §4.4 Why the multi-source rule is validated in the model
 

@@ -30,3 +30,13 @@ func TestAssociationCalculateNoSources(t *testing.T) {
 
 	require.Error(t, a.calculate(context.Background()))
 }
+
+// TestAssocConfigValidateNilTarget covers Validate's target==nil guard.
+// NewAssociation rejects a nil target before it builds the config, so the
+// branch is unreachable through the public constructor — exercised here
+// white-box to prove it classifies rather than passing a nil through.
+func TestAssocConfigValidateNilTarget(t *testing.T) {
+	cfg := asscConfig{src: []*ItemAwareElement{{}}}
+
+	require.ErrorContains(t, cfg.Validate(), "target isn't defined")
+}
