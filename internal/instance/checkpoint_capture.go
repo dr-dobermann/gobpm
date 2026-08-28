@@ -162,6 +162,7 @@ func (ls *loopState) captureDocument(
 		ConvKeys:        inst.corr.snapshotKeys(),
 		CompletedBy:     inst.performers.snapshot(),
 		IterationOwners: inst.iterationOwners.snapshot(),
+		Iterations:      inst.iterations.records(),
 		StartedAt:       inst.startedAtRFC3339(),
 	}
 

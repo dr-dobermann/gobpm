@@ -1,6 +1,10 @@
 package instance
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
+)
 
 // iterationFact is what an activity's iteration reports about itself: the
 // shape, the frozen total, and how the instances ended. It is the durable
@@ -53,6 +57,49 @@ func (i *iterations) record(id string, f iterationFact) {
 	defer i.m.Unlock()
 
 	i.byActivity[id] = f
+}
+
+// records copies the register for the checkpoint, in the wire shape.
+func (i *iterations) records() map[string]checkpoint.ActivityIteration {
+	i.m.Lock()
+	defer i.m.Unlock()
+
+	if len(i.byActivity) == 0 {
+		return nil
+	}
+
+	out := make(map[string]checkpoint.ActivityIteration, len(i.byActivity))
+	for id, f := range i.byActivity {
+		out[id] = checkpoint.ActivityIteration{
+			Kind:       f.Kind,
+			Total:      f.Total,
+			Completed:  f.Completed,
+			Terminated: f.Terminated,
+		}
+	}
+
+	return out
+}
+
+// restore adopts the accounts a checkpoint recorded, so what an activity did
+// survives the instance being released and rebuilt — the question is asked by
+// nodes AFTER it, which is exactly when a long wait has had time to dehydrate.
+func (i *iterations) restore(byActivity map[string]checkpoint.ActivityIteration) {
+	if len(byActivity) == 0 {
+		return
+	}
+
+	i.m.Lock()
+	defer i.m.Unlock()
+
+	for id, r := range byActivity {
+		i.byActivity[id] = iterationFact{
+			Kind:       r.Kind,
+			Total:      r.Total,
+			Completed:  r.Completed,
+			Terminated: r.Terminated,
+		}
+	}
 }
 
 // snapshot copies the register for a RUNTIME read; nil when no activity has

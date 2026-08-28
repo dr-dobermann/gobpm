@@ -571,3 +571,79 @@ func TestIterationOwnersSurvivesTheInstanceBeingRebuilt(t *testing.T) {
 		owners["cr-owners-cp-approve"],
 		"a later node asking who approved item 0 gets alice, not silence")
 }
+
+// TestIterationsSurvivesTheInstanceBeingRebuilt (SRD-090.D FR-4, M1b): what an
+// activity's iteration DID rides the checkpoint too.
+//
+// The register exists to be read AFTER the activity — that is the question
+// BPMN's counts cannot answer, since they end with the activation they
+// describe. A node asking it is therefore reading in a rebuilt instance
+// whenever the process waited on anything, and a register rebuilt empty would
+// report an activity that processed three items as having processed none: a
+// wrong answer rather than a missing one.
+func TestIterationsSurvivesTheInstanceBeingRebuilt(t *testing.T) {
+	s := miUserTaskSnapshot(t, "cr-iters-cp", true)
+
+	dist := &countingDist{}
+	rt := cpRuntime(t)
+
+	inst, err := New(s, scope.EmptyDataPath, rt, laxEP(t), dist,
+		WithCheckpointing("engine-A", "engine-A", time.Minute))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	out := []data.Data{
+		data.MustParameter("result",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable("approved")),
+				data.ReadyDataState)),
+	}
+
+	require.Eventually(t, func() bool { return len(dist.announced()) == 1 },
+		5*time.Second, 10*time.Millisecond)
+
+	require.NoError(t, inst.Complete(ctx,
+		dist.announced()[0], stubActor{id: "alice"}, out))
+
+	var doc *checkpoint.Document
+
+	require.Eventually(t, func() bool {
+		rec, ok, lErr := rt.Repository().Load(context.Background(), inst.ID())
+		if lErr != nil || !ok {
+			return false
+		}
+
+		d, uErr := checkpoint.Unmarshal(rec.Payload)
+		if uErr != nil {
+			return false
+		}
+
+		if d.Iterations["cr-iters-cp-approve"].Completed == 0 {
+			return false
+		}
+
+		doc = d
+
+		return true
+	}, 5*time.Second, 10*time.Millisecond,
+		"the account is captured, not left in memory with the decorator")
+
+	restored, err := Restore(doc, s, scope.EmptyDataPath,
+		cpRuntime(t), laxEP(t), dist, nil)
+	require.NoError(t, err)
+
+	v, err := restored.RuntimeVar(Iterations)
+	require.NoError(t, err)
+
+	iters, ok := v.Value().Get(ctx).(map[string]iterationFact)
+	require.True(t, ok)
+
+	got := iters["cr-iters-cp-approve"]
+	require.Equal(t, iterKindMISequential, got.Kind)
+	require.Equal(t, 3, got.Total, "three items, frozen at activation")
+	require.Equal(t, 1, got.Completed,
+		"one approval done — a rebuilt register would say none")
+}

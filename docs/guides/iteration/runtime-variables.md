@@ -127,8 +127,10 @@ d, err := r.GetData("RUNTIME/ITERATION_OWNERS")
 ```
 
 Both ride the checkpoint, so the answer survives the instance being released
-and rebuilt — which for a fan-out over human work is its ordinary state, since
-the approvals it is waiting on take days.
+and rebuilt. That is not an edge case for either: they exist to be read AFTER
+the activity, and a process that waited on anything is answering in a rebuilt
+instance. A register rebuilt empty would report an activity that processed
+three items as having processed none.
 
 It is not the same question as `RUNTIME/COMPLETED_BY`, and one cannot answer
 the other. `COMPLETED_BY` keys by NODE, so an iterated activity has a single

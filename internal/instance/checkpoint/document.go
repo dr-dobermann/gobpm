@@ -94,6 +94,18 @@ type Document struct {
 	// as it did then: no answer rather than a wrong one.
 	IterationOwners map[string]map[string]string `json:"iteration_owners,omitempty"`
 
+	// Iterations records what each iterated activity DID — activity id →
+	// its account (ADR-025 §2.9.2, SRD-090.D FR-4). It rides the checkpoint
+	// for IterationOwners' reason: the register answers a question asked
+	// AFTER the activity finished, by a node that may well be running in a
+	// rebuilt instance, and one rebuilt empty would report an activity that
+	// processed three items as having processed none.
+	//
+	// It is not TrackRecord.Iteration, which is a live activity's POSITION —
+	// where a fan-out has got to, so it can resume. This is the account it
+	// leaves behind, and it outlives the track that produced it.
+	Iterations map[string]ActivityIteration `json:"iterations,omitempty"`
+
 	InstanceID string `json:"instance_id"`
 	// ParentID/CallNodeID record child linkage informationally (a child
 	// instance is its own record; re-linking a live call is SRD-071+).
@@ -301,6 +313,20 @@ type IterationInstance struct {
 	TaskID string `json:"task_id,omitempty"`
 
 	Ordinal int `json:"ordinal"`
+}
+
+// ActivityIteration is what one iterated activity DID: the shape it ran in,
+// how many instances it froze at, and how they ended. The durable half of
+// BPMN's §2.9 counts, which end with the activation they describe.
+//
+// Not to be read as IterationRecord below, which is a live activity's
+// POSITION — where it has got to, so it can resume. This is the account it
+// leaves behind, and it outlives the track that produced it.
+type ActivityIteration struct {
+	Kind       string `json:"kind"`
+	Total      int    `json:"total"`
+	Completed  int    `json:"completed"`
+	Terminated int    `json:"terminated"`
 }
 
 // IterationRecord is an iterated activity's live instances (Schema 6,

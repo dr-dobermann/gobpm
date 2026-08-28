@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   activity id + ordinal, all of which already survive a checkpoint, so it is
   stable across a restart with nothing stored for it.
 
+  Both registers ride the checkpoint: they are read AFTER the activity, so a
+  process that waited on anything is answering in a rebuilt instance.
+
   New `RUNTIME/ITERATIONS` answers what an activity's iteration *did* —
   `{kind, total, completed, terminated}` keyed by activity id — from any node
   after it. That is the question the `numberOf*` counts cannot answer at any
