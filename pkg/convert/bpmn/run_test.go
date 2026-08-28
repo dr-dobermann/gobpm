@@ -696,9 +696,21 @@ func TestEventBasedGatewayRunsOnAThresher(t *testing.T) {
 		t.Fatalf("StartLatest: %v", err)
 	}
 
+	started := time.Now()
+
 	if _, err = h.WaitCompletion(ctx); err != nil {
 		t.Fatalf("WaitCompletion: %v — the gateway imported, so a run that "+
 			"never finishes means its branches were built and never armed",
 			err)
+	}
+
+	// Completing is not enough: a gateway that armed nothing and fell
+	// straight through would also complete, and instantly. The timer is the
+	// only branch that can fire, so the run cannot be shorter than it — and
+	// asserting that is what makes this a test of the ARMING rather than of
+	// the token reaching an end event.
+	if waited := time.Since(started); waited < 900*time.Millisecond {
+		t.Errorf("the run finished in %s, faster than the 1s timer branch it "+
+			"had to wait for — the gateway completed without arming", waited)
 	}
 }
