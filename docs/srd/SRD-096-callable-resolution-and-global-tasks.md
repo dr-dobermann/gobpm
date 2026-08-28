@@ -13,41 +13,41 @@
 ## §1 Background
 
 A call activity resolves its callable **at call time** and nowhere earlier:
-`activities.NewCallActivity` (`pkg/model/activities/call_activity.go:72`)
+`activities.NewCallActivity` (`NewCallActivity` (`pkg/model/activities/call_activity.go`))
 stores `calledKey` verbatim and its doc comment says why — *"The registry is
 deliberately NOT consulted here — resolution happens at call time (ADR-023
 §2.7), so the callable may be registered later or re-versioned."* The
 instance loop hands the key to the engine as `exec.ProcessCall{Key,
-Version, …}` (`onCallWaiting`, `internal/instance/calls.go:81-88`), and the Thresher serves
+Version, …}` (`onCallWaiting`, `internal/instance/calls.go`), and the Thresher serves
 it from its registration maps in `InvokeProcess`
-(`pkg/thresher/invoker.go:56`, `resolveCallLocked` at
-`pkg/thresher/locked.go:396`), failing a missing key with a classified
-`ObjectNotFound` (`invoker.go:57-63`). There is no registry interface: the
+(`pkg/thresher/invoker.go`, `resolveCallLocked` at
+`resolveCallLocked` (`pkg/thresher/locked.go`)), failing a missing key with a classified
+`ObjectNotFound` (`invoker.go`). There is no registry interface: the
 registry is Thresher state.
 
 The importer maps `<callActivity calledElement="k">` onto exactly that key
-(`buildCallActivity`, `pkg/convert/bpmn/dispatch.go:467`), which is right
+(`buildCallActivity`, `pkg/convert/bpmn/dispatch.go`), which is right
 whenever the document's reference and the engine's registration key are the
 same string, and wrong in two cases the same function already knows about:
 
-1. **A prefixed `calledElement`.** `dispatch.go:472` refuses any `:` in the
+1. **A prefixed `calledElement`.** `buildCallActivity` refuses any `:` in the
    value — *"names a callable in another definitions document … needs a
    callable-resolution seam this engine does not have (#325)"*. The
    converter has the machinery to resolve a prefix (`items.prefixes`,
-   `pkg/convert/bpmn/item.go:113-117`, filled by `declareNamespaces` at
-   `item.go:144`; `importFor` at `item.go:368` already resolves an
+   `items.prefixes` (`pkg/convert/bpmn/item.go`), filled by `declareNamespaces` at
+   `declareNamespaces` (`item.go`); `importFor` at `importFor` (`item.go`) already resolves an
    `<itemDefinition>`'s `structureRef` prefix through the declared
    `<import>`s) and uses none of it here. The document's own
    `targetNamespace` is read by nobody (no hit in `pkg/convert/bpmn`
    outside the exporter's hard-coded `"http://bpmn.io/schema/bpmn"`,
-   `exporter.go:288`), so even a self-qualified `tns:P` — what most
+   `exporter.go`), so even a self-qualified `tns:P` — what most
    modellers emit — is refused.
 2. **The GlobalTask family.** Five `notYet` rows in the policy table
-   (`dispatch.go:122-126`) refuse `globalTask`, `globalUserTask`,
+   (`dispatch.go`'s policy table) refuse `globalTask`, `globalUserTask`,
    `globalManualTask`, `globalScriptTask` and `globalBusinessRuleTask`
-   through `notSupportedYet` (`pkg/convert/bpmn/errors.go:65`) — *"reuse by
+   through `notSupportedYet` (`notSupportedYet` (`pkg/convert/bpmn/errors.go`)) — *"reuse by
    reference needs a registry of callable definitions, which belongs to the
-   server tier"*. The `notYet` kind (`dispatch.go:72`) has no other user.
+   server tier"*. The `notYet` kind (`dispatch.go`) has no other user.
 
 Both were filed as one register row (#325; the import-coverage guide, row
 `<callActivity calledElement="…">`), and the row was written before
@@ -108,7 +108,7 @@ registry lives and where the call is resolved.
   task's id (claimed in the id ledger; a document already using it is
   refused as a duplicate) and name (falling back to the id); its
   `<ioSpecification>` built through the process-level path SRD-093 landed
-  (`data.WithInputs`/`data.WithOutputs`, `importer.go:847-868`), absent →
+  (`data.WithInputs`/`data.WithOutputs`, `constructProcess` (`importer.go`)), absent →
   contract-less; its `<documentation>` on the process; and a body of a None
   Start Event, the task, and a None End Event joined by two sequence flows.
 - **FR-7 — The task is its in-process counterpart.** The task's node spec
@@ -117,19 +117,19 @@ registry lives and where the call is resolved.
   `globalScriptTask` → `scriptTask`, `globalBusinessRuleTask` →
   `businessRuleTask` — so pass 2's existing `nodeBuilders`, `paramOwners`
   and dialect handling build it with no second reading of any construct
-  (`dispatch.go:610-652`, `importer.go:1179`, `:1207-1217`). The body is
-  read by the same `parseNodeBody` (`importer.go:1644`), so `<script>`,
+  (`nodeBuilders` in `dispatch.go`; `buildNode` in `importer.go`). The body is
+  read by the same `parseNodeBody` (`parseNodeBody` (`importer.go`)), so `<script>`,
   `<documentation>` and dialect attributes behave exactly as on the
   in-process form — and so does everything the in-process form refuses: a
   `<resourceRole>`/`<potentialOwner>` has no reader today
-  (`nodeChildParsers`, `dispatch.go:536-548`) and is refused on both forms
+  (`nodeChildParsers`, `nodeChildParsers` (`dispatch.go`)) and is refused on both forms
   identically. Data associations are not read on the global form: a
   `CallableElement` is not an `Activity` and has none
   (`activities.md:646`).
 - **FR-7a — One `<ioSpecification>`, two roles.** The callable's
   `<ioSpecification>` is parsed **once** (its own id and its sets' ids
-  claimed once, as `parseIOSpecification` already does,
-  `dataflow.go:392-393`, `:530-533`) and used twice: as the **process
+  claimed once, as `parseIOSpecification` and `parseIOSet` in `dataflow.go`
+  already do) and used twice: as the **process
   contract** (FR-6) and as the **task's own parameters**. This is one
   element in the standard — the `ioSpecification` belongs to the
   `CallableElement`, and for a global task the callable *is* the task
@@ -149,24 +149,24 @@ registry lives and where the call is resolved.
 - **FR-9 — `Import`'s pick ignores synthesized processes.** A global task is
   not the document's executable process, and SRD-089.I §4.2's pick counts
   candidates, so a synthesized process must not enter that count: `Import`
-  (`importer.go:65-88`) considers only parsed `<process>` elements — both in
+  (`Import` (`importer.go`)) considers only parsed `<process>` elements — both in
   the `len(procs) == 1` short-circuit and in the `isExecutable` tally — so
   the common file of one unmarked `<process>` plus a `<globalTask>` still
   imports, instead of becoming ambiguous. A document with global tasks and
   **no** `<process>` keeps today's refusal ("no `<process>` element found",
-  `importer.go:415-419`), reworded to say that global tasks alone are not a
+  `parse` (`importer.go`)), reworded to say that global tasks alone are not a
   process and to point at `ImportDocument`. `ImportDocument` returns every
   process, synthesized or parsed.
 - **FR-10 — The `notYet` disposition is retired.** With FR-6 its five rows
-  go, and with them the `notYet` kind (`dispatch.go:72`), `notSupportedYet`
-  (`errors.go:65`) and the "waiting on a subsystem" case of
-  `TestTheThreeRefusalsAreDistinguishable` (`refusals_test.go:132`). A
+  go, and with them the `notYet` kind (`dispatch.go`), `notSupportedYet`
+  (`notSupportedYet` (`errors.go`)) and the "waiting on a subsystem" case of
+  `TestTheThreeRefusalsAreDistinguishable` (`TestTheThreeRefusalsAreDistinguishable` (`refusals_test.go`)). A
   global task **inside** a `<process>` stays refused by the context rule
   (SRD-089.E §10 item 4) as an `UnsupportedElementError` with an **empty**
-  section: `sections` (`dispatch.go:181-250`) has no entry for the family
+  section: `sections` (`sections` (`dispatch.go`)) has no entry for the family
   and cannot honestly gain one — the extract pins no § for it (ADR-023 v.5
   §3), which is the same reason `globalChoreographyTask` is pinned to `""`
-  today (`dispositions_test.go:96`).
+  today (`dispositions_test.go`).
 - **FR-11 — The register row leaves.** The `<callActivity calledElement>`
   / `globalTask` row leaves the import-coverage guide's capability-blocked
   table; the converters guide and `conformance.md`'s family row say what
@@ -227,8 +227,8 @@ func (ca *CallActivity) CalledNamespace() string
 
 `callActivityConfig` and `CallActivity` gain `calledNamespace string`;
 `Clone` copies it. The instance loop's capability interface
-(`internal/instance/calls.go:18-23`) gains `CalledNamespace() string`,
-and `onCallWaiting` (`internal/instance/calls.go:47`) copies it into
+(`internal/instance/calls.go`) gains `CalledNamespace() string`,
+and `onCallWaiting` (`internal/instance/calls.go`) copies it into
 `ProcessCall.Namespace`.
 
 ### §3.3 `pkg/thresher`
@@ -253,15 +253,15 @@ passed to the resolver.
 ### §3.4 `pkg/convert/bpmn`
 
 - `items` gains `targetNS string`, set from `<definitions targetNamespace>`
-  where `declareNamespaces` is called on the root (`importer.go:491`).
+  where `declareNamespaces` is called on the root (`parseDefinitions` (`importer.go`)).
 - `resolveCalledElement(p *parser, id, value string) (key, ns string, err
   error)` implements FR-5's table; `buildCallActivity` calls it.
 - `parseGlobalTaskElem(p *parser, se xml.StartElement) (*assembly,
   error)` — a `defsParser` registered for the five tags — **records specs
   in pass 1 and builds nothing**, which is what the importer's two-pass
   shape requires: `parse()` hands every `p.asms` entry to `build`
-  (`importer.go:445-457`, `:1719`), and `asm.items` only exists from
-  `buildItems(p)` at the start of pass 2 (`importer.go:443`), so an
+  (`parse` and `build` in `importer.go`), and `asm.items` only exists from
+  `buildItems(p)` at the start of pass 2 (`buildItems`, called from `parse` (`importer.go`)), so an
   `<ioSpecification>` naming an `itemSubjectRef` **cannot** be resolved at
   parse time. It therefore reads the element's leading `<documentation>`
   and `<ioSpecification>` the way `procBuild` does, then the body via
@@ -270,9 +270,9 @@ passed to the resolver.
   **rewritten** to the in-process tag (FR-7) and the same `io`, and two
   `flowSpec`s. Pass 2 then builds it with `constructProcess` → `buildNodes`
   → `linkFlow` → `Validate` unchanged — including `paramOwners` and
-  `buildIOParams` (`importer.go:1207-1217`), which is why the rewrite is
+  `buildIOParams` (`buildNode` (`importer.go`)), which is why the rewrite is
   the whole of the mechanism.
-- `defsParser`'s doc comment (`dispatch.go:288-291`, *"returns a non-nil
+- `defsParser`'s doc comment (`defsParser`'s doc comment (`dispatch.go`), *"returns a non-nil
   assembly when the child was a `<process>`"*) gains the second producer.
 - `policy` loses the five `notYet` rows; `dispositionKind` loses `notYet`;
   `errors.go` loses `notSupportedYet`.
@@ -281,14 +281,14 @@ passed to the resolver.
 
 ### §4.1 Why the resolver is a Thresher option and not a converter option
 
-The converter has no options by design (`pkg/convert/convert.go:41-43`:
+The converter has no options by design (`pkg/convert/convert.go`'s registry comment:
 *"a deliberate deviation from the functional-options norm because convert
 is engine-independent"*), consults no registry, and finishes long before
 any call. Resolution is a call-time act on the registry the Thresher owns,
 so the seam lives beside the registry and every other host contract the
 Thresher takes (`pkg/thresher/options.go` — 24 `With*` options, all
 host-supplied seams). The converter's part is to carry the namespace the
-resolver will need — the same split as `importFor` (`item.go:368`), which
+resolver will need — the same split as `importFor` (`importFor` (`item.go`)), which
 resolves a *prefix* to an `<import>` and hands the model the import, never
 the type behind it.
 
@@ -296,7 +296,7 @@ the type behind it.
 it has deliberately never had, and would bind a document to one engine at
 import instead of at call.
 *Rejected — resolve inside `resolveCallLocked`*: puts host code under `t.m`,
-the FIX-002 RC2 rule (`locked.go:13-19`) and the `lock-sweep` reason.
+the FIX-002 RC2 rule (`locked.go`'s lock-discipline comment) and the `lock-sweep` reason.
 *Rejected — one resolver per document or per registration*: the reference a
 resolver sees already carries the namespace that distinguishes documents, so
 a single engine-wide resolver can route by it (a `switch` a host writes once)
@@ -316,7 +316,7 @@ case, so nothing changes for a host that configures nothing.
 
 The alternatives are `local` (silently calling whatever the host registered
 under a name that happened to coincide — exactly the failure
-`dispatch.go:472` refuses today) or `namespace + "#" + local` (an engine
+`buildCallActivity` refuses today) or `namespace + "#" + local` (an engine
 naming convention no host asked for, which the standard does not supply —
 `calledElement` is a plain `String`, §13.3.3). Refusing by name at call time
 is the ADR-023 §2.7 contract for a reference the registry cannot serve, and
@@ -326,7 +326,7 @@ it tells the host which option to add.
 
 The registry serves snapshots of processes (`resolveCallLocked` returns a
 `*snapshot.Snapshot`); the call path launches a child instance around one
-(`checkCallOutputs`, `invoker.go:116`); the caller binds inputs into the child's root scope
+(`checkCallOutputs`, `checkCallOutputs` (`invoker.go`)); the caller binds inputs into the child's root scope
 and reads outputs back by name (SRD-050, SRD-093). A "task registry" would
 need a second call path, a second I/O binding and a second restart contract
 (ADR-023 §2.7 restart) for a callable that §13.3.4 says calls like a
@@ -349,7 +349,7 @@ parameters was the first draft of this section, and it cannot satisfy a
 declared **output**: a process output is read from the root scope, and what
 puts a value there is a node's output parameter (the precedent is
 `examples/process-io`, whose child fills `total` from a service task's
-returned item, `handlers.go:16-18`). A parameter-less task writes nothing,
+returned item, `handlers.go`). A parameter-less task writes nothing,
 so every global task with a declared output would import and then fail its
 own contract at completion. Feeding the same declaration to both ends makes
 the callable's promise the task's obligation, which is what the standard
@@ -361,7 +361,7 @@ be a shape the file does not contain, and the two could then disagree.
 ### §4.6 Why the ids are derived and claimed, not generated
 
 Ids are never auto-generated on import (ADR-019; `parseProcess`,
-`importer.go:553-556`), and the lanes precedent (`lanes.go:183`) generates
+`parseProcess` (`importer.go`)), and the lanes precedent (`buildLaneSet` (`lanes.go`)) generates
 only for an element that is *unreferencable*. A synthesized start or flow
 must be stable across imports (a re-import mints a new version of the same
 process; its snapshot must compare) and must not collide silently, so the
@@ -371,7 +371,7 @@ like every declared id.
 ### §4.7 Why `notYet` goes
 
 The kind exists for a refusal that says "the same file imports unchanged
-once the subsystem lands" (`dispatch.go:68-72`). After FR-6 no row says
+once the subsystem lands" (`dispatch.go`). After FR-6 no row says
 that; ADR-024 v.7 §2.16's three classes leave no room for a fourth, and
 keeping an unused disposition invites its reuse for the next
 capability-blocked construct, which the register (one issue per row) is
@@ -509,7 +509,7 @@ not assumptions:
   `2c9198fe`); **.E**'s T-7c (`<transaction>` nested in a `<transaction>`)
   has no importer-level test, only a model-side one predating the stage;
   **.B** §3/FR-1 states a language-resolution order the code contradicts
-  deliberately (`pkg/convert/bpmn/language.go:75-81` lets the `${…}`
+  deliberately (`resolveLanguage` (`pkg/convert/bpmn/language.go`) lets the `${…}`
   delimiters outrank a *declared* language, pinned by
   `TestDelimitersOutrankADeclaredLanguage`) — and so does ADR-024 §2.10;
   **.A**'s FR-8/§4.4/T-6 still say the visual artifacts and `<import>` are

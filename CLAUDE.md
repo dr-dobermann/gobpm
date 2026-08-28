@@ -344,6 +344,40 @@ one-shot document is not retro-edited — stripping their versions would rewrite
 history for tidiness. Keep pinning them at the version they carry; the rule
 governs documents written from here on.
 
+## Design docs — cite the symbol, not the line
+
+**A code reference in a design doc names the file and the symbol, never a line
+number:** `resolveLanguage` in `pkg/convert/bpmn/language.go`, not
+`language.go:59-84`. The same goes for a range — quote the code or name the
+function, rather than pinning `:88-105`.
+
+The reason is that a line pin rots on the next refactor while looking exactly
+as authoritative as the day it was written, and a **one-shot** SRD or FIX is
+precisely the document nobody re-verifies. A reader who greps the symbol finds
+it wherever it moved; a reader who follows `:184` lands in the middle of an
+unrelated function and cannot tell whether the doc is wrong or they are.
+
+Measured, not assumed: four audit rounds over `SRD-089.D` and `.E` found
+line-pin rot to be the single largest defect class in both — twenty-three
+stale pins between them, several landing inside code that had nothing to do
+with the claim, against a handful of genuine content errors. Every other
+defect class was found once and fixed; this one regenerated with every
+refactor of the packages the documents describe.
+
+Applies to **documents written from here on**. Existing docs keep their pins:
+an Accepted one-shot is not retro-edited for tidiness, and a stale pin inside
+a historical record is a smaller problem than rewriting the record. Refresh
+one only when you are editing that passage for another reason — which is how
+`SRD-089.D` and `.E` got theirs corrected.
+
+Two carve-outs, because the rot argument does not apply to them:
+
+- **The vendored spec extract** (`docs/bpmn-spec/…`) — line-pinned citations
+  there are stable, because the extract changes only when the standard's
+  transcription does, and a `§`-less structural table has no symbol to name.
+- **A commit SHA plus a path** in an implementation summary — that names an
+  immutable object, so `git show <sha>:path` always resolves.
+
 ## Design docs — Russian twins
 
 **Russian twins (`.ru.md`) are a SAD/ADR privilege, and they live in
