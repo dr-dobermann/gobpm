@@ -287,14 +287,27 @@ condition that parses, evaluates, and routes the token the wrong way; the failur
 then surfaces as a mis-executed process, far from the import. Refusal at import is
 the only place the error is still cheap.
 
-**The schema default is deliberately not honoured.** `expressionLanguage`
-defaults to XPath, and XPath is refused — so a literal reading rejects every
-document that omits the attribute, which is nearly all of them, including files
-whose expressions are plainly `${…}`. The default is a *schema* default asserting
-what an unmarked expression **is**, and it describes almost no real file. Language
-is therefore resolved by: the expression's own language, else the document's
-default, else the **syntactic tell** (`${…}`/`#{…}` is JUEL), else refusal. This
-is an engine choice, recorded in §3.
+**The syntactic tell is decisive, and a declared language does not override
+it.** `expressionLanguage` has a *schema* default of XPath, and XPath is refused
+— so a literal reading rejects every document that omits the attribute, which is
+nearly all of them, including files whose expressions are plainly `${…}`. Worse,
+a Camunda file often does not omit it: the tool writes the schema default out
+explicitly, so the document *declares* XPath and then writes JUEL in every
+condition. Honouring the declaration there refuses the file on its own
+mislabelling, which serves nobody — the delimiters are what the author actually
+wrote, and the declaration is what a tool emitted on their behalf.
+
+Language is therefore resolved by the body first:
+
+| The expression body | Language |
+|---|---|
+| carries `${…}` / `#{…}` | **JUEL**, whatever the document or the expression declares |
+| anything else | the expression's own `language`, else the document's `expressionLanguage`, else **refused** |
+
+A declaration only decides a body the delimiters do not. This is an engine
+choice, recorded in §3, and it is the same judgement as not honouring the schema
+default — applied to the case where the default was written out rather than left
+implicit.
 
 ### 2.11 Scripts: self-contained source only
 
@@ -593,8 +606,8 @@ carries the OMG §-refs.
 BPMN `id` treated as durable versioning identity (§2.5 — the standard is silent on
 registry versioning); an unmapped in-namespace element is a hard import error
 rather than a lenient skip (§2.7 — stricter than the standard requires, to serve
-the §5 feedback need); the `expressionLanguage` schema default is not honoured
-(§2.10); a refused script format and a refused expression language are engine
+the §5 feedback need); a declared expression language — including the `expressionLanguage` schema
+default — does not override the `${…}` delimiters (§2.10); a refused script format and a refused expression language are engine
 choices, since the standard mandates neither (§2.10, §2.11); a `calledElement`
 read as a QName (§2.13); and **recognizing a vendor dialect** (§2.14) is outside
 the standard entirely — the standard supplies the `extensionElements` mechanism
@@ -613,7 +626,7 @@ and assigns its content no meaning.
 | G | "Batteries-included" delivery | (a) blank-import, image-style; (b) a true core default | **(a)** — (b) puts a format in core and contradicts SAD-001 N7, so it needs a SAD revision; the blank import costs one line and keeps core clean (§2.3). |
 | H | Import fence | (a) keep slicing element families; (b) the whole execution-conformance set | **(b)** — a definition is a graph, so a partial importer imports *nothing* from any file containing the one kind it lacks. Slicing delivers no usable increment until the final slice. The cost is one large landing; the alternative is several landings that each ship zero working imports (§2.9). |
 | I | JUEL support | (a) a JUEL engine registered under its own language claim; (b) source-to-source translation; (c) unsupported | **(b)** — the grammars overlap almost completely, so (a) buys a second permanent implementation of every expression semantic to gain nothing (b) lacks. (c) refuses the corpus, since JUEL is what Camunda files actually contain. Untranslatable constructs are refused by name, never partially rewritten (§2.10). |
-| J | Unmarked expression language | (a) honour the XPath schema default; (b) resolve by syntactic tell | **(b)** — (a) is the literal reading and rejects nearly every real document, since modellers omit the attribute and write `${…}`. Recorded as a deliberate divergence rather than taken quietly (§2.10, §3). |
+| J | Expression language when the declaration and the body disagree | (a) honour the declaration, including the XPath schema default; (b) let the `${…}` delimiters decide, whatever is declared | **(b)** — (a) is the literal reading and rejects nearly every real document: modellers either omit `expressionLanguage` and write `${…}`, or their tool writes the XPath default out explicitly and then emits JUEL under it. Both shapes are the same file, and refusing either on its own mislabelling gains nothing a correct import does not. A declaration still decides every body the delimiters do not touch. Recorded as a deliberate divergence rather than taken quietly (§2.10, §3). |
 | K | Unroutable script format | (a) refuse; (b) default to a shipped engine | **(a)** — (b) runs another language's syntax through the wrong interpreter and reports the parse error from inside the engine at execution time, blaming the script rather than the missing format (§2.11). |
 | L | DMN | (a) parse DMN XML in the converter; (b) carry an opaque decision reference | **(b)** — (a) contradicts the never-embed-a-DMN-engine non-goal and puts a second standard's parser inside a BPMN converter. The rule-engine seam resolves references; the converter's job ends at carrying one (§2.12). |
 | M | Global tasks | (a) inline a copy of the task at every call site; (b) refuse the family; (c) import each as a **process** registered under its id | **(c)** — (a) converts reuse-by-reference into duplication: one global task called from three places imports as three unrelated tasks, and edits to the original stop propagating. (b) is honest only while nothing can serve a callable, and something can: a global task **is** a callable process (ADR-023 v.5 §2.7), so the reference stays a reference — one registration, any number of callers, versioned like a process — and the converter's part is to produce the process (§2.13). |
@@ -756,4 +769,4 @@ None.
 | v.4 | 2026-08-10 | **The import fence moves.** Import takes the whole execution-conformance element set, with an explicit disposition for every family outside it (§2.9), because a partial importer imports nothing from any file containing the one kind it lacks (row H). Adds the three language policies — JUEL translated source-to-source and untranslatable constructs refused by name, the XPath schema default deliberately not honoured (§2.10); self-contained script source only (§2.11); an opaque decision reference, never a DMN parser (§2.12) — the recognized Camunda 7 dialect (§2.14) and the optional `DocumentImporter` capability carrying a document's process set plus a report of dropped constructs (§2.15). Export stays on §2.6's subset, narrowing §2.8's guarantee to it. |
 | v.5 | 2026-08-17 | `<import>` is mapped rather than skipped: collected by namespace and bound to the `<itemDefinition>` whose `structureRef` prefix resolves to it, with an unreferenced one reported. A disposition-row correction; no contract change. |
 | v.6 | 2026-08-26 | The standard's three artifacts are **parsed and preserved** into the model-only artifact tier and `category`/`categoryValue` consumed as resolution input ([ADR-039 v.1](ADR-039-standard-artifacts.md)), on the same two-obligation reading as lanes. §2.16 absorbs the boundary rule the retired ADR-038 carried: the three classes, the never-compensate and capability-lands-first rules, and what each refusal owes its reader. |
-| v.7 | 2026-08-28 | **Global tasks import as callable processes, and a qualified `calledElement` carries its namespace.** Each global task becomes a process in the document's set — its id, its `ioSpecification` as the [ADR-040 v.2](ADR-040-process-io-contract.md) contract, its task built by the same reading as the in-process form — because [ADR-023 v.5](ADR-023-sub-process-and-call-activity.md) §2.7 decides a global task is a callable process the registry serves; row M records the reversal of v.4's refusal. A `calledElement` is read as a QName: an own-namespace prefix collapses to the key, an imported namespace rides with the call activity for the engine's resolver, an undeclared one is refused. The document is also **rewritten for currency** — the version blockquotes, the superseded-fence notes, the "added in v.N" splitters and the resolved-questions ledger are gone, and the standard pins are re-verified. |
+| v.7 | 2026-08-28 | **Global tasks import as callable processes, a qualified `calledElement` carries its namespace, and §2.10 records the delimiter override.** Each global task becomes a process in the document's set — its id, its `ioSpecification` as the [ADR-040 v.2](ADR-040-process-io-contract.md) contract, its task built by the same reading as the in-process form — because [ADR-023 v.5](ADR-023-sub-process-and-call-activity.md) §2.7 decides a global task is a callable process the registry serves; row M records the reversal of v.4's refusal. A `calledElement` is read as a QName: an own-namespace prefix collapses to the key, an imported namespace rides with the call activity for the engine's resolver, an undeclared one is refused. §2.10 is corrected: the `${…}` delimiters decide the language whatever a document declares, which is what the converter has done since the JUEL translator landed while this ADR described the opposite order — a declaration now decides only the bodies the delimiters do not touch (row J restated). The document is also **rewritten for currency** — the version blockquotes, the superseded-fence notes, the "added in v.N" splitters and the resolved-questions ledger are gone, and the standard pins are re-verified. |
