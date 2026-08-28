@@ -474,7 +474,19 @@ public surface.
 
 | M | Content | Commit |
 |---|---|---|
-| M0 | Housekeeping (see §7a) — ADR-024 v.6 and SRD-089.A–E flip to Accepted | one `docs:` commit |
+| M0a | ADR-024 §2.10 records the **delimiter override**: a `${…}` body is JUEL whenever present, including over a declared language; only a non-JUEL body consults the declaration, then the document default, then refuses. Row J and the §3 engine-note follow | docs |
+| M0b | SRD-089.C's **T-11**: a thresher test running the stage's own elements — an inclusive gateway split/join, a `scriptTask` and a `businessRuleTask` — to completion, closing the DoD item that stage never closed | converter test |
+| M0c | SRD-089.E's **T-7c**: `<transaction>` nested in a `<transaction>`, refused at import in the model's words (ADR-028 v.2 §2.8), the shape T-7b already uses | converter test |
+| M0d | The five SRD-089 documents say what landed — supersession notes where later Accepted work overtook them (.A, .D, .E), an outright correction where the doc contradicted its own landing (.B), and the two now-covered scenarios marked (.C, .E). See §7a | docs |
+| M0e | Re-audit all five; flip each doc that passes to Accepted, leave any that does not with its reason recorded | docs |
+
+**A gate caveat this remediation did not cause.** `internal/instance` fails
+about one package run in three on three checkpoint/restore tests that pass
+20/20 in isolation ([#356](https://github.com/dr-dobermann/gobpm/issues/356)),
+so a red `test-core` on this branch is not evidence about this branch until
+that issue closes — judge it by which package failed. `govulncheck` is also
+intermittently unable to reach `vuln.go.dev` from this environment. Neither is
+reachable from `pkg/convert/bpmn`.
 | M1 | `pkg/exec`: `CallableRef`, `CallableResolver`, `DefaultCallableResolver`, `ProcessCall.Namespace`; `activities.WithCalledNamespace`; the instance loop copies it (T-1–T-3) | model + exec |
 | M2 | `pkg/thresher`: `WithCallableResolver`, resolution in `InvokeProcess` outside the lock, the fact attribute, `lock-sweep` PATTERNS (T-4–T-8, T-13) | engine |
 | M3 | `pkg/convert/bpmn`: `targetNamespace`, `resolveCalledElement`, the refusal rewording (T-9–T-12, T-21 part) | converter, calls |
@@ -487,16 +499,29 @@ public surface.
 Checked before this SRD was written, so the flips are recorded facts and
 not assumptions:
 
-- **SRD-089.A–E** are `Draft` with every §10 implementation summary filled
-  and `Open questions: None` (A `:378`, B `:302`, C `:221`, D `:533`, E
-  `:531`); their code landed in PR #341's branch and earlier
-  (`4b179b56`…`8649b81e`). Nothing is missing but the status.
-- **ADR-024** has been `Draft` since v.4 (2026-08-10) through v.5 and v.6;
-  the SRDs implementing it pin `v.4`, `v.5` or `v.6` (earlier ones pin the
-  version current when they landed — SRD-051 `v.1`, SRD-076 `v.3` — and stay
-  frozen), all landed.
-  v.6 is accepted as it stands at M0; this SRD's change is v.7, on top of
-  it, so v.6's history row keeps describing what landed with ADR-039.
+- **SRD-089.A–E stay `Draft`.** A `/check-srd` audit of all five (one per
+  doc, against HEAD) found that none of them is flip-ready, so M0 does not
+  flip them and this SRD does not claim they are done. Every §10 milestone
+  SHA resolves with matching scope and every FR is wired, but each doc has at
+  least one open item: **.C** never closed its own DoD item 3 — no test or
+  example runs a `scriptTask`, `businessRuleTask`, `inclusiveGateway` or
+  `eventBasedGateway` on a thresher (`run_test.go` arrived with a .D commit,
+  `2c9198fe`); **.E**'s T-7c (`<transaction>` nested in a `<transaction>`)
+  has no importer-level test, only a model-side one predating the stage;
+  **.B** §3/FR-1 states a language-resolution order the code contradicts
+  deliberately (`pkg/convert/bpmn/language.go:75-81` lets the `${…}`
+  delimiters outrank a *declared* language, pinned by
+  `TestDelimitersOutrankADeclaredLanguage`) — and so does ADR-024 §2.10;
+  **.A**'s FR-8/§4.4/T-6 still say the visual artifacts and `<import>` are
+  skipped silently, which ADR-039 and ADR-024 v.5/v.6 re-decided into
+  mapping; **.D**'s §6 T-4/T-5 list a conditional start and a cancel end that
+  the model refuses in those positions. Closing them is its own work, tracked
+  separately from this SRD.
+- **ADR-023 and ADR-024** are both `Draft` and both carry landed contract
+  besides this branch's change. The SRDs implementing them pin the version
+  current when they landed (SRD-051 `v.1`, SRD-076 `v.3` and the rest stay
+  frozen), so no pin moves. Both flip to Accepted at this branch's handover,
+  once the v.5/v.7 changes are implemented — not at M0.
 - **#324** stays open — PR #354 was `Part of` (the model/bind/import half;
   export rides ADR-024 slice 3). The import-coverage guide already says a
   transaction's `method`/`protocol` are not a refusal. No change.
