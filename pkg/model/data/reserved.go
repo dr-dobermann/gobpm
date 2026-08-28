@@ -32,15 +32,17 @@ const (
 	IterationIDName     = "ITERATION_ID"
 	IterationModeName   = "ITERATION_MODE"
 
-	// IterationsName is the engine's durable per-activity register. It is
-	// served from the reserved RUNTIME source rather than the data plane, so
-	// a model could not reach it in any case — it is listed here so the whole
-	// engine-owned vocabulary is refused in one place, and because a model
-	// declaring it is confused about where the value lives either way.
-	IterationsName = "ITERATIONS"
+	// IterationsName and IterationOwnersName are the engine's durable
+	// per-activity registers. They are served from the reserved RUNTIME source
+	// rather than the data plane, so a model could not reach them in any case
+	// — they are listed here so the whole engine-owned vocabulary is refused
+	// in one place, and because a model declaring one is confused about where
+	// the value lives either way.
+	IterationsName      = "ITERATIONS"
+	IterationOwnersName = "ITERATION_OWNERS"
 )
 
-// reservedNames is the engine-owned set, as data. Lookup is a scan of nine
+// reservedNames is the engine-owned set, as data. Lookup is a scan of ten
 // entries at construction time, which is cheaper than the map it would
 // otherwise be and keeps the list readable as a list.
 var reservedNames = []string{
@@ -53,6 +55,7 @@ var reservedNames = []string{
 	IterationIDName,
 	IterationModeName,
 	IterationsName,
+	IterationOwnersName,
 }
 
 // ReservedNames returns the data names a model may not declare.

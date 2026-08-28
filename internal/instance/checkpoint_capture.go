@@ -153,15 +153,16 @@ func (ls *loopState) captureDocument(
 	// encode/save failure, still loud.
 
 	doc := &checkpoint.Document{
-		InstanceID:  inst.ID(),
-		ParentID:    inst.parentInstanceID,
-		CallNodeID:  inst.callNodeID,
-		ProcessID:   inst.s.ProcessID,
-		Version:     inst.s.Version,
-		Status:      inst.State().String(),
-		ConvKeys:    inst.corr.snapshotKeys(),
-		CompletedBy: inst.performers.snapshot(),
-		StartedAt:   inst.startedAtRFC3339(),
+		InstanceID:      inst.ID(),
+		ParentID:        inst.parentInstanceID,
+		CallNodeID:      inst.callNodeID,
+		ProcessID:       inst.s.ProcessID,
+		Version:         inst.s.Version,
+		Status:          inst.State().String(),
+		ConvKeys:        inst.corr.snapshotKeys(),
+		CompletedBy:     inst.performers.snapshot(),
+		IterationOwners: inst.iterationOwners.snapshot(),
+		StartedAt:       inst.startedAtRFC3339(),
 	}
 
 	for _, path := range inst.sc.plane.OpenPaths() {

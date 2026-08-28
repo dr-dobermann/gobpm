@@ -79,6 +79,21 @@ type Document struct {
 	// in the case it exists for: a LATER node asking who performed an earlier task.
 	CompletedBy map[string]string `json:"completed_by,omitempty"`
 
+	// IterationOwners records who completed each INSTANCE of an iterated
+	// activity — activity id → (ordinal → user id) (ADR-025 §2.15,
+	// SRD-090.D FR-4). It rides the checkpoint for CompletedBy's reason, and
+	// more so: a fan-out over human work exists because N approvals take
+	// days, so dehydration is its ordinary state rather than an edge one. A
+	// register rebuilt empty would answer "nobody did any of it" for exactly
+	// the workload it was built for.
+	//
+	// CompletedBy cannot stand in for it: that keys by node, so an iterated
+	// activity has one entry however many instances ran.
+	//
+	// Empty on a checkpoint written before this field existed, which restores
+	// as it did then: no answer rather than a wrong one.
+	IterationOwners map[string]map[string]string `json:"iteration_owners,omitempty"`
+
 	InstanceID string `json:"instance_id"`
 	// ParentID/CallNodeID record child linkage informationally (a child
 	// instance is its own record; re-linking a live call is SRD-071+).

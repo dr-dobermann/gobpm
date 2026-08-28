@@ -66,7 +66,7 @@ func TestACompletionGoesToTheINSTANCEThatOwnsIt(t *testing.T) {
 	d.parking(1)
 	ls.waiting[tr.ID()] = struct{}{}
 
-	ls.deliverCompletion(taskEntry{track: tr, ord: 1}, def)
+	ls.deliverCompletion(taskEntry{track: tr, ord: 1}, def, "alice")
 
 	held := d.takeDeliveries()
 	require.Len(t, held, 1,
@@ -82,7 +82,7 @@ func TestACompletionGoesToTheINSTANCEThatOwnsIt(t *testing.T) {
 		"and reads busy until that instance takes its envelope, so a "+
 			"dehydration cannot take the track away mid-handover")
 
-	ls.deliverCompletion(taskEntry{track: tr, ord: 0}, def)
+	ls.deliverCompletion(taskEntry{track: tr, ord: 0}, def, "bob")
 	require.NotContains(t, ls.waiting, tr.ID(),
 		"with the last approval delivered, nobody holds work any more")
 }
@@ -112,7 +112,7 @@ func TestALoneTaskKeepsTheTrackChannel(t *testing.T) {
 	ls.waiting[tr.ID()] = struct{}{}
 	def := sigDefN(t, "done")
 
-	ls.deliverCompletion(taskEntry{track: tr}, def)
+	ls.deliverCompletion(taskEntry{track: tr}, def, "alice")
 
 	select {
 	case got := <-tr.evtCh:
@@ -147,7 +147,7 @@ func TestACompletionForAFanOutThatIsNotRunningIsHeld(t *testing.T) {
 			"to release the track")
 
 	ls.deliverCompletion(
-		taskEntry{track: tr, node: tr.steps[0].node, ord: 1}, def)
+		taskEntry{track: tr, node: tr.steps[0].node, ord: 1}, def, "alice")
 
 	held := tr.takePendingCompletions()
 	require.Len(t, held, 1)

@@ -267,7 +267,8 @@ func (ls *loopState) completeTask(
 	// loop is the sole sender and it is parked-and-undelivered (SRD-027). The track
 	// wakes, ProcessEvent binds the outputs, Exec advances.
 	delete(ls.tasks, req.taskID)
-	ls.deliverCompletion(entry, interactor.NewTaskCompletion(req.outputs))
+	ls.deliverCompletion(
+		entry, interactor.NewTaskCompletion(req.outputs), req.actor.UserID())
 
 	// The actor completed the task; the parked track resumes (SRD-041 §3.4).
 	// The following withdrawTask additionally emits Withdrawn — the distributor
@@ -300,9 +301,9 @@ func (ls *loopState) completeTask(
 // A lone activity has one instance and no decorator, so it keeps the track's
 // own channel and flips out immediately — the path is unchanged for it.
 func (ls *loopState) deliverCompletion(
-	entry taskEntry, completion flow.EventDefinition,
+	entry taskEntry, completion flow.EventDefinition, owner string,
 ) {
-	owner := entry.track.ownerIfResolved()
+	sub := entry.track.ownerIfResolved()
 
 	// AN ITERATED ACTIVITY THAT IS NOT RUNNING ITS INSTANCES YET holds the
 	// completion on its track until its decorator starts (SRD-090.B FR-3).
@@ -313,13 +314,13 @@ func (ls *loopState) deliverCompletion(
 	// activity waits forever for an approval nobody can give again. It is the
 	// ordinary case rather than a rare one, because a restored fan-out is
 	// rebuilt by the very action being applied to it.
-	if owner == nil && fansOut(entry.node) {
+	if sub == nil && fansOut(entry.node) {
 		entry.track.holdCompletion(entry.ord, completion)
 
 		return
 	}
 
-	if owner == nil {
+	if sub == nil {
 		ls.flipNotParked(entry.track)
 		entry.track.evtCh <- completion
 
@@ -329,7 +330,7 @@ func (ls *loopState) deliverCompletion(
 	// BEFORE the handover: from here until the instance takes it, the
 	// activity must not read as fully parked, or the loop's next dehydration
 	// takes the track away with this completion still undelivered.
-	owner.delivering()
+	sub.delivering()
 
 	// The handover and the end of the wait are ONE step — see eventSubs.deliver.
 	//
@@ -339,10 +340,10 @@ func (ls *loopState) deliverCompletion(
 	// checkpoint records that instance as RUNNING WITH NO IDENTITY, and a
 	// restore would mint a fresh one for work whose handle its holder is
 	// still carrying.
-	owner.completeInstance(entry.ord, completion)
+	sub.completeInstance(entry.ord, completion, owner)
 
 	// the track leaves the parked set only when NO instance still holds work.
-	if !owner.anyWaiting() {
+	if !sub.anyWaiting() {
 		ls.flipNotParked(entry.track)
 	}
 }

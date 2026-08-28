@@ -497,7 +497,7 @@ type activitySubscriber interface {
 	// decides where it goes: a fan-out queues it for serial application, and
 	// every other shape runs one pass at a time, which is parked on the
 	// track's own channel.
-	completeInstance(ord int, def flow.EventDefinition)
+	completeInstance(ord int, def flow.EventDefinition, owner string)
 
 	// delivering and delivered bracket the handoff, so the loop can tell a
 	// fully parked activity from one with work in flight.

@@ -57,12 +57,13 @@ type Instance struct {
 	// iterations records what each iterated activity did — the durable half of
 	// §2.9's attributes, keyed by activity id so two concurrent iterations
 	// stay distinguishable (ADR-025 §2.9.2).
-	iterations *iterations
-	now        func() time.Time
-	tracksSnap atomic.Pointer[[]*track]
-	lastErr    atomic.Pointer[error]
-	s          *snapshot.Snapshot
-	tracks     map[string]*track
+	iterations      *iterations
+	iterationOwners *iterationOwners
+	now             func() time.Time
+	tracksSnap      atomic.Pointer[[]*track]
+	lastErr         atomic.Pointer[error]
+	s               *snapshot.Snapshot
+	tracks          map[string]*track
 	// incidents is the durable record of unhandled failures (ADR-036 §2.1),
 	// keyed by incident id. Mutated only on the loop goroutine; carried into
 	// the checkpoint by the persistence slice (SRD-079 §3.3). openIncCount
@@ -578,6 +579,7 @@ func New(
 	inst.corr = correlator{inst: &inst, keys: map[string]string{}}
 	inst.performers = newPerformers()
 	inst.iterations = newIterations()
+	inst.iterationOwners = newIterationOwners()
 
 	if err := inst.sc.load(
 		parentRoot, inst.s.ProcessName, inst.s.Properties,

@@ -61,7 +61,9 @@ func miUserTaskSnapshot(
 	require.NoError(t, err)
 
 	ut, err := activities.NewUserTask("approve",
-		activities.WithCandidateUsers("alice"),
+		// three candidates, so a test can have a DIFFERENT person do each
+		// instance — the case one entry per node loses.
+		activities.WithCandidateUsers("alice", "bob", "carol"),
 		activities.WithOutput("result", "string", true),
 		activities.WithoutParams(), activities.WithLoop(mi),
 		foundation.WithID(key+"-approve"))
@@ -320,4 +322,252 @@ func TestASequentialIteratedUserTaskIsCompletedPassByPass(t *testing.T) {
 	require.Eventually(t, func() bool { return inst.State() == Completed },
 		5*time.Second, 10*time.Millisecond,
 		"three passes done, and the activity leaves")
+}
+
+// TestIterationOwnersAnswersWhoDidWhichInstance (SRD-090.D FR-4, T-9): a
+// register of activity id → (ordinal → the actor who completed that instance).
+//
+// `COMPLETED_BY` cannot answer this. It keys by NODE, so an iterated activity
+// has ONE entry however many instances ran and whoever did them — the last
+// completion wins and the rest are lost. Three approvals are three pieces of
+// work by three people, and which of them approved item 2 has to stay
+// answerable after the activity has gone.
+func TestIterationOwnersAnswersWhoDidWhichInstance(t *testing.T) {
+	s := miUserTaskSnapshot(t, "cr-owners", true)
+
+	dist := &countingDist{}
+
+	inst, err := New(s, scope.EmptyDataPath, cpRuntime(t), laxEP(t), dist)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	out := []data.Data{
+		data.MustParameter("result",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable("approved")),
+				data.ReadyDataState)),
+	}
+
+	// a different person does each pass — the case one entry per node loses.
+	approvers := []string{"alice", "bob", "carol"}
+
+	for pass, who := range approvers {
+		require.Eventually(t, func() bool {
+			return len(dist.announced()) == pass+1
+		}, 5*time.Second, 10*time.Millisecond)
+
+		ids := dist.announced()
+		require.NoError(t,
+			inst.Complete(ctx, ids[pass], stubActor{id: who}, out))
+	}
+
+	require.Eventually(t, func() bool { return inst.State() == Completed },
+		5*time.Second, 10*time.Millisecond)
+
+	// read the way a process reads it: through the reserved RUNTIME source.
+	v, err := inst.RuntimeVar(IterationOwners)
+	require.NoError(t, err)
+
+	owners, ok := v.Value().Get(ctx).(map[string]map[string]string)
+	require.True(t, ok, "a map of activity id → (ordinal → owner)")
+	require.Len(t, owners, 1, "one iterated activity ran")
+
+	require.Equal(t,
+		map[string]string{"0": "alice", "1": "bob", "2": "carol"},
+		owners["cr-owners-approve"],
+		"every instance keeps the person who did it, keyed by the ordinal "+
+			"ITERATION_NUMBER publishes inside it")
+
+	// and it OUTLIVES the activity: the decorator that held the account is
+	// gone by now, which is the whole reason the register is not its state.
+	require.Equal(t, Completed, inst.State())
+}
+
+// TestIterationOwnersRecordsNothingForNobody: an entry naming no actor would
+// answer "who did this" with a blank rather than with silence.
+func TestIterationOwnersRecordsNothingForNobody(t *testing.T) {
+	o := newIterationOwners()
+
+	require.Nil(t, o.snapshot(), "nobody has completed anything")
+
+	o.record("", 0, "alice")
+	o.record("act", 0, "")
+	require.Nil(t, o.snapshot())
+
+	o.record("act", 2, "alice")
+	require.Equal(t,
+		map[string]map[string]string{"act": {"2": "alice"}}, o.snapshot())
+
+	// the snapshot is a COPY, inner map included: a reader must not be able
+	// to reach into the register the engine is still writing.
+	o.snapshot()["act"]["2"] = "tampered"
+	require.Equal(t, "alice", o.snapshot()["act"]["2"])
+}
+
+// TestAStandardLoopOverAUserTaskOffersATaskPerPass (ADR-025 §2.13, ADR-020
+// §2.12): a loop runs ONE pass at a time, so each pass parks as itself, is
+// announced as its own task, and its completion goes to the pass that is
+// parked on it — the track's own channel, since only one waits.
+//
+// It also keeps a completion account: a loop over human work is as much "who
+// did which pass" as a Multi-Instance is.
+func TestAStandardLoopOverAUserTaskOffersATaskPerPass(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	sl, err := activities.NewStandardLoop(loopCondLt(t, 3))
+	require.NoError(t, err)
+
+	p, err := process.New("sl-ut", foundation.WithID("sl-ut"))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start", foundation.WithID("sl-ut-start"))
+	require.NoError(t, err)
+
+	ut, err := activities.NewUserTask("approve",
+		activities.WithCandidateUsers("alice", "bob", "carol"),
+		activities.WithOutput("result", "string", true),
+		activities.WithoutParams(), activities.WithLoop(sl),
+		foundation.WithID("sl-ut-approve"))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end", foundation.WithID("sl-ut-end"))
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, ut, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	_, err = flow.Link(start, ut)
+	require.NoError(t, err)
+	_, err = flow.Link(ut, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	dist := &countingDist{}
+
+	inst, err := New(s, scope.EmptyDataPath, cpRuntime(t), laxEP(t), dist)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	out := []data.Data{
+		data.MustParameter("result",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable("approved")),
+				data.ReadyDataState)),
+	}
+
+	approvers := []string{"alice", "bob", "carol"}
+
+	for pass, who := range approvers {
+		require.Eventually(t, func() bool {
+			return len(dist.announced()) == pass+1
+		}, 5*time.Second, 10*time.Millisecond,
+			"pass %d offers its own task, and only its own", pass)
+
+		ids := dist.announced()
+		require.NoError(t,
+			inst.Complete(ctx, ids[pass], stubActor{id: who}, out))
+	}
+
+	require.Eventually(t, func() bool { return inst.State() == Completed },
+		5*time.Second, 10*time.Millisecond,
+		"the loop condition stops it after three passes")
+
+	v, err := inst.RuntimeVar(IterationOwners)
+	require.NoError(t, err)
+
+	owners, ok := v.Value().Get(ctx).(map[string]map[string]string)
+	require.True(t, ok)
+	require.Equal(t,
+		map[string]string{"0": "alice", "1": "bob", "2": "carol"},
+		owners["sl-ut-approve"],
+		"each pass keeps the person who did it")
+}
+
+// TestIterationOwnersSurvivesTheInstanceBeingRebuilt (SRD-090.D FR-4): who did
+// which instance rides the checkpoint.
+//
+// It has to. A fan-out over human work exists because N approvals take days,
+// so being released and rebuilt is its ordinary state rather than an edge one
+// — a register rebuilt empty would answer "nobody did any of it" for exactly
+// the workload it was built for. COMPLETED_BY rides the checkpoint for the
+// same reason and cannot stand in for this one: it keys by node, so an
+// iterated activity has a single entry however many instances ran.
+func TestIterationOwnersSurvivesTheInstanceBeingRebuilt(t *testing.T) {
+	s := miUserTaskSnapshot(t, "cr-owners-cp", true)
+
+	dist := &countingDist{}
+	rt := cpRuntime(t)
+
+	inst, err := New(s, scope.EmptyDataPath, rt, laxEP(t), dist,
+		WithCheckpointing("engine-A", "engine-A", time.Minute))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	out := []data.Data{
+		data.MustParameter("result",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable("approved")),
+				data.ReadyDataState)),
+	}
+
+	require.Eventually(t, func() bool { return len(dist.announced()) == 1 },
+		5*time.Second, 10*time.Millisecond)
+
+	require.NoError(t, inst.Complete(ctx,
+		dist.announced()[0], stubActor{id: "alice"}, out))
+
+	// the checkpoint that carries alice's approval
+	var doc *checkpoint.Document
+
+	require.Eventually(t, func() bool {
+		rec, ok, lErr := rt.Repository().Load(context.Background(), inst.ID())
+		if lErr != nil || !ok {
+			return false
+		}
+
+		d, uErr := checkpoint.Unmarshal(rec.Payload)
+		if uErr != nil {
+			return false
+		}
+
+		if len(d.IterationOwners) == 0 {
+			return false
+		}
+
+		doc = d
+
+		return true
+	}, 5*time.Second, 10*time.Millisecond,
+		"the account is captured, not left in memory with the decorator")
+
+	require.Equal(t,
+		map[string]string{"0": "alice"},
+		doc.IterationOwners["cr-owners-cp-approve"])
+
+	// rebuilt from that document, the answer is still alice's
+	restored, err := Restore(doc, s, scope.EmptyDataPath,
+		cpRuntime(t), laxEP(t), dist, nil)
+	require.NoError(t, err)
+
+	v, err := restored.RuntimeVar(IterationOwners)
+	require.NoError(t, err)
+
+	owners, ok := v.Value().Get(ctx).(map[string]map[string]string)
+	require.True(t, ok)
+	require.Equal(t,
+		map[string]string{"0": "alice"},
+		owners["cr-owners-cp-approve"],
+		"a later node asking who approved item 0 gets alice, not silence")
 }

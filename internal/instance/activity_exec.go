@@ -554,7 +554,11 @@ func (d *iterDecorator) state() instanceState {
 // registers its tasks before its decorator runs, so the first completion
 // arrives ahead of the instances. Dropping that marks the work done and waits
 // forever for it to be done again.
-func (d *iterDecorator) completeInstance(ord int, def flow.EventDefinition) {
+func (d *iterDecorator) completeInstance(
+	ord int, def flow.EventDefinition, owner string,
+) {
+	d.t.recordIterationOwner(d.step.node, ord, owner)
+
 	if d.fansOutLeaves() {
 		d.deliver(ord, def)
 

@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   address, since they end with the activation they describe. Keyed by
   activity id so it stays unambiguous when two activities iterate at once.
 
+  New `RUNTIME/ITERATION_OWNERS` answers *who did which instance* — activity
+  id → (ordinal → the actor who completed it). `COMPLETED_BY` cannot: it keys
+  by node, so an iterated activity has one entry however many instances ran
+  and whoever did them, and the last completion wins. Three approvals are
+  three pieces of work by three people.
+
   Documented in one place: [Iteration runtime variables](docs/guides/iteration/runtime-variables.md).
 
 - **The standard's artifacts are carried, and an annotated diagram

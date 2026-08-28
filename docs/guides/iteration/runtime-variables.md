@@ -16,7 +16,7 @@ once because they explain the whole table:
 - **How many answers the value has.** `loopCounter` has one answer *per
   instance* — three parallel instances reading it at the same moment must get
   0, 1 and 2. `numberOfInstances` has one answer *per activity*.
-  `ITERATIONS` has one answer *per process instance*.
+  `ITERATIONS` and `ITERATION_OWNERS` have one answer *per process instance*.
 - **Who needs to read it.** A `completionCondition` is evaluated outside any
   instance, and a node inside an iterated Sub-Process reads from several
   scopes down.
@@ -107,15 +107,36 @@ path rather than a plain name.
 | Name | Value |
 |---|---|
 | `RUNTIME/ITERATIONS` | map: activity id → `{kind, total, completed, terminated}` |
+| `RUNTIME/ITERATION_OWNERS` | map: activity id → (ordinal → the actor who completed that instance) |
 
 ```go
 d, err := r.GetData("RUNTIME/ITERATIONS")
 ```
 
-**This is the one that outlives the activity.** It answers "how many did we
-process?" from any later node, and it is keyed by activity id, so it stays
-unambiguous when two activities iterate at the same time — a parallel gateway
-with a Multi-Instance on each arm.
+**These are the ones that outlive the activity.** `ITERATIONS` answers "how
+many did we process?" from any later node, and both are keyed by activity id,
+so they stay unambiguous when two activities iterate at the same time — a
+parallel gateway with a Multi-Instance on each arm.
+
+`ITERATION_OWNERS` answers *who did which one*, keyed inside by the ordinal
+`ITERATION_NUMBER` publishes:
+
+```go
+d, err := r.GetData("RUNTIME/ITERATION_OWNERS")
+// {"approve": {"0": "alice", "1": "bob", "2": "carol"}}
+```
+
+Both ride the checkpoint, so the answer survives the instance being released
+and rebuilt — which for a fan-out over human work is its ordinary state, since
+the approvals it is waiting on take days.
+
+It is not the same question as `RUNTIME/COMPLETED_BY`, and one cannot answer
+the other. `COMPLETED_BY` keys by NODE, so an iterated activity has a single
+entry however many instances ran and whoever did them — the last completion
+wins and the rest are lost. Three approvals are three pieces of work by three
+people. Only instances that were actually completed by an actor appear: an
+instance nobody did, or one the engine ran without a human, is absent rather
+than present with a blank.
 
 ## The names are the engine's
 

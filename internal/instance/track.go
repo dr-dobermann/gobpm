@@ -945,6 +945,21 @@ func (t *track) offerToPass(eDef flow.EventDefinition) bool {
 	}
 }
 
+// recordIterationOwner notes who completed instance ord of the iterated
+// activity at node (SRD-090.D FR-4).
+//
+// On the track rather than in the decorator's own state because the register
+// outlives the activity: the question it answers — who approved item 2 — is
+// asked by nodes downstream of an activity that has finished and taken its
+// decorator with it.
+func (t *track) recordIterationOwner(node flow.Node, ord int, owner string) {
+	if node == nil || t.instance == nil {
+		return
+	}
+
+	t.instance.iterationOwners.record(node.ID(), ord, owner)
+}
+
 // rememberTaskID records instance ord's parked-work identity as it is minted
 // or adopted, so the checkpoint records what each instance was announced under
 // (ADR-020 §2.12).

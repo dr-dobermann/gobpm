@@ -246,11 +246,12 @@ func (d *loopDecorator) iterKind() string {
 	return iterKindStdLoop
 }
 
-// subscriber: see iterDecorator.subscriber — one subscription for the
-// activity, held across its passes (SRD-090.B FR-1/FR-2).
 // completeInstance hands the completion to the pass that is parked on it — a
 // Standard Loop runs one at a time. See iterDecorator.completeInstance.
-func (d *loopDecorator) completeInstance(_ int, def flow.EventDefinition) {
+func (d *loopDecorator) completeInstance(
+	ord int, def flow.EventDefinition, owner string,
+) {
+	d.t.recordIterationOwner(d.step.node, ord, owner)
 	d.t.offerToPass(def)
 }
 
@@ -261,6 +262,8 @@ func (d *loopDecorator) deliverTo(_ int, eDef flow.EventDefinition) bool {
 	return d.t.offerToPass(eDef)
 }
 
+// subscriber: see iterDecorator.subscriber — one subscription for the
+// activity, held across its passes (SRD-090.B FR-1/FR-2).
 func (d *loopDecorator) subscriber() activitySubscriber { return d }
 
 // runPass runs one pass as its own instance: the executor opens that pass's
@@ -291,6 +294,17 @@ func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
 
 	e := newNodeExec(d.t, d.step, pass)
 	d.live.Store(&execHandle{e: e, node: e.step.node})
+
+	// classify the node FOR THIS PASS's execution, for the reason
+	// iterDecorator.runPass states: an iterated activity is parked by its
+	// passes and not by the arrival that reaches it — the arrival happens
+	// once however many passes run — so a classification naming no execution
+	// is skipped as that arrival, and the pass runs its waiting node without
+	// waiting. It is also what gives each pass its own parked-work identity:
+	// three passes over a User Task are three offers, one at a time.
+	if err := d.t.checkNodeTypeFor(e, d.step.node, false); err != nil {
+		return err
+	}
 
 	flows, err := e.run(ctx)
 	if err != nil {

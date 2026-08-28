@@ -113,6 +113,7 @@ func Restore(
 
 	inst.corr.restoreKeys(doc.ConvKeys)
 	inst.performers.restore(doc.CompletedBy)
+	inst.iterationOwners.restore(doc.IterationOwners)
 	inst.restoreStartedAt(doc.StartedAt)
 
 	if err := inst.restoreLedgers(ctx, doc); err != nil {
