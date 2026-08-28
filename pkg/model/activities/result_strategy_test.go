@@ -36,17 +36,17 @@ func TestAnActivityDeclaresOneResultStrategy(t *testing.T) {
 
 	t.Run("Multi-Instance", func(t *testing.T) {
 		_, err := activities.NewMultiInstance(
-			activities.WithResultArray("results"),
+			activities.WithResultMap("byKey", "result", keyExpr(t)),
 			activities.WithResultReduce("total"))
 		require.ErrorContains(t, err, "ONE result strategy")
-		require.ErrorContains(t, err, "array", "naming what was declared")
+		require.ErrorContains(t, err, "map", "naming what was declared")
 		require.ErrorContains(t, err, "reduce", "and what would be a second")
 	})
 
 	t.Run("Standard Loop", func(t *testing.T) {
 		_, err := activities.NewStandardLoop(boolExpr(t),
-			activities.WithLoopResultMap("byKey", keyExpr(t)),
-			activities.WithLoopResultArray("results"))
+			activities.WithLoopResultMap("byKey", "result", keyExpr(t)),
+			activities.WithLoopResultArray("results", "result"))
 		require.ErrorContains(t, err, "ONE result strategy")
 	})
 }
@@ -56,12 +56,37 @@ func TestAnActivityDeclaresOneResultStrategy(t *testing.T) {
 func TestAResultStrategyNeedsSomewhereToPublish(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	_, err := activities.NewMultiInstance(activities.WithResultArray(""))
+	_, err := activities.NewStandardLoop(boolExpr(t),
+		activities.WithLoopResultArray("", "result"))
 	require.ErrorContains(t, err, "needs the name it publishes under")
 
 	_, err = activities.NewStandardLoop(boolExpr(t),
 		activities.WithLoopResultReduce(""))
 	require.ErrorContains(t, err, "needs the name it publishes under")
+}
+
+// TestAnAssemblingStrategyNeedsTheItemItCollects: an activity may declare more
+// than one output, so which of them is assembled is not derivable — ADR-025
+// §2.6 states the assembly as "that instance's outputDataItem into slot
+// loopCounter of the loopDataOutputRef collection", and both halves are named.
+//
+// Reduce is exempt: it assembles nothing, and the name it declares IS the
+// accumulating value in the enclosing scope.
+func TestAnAssemblingStrategyNeedsTheItemItCollects(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	_, err := activities.NewStandardLoop(boolExpr(t),
+		activities.WithLoopResultArray("results", ""))
+	require.ErrorContains(t, err, "needs the per-instance item it collects")
+
+	_, err = activities.NewMultiInstance(
+		activities.WithResultMap("byKey", "", keyExpr(t)))
+	require.ErrorContains(t, err, "needs the per-instance item it collects")
+
+	sl, err := activities.NewStandardLoop(boolExpr(t),
+		activities.WithLoopResultReduce("total"))
+	require.NoError(t, err, "reduce assembles nothing, so it names nothing")
+	require.Empty(t, sl.Result().Item())
 }
 
 // TestAMapStrategyNeedsItsKey: the key is what says which instance's result
@@ -70,11 +95,11 @@ func TestAMapStrategyNeedsItsKey(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
 	_, err := activities.NewMultiInstance(
-		activities.WithResultMap("byKey", nil))
+		activities.WithResultMap("byKey", "result", nil))
 	require.ErrorContains(t, err, "a nil key expression isn't allowed")
 
 	_, err = activities.NewMultiInstance(
-		activities.WithResultMap("byKey", keyExpr(t), nil))
+		activities.WithResultMap("byKey", "result", keyExpr(t), nil))
 	require.ErrorContains(t, err, "a nil MapOption isn't allowed")
 }
 
@@ -93,18 +118,20 @@ func TestADeclaredStrategyIsReadableBack(t *testing.T) {
 
 	mi, err = activities.NewMultiInstance(
 		activities.WithInputCollection("items", "item"),
-		activities.WithResultMap("byOwner", key, activities.ErrorOnKeyRewrite()))
+		activities.WithResultMap("byOwner", "result", key,
+			activities.ErrorOnKeyRewrite()))
 	require.NoError(t, err)
 
 	r := mi.Result()
 	require.NotNil(t, r)
 	require.Equal(t, activities.ResultMap, r.Kind())
 	require.Equal(t, "byOwner", r.Name())
+	require.Equal(t, "result", r.Item())
 	require.Equal(t, key, r.Key())
 	require.True(t, r.ErrorOnKeyRewrite())
 
 	sl, err := activities.NewStandardLoop(boolExpr(t),
-		activities.WithLoopResultArray("perPass"))
+		activities.WithLoopResultArray("perPass", "result"))
 	require.NoError(t, err)
 
 	require.Equal(t, activities.ResultArray, sl.Result().Kind())

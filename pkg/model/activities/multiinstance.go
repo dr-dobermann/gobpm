@@ -416,17 +416,12 @@ func (mi *MultiInstanceLoopCharacteristics) ComplexBehavior() []*ComplexBehavior
 	return mi.complexBehaviorDefinition
 }
 
-// WithResultArray declares that the instances' results are indexed by ORDINAL
-// and published under name at completion (ADR-025 §2.6.1).
-//
-// Slot i holds instance i's output whatever order the instances completed in,
-// which is what makes a parallel fan-out's result deterministic — the
-// undeclared default is order-dependent, and says so.
-func WithResultArray(name string) MultiInstanceOption {
-	return func(mi *MultiInstanceLoopCharacteristics) error {
-		return mi.declareResult(ResultArray, name, nil)
-	}
-}
+// A Multi-Instance has NO WithResultArray: the array strategy is already the
+// standard's own `loopDataOutputRef` assembly (ADR-025 §2.6/§2.6.1, BPMN
+// §13.3.7), declared with WithOutputCollection. A second spelling of it would
+// be two ways to say one thing, which is the confusion "one strategy per
+// activity" exists to prevent. A Standard Loop gets WithLoopResultArray,
+// because the standard gives a loop no output aggregation at all.
 
 // WithResultMap declares that the instances' results are keyed by key,
 // evaluated in the COMPLETING INSTANCE's own frame (ADR-025 §2.6.1).
@@ -440,10 +435,10 @@ func WithResultArray(name string) MultiInstanceOption {
 // failure the declared strategies exist to make impossible. A duplicate key
 // overwrites unless ErrorOnKeyRewrite is given.
 func WithResultMap(
-	name string, key data.FormalExpression, opts ...MapOption,
+	name, item string, key data.FormalExpression, opts ...MapOption,
 ) MultiInstanceOption {
 	return func(mi *MultiInstanceLoopCharacteristics) error {
-		return mi.declareResult(ResultMap, name, key, opts...)
+		return mi.declareResult(ResultMap, name, item, key, opts...)
 	}
 }
 
@@ -457,15 +452,16 @@ func WithResultMap(
 // rediscover by experiment.
 func WithResultReduce(name string) MultiInstanceOption {
 	return func(mi *MultiInstanceLoopCharacteristics) error {
-		return mi.declareResult(ResultReduce, name, nil)
+		return mi.declareResult(ResultReduce, name, "", nil)
 	}
 }
 
 // declareResult records the one strategy this activity may declare.
 func (mi *MultiInstanceLoopCharacteristics) declareResult(
-	kind ResultKind, name string, key data.FormalExpression, opts ...MapOption,
+	kind ResultKind, name, item string,
+	key data.FormalExpression, opts ...MapOption,
 ) error {
-	r, err := newResultStrategy(kind, name, key, opts...)
+	r, err := newResultStrategy(kind, name, item, key, opts...)
 	if err != nil {
 		return err
 	}

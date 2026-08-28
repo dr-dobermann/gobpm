@@ -33,6 +33,10 @@ type multiInstance interface {
 	NoneBehaviorEvent() flow.EventDefinition
 	OneBehaviorEvent() flow.EventDefinition
 	ComplexBehavior() []*activities.ComplexBehaviorDefinition
+
+	// Result is the declared reading of the instances' results, nil for the
+	// last-wins default (ADR-025 §2.6.1).
+	Result() *activities.ResultStrategy
 }
 
 // multiInstanceOf reports the node's Multi-Instance characteristics, or nil when

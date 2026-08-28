@@ -48,6 +48,15 @@ type ResultStrategy struct {
 	// name is where the assembled result is published.
 	name string
 
+	// item is the per-instance value that goes into it, by name.
+	//
+	// Both halves are needed and neither is derivable: ADR-025 §2.6 states the
+	// assembly as "the engine writes that instance's outputDataItem into slot
+	// loopCounter of the loopDataOutputRef collection", and an activity may
+	// declare more than one output. Empty for reduce, which assembles nothing
+	// — its name IS the accumulating value in the enclosing scope.
+	item string
+
 	kind ResultKind
 
 	// errorOnKeyRewrite makes a duplicate map key a fault rather than an
@@ -60,6 +69,10 @@ func (r *ResultStrategy) Kind() ResultKind { return r.kind }
 
 // Name is where the assembled result is published.
 func (r *ResultStrategy) Name() string { return r.name }
+
+// Item is the per-instance value the assembly collects, by name. Empty for
+// reduce, which assembles nothing.
+func (r *ResultStrategy) Item() string { return r.item }
 
 // Key is the map strategy's per-instance key expression, nil for the others.
 func (r *ResultStrategy) Key() data.FormalExpression { return r.key }
@@ -90,11 +103,22 @@ func ErrorOnKeyRewrite() MapOption {
 
 // newResultStrategy validates one declaration.
 func newResultStrategy(
-	kind ResultKind, name string, key data.FormalExpression, opts ...MapOption,
+	kind ResultKind, name, item string,
+	key data.FormalExpression, opts ...MapOption,
 ) (*ResultStrategy, error) {
 	if name == "" {
 		return nil, errs.New(
 			errs.M("a result strategy needs the name it publishes under"),
+			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
+	}
+
+	// reduce assembles nothing, so it names no per-instance value: the name
+	// it declares IS the accumulating one in the enclosing scope.
+	if kind != ResultReduce && item == "" {
+		return nil, errs.New(
+			errs.M("a %q result strategy needs the per-instance item it "+
+				"collects: an activity may declare more than one output, so "+
+				"which of them is assembled is not derivable", string(kind)),
 			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
@@ -105,7 +129,7 @@ func newResultStrategy(
 			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
-	r := ResultStrategy{kind: kind, name: name, key: key}
+	r := ResultStrategy{kind: kind, name: name, item: item, key: key}
 
 	for _, o := range opts {
 		if o == nil {

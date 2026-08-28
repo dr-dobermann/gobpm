@@ -2,8 +2,11 @@ package instance
 
 import (
 	"context"
-	"github.com/dr-dobermann/gobpm/pkg/observability"
+
 	"sync/atomic"
+
+	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -19,6 +22,10 @@ type standardLoop interface {
 	LoopCondition() data.FormalExpression
 	TestBefore() bool
 	LoopMaximum() (int, bool)
+
+	// Result is the declared reading of the passes' results, nil for the
+	// last-wins default (ADR-025 §2.6.1).
+	Result() *activities.ResultStrategy
 }
 
 // standardLoopOf reports the node's Standard-Loop characteristics, or nil when
@@ -115,6 +122,13 @@ type loopDecorator struct {
 	// current — this fences the field it points at.
 	live atomic.Pointer[execHandle]
 
+	// results assembles the passes' results the way the model declared they
+	// should be read (ADR-025 §2.6.1), nil for the last-wins default.
+	//
+	// An ENGINE EXTENSION for this shape: BPMN gives a Standard Loop no output
+	// aggregation at all, only a Multi-Instance.
+	results *resultAssembly
+
 	// lastFlows is the flows the most recent LEAF pass produced. A leaf's
 	// node execution is the activity, so the flows it selected on its final
 	// pass are the activity's; a composite re-runs its node once on exit
@@ -146,6 +160,27 @@ func newLoopDecorator(
 	}
 }
 
+// bindPassData binds this pass's position: BPMN's loopCounter, and the
+// engine's own per-pass names from the one builder every publication path
+// shares (iterationvars.go), at the scope the counter is bound to.
+func (d *loopDecorator) bindPassData(pass int) error {
+	t := d.t
+
+	if err := t.instance.sc.bindLoopCounterAt(t.scopePath, pass); err != nil {
+		return err
+	}
+
+	for _, b := range iterationBindings(
+		t.scopePath.String(), iterKindStdLoop, d.step.node, pass) {
+		if err := t.instance.sc.bindDataItemAt(
+			t.scopePath, b.name, b.value); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // run drives the passes and follows the composite's outgoing flow once, on
 // exit — the activity is one token's step however many times its body ran.
 //
@@ -173,6 +208,10 @@ func (d *loopDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 		t.miSeed = nil
 	}
 
+	// a Standard Loop's bound is its condition, so N is not known in advance:
+	// the array grows by ordinal as the passes run.
+	d.results = newResultAssembly(d.sl.Result(), 0)
+
 	// one step of the token, however many passes run (ADR-025 §2.13b.1e).
 	t.updateState(TrackExecutingStep)
 	t.record(TrackExecutingStep)
@@ -187,19 +226,8 @@ func (d *loopDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 			t.setLoopCounter(pass)
 		}
 
-		if err := t.instance.sc.bindLoopCounterAt(t.scopePath, pass); err != nil {
+		if err := d.bindPassData(pass); err != nil {
 			return nil, err
-		}
-
-		// the engine's own names for this pass, from the one builder every
-		// publication path shares (iterationvars.go), at the same scope the
-		// counter is bound to.
-		for _, b := range iterationBindings(
-			t.scopePath.String(), iterKindStdLoop, d.step.node, pass) {
-			if err := t.instance.sc.bindDataItemAt(
-				t.scopePath, b.name, b.value); err != nil {
-				return nil, err
-			}
 		}
 
 		// pre-tested (while) tests every pass; post-tested (do-while) skips
@@ -225,6 +253,12 @@ func (d *loopDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	}
 
 	d.live.Store(nil)
+
+	// ONCE, at completion (§2.6's visibility barrier, extended to a declared
+	// result by §2.6.1): no concurrent activity may read a half-assembled one.
+	if err := d.results.publish(t); err != nil {
+		return nil, err
+	}
 
 	// the exit runs while STILL iterating — a composite's exit executes its
 	// node, and leaving the state first would record a second step for an
@@ -293,6 +327,13 @@ func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
 	d.step.state = StepCreated
 
 	e := newNodeExec(d.t, d.step, pass)
+
+	if d.results != nil {
+		e.capture = func(f *scope.Frame) error {
+			return d.results.take(ctx, d.t.instance, f, pass)
+		}
+	}
+
 	d.live.Store(&execHandle{e: e, node: e.step.node})
 
 	// classify the node FOR THIS PASS's execution, for the reason

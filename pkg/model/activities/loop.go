@@ -132,19 +132,19 @@ func (sl *StandardLoopCharacteristics) LoopMaximum() (int, bool) {
 //
 // An engine extension: BPMN gives a Standard Loop no output aggregation at
 // all, only a Multi-Instance.
-func WithLoopResultArray(name string) StandardLoopOption {
+func WithLoopResultArray(name, item string) StandardLoopOption {
 	return func(sl *StandardLoopCharacteristics) error {
-		return sl.declareResult(ResultArray, name, nil)
+		return sl.declareResult(ResultArray, name, item, nil)
 	}
 }
 
 // WithLoopResultMap declares that the passes' results are keyed by key,
 // evaluated in the completing pass's own frame — see WithResultMap.
 func WithLoopResultMap(
-	name string, key data.FormalExpression, opts ...MapOption,
+	name, item string, key data.FormalExpression, opts ...MapOption,
 ) StandardLoopOption {
 	return func(sl *StandardLoopCharacteristics) error {
-		return sl.declareResult(ResultMap, name, key, opts...)
+		return sl.declareResult(ResultMap, name, item, key, opts...)
 	}
 }
 
@@ -153,15 +153,16 @@ func WithLoopResultMap(
 // which is why naming it matters more here than anywhere.
 func WithLoopResultReduce(name string) StandardLoopOption {
 	return func(sl *StandardLoopCharacteristics) error {
-		return sl.declareResult(ResultReduce, name, nil)
+		return sl.declareResult(ResultReduce, name, "", nil)
 	}
 }
 
 // declareResult records the one strategy this loop may declare.
 func (sl *StandardLoopCharacteristics) declareResult(
-	kind ResultKind, name string, key data.FormalExpression, opts ...MapOption,
+	kind ResultKind, name, item string,
+	key data.FormalExpression, opts ...MapOption,
 ) error {
-	r, err := newResultStrategy(kind, name, key, opts...)
+	r, err := newResultStrategy(kind, name, item, key, opts...)
 	if err != nil {
 		return err
 	}

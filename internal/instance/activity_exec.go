@@ -256,6 +256,10 @@ type iterDecorator struct {
 	// from the track at the start of the run (SRD-090.A FR-7).
 	seed *checkpoint.IterationRecord
 
+	// results assembles the instances' results the way the model declared
+	// they should be read (ADR-025 §2.6.1), nil for the last-wins default.
+	results *resultAssembly
+
 	// eventSubs makes the decorator the hub's subscriber for this activity's
 	// waits (ADR-006 §2.9.5, SRD-090.B FR-1): one identity per iterated
 	// activity, one subscription per definition, alive while any instance
@@ -365,6 +369,8 @@ func (d *iterDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 		return d.exitFlows(ctx)
 	}
 
+	d.results = newResultAssembly(d.mi.Result(), n)
+
 	if !d.mi.IsSequential() {
 		return d.runParallel(ctx, it, n)
 	}
@@ -394,6 +400,10 @@ func (d *iterDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 	}
 
 	if err := it.publishOutput(d.t); err != nil {
+		return nil, err
+	}
+
+	if err := d.results.publish(d.t); err != nil {
 		return nil, err
 	}
 
@@ -1259,6 +1269,10 @@ func (d *iterDecorator) finishParallel(
 		return nil, err
 	}
 
+	if err := d.results.publish(t); err != nil {
+		return nil, err
+	}
+
 	t.miState = nil
 	t.setLoopCounter(0)
 	t.updateState(TrackProcessStepResults)
@@ -1378,11 +1392,17 @@ func (d *iterDecorator) instanceFor(
 		local: local,
 	}
 
-	if st.staging != nil {
+	if st.staging != nil || d.results != nil {
 		e.capture = func(f *scope.Frame) error {
-			outs.take(ctx, ord, f, st.outputItem)
+			if st.staging != nil {
+				outs.take(ctx, ord, f, st.outputItem)
+			}
 
-			return nil
+			// the DECLARED result is taken from the same frame, before the
+			// commit makes the name a shared one — and for a map, the key is
+			// evaluated here too, which is what lets it use something this
+			// instance produced (§2.6.1).
+			return d.results.take(ctx, d.t.instance, f, ord)
 		}
 	}
 

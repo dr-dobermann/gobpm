@@ -26,6 +26,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instance does its work rather than waiting for somebody, and those passes
   still overlap.
 
+- **A model declares what its instances produce** (SRD-090.D FR-7/FR-8,
+  ADR-025 §2.6.1, part of #340). The default is unchanged and stated plainly:
+  last write wins, which makes a sequential iteration a fold and a parallel one
+  order-dependent. A model that needs every instance's result now says so and
+  gets a deterministic one.
+
+  A **map** keys results by a per-instance expression, evaluated in the
+  completing instance's own frame — so the key can use something that instance
+  produced, an approver's answer being the motivating case. An empty key
+  refuses; a duplicate overwrites by default, or faults naming both ordinals
+  and the key under `ErrorOnKeyRewrite`. A Standard Loop also gains an
+  **array** indexed by pass, which BPMN does not give it; a Multi-Instance
+  keeps the standard's own `loopDataOutputRef` assembly for that.
+  **reduce** names the default so a model can state the fold it relies on.
+
+  A declared result publishes ONCE, at activity completion — never
+  incrementally, so nothing can read a half-assembled collection.
+
 - **An iterating activity publishes which instance is running** (SRD-090.D,
   ADR-025 §2.9.2, part of #340). Beside BPMN's `loopCounter`, every instance
   of a Standard Loop or Multi-Instance now reads `ITERATION_NUMBER`, its
