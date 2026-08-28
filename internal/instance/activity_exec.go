@@ -288,7 +288,9 @@ func newIterDecorator(
 
 // buildInstance makes the executor for ordinal ord: a child scope for a
 // composite activity, an execution of the node for a leaf.
-func (d *iterDecorator) buildInstance(ord int) activityExec {
+func (d *iterDecorator) buildInstance(
+	ctx context.Context, ord int,
+) activityExec {
 	if d.composite {
 		e := newScopeExec(d.t, d.step, ord)
 		e.iterKind = d.iterKind()
@@ -296,7 +298,18 @@ func (d *iterDecorator) buildInstance(ord int) activityExec {
 		return e
 	}
 
-	return newNodeExec(d.t, d.step, ord)
+	e := newNodeExec(d.t, d.step, ord)
+
+	// a SEQUENTIAL pass feeds the declared result too, from its own frame —
+	// the fan-out wires this in instanceFor, and a pass that did not would
+	// leave a declared strategy silently assembling nothing.
+	if d.results != nil {
+		e.capture = func(f *scope.Frame) error {
+			return d.results.take(ctx, d.t.instance, f, ord)
+		}
+	}
+
+	return e
 }
 
 // iterKind names the shape this decorator drives, for the loop's position
@@ -454,7 +467,7 @@ func (d *iterDecorator) run(ctx context.Context) ([]*flow.SequenceFlow, error) {
 func (d *iterDecorator) runInstance(
 	ctx context.Context, it miIterator, i, n int,
 ) ([]*flow.SequenceFlow, bool, error) {
-	d.live.Store(&execHandle{e: d.buildInstance(i)})
+	d.live.Store(&execHandle{e: d.buildInstance(ctx, i)})
 
 	// cleared when this instance is done, so the field means what it says:
 	// nil between instances (see loopDecorator.runPass).

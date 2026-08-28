@@ -2,11 +2,14 @@ package instance
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -400,4 +403,133 @@ func TestAnInstanceThatProducedNoResultLeavesItsSlotEmpty(t *testing.T) {
 	got, ok := d.Value().Get(context.Background()).(map[string]any)
 	require.True(t, ok)
 	require.Empty(t, got)
+}
+
+// TestIterationIDIsStableAcrossARebuild (SRD-090.D T-6, ADR-025 §2.9.3):
+// ITERATION_ID survives the instance being released and rebuilt, with nothing
+// stored for it.
+//
+// It is DERIVED — enclosing scope path, activity id, ordinal — and all three
+// already survive a checkpoint, so the identity comes back without the engine
+// persisting it. The check rides a map result strategy because its key is
+// evaluated in the completing instance's own frame: the keys ARE what each
+// instance read for its own ITERATION_ID, one of them before the release and
+// two after.
+func TestIterationIDIsStableAcrossARebuild(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	byIterID := goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, src data.Source) (data.Value, error) {
+			d, err := src.Find(ctx, data.IterationIDName)
+			if err != nil {
+				return values.NewVariable(""), nil
+			}
+
+			return values.NewVariable(d.Value().Get(ctx)), nil
+		})
+
+	mi, err := activities.NewMultiInstance(
+		activities.WithSequential(),
+		activities.WithInputCollection("items", "item"),
+		activities.WithResultMap("byIterID", "result", byIterID))
+	require.NoError(t, err)
+
+	s := miUserTaskSnapshotWith(t, "rs-iterid", mi)
+
+	dist := &countingDist{}
+	rt := cpRuntime(t)
+
+	inst, err := New(s, scope.EmptyDataPath, rt, laxEP(t), dist,
+		WithCheckpointing("engine-A", "engine-A", time.Minute),
+		WithWaitHolders(newFakeHolders()))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	answer := func(v string) []data.Data {
+		return []data.Data{
+			data.MustParameter("result",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(v)),
+					data.ReadyDataState)),
+		}
+	}
+
+	// the activity parks its first pass and is released holding it — the
+	// ordinary state of an iteration over human work.
+	require.Eventually(t, func() bool { return len(dist.announced()) == 1 },
+		5*time.Second, 10*time.Millisecond)
+
+	require.Eventually(t, func() bool { return inst.State() == Dehydrated },
+		5*time.Second, 10*time.Millisecond,
+		"released with every pass still to run")
+
+	rec, ok, err := rt.Repository().Load(context.Background(), inst.ID())
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	doc, err := checkpoint.Unmarshal(rec.Payload)
+	require.NoError(t, err)
+
+	restored, err := Restore(doc, s, scope.EmptyDataPath,
+		cpRuntime(t), laxEP(t), dist, nil)
+	require.NoError(t, err)
+	require.NoError(t, restored.Run(ctx))
+
+	// every pass now runs in the REBUILT instance, and each reads its own
+	// ITERATION_ID there.
+	for pass, v := range []string{"first", "second", "third"} {
+		want := pass + 2 // one announcement before the release, one per pass
+
+		require.Eventually(t, func() bool {
+			return len(dist.announced()) >= want
+		}, 5*time.Second, 10*time.Millisecond,
+			"pass %d offers its task", pass)
+
+		ids := dist.announced()
+		require.NoError(t, restored.Complete(ctx, ids[len(ids)-1],
+			stubActor{id: "alice"}, answer(v)))
+	}
+
+	require.Eventually(t, func() bool { return restored.State() == Completed },
+		5*time.Second, 10*time.Millisecond)
+
+	d, err := restored.sc.plane.GetData(restored.sc.root, "byIterID")
+	require.NoError(t, err)
+
+	got, ok := d.Value().Get(ctx).(map[string]any)
+	require.True(t, ok)
+
+	require.Len(t, got, 3, "three passes, three distinct identities")
+
+	// The identity is DERIVED — enclosing scope path, activity id, ordinal —
+	// so the three keys differ only in the ordinal they end with. Asserting
+	// the shape rather than a remembered string is the point: nothing was
+	// stored for these, and a rebuilt instance re-derived every one.
+	var prefix string
+
+	for key := range got {
+		idx := strings.LastIndex(key, "#")
+		require.Positive(t, idx, "an identity ends with its ordinal")
+
+		if prefix == "" {
+			prefix = key[:idx]
+		}
+
+		require.Equal(t, prefix, key[:idx],
+			"all three name the same activity in the same scope")
+
+		require.Contains(t, key, "rs-iterid-approve",
+			"and the activity by its id")
+	}
+
+	for ord, v := range map[int]string{0: "first", 1: "second", 2: "third"} {
+		want := prefix + "#" + strconv.Itoa(ord)
+		require.Equal(t, v, got[want],
+			"pass %d re-derived its own identity after the rebuild, with "+
+				"nothing stored for it", ord)
+	}
 }

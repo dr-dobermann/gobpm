@@ -48,6 +48,18 @@ func miUserTaskSnapshot(
 	mi, err := activities.NewMultiInstance(opts...)
 	require.NoError(t, err)
 
+	return miUserTaskSnapshotWith(t, key, mi)
+}
+
+// miUserTaskSnapshotWith is the same process over a Multi-Instance the caller
+// prepared — for a test that needs one carrying a result strategy.
+func miUserTaskSnapshotWith(
+	t *testing.T, key string, mi *activities.MultiInstanceLoopCharacteristics,
+) *snapshot.Snapshot {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
 	items := data.MustProperty("items",
 		data.MustItemDefinition(values.NewArray("a", "b", "c"),
 			foundation.WithID(key+"-items")),
