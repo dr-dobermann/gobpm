@@ -31,6 +31,11 @@ func TestReservedNameIsRefusedWhereItIsWritten(t *testing.T) {
 			foundation.WithID("v"))
 	}
 
+	require.Len(t, data.ReservedNames(), 10,
+		"the set is CLOSED and stays so: ten engine-owned names, not a "+
+			"namespace or a prefix match. A model reading the list gets the "+
+			"whole vocabulary it may not declare")
+
 	for _, name := range data.ReservedNames() {
 		t.Run(name, func(t *testing.T) {
 			_, err := data.NewProperty(name, item(t), data.ReadyDataState)

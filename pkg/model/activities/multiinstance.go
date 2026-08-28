@@ -86,7 +86,11 @@ type MultiInstanceLoopCharacteristics struct {
 	loopDataOutputRef         string
 	inputDataItem             string
 	outputDataItem            string
-	behavior                  MultiInstanceBehavior
+	// result is the declared reading of the instances' results, nil for the
+	// last-wins default (ADR-025 §2.6.1).
+	result *ResultStrategy
+
+	behavior MultiInstanceBehavior
 	foundation.BaseElement
 	isSequential bool
 }
@@ -410,4 +414,72 @@ func (mi *MultiInstanceLoopCharacteristics) OneBehaviorEvent() flow.EventDefinit
 // nil.
 func (mi *MultiInstanceLoopCharacteristics) ComplexBehavior() []*ComplexBehaviorDefinition {
 	return mi.complexBehaviorDefinition
+}
+
+// WithResultArray declares that the instances' results are indexed by ORDINAL
+// and published under name at completion (ADR-025 §2.6.1).
+//
+// Slot i holds instance i's output whatever order the instances completed in,
+// which is what makes a parallel fan-out's result deterministic — the
+// undeclared default is order-dependent, and says so.
+func WithResultArray(name string) MultiInstanceOption {
+	return func(mi *MultiInstanceLoopCharacteristics) error {
+		return mi.declareResult(ResultArray, name, nil)
+	}
+}
+
+// WithResultMap declares that the instances' results are keyed by key,
+// evaluated in the COMPLETING INSTANCE's own frame (ADR-025 §2.6.1).
+//
+// That timing is the point: it lets the key use something the instance
+// produced — the assignee of a User Task being the motivating case, since it
+// is not known until the task is claimed.
+//
+// An empty or missing key refuses at runtime: there is no sensible slot for a
+// result with no key, and silently dropping one instance's output is the
+// failure the declared strategies exist to make impossible. A duplicate key
+// overwrites unless ErrorOnKeyRewrite is given.
+func WithResultMap(
+	name string, key data.FormalExpression, opts ...MapOption,
+) MultiInstanceOption {
+	return func(mi *MultiInstanceLoopCharacteristics) error {
+		return mi.declareResult(ResultMap, name, key, opts...)
+	}
+}
+
+// WithResultReduce names the accumulating default under name: each instance's
+// writes land in the enclosing scope, and a later one replaces an earlier
+// (ADR-025 §2.6.1).
+//
+// It changes no behavior — it IS the default — and exists so a model can
+// state the intent it is relying on. A sequential iteration reading what the
+// previous pass committed is a fold, and an implicit fold is a thing readers
+// rediscover by experiment.
+func WithResultReduce(name string) MultiInstanceOption {
+	return func(mi *MultiInstanceLoopCharacteristics) error {
+		return mi.declareResult(ResultReduce, name, nil)
+	}
+}
+
+// declareResult records the one strategy this activity may declare.
+func (mi *MultiInstanceLoopCharacteristics) declareResult(
+	kind ResultKind, name string, key data.FormalExpression, opts ...MapOption,
+) error {
+	r, err := newResultStrategy(kind, name, key, opts...)
+	if err != nil {
+		return err
+	}
+
+	if mi.result != nil {
+		return errSecondStrategy(mi.result.kind, kind)
+	}
+
+	mi.result = r
+
+	return nil
+}
+
+// Result is the declared result strategy, or nil for the last-wins default.
+func (mi *MultiInstanceLoopCharacteristics) Result() *ResultStrategy {
+	return mi.result
 }
