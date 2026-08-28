@@ -115,8 +115,7 @@ func applyShape(
 		}
 
 		if err := target.Update(ctx, v.Get(ctx)); err != nil {
-			return opErr("couldn't write the transformation result of "+
-				owner+" into "+targetName, err)
+			return opErr("couldn't write the transformation result of "+owner+" into "+targetName, err)
 		}
 
 		return nil
@@ -166,16 +165,14 @@ func applyAssignment(
 	// path for exactly that reason (ADR-011 §2.9.3).
 	if rest == "" {
 		if err := target.Update(ctx, v.Get(ctx)); err != nil {
-			return opErr("couldn't write assignment #"+strconv.Itoa(idx)+" of "+
-				owner+" into "+targetName, err)
+			return opErr("couldn't write assignment #"+strconv.Itoa(idx)+" of "+owner+" into "+targetName, err)
 		}
 
 		return nil
 	}
 
 	if err := values.SetPath(ctx, target, rest, v); err != nil {
-		return opErr("couldn't write assignment #"+strconv.Itoa(idx)+" of "+owner+
-			" at "+as.To(), err)
+		return opErr("couldn't write assignment #"+strconv.Itoa(idx)+" of "+owner+" at "+as.To(), err)
 	}
 
 	return nil
