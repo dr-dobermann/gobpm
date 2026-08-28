@@ -3,8 +3,14 @@ package bpmn
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/rules"
+	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
+	"github.com/dr-dobermann/gobpm/pkg/script"
 
 	"github.com/dr-dobermann/gobpm/pkg/datastore/memstore"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -491,4 +497,208 @@ func TestIteratedWaitingLeafPassesThrough(t *testing.T) {
 			}
 		}
 	})
+}
+
+// luaish is a test-local script engine claiming the Lua formats the
+// importer accepts (ADR-024 v.7 §2.11 — a script imports only when its
+// body is self-contained source, and Lua is that shape).
+//
+// The interpreter itself is `adapters/lua`, a separate module, so a core
+// test cannot reach it without inverting the dependency the module
+// boundary exists to keep. What T-11 has to prove is not that Lua
+// evaluates — that module tests it — but that an IMPORTED script task is
+// wired: routed by its scriptFormat, executed by the engine the host
+// registered, and its outputs committed to the instance's scope. A stub
+// that returns a fixed output proves exactly that path and nothing it
+// does not.
+type luaish struct {
+	seen atomic.Bool
+}
+
+func (l *luaish) Type() string { return "##TestLua" }
+
+func (l *luaish) Formats() []string {
+	return []string{"lua", "text/x-lua", "application/x-lua"}
+}
+
+func (l *luaish) Execute(
+	_ context.Context, _, _ string, _ service.DataReader,
+) (script.Outputs, error) {
+	l.seen.Store(true)
+
+	return script.Outputs{"amount": values.NewVariable(150)}, nil
+}
+
+// TestFlowNodesRunOnAThresher covers SRD-089.C §6 T-11 and §9 DoD 3.
+//
+// The stage added a script task, a business rule task, an inclusive and
+// an event-based gateway, and every other test in it stops at the
+// imported SHAPE — the node exists, its format or decision reference
+// survived. That is not the same as wired. A script task whose format
+// never reaches the script registry, or an inclusive gateway whose
+// conditions never reach the expression engine, imports identically to
+// one that works and then does nothing at run time.
+//
+// So the three deterministic additions run together on a real thresher:
+// the script task produces a value, the inclusive gateway routes on it
+// through the lite expression engine — reached from the JUEL a real
+// modeller file carries, so the §2.10 translation is on the path too —
+// and the rule task decides on the merged result. The event-based
+// gateway is driven separately, below, because it completes by waiting
+// rather than by flowing.
+func TestFlowNodesRunOnAThresher(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:camunda="http://camunda.org/schema/1.0/bpmn">
+  <bpmn:process id="FlowNodes" name="flow nodes" isExecutable="true">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:scriptTask id="sc1" name="price it" scriptFormat="lua">
+      <bpmn:script>data.set("amount", 150)</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:inclusiveGateway id="ig1" name="split"/>
+    <bpmn:task id="big" name="big order"/>
+    <bpmn:task id="any" name="always"/>
+    <bpmn:inclusiveGateway id="ig2" name="join"/>
+    <bpmn:businessRuleTask id="br1" name="grade it" camunda:decisionRef="grade"/>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="sc1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="sc1" targetRef="ig1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="ig1" targetRef="big">
+      <bpmn:conditionExpression>${amount &gt; 100}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f4" sourceRef="ig1" targetRef="any">
+      <bpmn:conditionExpression>${amount &gt; 0}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f5" sourceRef="big" targetRef="ig2"/>
+    <bpmn:sequenceFlow id="f6" sourceRef="any" targetRef="ig2"/>
+    <bpmn:sequenceFlow id="f7" sourceRef="ig2" targetRef="br1"/>
+    <bpmn:sequenceFlow id="f8" sourceRef="br1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	p, err := importer{}.Import(ctx, strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	scripts := &luaish{}
+
+	var graded atomic.Bool
+
+	decisions := gorules.New()
+	if err = decisions.Register("grade",
+		func(_ context.Context, _ service.DataReader) (rules.Row, error) {
+			graded.Store(true)
+
+			return rules.Row{"grade": values.NewVariable("gold")}, nil
+		}); err != nil {
+		t.Fatalf("Register decision: %v", err)
+	}
+
+	engine, err := thresher.New("flow-nodes-engine",
+		thresher.WithScriptEngine(scripts),
+		thresher.WithRuleEngine(decisions))
+	if err != nil {
+		t.Fatalf("thresher.New: %v", err)
+	}
+
+	if _, err = engine.RegisterProcess(p); err != nil {
+		t.Fatalf("RegisterProcess: %v — an imported process the engine will "+
+			"not register is not an imported process", err)
+	}
+
+	if err = engine.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	h, err := engine.StartLatest(p.ID())
+	if err != nil {
+		t.Fatalf("StartLatest: %v", err)
+	}
+
+	if _, err = h.WaitCompletion(ctx); err != nil {
+		t.Fatalf("WaitCompletion: %v — the stage's nodes imported, so a run "+
+			"that never finishes means one of them was built and never "+
+			"wired", err)
+	}
+
+	if !scripts.seen.Load() {
+		t.Error("the script engine was never called — the imported " +
+			"scriptFormat did not route")
+	}
+
+	if !graded.Load() {
+		t.Error("the decision was never evaluated — the imported " +
+			"decisionRef did not reach the rule engine")
+	}
+}
+
+// TestEventBasedGatewayRunsOnAThresher completes SRD-089.C §6 T-11: the
+// stage's fourth addition, driven the only way it can be.
+//
+// An event-based gateway does not route on data — it arms its outgoing
+// catch events and lets the first one to fire decide. So it cannot ride
+// the test above, which completes by flowing; it needs an event to
+// actually arrive. A short timer supplies one, and the message branch
+// that never arrives is what proves the choice was made rather than both
+// paths taken.
+func TestEventBasedGatewayRunsOnAThresher(t *testing.T) {
+	doc := `<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:message id="m1" name="never"/>
+  <bpmn:process id="EventGate" name="event gate" isExecutable="true">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:eventBasedGateway id="eg1" name="whichever first"/>
+    <bpmn:intermediateCatchEvent id="tick" name="after a moment">
+      <bpmn:timerEventDefinition id="d1">
+        <bpmn:timeDuration>PT1S</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+    <bpmn:intermediateCatchEvent id="never" name="not coming">
+      <bpmn:messageEventDefinition id="d2" messageRef="m1"/>
+    </bpmn:intermediateCatchEvent>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:endEvent id="e2"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="eg1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="eg1" targetRef="tick"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="eg1" targetRef="never"/>
+    <bpmn:sequenceFlow id="f4" sourceRef="tick" targetRef="e1"/>
+    <bpmn:sequenceFlow id="f5" sourceRef="never" targetRef="e2"/>
+  </bpmn:process>
+</bpmn:definitions>`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	p, err := importer{}.Import(ctx, strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	engine, err := thresher.New("event-gate-engine")
+	if err != nil {
+		t.Fatalf("thresher.New: %v", err)
+	}
+
+	if _, err = engine.RegisterProcess(p); err != nil {
+		t.Fatalf("RegisterProcess: %v", err)
+	}
+
+	if err = engine.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	h, err := engine.StartLatest(p.ID())
+	if err != nil {
+		t.Fatalf("StartLatest: %v", err)
+	}
+
+	if _, err = h.WaitCompletion(ctx); err != nil {
+		t.Fatalf("WaitCompletion: %v — the gateway imported, so a run that "+
+			"never finishes means its branches were built and never armed",
+			err)
+	}
 }

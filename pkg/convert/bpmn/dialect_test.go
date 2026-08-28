@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/convert"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
@@ -80,11 +81,28 @@ func TestCamundaDialectIsMappedAndReported(t *testing.T) {
 	}
 
 	t.Run("what the model can hold is mapped", func(t *testing.T) {
-		// The mapped values are not readable back through a getter — the
+		// Most mapped values are not readable back through a getter — the
 		// model keeps assignment private — so the evidence that they were
 		// consumed is that they are NOT in the report. A construct is
 		// either mapped or reported; nothing is both, and nothing is
 		// neither.
+		//
+		// That is a weaker claim than "it arrived", so where the model DOES
+		// expose the value it is asserted directly: camunda:type +
+		// camunda:topic become the ServiceTask's external-worker topic, and
+		// the absence-from-the-report check below would pass just as well if
+		// the pair had been read and dropped.
+		st, ok := nodeByID(t, res, "v1").(*activities.ServiceTask)
+		if !ok {
+			t.Fatalf("v1 = %T, want *activities.ServiceTask", nodeByID(t, res, "v1"))
+		}
+
+		topic, dispatched := st.WorkerTopic()
+		if !dispatched || topic != "charge" {
+			t.Errorf("WorkerTopic() = (%q, %v), want (\"charge\", true) — "+
+				"camunda:type/topic did not reach the model", topic, dispatched)
+		}
+
 		for _, mapped := range []string{
 			"camunda:assignee",
 			"camunda:candidateUsers",
