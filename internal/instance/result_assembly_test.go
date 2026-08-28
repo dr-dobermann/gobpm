@@ -37,6 +37,29 @@ func ownerKey(t *testing.T) data.FormalExpression {
 		})
 }
 
+// blankKey returns an empty key for one nominated answer, which is how a
+// model's key expression fails in practice: it reads something the instance
+// did not produce.
+func blankKey(t *testing.T, blankFor string) data.FormalExpression {
+	t.Helper()
+
+	return goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, src data.Source) (data.Value, error) {
+			d, err := src.Find(ctx, "result")
+			if err != nil {
+				return values.NewVariable(""), nil
+			}
+
+			v, _ := d.Value().Get(ctx).(string)
+			if v == blankFor {
+				return values.NewVariable(""), nil
+			}
+
+			return values.NewVariable(v), nil
+		})
+}
+
 // resultProc builds start → PARALLEL Multi-Instance User Task (three items) →
 // end, with whatever result strategy is asked for.
 func resultProc(
@@ -333,4 +356,48 @@ func TestAStandardLoopAssemblesItsPassesByOrdinal(t *testing.T) {
 	require.Equal(t,
 		[]any{"first", "second", "third"}, arr.GetAll(context.Background()),
 		"slot i holds pass i's result, in pass order")
+}
+
+// TestAnEmptyResultKeyRefuses (SRD-090.D T-11, ADR-025 §2.6.1): there is no
+// sensible slot for a result with no key.
+//
+// Silently dropping one instance's output is the failure the declared
+// strategies exist to make impossible, so the instance whose key came back
+// empty faults rather than vanishing from the collection.
+func TestAnEmptyResultKeyRefuses(t *testing.T) {
+	s := resultProc(t, "rs-blank",
+		activities.WithResultMap("byAnswer", "result", blankKey(t, "no")))
+
+	inst := completeAll(t, s, "yes", "no", "maybe")
+
+	require.Eventually(t, func() bool { return inst.OpenIncidents() == 1 },
+		5*time.Second, 10*time.Millisecond,
+		"the instance with no key faults; it is not quietly left out")
+
+	require.NotEqual(t, Completed, inst.State(),
+		"and the activity does not complete on a collection missing a result")
+}
+
+// TestAnInstanceThatProducedNoResultLeavesItsSlotEmpty: an activity whose
+// output is optional is not an error here — the slot stays empty, as a
+// canceled instance's does.
+//
+// The strategy names an item this task never writes, which is the same
+// situation from the assembly's side.
+func TestAnInstanceThatProducedNoResultLeavesItsSlotEmpty(t *testing.T) {
+	s := resultProc(t, "rs-absent",
+		activities.WithResultMap("byAnswer", "unwritten", ownerKey(t)))
+
+	inst := completeAll(t, s, "yes", "no", "maybe")
+
+	require.Eventually(t, func() bool { return inst.State() == Completed },
+		5*time.Second, 10*time.Millisecond,
+		"nothing was produced to assemble, and that is not a fault")
+
+	d, err := inst.sc.plane.GetData(inst.sc.root, "byAnswer")
+	require.NoError(t, err, "the name is still published, and it is empty")
+
+	got, ok := d.Value().Get(context.Background()).(map[string]any)
+	require.True(t, ok)
+	require.Empty(t, got)
 }

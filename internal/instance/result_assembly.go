@@ -57,8 +57,6 @@ func newResultAssembly(r *activities.ResultStrategy, n int) *resultAssembly {
 	case activities.ResultMap:
 		a.byKey = map[string]any{}
 		a.keyedBy = map[string]int{}
-
-	case activities.ResultReduce:
 	}
 
 	return &a
