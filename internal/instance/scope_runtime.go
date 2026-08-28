@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"slices"
 	"strconv"
 	"strings"
@@ -90,7 +91,12 @@ type scopeEntry struct {
 	// adHoc is the routing state of an Ad-Hoc scope (SRD-074 §3.4), nil for
 	// every other scope: the per-activity completed/running counts the Router
 	// decides on, and whether routing has already stopped.
-	adHoc  *adHocProgress
+	adHoc *adHocProgress
+	// tx is the transaction binding (ADR-028 §2.1, SRD-095 FR-5): the
+	// characteristics the executing unit bound this scope to when it opened,
+	// nil for every scope that is not a Transaction's. cancelTransaction
+	// dispatches the abort on it.
+	tx     *activities.TransactionCharacteristics
 	node   flow.Node
 	parent scope.DataPath
 	// queue holds the open requests waiting for this path to free — a
@@ -377,6 +383,7 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 		ls.scopes[path] = &scopeEntry{
 			host:        host,
 			node:        node,
+			tx:          bindTransaction(node),
 			parent:      parent,
 			active:      pins,
 			awaitAttach: true,
@@ -482,6 +489,7 @@ func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 			ls.scopes[path] = &scopeEntry{
 				host:        host,
 				node:        node,
+				tx:          bindTransaction(node),
 				parent:      host.scopePath,
 				ordinal:     o.Ordinal,
 				instance:    true,

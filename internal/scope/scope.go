@@ -1,3 +1,4 @@
+// Package scope provides data scoping and path management for BPMN process execution.
 package scope
 
 import (

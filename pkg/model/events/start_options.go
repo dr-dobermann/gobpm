@@ -16,7 +16,6 @@ type (
 
 	startConfig struct {
 		props          map[string]*data.Property
-		dataOutputs    map[string]*data.Parameter
 		correlationKey *bpmncommon.CorrelationKey
 		name           string
 		baseOpts       []options.Option
@@ -107,10 +106,6 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 		return nil, err
 	}
 
-	if len(sc.dataOutputs) > 0 {
-		ce.dataOutputs = sc.dataOutputs
-	}
-
 	return &StartEvent{
 		catchEvent:     *ce,
 		correlationKey: sc.correlationKey,
@@ -193,32 +188,11 @@ func (sc *startConfig) setEscalation(
 	return nil
 }
 
-// setMessage implements messageAdder interface.
+// setMessage implements messageAdder interface. The message payload's data
+// output is declared by newCatchEvent from the definition, with every other
+// item-bearing trigger's (p217).
 func (sc *startConfig) setMessage(med *MessageEventDefinition) error {
 	sc.defs = append(sc.defs, med)
-
-	if id := med.Message().Item(); id != nil {
-		ds := data.ReadyDataState
-		if id.Structure() == nil {
-			ds = data.UndefinedSrcState
-		}
-
-		iae, err := data.NewItemAwareElement(id, ds)
-		if err != nil {
-			return err
-		}
-
-		do, err := data.NewParameter(
-			fmt.Sprintf("message %q(%s) output",
-				med.Message().Name(),
-				med.Message().ID()),
-			iae)
-		if err != nil {
-			return err
-		}
-
-		sc.dataOutputs[id.ID()] = do
-	}
 
 	return nil
 }

@@ -48,9 +48,16 @@ type Instance struct {
 	scopeReq            chan scopeRequest
 	incidentReq         chan incidentRequest
 	invoker             exec.ProcessInvoker
-	waitHolders         exec.WaitHolders
-	sc                  instanceScope
-	corr                correlator
+	// result holds the declared outputs read at normal completion (ADR-040
+	// §2.3): the contract's committed values, written once by the loop in
+	// exitLoop; copy-on-write (the tracksSnap pattern), since a host may ask
+	// Outputs() at any time and a read racing the store must see nothing or
+	// the whole result. nil for a
+	// contract-less process and after an abnormal end.
+	result      atomic.Pointer[[]data.Data]
+	waitHolders exec.WaitHolders
+	sc          instanceScope
+	corr        correlator
 	// performers records who completed each human task, served read-only through
 	// the RUNTIME subtree and carried across a hydrate (ADR-020 v.2 §2.4.2).
 	performers *performers
@@ -447,6 +454,14 @@ func withRootData(dd []data.Data) newOption {
 	}
 }
 
+// WithRootData is the exported twin of withRootData for the host's start
+// request (ADR-040 §2.2, SRD-093 FR-6): the values the engine binds through
+// the process's declared inputs at launch — or, for a contract-less process,
+// commits into the root scope as they are.
+func WithRootData(dd []data.Data) Option {
+	return withRootData(dd)
+}
+
 // withCallLinkage stamps the call linkage (SRD-050 FR-4) onto every fact the
 // instance emits, stitching a child's trace back to its caller. Exposed via
 // NewChild. Empty ids leave the instance top-level (unstamped).
@@ -573,7 +588,6 @@ func New(
 	}
 
 	inst.wireWaitHeld()
-	inst.announceCreated()
 	// The correlator back-pointer refers to the same heap object New returns —
 	// inst escapes via &inst below (the instanceScope loader takes it the same way).
 	inst.corr = correlator{inst: &inst, keys: map[string]string{}}
@@ -598,6 +612,11 @@ func New(
 	if serr != nil {
 		return nil, serr
 	}
+
+	// Announced only now: a launch the scope load or the I/O contract refuses
+	// (ADR-040 §2.2) never existed, so it must not leave a Created fact with
+	// no transition after it.
+	inst.announceCreated()
 
 	// Seed the conversation key BEFORE createTracks (SRD-017 §4.5): createTracks
 	// parks an in-instance receiver reached directly off the born start, and the
@@ -648,6 +667,33 @@ func (inst *Instance) seedInitialData(cfg *newConfig) (flow.Node, error) {
 
 	if err := inst.sc.bindRootData(cfg.rootData); err != nil {
 		return nil, err
+	}
+
+	// A born start never runs as a node, so its output associations — the
+	// standard's route from a message payload into the process inputs or a
+	// data object (§10.4.2's Start/End case) — run here, before the contract
+	// is checked (ADR-040 v.2 §2.7, SRD-094 FR-5).
+	flush := noFlush
+
+	if bornStart != nil {
+		var err error
+
+		if flush, err = inst.runBornStartAssociations(bornStart, cfg); err != nil {
+			return nil, err
+		}
+	}
+
+	// The declared contract, if any, binds the delivered data through its
+	// input parameters — the one moment before any token exists (ADR-040
+	// §2.9); a contract-less process is untouched.
+	if err := inst.bindContract(cfg); err != nil {
+		return nil, err
+	}
+
+	// the launch is accepted: what the born start wrote outside the
+	// instance — the engine-global Data Stores — is written now
+	if err := flush(); err != nil {
+		return nil, inst.seedErr(bornStart, "couldn't write the Data Stores", err)
 	}
 
 	return bornStart, nil

@@ -423,6 +423,7 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 	ls.scopes[child] = &scopeEntry{
 		host:      req.host,
 		node:      req.node,
+		tx:        bindTransaction(req.node),
 		parent:    req.host.scopePath,
 		drain:     req.drain,
 		capture:   req.capture,

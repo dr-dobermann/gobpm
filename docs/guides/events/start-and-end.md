@@ -195,6 +195,6 @@ Behavior worth knowing:
 ## See also
 
 - Examples: [`examples/basic-process/`](../../../examples/basic-process/) · [`examples/terminate-end-event/`](../../../examples/terminate-end-event/)
-- Related guides: [Your first process](../getting-started/first-process.md) · [Terminate](terminate.md) · [Boundary events](boundary.md) · [Event sub-processes](event-subprocess.md) · [Correlation & conversations](../operating/correlation.md)
+- Related guides: [Your first process](../getting-started/first-process.md) · [Event data and the process contract](../data/event-data.md) · [Terminate](terminate.md) · [Boundary events](boundary.md) · [Event sub-processes](event-subprocess.md) · [Correlation & conversations](../operating/correlation.md)
 - Design: [ADR-006 — events and subscriptions](../../design/ADR-006-events-and-subscriptions.md) · [ADR-016 — message correlation](../../design/ADR-016-message-correlation.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/events`

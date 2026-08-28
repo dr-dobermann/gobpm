@@ -561,6 +561,64 @@ refers to — and `<messageFlow>` is reported as dropped: it is the *drawing* of
 message exchange whose execution the engine performs through message events and
 correlation. The graph the engine runs is unchanged by its presence.
 
+### 2.16 Outside coverage: three classes, and a converter that never compensates
+
+Every construct the importer does not map is exactly one of three, and the
+unit classified is the **construct, not the tag** — `<association>` holds a
+mapped compensation link and, until [ADR-039 v.1](ADR-039-standard-artifacts.md),
+a blocked plain one.
+
+- **Staged** — mapped work not yet reached. Not a boundary; the plan that
+  schedules it is its only record.
+- **Capability-blocked** — executable, expressible in a document, and blocked
+  by a capability `pkg/model` lacks. The refusal **names the capability** and
+  the issue tracking it, because that name is the specification of the work
+  that removes it. The register of such capabilities is the import epic
+  ([#335](https://github.com/dr-dobermann/gobpm/issues/335)), one issue per
+  row; a consumed row's issue closes with the landing.
+- **Standing** — the engine will not accept it, and not for want of work.
+  Either the constructor takes a Go value no document can carry — a complex
+  gateway's per-flow token counts against an `activationCondition`
+  expression; an ad-hoc container's host-supplied `Router`
+  ([ADR-035](ADR-035-adhoc-sub-process.md) §2.1) — or it is a **decided
+  non-goal**: a second input/output set per direction. A standing refusal says what to do
+  instead — build it programmatically, or use the mechanism that was
+  chosen — and never says "yet". It is not a defect and is never re-filed
+  as one.
+
+Two rules bound the classes:
+
+1. **The converter never compensates for a missing model capability.** It
+   reports and refuses; it grows no private parser, router, type or second
+   copy of a model rule. Two implementations of one rule diverge, and then
+   the converter's wins at import while the model's wins at run time — the
+   worst possible split, which the model layer would later have to
+   supersede while keeping the converter's behaviour intact. The rule cuts
+   the other way first: before declaring a capability missing, look for the
+   model's **own way in** and for the **decision that already governs it** —
+   a timer reaches the engine whole through the model's ISO 8601
+   constructors, and a transaction's `method` is read and carried by the
+   model itself, with registration — not the converter — deciding whether
+   the engine has a coordinator for it ([ADR-028](ADR-028-transaction-sub-process.md)
+   §2.7); the converter's own value table for it was the second copy this
+   rule forbids, and it drifted. A capability you cannot name precisely
+   is usually one you have not looked for.
+2. **A capability lands before the row that consumes it.** An extension
+   point is a model change with a model change's obligations — its own
+   decision record where it alters a contract, its own landing document —
+   and the converter row consuming it is a one-line follow-up, never the
+   vehicle for the capability. ADR-039 is the pattern: the artifact tier
+   landed first, the `<association>` rows followed.
+
+What each refusal owes its reader, and `pkg/convert/bpmn`'s wording test
+pins: a capability-blocked **element** is refused naming the capability and
+the programmatic alternative; a capability-blocked **attribute** is reported
+through §2.14 while the element around it imports; a **standing** boundary
+is refused with the reason and the programmatic route, and says nothing
+about waiting. A reader who cannot tell "not yet" from "not ever" either
+waits for something that will not arrive or rebuilds something that is
+already correct.
+
 ## 3. Standard grounding
 
 All claims cite the vendored KB ([docs/bpmn-spec/](../bpmn-spec/index.md)), which carries
@@ -866,7 +924,7 @@ trigger, not questions awaiting an answer.
 
 | Version | Date | Change |
 |---|---|---|
-| v.6 | 2026-08-26 | **The artifact rows catch up with [ADR-039 v.1](ADR-039-standard-artifacts.md).** §2.9's table skipped `textAnnotation`/`group`/`category` silently and mapped `association` for its compensation semantics alone. The standard's three artifacts are now **parsed and preserved** into the model-only artifact tier (the lanes reading: §2.3.2 loading + §2.8 round-trip need the model to hold what a diagram states); `category`/`categoryValue` are **consumed** as load-time resolution input; the compensation association stays the boundary's handler wiring, never duplicated as an artifact; an unresolvable reference degrades that one artifact to the §2.14 report. The deciding-rule paragraph now records that the representation obligation cuts across the means-the-same test. Table rows and one paragraph only; the dispositions' vocabulary and the report contract are unchanged. |
+| v.6 | 2026-08-26 | **The artifact rows catch up with [ADR-039 v.1](ADR-039-standard-artifacts.md).** §2.9's table skipped `textAnnotation`/`group`/`category` silently and mapped `association` for its compensation semantics alone. The standard's three artifacts are now **parsed and preserved** into the model-only artifact tier (the lanes reading: §2.3.2 loading + §2.8 round-trip need the model to hold what a diagram states); `category`/`categoryValue` are **consumed** as load-time resolution input; the compensation association stays the boundary's handler wiring, never duplicated as an artifact; an unresolvable reference degrades that one artifact to the §2.14 report. The deciding-rule paragraph now records that the representation obligation cuts across the means-the-same test. Table rows and one paragraph only; the dispositions' vocabulary and the report contract are unchanged. **§2.16 absorbs the boundary rule ADR-038 carried** — the three classes (staged / capability-blocked / standing, per construct not per tag), the never-compensate and capability-lands-first rules, and what each refusal owes its reader. ADR-038 is retired: a decision record had become a ledger, bumped on every landing while its rule never moved. The capability register lives in the import epic #335, one issue per row, and the per-construct reading in the import-coverage guide. |
 | v.5 | 2026-08-17 | **The `import` disposition row catches up with SRD-089.F FR-7.** §2.9's table said `<import>` is skipped silently — true when v.4 was written, and scheduled for revisit by the skip's own code comment ("when itemDefinition lands with the data stage, its typeRef makes the declaration meaningful"). The data stage landed: an `<import>` is collected by namespace and bound to the `<itemDefinition>` whose `structureRef` prefix resolves to it, and one nothing refers to is reported rather than dropped. The row is split (`relationship` keeps its skip) and re-stated as **map**. A table-row correction only; no decision changes. |
 | v.1 | 2026-07-17 | Initial draft — converter seam (`pkg/convert`), BPMN as the batteries-included separate-module converter, MVP element subset, semantic round-trip. |
 | v.2 | 2026-07-30 | Accepted on the SRD-051 slice-1 landing. §4-A reversed: the converter is the package `pkg/convert/bpmn`, not a top-level module — the stdlib parser costs core no dependency, and a module would have stayed invisible to the diff-coverage gate (§2.3). Q1 (module rename) withdrawn; the SAD-001 §9 `doc-source/` reservation retired. §2.6: `serviceTask` restored to the MVP set with the new `ServiceTask.Operation()` accessor, and the `documentation`/`extensionElements` silent-skip carve-out recorded. |

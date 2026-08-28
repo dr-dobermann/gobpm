@@ -188,25 +188,64 @@ func ioSpecMisplaced(s *nodeSpec) error {
 func buildIOParams(
 	p *parser, asm *assembly, s *nodeSpec,
 ) ([]options.Option, error) {
+	byDir, err := buildParamSpecs(s.body.io.params, true,
+		func(spec *paramSpec, from string) (*data.ItemDefinition, error) {
+			return paramItem(p, asm, s, spec, from)
+		})
+	if err != nil {
+		return nil, err
+	}
+
+	// Fixed order, not a map range: option order is behaviorally inert
+	// today (each option touches only its own direction's list), but
+	// deterministic enumeration is the house rule (ADR-011 §2.9) — the
+	// one order stable across runs is the one a debugger can rely on.
+	opts := make([]options.Option, 0, len(byDir))
+	for _, dir := range []data.Direction{data.Input, data.Output} {
+		if params := byDir[dir]; len(params) != 0 {
+			opts = append(opts, activities.WithParameters(dir, params...))
+		}
+	}
+
+	return opts, nil
+}
+
+// itemResolver resolves one parameter's item definition: an activity's
+// version adopts an association partner's item when the parameter names
+// none (paramItem); a process has no associations to adopt from and
+// resolves the ref or takes the empty item (SRD-093 FR-11).
+type itemResolver func(
+	spec *paramSpec, from string,
+) (*data.ItemDefinition, error)
+
+// buildParamSpecs builds the parameters of one <ioSpecification> per
+// direction — the owner-agnostic half of the build, shared by a task and
+// a process (SRD-093 §3.5): the element construction, the set flags and
+// the name fallback. dedupByItem turns on the §4.3a duplicate-item guard:
+// an ACTIVITY addresses a direction's parameters by item-definition id
+// (the association match, the readiness gate, the load loop), so two
+// parameters over one item are one parameter declared twice; a PROCESS
+// addresses its contract by name (ADR-040 §2.4), and two inputs typed by
+// the same item are simply two inputs.
+func buildParamSpecs(
+	specs []paramSpec, dedupByItem bool, resolve itemResolver,
+) (map[data.Direction][]*data.Parameter, error) {
 	byDir := map[data.Direction][]*data.Parameter{}
-	// seen implements §4.3a: the model addresses a direction's parameters
-	// by item-definition id, so a duplicate is one parameter declared
-	// twice, and the runtime would merge the pair silently.
 	seen := map[data.Direction]map[string]string{
 		data.Input:  {},
 		data.Output: {},
 	}
 
-	for i := range s.body.io.params {
-		spec := &s.body.io.params[i]
+	for i := range specs {
+		spec := &specs[i]
 		from := spec.local() + " " + strconv.Quote(spec.id)
 
-		item, err := paramItem(p, asm, s, spec, from)
+		item, err := resolve(spec, from)
 		if err != nil {
 			return nil, err
 		}
 
-		if prior, dup := seen[spec.dir][item.ID()]; dup {
+		if prior, dup := seen[spec.dir][item.ID()]; dedupByItem && dup {
 			return nil, errs.New(
 				errs.M("bpmn: %s and %q declare one itemSubjectRef %q; the "+
 					"engine addresses a direction's parameters by item id — "+
@@ -249,18 +288,7 @@ func buildIOParams(
 		byDir[spec.dir] = append(byDir[spec.dir], param)
 	}
 
-	// Fixed order, not a map range: option order is behaviorally inert
-	// today (each option touches only its own direction's list), but
-	// deterministic enumeration is the house rule (ADR-011 §2.9) — the
-	// one order stable across runs is the one a debugger can rely on.
-	opts := make([]options.Option, 0, len(byDir))
-	for _, dir := range []data.Direction{data.Input, data.Output} {
-		if params := byDir[dir]; len(params) != 0 {
-			opts = append(opts, activities.WithParameters(dir, params...))
-		}
-	}
-
-	return opts, nil
+	return byDir, nil
 }
 
 // local names a parameter's element as the file wrote it.
@@ -430,18 +458,34 @@ func (p *parser) parseIOSpecChild(io *ioSpec, se xml.StartElement) error {
 	return p.settle(ctxData, se)
 }
 
-// parseIOParam reads one <dataInput> or <dataOutput>.
+// parseIOParam reads one <dataInput> or <dataOutput> of an ioSpecification.
 func (p *parser) parseIOParam(
 	io *ioSpec, dir data.Direction, se xml.StartElement,
 ) error {
-	id, err := requiredID(se)
+	spec, err := p.parseParamSpec(dir, se)
 	if err != nil {
 		return err
 	}
 
+	io.params = append(io.params, spec)
+
+	return nil
+}
+
+// parseParamSpec reads one <dataInput> or <dataOutput> wherever it stands
+// — inside an ioSpecification, or bare on an event (§10.4.2) — claiming
+// its id and returning its spec.
+func (p *parser) parseParamSpec(
+	dir data.Direction, se xml.StartElement,
+) (paramSpec, error) {
+	id, err := requiredID(se)
+	if err != nil {
+		return paramSpec{}, err
+	}
+
 	err = p.claimID(id, se.Name.Local)
 	if err != nil {
-		return err
+		return paramSpec{}, err
 	}
 
 	// A parameter's content model is a data element's: documentation and
@@ -461,7 +505,7 @@ func (p *parser) parseIOParam(
 	p.owner = outer
 
 	if err != nil {
-		return err
+		return paramSpec{}, err
 	}
 
 	if carrier.state != "" {
@@ -470,15 +514,13 @@ func (p *parser) parseIOParam(
 
 	p.reportUnmappedAttrs(se, id, nil)
 
-	io.params = append(io.params, paramSpec{
+	return paramSpec{
 		id:      carrier.id,
 		name:    carrier.name,
 		itemRef: carrier.itemRef,
 		dir:     dir,
 		docs:    carrier.docs,
-	})
-
-	return nil
+	}, nil
 }
 
 // parseIOSet reads one <inputSet> or <outputSet>: the single set the

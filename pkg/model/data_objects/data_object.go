@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -139,10 +140,43 @@ func (do *DataObject) AssociateSource(
 }
 
 // AssociateTarget creates a new data association from the DataObject a as a
-// source and the Node n as a target.
+// source and the Node n as a target — the node's input over the
+// DataObject's item.
 func (do *DataObject) AssociateTarget(
 	n flow.AssociationTarget,
 	transformation data.FormalExpression,
+) error {
+	itemID := do.ItemDefinition().ID()
+
+	return do.associateTarget(n, transformation, "#"+itemID,
+		func(iae *data.ItemAwareElement) bool {
+			return iae.ItemDefinition().ID() == itemID
+		})
+}
+
+// AssociateTargetInput creates a new data association from the DataObject
+// as a source into the Node n's input with id inputID — for a node whose
+// inputs are not addressed by item: an event's data input carries its
+// definition's item, so a file's association names the input itself
+// (SRD-094 FR-7).
+func (do *DataObject) AssociateTargetInput(
+	n flow.AssociationTarget,
+	inputID string,
+	transformation data.FormalExpression,
+) error {
+	return do.associateTarget(n, transformation, strconv.Quote(inputID),
+		func(iae *data.ItemAwareElement) bool {
+			return iae.ID() == inputID
+		})
+}
+
+// associateTarget is the body of the two AssociateTarget forms: the node's
+// input is the one pick accepts, want names it in the refusal.
+func (do *DataObject) associateTarget(
+	n flow.AssociationTarget,
+	transformation data.FormalExpression,
+	want string,
+	pick func(*data.ItemAwareElement) bool,
 ) error {
 	if n == nil {
 		return fmt.Errorf("empty target")
@@ -153,15 +187,10 @@ func (do *DataObject) AssociateTarget(
 	}
 
 	inputs := n.Inputs()
-	idx := slices.IndexFunc(
-		inputs,
-		func(iae *data.ItemAwareElement) bool {
-			return iae.ItemDefinition().ID() == do.ItemDefinition().ID()
-		})
 
+	idx := slices.IndexFunc(inputs, pick)
 	if idx == -1 {
-		return fmt.Errorf("node %q has no input #%s",
-			n.Name(), do.ItemDefinition().ID())
+		return fmt.Errorf("node %q has no input %s", n.Name(), want)
 	}
 
 	opts := []options.Option{data.WithSource(&do.ItemAwareElement)}

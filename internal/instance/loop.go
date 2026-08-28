@@ -366,6 +366,17 @@ func (ls *loopState) exitLoop(ctx context.Context) {
 	// (ADR-006 §2.3, SRD-059 FR-3/NFR-3).
 	ls.discardLedgers(inst.sc.root)
 
+	// The result, at the one moment after the last token ended (ADR-040
+	// §2.9): a normal completion reads the declared outputs; a required one
+	// the flow never produced faults the instance here, in the existing
+	// terminal shape — Terminated, LastErr set, no result (SRD-093 §4.5).
+	if !ls.stopping {
+		if err := ls.collectOutputs(); err != nil {
+			inst.fail(err)
+			ls.stopping = true
+		}
+	}
+
 	inst.settleFinalState(ls.stopping)
 
 	// The instance is genuinely FINISHED — release anyone waiting on
@@ -604,8 +615,8 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		ls.compensationTrackEnded(ctx, ev.track, true)
 		ls.applyFailed(ctx, ev)
 
-	case evWaiting, evTaskWaiting, evJobWaiting, evCallWaiting, evDeliver,
-		evDataCommit, evDehydrated:
+	case evWaiting, evWaitArmed, evTaskWaiting, evJobWaiting, evCallWaiting,
+		evDeliver, evDataCommit, evDehydrated:
 		// the wait/deliver plane — parks, deliveries, and the signals that
 		// re-evaluate or resume them; sub-dispatched to keep apply under the
 		// complexity limit (the applyParked precedent).
@@ -671,6 +682,10 @@ func (ls *loopState) applyWaitPlane(ctx context.Context, ev trackEvent) {
 
 	case evWaiting:
 		ls.onWaiting(ctx, ev)
+
+	case evWaitArmed:
+		// the parked track's holders are registered — nothing to apply; the
+		// loop tail's maybeDehydrate is what this event is for (SRD-095 FR-8).
 
 	case evTaskWaiting:
 		// a UserTask parked as a human task — register + announce it (SRD-034).

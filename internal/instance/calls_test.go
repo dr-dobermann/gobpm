@@ -33,10 +33,13 @@ type fakeChild struct {
 	err     error
 	outputs map[string]data.Data
 	outErr  error
-	mu      sync.Mutex
-	done    chan struct{}
-	closed  bool
-	killed  bool
+	// nilSlots makes a missing name a nil slot — a contracted child's
+	// unproduced optional output — instead of an error.
+	nilSlots bool
+	mu       sync.Mutex
+	done     chan struct{}
+	closed   bool
+	killed   bool
 }
 
 func newFakeChild(id string, version int) *fakeChild {
@@ -81,7 +84,7 @@ func (c *fakeChild) Outputs(names []string) ([]data.Data, error) {
 	out := make([]data.Data, 0, len(names))
 	for _, n := range names {
 		d, ok := c.outputs[n]
-		if !ok {
+		if !ok && !c.nilSlots {
 			return nil, errs.New(errs.M("no output %q", n))
 		}
 
@@ -316,6 +319,8 @@ func TestCallInputsClonedToChild(t *testing.T) {
 // TestCallCompletionBindsOutputs (SRD-050 FR-7): the child's declared output is
 // read by name and committed into the caller's scope.
 func TestCallCompletionBindsOutputs(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
 	child := newFakeChild("child-3", 1)
 	child.outputs = map[string]data.Data{"result": namedDatum("result", 99)}
 	child.finish()
@@ -329,6 +334,28 @@ func TestCallCompletionBindsOutputs(t *testing.T) {
 	got, err := inst.DataReader().GetData("result")
 	require.NoError(t, err)
 	require.Equal(t, 99, got.Value().Get(context.Background()))
+}
+
+// TestCallNilOutputSlotBindsNothing (SRD-093 FR-9): a nil slot from a
+// contracted child — a declared optional output it never produced — commits
+// nothing under the caller's name; the caller completes with the name
+// unbound, no fault.
+func TestCallNilOutputSlotBindsNothing(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	child := newFakeChild("child-3n", 1)
+	child.nilSlots = true
+	child.finish()
+	inv := &fakeInvoker{child: child}
+
+	p, _, _, _ := callProc(t, "callee", 0, callOpts{outputName: "result"})
+	inst := runCall(t, p, inv)
+
+	waitState(t, inst, Completed)
+	require.NoError(t, inst.LastErr())
+
+	_, err := inst.DataReader().GetData("result")
+	require.Error(t, err, "nothing flowed under the optional name")
 }
 
 // TestCallMissingOutputFaults (SRD-050 FR-7): a declared output the child never

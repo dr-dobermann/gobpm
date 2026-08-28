@@ -1,5 +1,3 @@
-// Package waiters provides event waiter implementations for different event types.
-// Waiters monitor for specific conditions and notify processors when events should occur.
 package waiters
 
 import (

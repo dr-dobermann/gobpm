@@ -47,6 +47,19 @@ Key semantics on display:
 - The **Cancel boundary** is a model-declared exit, always interrupting — it is
   resolved by the abort directly, never through the event bus.
 
+The Transaction also carries its two BPMN attributes (ADR-028 §2.7). The
+booking states `protocol="saga-v1"` through
+`activities.WithTransaction(activities.WithTransactionProtocol("saga-v1"))`;
+the model holds it (`tx.Transaction().Protocol()`), the engine never reads
+it. The `method` is left to its default, `compensate` — the one coordinator
+the engine has. Before the booking runs, the example registers a second copy
+whose Transaction names `method="##Store"` and prints what registration
+answers: *no transaction coordinator is registered for 1 transaction(s):
+"booking" (method "##Store") — this engine coordinates compensate only
+(ADR-028 §2.7); model the undo as compensation handlers*. The model carries
+any method a document names; it is `RegisterProcess` that refuses one nothing
+can perform, while the caller still holds an error and nothing has run.
+
 ## Run
 
 ```bash
@@ -54,6 +67,8 @@ cd examples/transaction-sub-process
 go run .
 ```
 
-Expected: `reserve-seat` and `charge-card` print, then the abort prints the
-undo handlers **card refunded first, seat released second**, then the customer
-notification — and the instance completes.
+Expected: the booking's `method="compensate" protocol="saga-v1"` read-back,
+the `##Store` copy refused at registration, then `reserve-seat` and
+`charge-card` print, the abort prints the undo handlers **card refunded first,
+seat released second**, then the customer notification — and the instance
+completes.

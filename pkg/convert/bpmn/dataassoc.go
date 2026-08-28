@@ -11,8 +11,8 @@ import (
 )
 
 // eventNodeTags are the flow-node kinds that are events — the owners
-// whose data associations BPMN allows and the model cannot attach
-// (§4.7, #329).
+// whose data associations take the one direction §10.4.2 gives them and
+// whose parameters are bare, not an ioSpecification's (SRD-094 FR-7).
 var eventNodeTags = map[string]bool{
 	tagStartEvent:        true,
 	tagEndEvent:          true,
@@ -51,25 +51,20 @@ func assocLabel(a *dataAssocSpec) string {
 }
 
 // wireDataAssoc resolves and wires one association, or refuses it by its
-// ADR-038 class (§4.6, §4.7).
+// ADR-024 §2.16 class (SRD-089.G §4.6, §4.7).
 func wireDataAssoc(
 	p *parser, asm *assembly, s *nodeSpec, a *dataAssocSpec,
 ) error {
 	label := assocLabel(a)
 
-	// The owner first: events are the shape BPMN allows and the model
-	// cannot attach (#329); everything else outside the task kinds is
+	// The owner first: an event takes the one direction the standard gives
+	// it (§10.4.2, SRD-094 FR-7); everything else outside the task kinds is
 	// the containment rule's territory, same as an ioSpecification.
 	if eventNodeTags[s.se.Name.Local] {
-		return errs.New(
-			errs.M("bpmn: <%s> %q carries %s; the model's events have no "+
-				"attachment for a data association — the capability is #329 — "+
-				"move the data through a task beside the event",
-				s.se.Name.Local, s.id, label),
-			errs.C(errorClass, errs.InvalidObject))
-	}
-
-	if !paramOwners[s.se.Name.Local] {
+		if err := eventAssocDirection(s, a, label); err != nil {
+			return err
+		}
+	} else if !paramOwners[s.se.Name.Local] {
 		return errs.New(
 			errs.M("bpmn: <%s> %q carries %s, and an association's activity "+
 				"end is a task's own parameter (§10.4.1); move it to the task "+
@@ -108,6 +103,12 @@ func wireDataAssoc(
 		return err
 	}
 
+	// The one data end that is not a data element: the enclosing process's
+	// own parameter, the standard's Start/End special case (SRD-094 FR-7).
+	if ps := processParam(asm, a.elemRef); ps != nil {
+		return bindProcessEnd(asm, s, a, ps, paramItemID, label)
+	}
+
 	elem, espec, err := assocElement(p, asm, a)
 	if err != nil {
 		return err
@@ -126,12 +127,16 @@ func wireDataAssoc(
 
 	// The standard's own type constraint: the two ends' itemDefinitions
 	// MUST match — the transformation escape hatch is refused above —
-	// and the model matches by exactly that id (§4.3).
-	if espec.itemRef != paramItemID {
+	// compared as the file wrote them (a task's parameter carries its file
+	// item; an event's carries its definition's, SRD-094). An event
+	// parameter that named no item adopted its definition's and is not
+	// compared (§4.3).
+	fileItem := paramItemRef(s, a.paramRef, paramItemID)
+	if fileItem != "" && espec.itemRef != fileItem {
 		return errs.New(
 			errs.M("bpmn: %s joins %q (item %q) to %s (item %q); §10.4.1 "+
 				"makes the two ends' itemDefinitions match — give both the "+
-				"same itemSubjectRef", label, a.paramRef, paramItemID,
+				"same itemSubjectRef", label, a.paramRef, fileItem,
 				espec.owner(), espec.itemRef),
 			errs.C(errorClass, errs.InvalidObject))
 	}
@@ -296,31 +301,44 @@ func bindAssoc(
 	node := asm.byID[s.id]
 
 	// Every paramOwner kind embeds task, which implements both binding
-	// interfaces (task.go:586-587) — a miss means the owners table let a
-	// non-task through.
+	// interfaces; an event implements the one its direction needs (a catch
+	// is a source, a throw a target — SRD-094 FR-1), and the direction
+	// check above let only that one through. A miss means the owners table
+	// let a non-binding kind through.
 	target, isTarget := node.(flow.AssociationTarget)
 	source, isSource := node.(flow.AssociationSource)
 
-	if !isTarget || !isSource {
-		return errs.Invariant("node %q (%T) binds no data associations",
-			s.id, node)
+	if (a.dir == data.Input && !isTarget) || (a.dir == data.Output && !isSource) {
+		return errs.Invariant("node %q (%T) binds no %s data associations",
+			s.id, node, a.dir)
 	}
 
 	var err error
 
+	// A task's input is addressed by item — its file item is its model
+	// item; an event's input carries its definition's placeholder, so the
+	// association names the input itself, as the file did (SRD-094 FR-7).
+	byInputID := eventNodeTags[s.se.Name.Local]
+
 	switch e := elem.(type) {
 	case *dataobjects.DataObject:
-		if a.dir == data.Input {
-			err = e.AssociateTarget(target, nil)
-		} else {
+		switch {
+		case a.dir == data.Output:
 			err = e.AssociateSource(source, []string{paramItemID}, nil)
+		case byInputID:
+			err = e.AssociateTargetInput(target, a.paramRef, nil)
+		default:
+			err = e.AssociateTarget(target, nil)
 		}
 
 	case *datastores.DataStoreReference:
-		if a.dir == data.Input {
-			err = e.AssociateTarget(target, nil)
-		} else {
+		switch {
+		case a.dir == data.Output:
 			err = e.AssociateSource(source, []string{paramItemID}, nil)
+		case byInputID:
+			err = e.AssociateTargetInput(target, a.paramRef, nil)
+		default:
+			err = e.AssociateTarget(target, nil)
 		}
 
 	default:

@@ -20,7 +20,7 @@ work, and its runtime behavior.
 |---|---|
 | BPMN category | Activity → Sub-Process → **Transaction** (§10.7) |
 | Package | `github.com/dr-dobermann/gobpm/pkg/model/activities` |
-| Type | `activities.SubProcess` (with `WithTransaction()`) |
+| Type | `activities.SubProcess` (with `WithTransaction(...)`) |
 | Inherits | everything an embedded Sub-Process is — a nested scope, its own inner graph, boundary events, data walk-up |
 | Implements | `flow.Node`, `exec.NodeExecutor` (`Exec`), `flow.ActivityNode` (`ActivityType`, `AddBoundaryEvent`); `IsTransaction() bool` reports the flag |
 | The work | the inner graph, ending at a **Cancel End Event** whose abort is caught by an outer **Cancel boundary** |
@@ -44,7 +44,7 @@ func NewSubProcess(
 | Parameter | Meaning |
 |---|---|
 | `name` | the sub-process's diagram name (and default id source). |
-| `opts` | zero or more options — pass `WithTransaction()` to make it a Transaction. |
+| `opts` | zero or more options — pass `WithTransaction(...)` to make it a Transaction. |
 
 It returns an error — never panics — on an invalid option combination. The
 shape rules (a legal inner graph, a Cancel End only inside a Transaction) are
@@ -53,19 +53,23 @@ built element by element and checked once complete.
 
 ## Options
 
-The one option that defines this page:
+The one option that defines this page, and the two it takes:
 
 | Option | When you reach for it |
 |---|---|
-| `WithTransaction()` | mark the Sub-Process a Transaction — permit its Cancel End + Cancel boundary and name the scope a cancel aborts. |
+| `WithTransaction(opts ...TransactionOption)` | make the Sub-Process a Transaction — permit its Cancel End + Cancel boundary, name the scope a cancel aborts, and carry the two BPMN attributes below. With no options: a compensate transaction stating no protocol. |
+| `WithTransactionMethod(m TransactionMethod)` | the BPMN `method` — which coordinator aborts the transaction. `TransactionCompensate` (`"compensate"`) is built in and the default; the model reads a document's `##Compensate` as the same thing. Any other identifier — `"store"`, `"##Image"`, a URI — is **carried** and refused by `RegisterProcess` as *no transaction coordinator is registered for this method* until a host can register one. A blank method is refused. |
+| `WithTransactionProtocol(p string)` | the BPMN `protocol` — carried verbatim for loading and round-trip, handed to the coordinator, never read by the engine. A blank protocol is refused. |
 
-`WithTransaction()` is a `SubProcessOption` — the Sub-Process-specific family,
+`WithTransaction` is a `SubProcessOption` — the Sub-Process-specific family,
 applied to the container itself. It is **mutually exclusive** with
-`WithTriggeredByEvent()` (a handler is not a transaction). The full family:
+`WithTriggeredByEvent()` (a handler is not a transaction). The two
+`TransactionOption`s exist only inside `WithTransaction`, so a protocol on a
+plain Sub-Process cannot be written. The full family:
 
 | Sub-process option | Effect |
 |---|---|
-| `WithTransaction()` | ACID-like abort on a Cancel End (this page). |
+| `WithTransaction(opts...)` | ACID-like abort on a Cancel End (this page). |
 | `WithTriggeredByEvent()` | make it an [Event Sub-Process](../events/event-subprocess.md) instead — mutually exclusive with `WithTransaction()`. |
 
 Because a Transaction *is* a Sub-Process, the activity options apply too —
@@ -178,7 +182,8 @@ call them directly); the one that distinguishes it:
 
 | Method | Role |
 |---|---|
-| `IsTransaction() bool` | reports the Transaction flag — the runtime uses it to resolve a Cancel abort to this scope; the model uses it to gate Cancel End/boundary placement. |
+| `Transaction() *TransactionCharacteristics` | the characteristics — `Method()` and `Protocol()` — or `nil` on a plain or Event Sub-Process. The runtime binds a Transaction scope to its coordinator by the method when the scope opens. |
+| `IsTransaction() bool` | whether characteristics are present — the runtime uses it to resolve a Cancel abort to this scope; the model uses it to gate Cancel End/boundary placement. |
 | `Exec(ctx, re) ([]*flow.SequenceFlow, error)` | open the child scope, run the inner graph, and either drain normally or abort on a Cancel End. |
 | `ActivityType()` / `AddBoundaryEvent(be)` / `BoundaryEvents()` | activity introspection and boundary wiring (shared with every Sub-Process). |
 
@@ -207,6 +212,11 @@ teardown discards the very completion ledger the compensation sweeps. Further:
   ledger — no compensation runs. Only the Cancel path rolls back. Compensation
   and the Cancel boundary are independent: a Transaction may declare handlers
   without an outer Cancel boundary, or a Cancel boundary with nothing to undo.
+- The abort runs through the **coordinator the scope was bound to** when it
+  opened — today always the engine's own compensate sequence. `RegisterProcess`
+  refuses a process whose Transaction names any other method, so a running
+  scope is never bound to a coordinator the engine lacks. The abort's
+  `Compensation`/`Thrown` fact carries `transaction_method` for the observer.
 
 ## Restarts
 
@@ -214,12 +224,13 @@ A Transaction **abort captured mid-compensation resumes after a
 restart**: the sweep continues (the running undo re-runs — at-least-
 once over its snapshot), the residual tracks are terminated once it
 drains, and control leaves through the Cancel boundary exactly as a
-resident abort would.
+resident abort would. A restored Transaction scope is bound to its
+coordinator on restore exactly as a fresh one is on open.
 
 
 ## See also
 
 - Examples: `examples/transaction-sub-process/`
-- Related guides: [Embedded Sub-Process](embedded.md) (the base) · [Call Activity](call-activity.md) · [Compensation](../events/compensation.md) · [Boundary events](../events/boundary.md) · [Terminate](../events/terminate.md) (the other "wins immediately" end trigger)
+- Related guides: [Embedded Sub-Process](embedded.md) (the base) · [Call Activity](call-activity.md) · [Compensation](../events/compensation.md) · [Boundary events](../events/boundary.md) · [Terminate](../events/terminate.md) (the other "wins immediately" end trigger) · [BPMN import coverage](../extending/bpmn-import-coverage.md) (how `<transaction method>`/`protocol` import)
 - Design: [ADR-028 — Transaction Sub-Process: ACID-like abort by Cancel](../../design/ADR-028-transaction-sub-process.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/activities`

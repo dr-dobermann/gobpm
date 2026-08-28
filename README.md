@@ -192,7 +192,12 @@ a message **instantiates** a handler process and **correlates** by a key derived
 from the payload (one handler instance per distinct order) ·
 [`examples/conversation-routing/`](examples/conversation-routing/) — a follow-up
 message **routes back** to the specific handler instance whose conversation it
-belongs to (keyed in-instance receivers; two conversations stay isolated).
+belongs to (keyed in-instance receivers; two conversations stay isolated) ·
+[`examples/event-data/`](examples/event-data/) — **events carry data**: a
+message Start Event's output association fills a declared process input from
+the payload, a message End Event's input association sources a declared
+process output — the standard's Start/End special case, so the message route
+reaches the same contract a Call Activity binds.
 
 For signal events (broadcast, no correlation), see
 [`examples/signal-broadcast/`](examples/signal-broadcast/) — one throw reaches
@@ -374,7 +379,14 @@ act on the scope as a unit) —
 Activity** invokes a separately registered process as an isolated **child
 instance** — the reuse boundary: declared I/O cloned across the boundary,
 latest-at-launch or pinned versioning, the output committed back —
-[`examples/call-activity/`](examples/call-activity/). An **Event Sub-Process**
+[`examples/call-activity/`](examples/call-activity/). A process can **declare
+its own I/O contract** (`data.WithInputs`/`WithOutputs`, or an
+`<ioSpecification>` under `<process>`): a host binds the inputs at launch with
+`thresher.WithStartInput`, a Call Activity through its parameters; a required
+input left unbound or a datum the contract does not name refuses the launch
+before the instance exists, and the declared outputs are collected at
+completion — `Outputs()` on the handle, or committed back to the caller —
+[`examples/process-io/`](examples/process-io/). An **Event Sub-Process**
 (`triggeredByEvent`) is a scope-armed handler: armed while its enclosing scope
 is open, an interrupting one fires a **cancel-and-run** — it cancels the
 scope's work, runs in the parent's data context, and absorbs the event so the
@@ -386,7 +398,10 @@ Sub-Process** (`WithTransaction`) is a Sub-Process variant that aborts
 atomically on a **Cancel End Event** — it compensates the completed activities
 (reverse completion order, as an ACID-like barrier), terminates the rest, and
 hands control out through its interrupting **Cancel boundary** (a Transaction
-with no Cancel boundary ends there) —
+with no Cancel boundary ends there); `WithTransaction` takes the BPMN
+`method` (`WithTransactionMethod`, compensate built in and the default — any
+other coordinator is refused at registration until a host can register one)
+and carries `protocol` (`WithTransactionProtocol`) untouched —
 [`examples/transaction-sub-process/`](examples/transaction-sub-process/). An
 **Ad-Hoc Sub-Process** (`WithAdHoc`) is a Sub-Process variant whose inner
 activities carry **no sequence flows**: what runs next is answered at runtime by

@@ -5,7 +5,7 @@
 //
 // Track starts execution from a start node.
 //
-//   - If node awaits an evenet to continue, then it event definition
+//   - If node awaits an event to continue, then it event definition
 //     registered in instance and track state becomes to TrackAwaitEvent.
 //     Once event sent to track via ProcessEvent, then track continues.
 //
@@ -13,7 +13,7 @@
 //     incoming data, runs the node's Exec, and uploads its outgoing data. On
 //     success Exec returns a list of outgoing flows.
 //
-// If number of outgouing flows is not zero, then they processed as followed:
+// If number of outgoing flows is not zero, then they processed as followed:
 //
 //   - first flow becomes the next step of the track.
 //     If there is a cyclic flow to node itself, then the first of them would
@@ -27,11 +27,11 @@
 //     assign to the track itself in next step, and the rest of them will
 //     be set to the others child tracks.
 //
-// if there is no outgouing flows, then track ends and token died.
+// if there is no outgoing flows, then track ends and token died.
 //
 // ## Human interaction
 //
-// If node nedds to interacto with the human, then it should support
+// If node needs to interact with the human, then it should support
 //
 
 package instance
@@ -702,7 +702,19 @@ func (t *track) checkNodeTypeFor(
 		})
 	}
 
-	return t.armWaiters(en, defs)
+	if err := t.armWaiters(en, defs); err != nil {
+		return err
+	}
+
+	// The wait is now holdable: tell the loop, so its dehydration check runs
+	// once more with the holder in place (SRD-095 FR-8). Same gating as the
+	// evWaiting emit above — at construction the loop is not draining yet,
+	// and a fork-born track's checkNodeType runs on the loop goroutine.
+	if !atConstruction && t.instance.State() == Active {
+		t.instance.emit(trackEvent{kind: evWaitArmed, track: t, node: en})
+	}
+
+	return nil
 }
 
 // iterationKey evaluates a catch's declared iteration correlation over
@@ -2301,6 +2313,27 @@ func (t *track) advance(succs []successor) error {
 	t.steps = append(t.steps, &nextStep)
 	t.m.Unlock()
 
+	// Report the advance to the loop — the sole owner of the position view
+	// (ADR-017 Rule 2, SRD-028 FR-2). The node is carried in the event so the
+	// loop never reads currentStep cross-goroutine. Reached only from run()
+	// (instance Active), so no construction gating.
+	//
+	// Emitted BEFORE checkNodeType, and the order is load-bearing (SRD-095
+	// FR-8). For a wait node checkNodeType declares the wait and emits
+	// evWaiting, which is a checkpoint trigger; the completed predecessor's
+	// ledger entry rides on THIS evMoved, so an evWaiting queued ahead of it
+	// let the loop checkpoint a ledger one entry short — a restore from a
+	// checkpoint taken at a wait right after a compensable activity then
+	// aborted without ever compensating it. The emit is a channel send, not
+	// a round trip, and the wait is not yet declared, so nothing here widens
+	// the window in which a fired event could find no subscriber.
+	t.instance.emit(trackEvent{
+		kind:         evMoved,
+		track:        t,
+		node:         nextStep.node,
+		compSnapshot: compSnap,
+	})
+
 	// The token continues on this track to nextStep's node. newTrack only
 	// classified the track's initial node, so a mid-flow event node (e.g. a
 	// ReceiveTask reached from an upstream node) must be classified here too —
@@ -2309,21 +2342,6 @@ func (t *track) advance(succs []successor) error {
 	if err := t.checkNodeType(nextStep.node, false); err != nil {
 		return err
 	}
-
-	// Report the advance to the loop — the sole owner of the position view (ADR-017 Rule 2,
-	// SRD-028 FR-2). The node is carried in the event so the loop never reads currentStep
-	// cross-goroutine. Reached only from run() (instance Active), so no construction gating.
-	// Emitted AFTER checkNodeType: for a wait node, checkNodeType makes the token observably
-	// WaitForEvent and then registers its hub waiters; inserting this loop round-trip before
-	// that registration would widen the window in which a fired event finds no subscriber and
-	// is lost. The position view does not need the move before evWaiting (a join recheck is
-	// triggered by a death/park, never by a move).
-	t.instance.emit(trackEvent{
-		kind:         evMoved,
-		track:        t,
-		node:         nextStep.node,
-		compSnapshot: compSnap,
-	})
 
 	// a wait-for-completion Compensation throw parked in checkNodeType above:
 	// its deferred evCompensate goes out now, AFTER the evMoved that ledgers

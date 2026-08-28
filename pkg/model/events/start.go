@@ -64,14 +64,15 @@ func NewStartEvent(
 		interrurpting: true,
 		baseOpts:      []options.Option{},
 		defs:          []flow.EventDefinition{},
-		dataOutputs:   make(map[string]*data.Parameter),
 	}
 
 	ee := []error{}
 
 	for _, opt := range startEventOptions {
 		switch so := opt.(type) {
-		case foundation.BaseOption:
+		case foundation.BaseOption, CatchOption:
+			// a CatchOption applies to the built catch event, after its
+			// payload parameters exist — newCatchEvent's job
 			sc.baseOpts = append(sc.baseOpts, opt)
 
 		case startOption:

@@ -1,3 +1,4 @@
+// Package gateways provides BPMN gateway implementations.
 package gateways
 
 import "github.com/dr-dobermann/gobpm/pkg/model/flow"

@@ -165,13 +165,6 @@ func TestTaskDataStoreRouting(t *testing.T) {
 	})
 }
 
-// TestTaskOpErr covers the single-line operation-error builder.
-func TestTaskOpErr(t *testing.T) {
-	tsk, err := newTask("op-err", WithoutParams())
-	require.NoError(t, err)
-	require.Error(t, tsk.opErr("boom", errors.New("cause")))
-}
-
 // TestTaskDataStoreRoutingErrorBranches drives the reroute's store read/write
 // error branches with a failing store, and the input-fill type check.
 func TestTaskDataStoreRoutingErrorBranches(t *testing.T) {

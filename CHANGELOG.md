@@ -9,6 +9,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A Transaction carries its `method` and `protocol`, and binds its abort
+  to a coordinator** (ADR-028 v.2 / SRD-095, part of #324). The
+  `isTransaction` flag becomes `activities.TransactionCharacteristics` —
+  `WithTransaction(opts...)` (source-compatible) with
+  `WithTransactionMethod`/`WithTransactionProtocol`, read back through
+  `SubProcess.Transaction()`. `method` is an open identifier
+  (`TransactionMethod`): `compensate` is built in and the default, the
+  model reads both the metamodel spelling and the schema token
+  `##Compensate`, and `RegisterProcess` refuses any method no coordinator
+  performs — the same moment a script format nothing claims is. The
+  instance runtime binds a Transaction scope to its coordinator when the
+  scope opens (fresh and restored alike) and dispatches the Cancel abort on
+  the binding; the abort's Thrown fact carries `transaction_method`. The
+  BPMN importer maps both attributes verbatim, retiring its private value
+  table — which read only the lowercase spellings and refused a schema-valid
+  `method="##Compensate"` — and the `protocol` `Dropped` report; a
+  `<transaction method="##Store">` now imports and is refused at
+  registration. Export of a Sub-Process, and so re-emission of the two, still
+  waits on ADR-024's export slice.
+- **The examples run sweep runs in parallel** (`scripts/run-examples.sh`,
+  `EXAMPLE_JOBS`): 49 modules in ~30s instead of 1m20s, each example's
+  output buffered and printed in its own group fold in module order, a
+  failure showing its log and status.
+- **Events carry data — and the process's own Start/End events fill its
+  contract** (ADR-040 v.2 §2.7 / SRD-094, closes #329). A catch event
+  (Start, Intermediate catch, Boundary) has data outputs and output
+  associations; a throw event (End, Intermediate throw) has data inputs
+  and input associations — the standard's §10.4.2 halves, which the
+  runtime already ran but nothing could wire to. An item-bearing trigger
+  (a message, a signal or escalation with a structure) declares its
+  payload parameter itself; `events.WithDataOutputs` / `WithDataInputs`
+  declare more, paired with the definitions in order (p217). Every event
+  is a `flow.AssociationSource` / `AssociationTarget`, so a Data Object or
+  Data Store wires to it the way it wires to a task
+  (`AssociateSource` by item; the new `AssociateTargetInput` by the input's
+  id). The process's own ends reach its contract: `Process.AssociateInput`
+  targets a declared input from a Start event's output,
+  `Process.AssociateOutput` sources a declared output into an End event's
+  input; a message-born launch fills the contract from the payload at the
+  seed — Data Store writes deferred until the contract accepted the
+  launch — and the End event throws the declared result. Tasks and events
+  share one copy path (`pkg/model/dataflow`), which now also marks a
+  produced Data Object Ready so a downstream input association can read
+  it. The importer wires `<dataInput>`/`<dataOutput>` and the associations
+  on events, including a `<dataStoreReference>` into an event's input, and
+  refuses a parameter whose `itemSubjectRef` differs from its definition's
+  (p217). `examples/event-data/` runs the message route end to end: the
+  order message fills the contract, the quote message carries the total.
+
+- **A process declares its own I/O contract** (ADR-040 v.1 / SRD-093,
+  closes #330). `process.New` takes `data.WithInputs`/`data.WithOutputs`
+  — one input set, one output set of named, typed, required-or-optional
+  parameters, in the namespace properties and data objects share — and the
+  importer accepts `<ioSpecification>` directly under `<process>` (an
+  explicit empty one is a strict empty contract). Declared inputs bind into
+  the instance's root scope at launch: a host supplies them with
+  `thresher.WithStartInput(name, value)` / `WithStartInputs(...)` on
+  `StartProcess`/`StartLatest`/`StartVersion`, a Call Activity through its
+  parameters, each value type-checked against its declaration. A required
+  input left unbound, or a datum the contract does not name, refuses the
+  launch before the instance exists — the process never waits for data.
+  Declared outputs are read from the root
+  scope at normal completion and bound through their declaration: a
+  required one missing, or a value the declared item cannot carry, faults
+  the instance (`Terminated`, `LastErr()` naming the output); an optional
+  one not produced simply does not flow. The collected result is served
+  by `InstanceHandle.Outputs()` (a copy per call) and, across a call
+  boundary, committed back to the caller — a contracted child never
+  exposes its raw scope, even when it produced nothing. The Call
+  Activity's declared names are validated against the resolved callable at
+  launch (latest-at-launch), faulting at the node on a mismatch. A process
+  without a contract keeps its permissive meaning. `examples/process-io/`
+  runs the whole contract end to end, including publishing the engine's
+  `RUNTIME/STARTED_AT` under a declared output.
+
 - **A parallel Multi-Instance over a User Task** (SRD-090.D FR-10, ADR-025
   §2.15/§2.15a, ADR-020 §2.12, part of #340). Three approvals offered at once
   are three addressable tasks: each is announced, claimed and completed on its
@@ -202,6 +277,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolves exactly as it did before.
 
 ### Fixed
+
+- **A checkpoint taken at a wait no longer drops the previous activity's
+  compensation-ledger entry** (SRD-095 FR-8). The track declared a wait —
+  a checkpoint trigger — before emitting the move that ledgers the activity
+  it had just completed, so a document written at that wait was one entry
+  short, and a Transaction restored from it aborted without compensating
+  that activity. The move is now emitted first; a restore from a wait
+  checkpoint compensates exactly as a resident abort does.
 
 - **Claiming a human task no longer lapses when the instance wakes**
   (ADR-020 §2.1, §2.4.1). Hydrating a released instance re-parks its
@@ -400,6 +483,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an instance prints as its identity rather than a page of internals.
 
 ### Changed
+
+- **ADR-038 retired; its rule moves into ADR-024 §2.16.** The converter
+  coverage-boundaries record had become a ledger — bumped to v.3 across
+  three landings while its contract never moved, and never flipped out of
+  Draft. The decision it carried (three refusal classes per construct:
+  staged / capability-blocked / standing; the converter never compensates
+  for a missing model capability; a capability lands before the converter
+  row consuming it; what each refusal owes its reader) is now one section
+  of the ADR it refined. The capability register lives only in the import
+  epic #335, one issue per row, and the new guide
+  `docs/guides/extending/bpmn-import-coverage.md` lists every refused
+  construct with its kind, the alternative today and its tracking issue.
+  References in ADR-039, its Russian twin, the SRD-089 series, SRD-092 and
+  `pkg/convert/bpmn` are retargeted; no code behaviour changes.
 
 - **Every activity now executes through one object, whatever its
   iteration** (ADR-025 §2.13/§2.13a/§2.13b, SRD-090.A, part of #313).

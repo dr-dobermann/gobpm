@@ -170,8 +170,8 @@ registration is required:
 **Descriptive attributes** — free-form by design, no registration required:
 `attempts`, `backoff`, `candidates`, `chosen_flows`, `loop_counter`, `ordinal`,
 `output_count`, `row_count`, `rule_count`, `script_format`, `selected_by`,
-`stage`, `stop_reason`, plus one-off counts and durations (`deadline`,
-`duration`, a `processors`/`catchers` count).
+`stage`, `stop_reason`, `transaction_method`, plus one-off counts and
+durations (`deadline`, `duration`, a `processors`/`catchers` count).
 
 A `*_type` key that reports what a validation EXPECTED or FOUND is descriptive
 even though it is entity-shaped: `option_type`, `expected_type`, `expr_type`
@@ -183,7 +183,9 @@ Two placements that look surprising and are deliberate: an **aggregate of ids**
 is descriptive, not canonical — `candidates` and `chosen_flows` enumerate rather
 than reference, so they identify no single object; and **`script_format` is
 descriptive** while `topic` is canonical, because a format is a category many
-scripts share whereas a topic names one queue.
+scripts share whereas a topic names one queue — and `transaction_method`, the
+coordinator a Transaction abort ran through (ADR-028 §2.1), is descriptive for
+the same reason.
 
 Rules:
 

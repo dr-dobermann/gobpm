@@ -8,6 +8,7 @@ package datastores
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -178,6 +179,37 @@ func (r *DataStoreReference) AssociateTarget(
 	n flow.AssociationTarget,
 	transformation data.FormalExpression,
 ) error {
+	itemID := r.ItemDefinition().ID()
+
+	return r.associateTarget(n, transformation, "#"+itemID,
+		func(iae *data.ItemAwareElement) bool {
+			return iae.ItemDefinition().ID() == itemID
+		})
+}
+
+// AssociateTargetInput binds this reference as a source into the Node n's
+// input with id inputID — for a node whose inputs are not addressed by
+// item: an event's data input carries its definition's item (SRD-094
+// FR-7).
+func (r *DataStoreReference) AssociateTargetInput(
+	n flow.AssociationTarget,
+	inputID string,
+	transformation data.FormalExpression,
+) error {
+	return r.associateTarget(n, transformation, strconv.Quote(inputID),
+		func(iae *data.ItemAwareElement) bool {
+			return iae.ID() == inputID
+		})
+}
+
+// associateTarget is the body of the two AssociateTarget forms: the node's
+// input is the one pick accepts, want names it in the refusal.
+func (r *DataStoreReference) associateTarget(
+	n flow.AssociationTarget,
+	transformation data.FormalExpression,
+	want string,
+	pick func(*data.ItemAwareElement) bool,
+) error {
 	if n == nil {
 		return errs.New(
 			errs.M("empty target"),
@@ -189,13 +221,10 @@ func (r *DataStoreReference) AssociateTarget(
 	}
 
 	inputs := n.Inputs()
-	idx := slices.IndexFunc(inputs,
-		func(iae *data.ItemAwareElement) bool {
-			return iae.ItemDefinition().ID() == r.ItemDefinition().ID()
-		})
+
+	idx := slices.IndexFunc(inputs, pick)
 	if idx == -1 {
-		return fmt.Errorf("node %q has no input #%s",
-			n.Name(), r.ItemDefinition().ID())
+		return fmt.Errorf("node %q has no input %s", n.Name(), want)
 	}
 
 	opts := []options.Option{
