@@ -34,6 +34,13 @@ func FillInput(
 	gating map[string]bool,
 	owner string,
 ) error {
+	// An association carrying an expression shape (ADR-011 §2.4) is filled by
+	// evaluating it, not by copying a source: its sources gate the fill, the
+	// expression produces the value, and neither half reads a source datum.
+	if shaped(ia) {
+		return fillByShape(ctx, f, ia, dst, gating, owner)
+	}
+
 	if ref := ia.DataStoreRef(); ref != "" {
 		return fillFromStore(ctx, f, ref, ia, dst, gating, owner)
 	}
@@ -56,6 +63,10 @@ func PushOutput(
 ) error {
 	if src.State().Name() != data.ReadyDataState.Name() {
 		return nil
+	}
+
+	if shaped(oa) {
+		return pushByShape(ctx, f, oa, src, owner)
 	}
 
 	if ref := oa.DataStoreRef(); ref != "" {
@@ -103,6 +114,141 @@ func fillFromScope(
 
 	// SRD-063: a per-instance Data Object was read into the node.
 	f.RecordDataMovement(false, false, src[0], "")
+
+	return nil
+}
+
+// fillByShape is FillInput's expression half (ADR-011 §2.4 rules 1 and 2):
+// the association's sources gate the fill and its expression produces the
+// value, which lands in the frame's input instance exactly as a copied one
+// does — the parameter is then Ready and gates the activity's start like any
+// other filled input.
+//
+// The gate differs from the plain copy's in one way the standard requires:
+// EVERY source must be available, not just the one a copy would read
+// (§10.4.2 — "if any of the sources is in the state of unavailable, the data
+// association cannot be executed"), because a transformation may read all of
+// them or none.
+func fillByShape(
+	ctx context.Context,
+	f exec.Frame,
+	ia *data.Association,
+	dst *data.Parameter,
+	gating map[string]bool,
+	owner string,
+) error {
+	if !sourcesReady(f, ia) {
+		if gating[ia.TargetItemDefID()] {
+			return errs.New(
+				errs.M("required input %q of %s is unavailable: a source of "+
+					"association %q is not Ready (gobpm does not wait for data)",
+					dst.Name(), owner, ia.ID()),
+				errs.C(errorClass, errs.ConditionFailed))
+		}
+
+		return nil
+	}
+
+	if err := applyShape(
+		ctx, f, ia, dst.Subject().Structure(), dst.Name(), owner,
+	); err != nil {
+		return err
+	}
+
+	// The frame instance's structure is permissive and Ready is a registered
+	// state; said in the form the coverage gate reads.
+	if err := dst.UpdateState(data.ReadyDataState); err != nil {
+		return opErr("couldn't mark input "+dst.Name()+" of "+owner+" Ready", err)
+	}
+
+	for _, name := range ia.SourceNames() {
+		f.RecordDataMovement(false, false, name, ia.DataStoreRef())
+	}
+
+	return nil
+}
+
+// pushByShape is PushOutput's expression half: the association's expression
+// produces what lands in the target, whether that target is a per-instance
+// Data Object or an engine Data Store key.
+func pushByShape(
+	ctx context.Context,
+	f exec.Frame,
+	oa *data.Association,
+	src *data.Parameter,
+	owner string,
+) error {
+	if ref := oa.DataStoreRef(); ref != "" {
+		return pushShapedToStore(ctx, f, ref, oa, src, owner)
+	}
+
+	datum, err := f.GetData(oa.TargetName())
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't resolve DataObject %q for %s output "+
+				"association %q", oa.TargetName(), owner, oa.ID()),
+			errs.C(errorClass, errs.ObjectNotFound),
+			errs.E(err))
+	}
+
+	if err := applyShape(
+		ctx, f, oa, datum.Value(), oa.TargetName(), owner,
+	); err != nil {
+		return err
+	}
+
+	// An ItemAwareElement refuses no state it knows; said in the form the
+	// coverage gate reads.
+	if st, ok := datum.(stateful); ok {
+		if err := st.UpdateState(data.ReadyDataState); err != nil {
+			return opErr("couldn't mark DataObject "+oa.TargetName()+" Ready for "+owner, err)
+		}
+	}
+
+	f.RecordDataMovement(false, true, oa.TargetName(), "")
+
+	return nil
+}
+
+// pushShapedToStore is pushByShape's Data Store half: the expression writes
+// into a clone of the output instance, which is then stored under the
+// association's target name — the store's datum stays independent of the
+// per-execution instance, exactly as a plain push keeps it.
+func pushShapedToStore(
+	ctx context.Context,
+	f exec.Frame,
+	ref string,
+	oa *data.Association,
+	src *data.Parameter,
+	owner string,
+) error {
+	store, err := storeFor(f, ref, owner)
+	if err != nil {
+		return err
+	}
+
+	// A Ready output instance always clones; said in the form the coverage
+	// gate reads.
+	datum, err := src.Clone()
+	if err != nil {
+		return opErr("couldn't clone output "+src.Name()+" of "+owner+" for DataStore "+ref, err)
+	}
+
+	if err := applyShape(
+		ctx, f, oa, datum.Value(), oa.TargetName(), owner,
+	); err != nil {
+		return err
+	}
+
+	if err := store.Put(ctx, oa.TargetName(), datum); err != nil {
+		return errs.New(
+			errs.M("couldn't write output %q into DataStore %q key %q for %s",
+				src.Name(), ref, oa.TargetName(), owner),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	f.RecordDataMovement(true, true, oa.TargetName(), ref)
 
 	return nil
 }

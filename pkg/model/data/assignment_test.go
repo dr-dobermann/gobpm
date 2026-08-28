@@ -32,20 +32,20 @@ func TestNewAssignment(t *testing.T) {
 		require.Equal(t, from, a.From())
 		require.Equal(t, "order.status", a.To())
 
-		head, steps, err := a.ToHead()
+		head, rest, err := a.ToHead()
 		require.NoError(t, err)
 		require.Equal(t, "order", head)
-		require.Len(t, steps, 1)
+		require.Equal(t, "status", rest)
 	})
 
 	t.Run("a head-only to is the whole-value write", func(t *testing.T) {
 		a, err := data.NewAssignment(from, "order")
 		require.NoError(t, err)
 
-		head, steps, err := a.ToHead()
+		head, rest, err := a.ToHead()
 		require.NoError(t, err)
 		require.Equal(t, "order", head)
-		require.Empty(t, steps)
+		require.Empty(t, rest, "no steps: the whole value is replaced")
 	})
 
 	t.Run("the to path is trimmed", func(t *testing.T) {
