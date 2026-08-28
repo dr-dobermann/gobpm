@@ -5,6 +5,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
@@ -58,6 +59,14 @@ type Frame interface {
 	// frame (a transient evaluation frame), and a store-backed association fails
 	// fast rather than dereferencing it.
 	DataStores() datastore.Registry
+
+	// ExpressionEngine returns the engine a data association's transformation
+	// or assignment evaluates through (ADR-011 §2.4, ADR-002). Like
+	// DataStores it is engine-global and shared across instances, and nil
+	// means none is wired for this frame (a transient evaluation frame) — an
+	// association carrying an expression then fails fast rather than
+	// dereferencing it, while a plain copy is unaffected.
+	ExpressionEngine() expression.Engine
 
 	// RecordDataMovement notes a Data Object / Data Store read or write for
 	// observability (SRD-063 / SRD-068): the reroute records each movement and

@@ -7,6 +7,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 )
 
 // frameState tracks the frame lifecycle: open → committed | discarded.
@@ -25,12 +26,16 @@ const (
 // A frame is owned by exactly one execution — it is NOT safe for concurrent
 // use; cross-track serialization happens in the Scope, never in frames.
 type Frame struct {
-	stores  datastore.Registry
-	plane   *Scope
-	inputs  map[string]*data.Parameter
-	outputs map[string]*data.Parameter
-	props   map[string]data.Data
-	puts    map[string]data.Data
+	stores datastore.Registry
+	// exprEngine evaluates an association's transformation or assignment
+	// (ADR-011 §2.4); nil on a transient frame, where an expression-bearing
+	// association fails fast.
+	exprEngine expression.Engine
+	plane      *Scope
+	inputs     map[string]*data.Parameter
+	outputs    map[string]*data.Parameter
+	props      map[string]data.Data
+	puts       map[string]data.Data
 	// received is THIS delivery's payload item, staged by the receiving
 	// execution at delivery and bound by a catch node's UploadData
 	// (ADR-006 v.5 §2.9.1, SRD-085 FR-1) — per-frame, so concurrent
@@ -94,6 +99,20 @@ func (f *Frame) SetDataStores(stores datastore.Registry) {
 // (nil for a transient evaluation frame).
 func (f *Frame) DataStores() datastore.Registry {
 	return f.stores
+}
+
+// SetExpressionEngine wires the engine an association's transformation or
+// assignment evaluates through (ADR-011 §2.4). Wired beside the Data Store
+// registry and for the same reason: both are engine-global seams the model
+// layer reaches only through the frame.
+func (f *Frame) SetExpressionEngine(ee expression.Engine) {
+	f.exprEngine = ee
+}
+
+// ExpressionEngine returns the expression engine wired on the frame (nil for
+// a transient evaluation frame).
+func (f *Frame) ExpressionEngine() expression.Engine {
+	return f.exprEngine
 }
 
 // NewFrame creates the execution frame of node nodeID executed by track

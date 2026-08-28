@@ -7,6 +7,7 @@ package mockexec
 import (
 	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -79,6 +80,52 @@ func (_c *MockFrame_DataStores_Call) Return(registry datastore.Registry) *MockFr
 }
 
 func (_c *MockFrame_DataStores_Call) RunAndReturn(run func() datastore.Registry) *MockFrame_DataStores_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ExpressionEngine provides a mock function for the type MockFrame
+func (_mock *MockFrame) ExpressionEngine() expression.Engine {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for ExpressionEngine")
+	}
+
+	var r0 expression.Engine
+	if returnFunc, ok := ret.Get(0).(func() expression.Engine); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(expression.Engine)
+		}
+	}
+	return r0
+}
+
+// MockFrame_ExpressionEngine_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ExpressionEngine'
+type MockFrame_ExpressionEngine_Call struct {
+	*mock.Call
+}
+
+// ExpressionEngine is a helper method to define mock.On call
+func (_e *MockFrame_Expecter) ExpressionEngine() *MockFrame_ExpressionEngine_Call {
+	return &MockFrame_ExpressionEngine_Call{Call: _e.mock.On("ExpressionEngine")}
+}
+
+func (_c *MockFrame_ExpressionEngine_Call) Run(run func()) *MockFrame_ExpressionEngine_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockFrame_ExpressionEngine_Call) Return(engine expression.Engine) *MockFrame_ExpressionEngine_Call {
+	_c.Call.Return(engine)
+	return _c
+}
+
+func (_c *MockFrame_ExpressionEngine_Call) RunAndReturn(run func() expression.Engine) *MockFrame_ExpressionEngine_Call {
 	_c.Call.Return(run)
 	return _c
 }
