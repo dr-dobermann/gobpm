@@ -107,12 +107,17 @@ difference between a writer and a reader:
 
 | Method | Direction | Effect |
 |---|---|---|
-| `AssociateSource(n, sourceIDs, transformation)` | Node → DataStore | binds node `n`'s output (by source id) **into** the store — a `DataOutputAssociation`. |
-| `AssociateTarget(n, transformation)` | DataStore → Node | binds the store **into** node `n`'s input — a `DataInputAssociation`. |
-| `AssociateTargetInput(n, inputID, transformation)` | DataStore → Node | the same, naming the input by its **id** — for a throw event ([Event data](event-data.md)). |
+| `AssociateSource(n, sourceIDs, transformation, shape...)` | Node → DataStore | binds node `n`'s output (by source id) **into** the store — a `DataOutputAssociation`. |
+| `AssociateTarget(n, transformation, shape...)` | DataStore → Node | binds the store **into** node `n`'s input — a `DataInputAssociation`. |
+| `AssociateTargetInput(n, inputID, transformation, shape...)` | DataStore → Node | the same, naming the input by its **id** — for a throw event ([Event data](event-data.md)). |
 
-Both take an optional `data.FormalExpression` transformation (`nil` for a
-straight copy). Introspection: `DataStoreRef()`, `Name()`, `ID()`, `EType()`.
+All three take an optional `data.FormalExpression` transformation (`nil` for a
+straight copy) and the same `shape` tail every association accepts —
+`data.WithAssignments(...)`, `data.WithSources(...)` — described under
+[Data objects](data-objects.md#the-three-shapes). An assignment whose target
+is a store reads the record first and writes back the whole of it, so the
+fields the assignment does not name survive. Introspection: `DataStoreRef()`,
+`Name()`, `ID()`, `EType()`.
 
 ## Build it
 
