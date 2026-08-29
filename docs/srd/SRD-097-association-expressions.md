@@ -422,7 +422,8 @@ No downward references.
 | — | `1b21f016` | the downstream docs synced with the shapes |
 | M8 | `b3675717` | the gate's heartbeat, which was dead on macOS (see §10.2) |
 | — | `f08e987c` | §10.3 points at the run that verified the tip |
-| M9 | (below) | the dead `flow.DataNode` evaluator deleted (see §10.2) |
+| M9 | `33d0e697` | the dead `flow.DataNode` evaluator deleted (see §10.2) |
+| M10 | `PENDING` | two checkpoint-capture flakes of issue #356 (see §10.2) |
 
 ### §10.2 Where reality diverged from the draft
 
@@ -539,6 +540,38 @@ No downward references.
   ways: the heartbeat prints, an interrupted run still records
   `interrupted by a signal`, and neither path leaves a stray `sleep` or an
   orphaned `golangci-lint`. Found here, so fixed here.
+
+- **M10: two of issue #356's gate flakes, diagnosed and fixed.** The gate
+  went red at `test-core` after M9 on `TestCompositeRestoreRunsBodyOnce` and
+  `TestARestoredFanOutKeepsTheEligibilityItAnnounced` — the first named by
+  [#356](https://github.com/dr-dobermann/gobpm/issues/356), the second not.
+  Neither is caused by M9, and neither reproduces alone: 15 isolated runs,
+  4 whole-package runs under the gate's CPU budget and 4 runs of the gate's
+  own `test-core` step all passed.
+
+  They share one defect, and it is in the tests: **a capture predicate that
+  does not require the evidence its test then asserts**. Both poll the
+  repository for the newest checkpoint and take the first that matches, so a
+  predicate satisfied by an *earlier* checkpoint silently supplies the wrong
+  document — which load makes likelier by shifting the poll relative to the
+  engine's transitions. `TestCompositeRestoreRunsBodyOnce` matched on
+  `openScope && len(Tracks) == 2`, which is equally true at the
+  host-opens-scope checkpoint, where the body's pass is not recorded; a
+  restore from that one re-runs the body *correctly*, and the test read it as
+  the FR-5 double-execution regression. The fan-out test matched on three
+  recorded `TaskID`s but then asserted each instance's `Eligible` verdict,
+  which the announcement records second. Both predicates now require what
+  their test asserts — the parked track, and the verdict.
+
+  The two remaining #356 tests (`TestWaitCheckpointCarriesPredecessorLedger`,
+  `TestForeignBindingSurvivesRestore`) are **left alone deliberately**. They
+  did not fail here and did not reproduce, and their premise is sound: the
+  SRD-094 FR-8 fix (`0ca7347f`) emits `evMoved` *before* the wait is declared
+  precisely so the wait checkpoint carries the predecessor's ledger. Making
+  their shared `atHold` predicate require a ledger entry would make them pass
+  — by walking past exactly the ledger-less wait checkpoint whose absence
+  they exist to prove. That is a mask, not a fix, so it wants a reproduction
+  first. #356 keeps them.
 
 - **A model constraint worth knowing.** An association keys its sources by
   `ItemDefinition` id, so two sources of the *same* item type collide with
