@@ -1047,3 +1047,19 @@ func TestLeafMIRestoresFromASchemaFiveGroup(t *testing.T) {
 
 	require.Equal(t, Completed, restored.State())
 }
+
+// TestTheIterationKindNamesTheShape (SRD-090.A FR-6): the recorded kind
+// describes the SHAPE the instances run in, which is what a restore resumes
+// from — not the node, whose loop characteristics both shapes share.
+func TestTheIterationKindNamesTheShape(t *testing.T) {
+	seq, err := activities.NewMultiInstance(activities.WithSequential(),
+		activities.WithInputCollection("items", "item"))
+	require.NoError(t, err)
+
+	par, err := activities.NewMultiInstance(
+		activities.WithInputCollection("items", "item"))
+	require.NoError(t, err)
+
+	require.Equal(t, iterKindMISequential, miIterator{mi: seq}.kind())
+	require.Equal(t, iterKindMIParallel, miIterator{mi: par}.kind())
+}

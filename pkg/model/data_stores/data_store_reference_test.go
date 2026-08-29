@@ -40,6 +40,15 @@ func TestDataStoreReferenceModel(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	t.Run("reserved runtime name rejected", func(t *testing.T) {
+		_, err := datastores.New(data.IterationIDName, "orders", idef(),
+			data.ReadyDataState)
+		require.ErrorContains(t, err, data.IterationIDName,
+			"the engine publishes this name itself, so a model that declared "+
+				"one would collide with the value the engine puts there "+
+				"(SRD-090.D FR-2)")
+	})
+
 	t.Run("empty dataStoreRef rejected", func(t *testing.T) {
 		_, err := datastores.New("x", "", idef(), data.ReadyDataState)
 		require.Error(t, err)

@@ -114,6 +114,16 @@ func TestMonitoring(t *testing.T) {
 			// deliberately not one name per completed task, so this set stays
 			// closed as human tasks complete.
 			instance.CompletedBy,
+			// The iteration register (ADR-025 §2.9.2) — one map-valued name
+			// keyed by activity id, for the same reason: the set stays closed
+			// however many activities iterate, and a key disambiguates two
+			// iterating at once where a flat name could not.
+			instance.Iterations,
+			// The completion account (ADR-025 §2.15) — who did each instance
+			// of an iterated activity. COMPLETED_BY keys by node, so it holds
+			// one answer however many instances ran; this keys by activity and
+			// then by ordinal, so three approvals keep three names.
+			instance.IterationOwners,
 		},
 		inst.RuntimeVarNames())
 
@@ -220,6 +230,13 @@ func TestInstanceCancel(t *testing.T) {
 // StartEvent -> ServiceTask(print hello user_name) -> EndEvent
 // and retruns its Snapshot.
 func getSnapshot(pname string) (*snapshot.Snapshot, error) {
+	// the default states are global and this fixture builds elements that
+	// need them: relying on some earlier test having created them makes this
+	// one pass or fail by declaration order.
+	if err := data.CreateDefaultStates(); err != nil {
+		return nil, err
+	}
+
 	p, err := process.New(pname,
 		data.WithProperties(
 			data.MustProperty(

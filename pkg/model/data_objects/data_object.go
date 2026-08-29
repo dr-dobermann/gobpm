@@ -54,6 +54,10 @@ func New(
 		return nil, err
 	}
 
+	if err := data.CheckReservedName(name, errorClass); err != nil {
+		return nil, err
+	}
+
 	if idef == nil {
 		return nil,
 			fmt.Errorf("empty ItemDefinition isn't allowed")

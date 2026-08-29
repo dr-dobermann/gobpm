@@ -52,6 +52,10 @@ func New(
 		return nil, err
 	}
 
+	if err := data.CheckReservedName(name, errorClass); err != nil {
+		return nil, err
+	}
+
 	dataStoreRef = strings.TrimSpace(dataStoreRef)
 	if err := errs.CheckStr(
 		dataStoreRef,

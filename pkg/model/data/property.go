@@ -37,6 +37,10 @@ func NewProperty(
 		return nil, err
 	}
 
+	if err := CheckReservedName(name, errorClass); err != nil {
+		return nil, err
+	}
+
 	iae, err := NewItemAwareElement(item, state, baseOpts...)
 	if err != nil {
 		return nil, err

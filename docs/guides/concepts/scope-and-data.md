@@ -46,8 +46,15 @@ Two addressing modes share this one plane:
 | **Source read** | a path-qualified name — `SOURCE/addr` | a named data source; the first segment picks the source, the rest is its own address space. |
 
 The engine's `RUNTIME` subtree is one such source — a reserved, read-only supply
-of synthetic variables (`STARTED_AT`, `STATE`, `TRACKS_CNT`) synthesized on each
-read, so every read observes live engine state.
+of synthetic variables (`STARTED_AT`, `STATE`, `TRACKS_CNT`, `COMPLETED_BY`,
+`ITERATIONS`) synthesized on each read, so every read observes live engine state.
+
+Not every engine-published value lives there. A value with one answer *per
+execution* — an iterating activity's `loopCounter`, for instance — is published
+into the running instance instead and read as a plain name, because a source is
+handed an address and nothing else, so it could not say *whose* ordinal was
+asked for. [Iteration runtime variables](../iteration/runtime-variables.md)
+lists which is which, and why.
 
 ## The read surface — `service.DataReader`
 

@@ -137,6 +137,8 @@ See [Observability](concepts/observability.md) and
 | **Transaction sub-process** | An ACID-like scope that aborts via a Cancel event. See [Transaction Sub-Process](subprocesses/transaction.md). |
 | **Standard loop** | Repeats one node while a condition holds. See [Standard Loop](iteration/standard-loop.md). |
 | **Multi-instance** | Fans a node out over a collection, sequentially or in parallel. See [Multi-Instance](iteration/multi-instance.md). |
+| **Iteration runtime variables** | What an iterating activity publishes — `loopCounter`, `ITERATION_NUMBER`/`ID`/`MODE`, the `numberOf*` counts and `RUNTIME/ITERATIONS`. The names are engine-owned: a model declaring one is refused at build time. See [Iteration runtime variables](iteration/runtime-variables.md). |
+| **Reserved data name** | A name the engine publishes and a model may not declare (a property, data object, data store reference or activity output). `data.ReservedNames()` lists them. |
 
 ## Extension seams
 
