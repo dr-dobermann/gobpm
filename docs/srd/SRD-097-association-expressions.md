@@ -423,7 +423,7 @@ No downward references.
 | M8 | `b3675717` | the gate's heartbeat, which was dead on macOS (see §10.2) |
 | — | `f08e987c` | §10.3 points at the run that verified the tip |
 | M9 | `33d0e697` | the dead `flow.DataNode` evaluator deleted (see §10.2) |
-| M10 | `PENDING` | two checkpoint-capture flakes of issue #356 (see §10.2) |
+| M10 | `ad82e4d5` | two checkpoint-capture flakes of issue #356 (see §10.2) |
 
 ### §10.2 Where reality diverged from the draft
 
@@ -580,18 +580,20 @@ No downward references.
 
 ### §10.3 Verification
 
-`make ci` at `81a55cb7` (the last doc commit): **PASS — 14/14 steps** in
-5m50s (`.ci/last-run.json`), race tests green, diff-coverage **97.1% of 491
-changed coverable lines** (min 95%), govulncheck clean, all examples executed
-end to end by the run sweep, `make lock-sweep` clean, `make link-check`
-clean. That run is also M8's own verification: it printed six heartbeat lines
-and no `setsid` diagnostic, where the run before the fix printed fourteen
-diagnostics and no heartbeat.
+`make ci` at `ad82e4d5` (the branch tip): **PASS — 14/14 steps** in 5m30s
+(`.ci/last-run.json`), race tests green, diff-coverage **97.1% of 485 changed
+coverable lines** (min 95%), govulncheck clean, all examples executed end to
+end by the run sweep, `make lock-sweep` clean, `make link-check` clean.
 
-Two earlier full runs bracket the work: `a70c7cc5` (the merge of master) was
-PASS 14/14 in 8m54s at 98.4% of 437 changed lines, and `1b21f016` (before the
-gate fix) PASS 14/14 at the same 97.1% of 491 — M7 added 54 changed lines,
-and the two rejected review findings added none.
+Four full runs bracket the work, and two of them are themselves evidence.
+`a70c7cc5` (the merge of master) was PASS 14/14 in 8m54s at 98.4% of 437
+changed lines. `1b21f016` was PASS at 97.1% of 491 — M7 added 54 changed
+lines and the two rejected review findings added none. `81a55cb7` was PASS in
+5m50s and is **M8's** verification: six heartbeat lines and no `setsid`
+diagnostic, where the run before that fix printed fourteen diagnostics and no
+heartbeat at all. The run at `33d0e697` **FAILED** at `test-core` on the two
+capture flakes, which is what M10 then fixed — the tip run above is its
+verification.
 
 Every §6 test row exists and passes; the twelve are spread across
 `pkg/model/data`, `internal/scope`, `pkg/model/dataflow` and
