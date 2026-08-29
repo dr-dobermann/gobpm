@@ -293,7 +293,12 @@ const (
 	// Call-activity facts (SRD-050 FR-10): emitted by the caller — the called
 	// process key, the RESOLVED version bound (the latest-at-launch audit
 	// point), and the launched child instance id.
-	AttrCalledKey       = "called_key"
+	AttrCalledKey = "called_key"
+	// AttrCalledNamespace is the namespace qualifying the called key, present
+	// only when the reference named another definitions document — so its
+	// absence on a call fact means the reference was unqualified, not that
+	// the attribute was dropped.
+	AttrCalledNamespace = "called_namespace"
 	AttrCalledVersion   = "called_version"
 	AttrChildInstanceID = "child_instance_id"
 

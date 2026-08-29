@@ -683,14 +683,17 @@ func TestSecondIOSpecificationRefused(t *testing.T) {
 
 // TestIOSpecificationMisplaced is T-29 (§4.7a): the owners the standard
 // itself refuses, each with the § a modeler can read.
+//
+// The CALL ACTIVITY left this set with SRD-096: §10.4's own CallActivity row
+// maps its DataInputs/DataOutputs onto the callable's, which presupposes it
+// has them, and the strict reading of §10.4.1's containment list made that
+// row unreachable. See TestCallActivityCarriesItsParameters.
 func TestIOSpecificationMisplaced(t *testing.T) {
 	const io = `<bpmn:ioSpecification id="io1"/>`
 
 	tests := map[string]string{
 		"sub-process": subProcessDoc(innerGraph + `
       ` + io),
-		"call activity": propDoc("",
-			`    <bpmn:callActivity id="ca1" calledElement="P2">`+io+`</bpmn:callActivity>`),
 		"gateway": propDoc("",
 			`    <bpmn:exclusiveGateway id="g1">`+io+`</bpmn:exclusiveGateway>`),
 		"event": propDoc("",

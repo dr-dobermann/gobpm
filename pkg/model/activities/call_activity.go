@@ -23,6 +23,12 @@ import (
 type CallActivity struct {
 	calledKey string
 
+	// calledNamespace qualifies calledKey with the document that declared
+	// the callable, empty for a reference inside the calling document. The
+	// pair reaches the engine's CallableResolver at call time; the engine
+	// itself owns no naming convention for it (ADR-023 v.5 §2.7).
+	calledNamespace string
+
 	// outcome stashes the child's completion (set by ProcessEvent on resume,
 	// read by Exec — the ServiceTask worker-outcome idiom).
 	outcome *exec.CallOutcome
@@ -34,7 +40,8 @@ type CallActivity struct {
 
 // callActivityConfig collects the CallActivity-specific options.
 type callActivityConfig struct {
-	version int
+	namespace string
+	version   int
 }
 
 // CallActivityOption is a CallActivity-specific construction option.
@@ -46,6 +53,30 @@ type CallActivityOption func(*callActivityConfig) error
 // Option marks CallActivityOption as an options.Option; NewCallActivity
 // applies it by calling the func directly.
 func (CallActivityOption) Option() {}
+
+// WithCalledNamespace qualifies the called key with the namespace of the
+// definitions document that declared the callable — what a modeler writes
+// as a prefix on `calledElement` when the callable lives in another document.
+//
+// Without it the reference is unqualified and names a registry key directly.
+// With it, the engine's CallableResolver maps the (namespace, key) pair onto a
+// registered key at call time; the default resolver refuses a qualified
+// reference by name rather than guess one (ADR-023 v.5 §2.7).
+func WithCalledNamespace(ns string) CallActivityOption {
+	return CallActivityOption(func(cfg *callActivityConfig) error {
+		if strings.TrimSpace(ns) == "" {
+			return errs.New(
+				errs.M("WithCalledNamespace: an empty namespace isn't "+
+					"allowed — omit the option for an unqualified callable "+
+					"reference"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		cfg.namespace = ns
+
+		return nil
+	})
+}
 
 // WithCalledVersion pins the call to an exact registered version of the
 // callable (1-based, ADR-019). Without it the call binds latest-at-launch
@@ -102,14 +133,19 @@ func NewCallActivity(
 	}
 
 	return &CallActivity{
-		activity:      *a,
-		calledKey:     calledKey,
-		calledVersion: cfg.version,
+		activity:        *a,
+		calledKey:       calledKey,
+		calledNamespace: cfg.namespace,
+		calledVersion:   cfg.version,
 	}, nil
 }
 
 // CalledKey returns the registry key of the callable process.
 func (ca *CallActivity) CalledKey() string { return ca.calledKey }
+
+// CalledNamespace returns the namespace qualifying the called key, or "" when
+// the reference is unqualified and names a registry key directly.
+func (ca *CallActivity) CalledNamespace() string { return ca.calledNamespace }
 
 // CalledVersion returns the pinned callable version, or 0 for the
 // latest-at-launch binding.
@@ -237,9 +273,10 @@ func (ca *CallActivity) Clone() (flow.Node, error) {
 	}
 
 	return &CallActivity{
-		activity:      a,
-		calledKey:     ca.calledKey,
-		calledVersion: ca.calledVersion,
+		activity:        a,
+		calledKey:       ca.calledKey,
+		calledNamespace: ca.calledNamespace,
+		calledVersion:   ca.calledVersion,
 	}, nil
 }
 

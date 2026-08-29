@@ -181,10 +181,37 @@ make ci
 
 On macOS, install GNU coreutils once with `brew install coreutils`;
 `run-examples` detects its `gtimeout` command automatically. Linux already
-provides `timeout`. The examples run in parallel — `EXAMPLE_JOBS` at a time,
-default the CPU count capped at 8 — with each example's output buffered and
-printed in its own group fold in module order once all have finished, so a
-failure is never interleaved with a neighbour's log (`scripts/run-examples.sh`).
+provides `timeout`.
+
+**Every per-module sweep runs in parallel** — the examples run
+(`scripts/run-examples.sh`, `EXAMPLE_JOBS`) and the tidy, lint, build and
+govulncheck sweeps over both halves (`scripts/run-modules.sh`, `MODULE_JOBS`).
+Both default to the CPU count capped at 8, and both buffer each module's output
+and print it inside that module's own group fold, in module order, once all have
+finished — so a failure is never interleaved with a neighbour's log and a fold
+is never torn open mid-write. The cost of *not* doing this was `examples-lint`:
+fifty-two independent linters queued behind each other for 209s of a 506s gate,
+four times what every other example step costs together. A passing module now
+prints only its group markers — `go build -v`'s per-package chatter sits in the
+buffer, shown if and only if that module fails.
+
+**`tidy` is the one sweep that schedules in dependency waves**
+(`MODULE_ORDER=deps`), because it is the one that *writes* `go.mod`/`go.sum`.
+The four adapter modules `replace` the root, so a flat batch would have the
+root rewriting the files they read — and while `cmd/go` locks those files, a
+drift check that resolves against whichever snapshot won the race can answer
+differently on two runs of the same tree. The scheduler reads the replace edges
+out of the `go.mod` files themselves, so it costs one extra wave in
+`tidy-check-core` (root + runtime, then the four adapters) and none at all in
+`examples-tidy`, where every replace points outside the sweep and all
+fifty-two still go at once. If a module fails, the modules that `replace` it
+are reported **not run** rather than passed.
+
+The one sweep that stays serial is **`test-all`**. `TEST_CPUS` pins the race
+run's CPU budget to what the CI runner exposes, precisely so that
+scheduling-sensitive tests behave the same locally and on GitHub; running
+several such modules at once would oversubscribe the box that pinning exists to
+model.
 
 **Parity rules (do not break these — they exist because a silent local
 no-op once let broken code reach CI):**
@@ -343,6 +370,40 @@ carry versions (e.g. `SRD-071 v.2.5`). They are `Accepted`, and an Accepted
 one-shot document is not retro-edited — stripping their versions would rewrite
 history for tidiness. Keep pinning them at the version they carry; the rule
 governs documents written from here on.
+
+## Design docs — cite the symbol, not the line
+
+**A code reference in a design doc names the file and the symbol, never a line
+number:** `resolveLanguage` in `pkg/convert/bpmn/language.go`, not
+`language.go:59-84`. The same goes for a range — quote the code or name the
+function, rather than pinning `:88-105`.
+
+The reason is that a line pin rots on the next refactor while looking exactly
+as authoritative as the day it was written, and a **one-shot** SRD or FIX is
+precisely the document nobody re-verifies. A reader who greps the symbol finds
+it wherever it moved; a reader who follows `:184` lands in the middle of an
+unrelated function and cannot tell whether the doc is wrong or they are.
+
+Measured, not assumed: four audit rounds over `SRD-089.D` and `.E` found
+line-pin rot to be the single largest defect class in both — twenty-three
+stale pins between them, several landing inside code that had nothing to do
+with the claim, against a handful of genuine content errors. Every other
+defect class was found once and fixed; this one regenerated with every
+refactor of the packages the documents describe.
+
+Applies to **documents written from here on**. Existing docs keep their pins:
+an Accepted one-shot is not retro-edited for tidiness, and a stale pin inside
+a historical record is a smaller problem than rewriting the record. Refresh
+one only when you are editing that passage for another reason — which is how
+`SRD-089.D` and `.E` got theirs corrected.
+
+Two carve-outs, because the rot argument does not apply to them:
+
+- **The vendored spec extract** (`docs/bpmn-spec/…`) — line-pinned citations
+  there are stable, because the extract changes only when the standard's
+  transcription does, and a `§`-less structural table has no symbol to name.
+- **A commit SHA plus a path** in an implementation summary — that names an
+  immutable object, so `git show <sha>:path` always resolves.
 
 ## Design docs — Russian twins
 

@@ -111,6 +111,7 @@ Every example runs end-to-end in CI and asserts its own outcome; the list below 
 | Example | Demonstrates |
 |---|---|
 | [`bpmn-convert/`](bpmn-convert/) | **BPMN 2.0 XML import & export** — a bundled `.bpmn` parsed through the `pkg/convert` seam into a live `*process.Process`, registered (the BPMN `id` becomes the ADR-019 version key), run to completion, then serialized back out. The converter itself lives in `pkg/convert/bpmn` and is switched on by a blank import (ADR-024 / SRD-051). |
+| [`bpmn-callable/`](bpmn-callable/) | **Reuse by reference across a document boundary** — a `<globalBusinessRuleTask>` declared once at `definitions` level imports as a callable *process* (a None start, the task, a None end), and one caller reaches it three ways: by its bare key, by a reference qualified with the document's own `targetNamespace` (which collapses), and by one qualified with an `<import>`ed namespace, which only the host's `thresher.WithCallableResolver` can map onto a registered key (ADR-023 / ADR-024 §2.13 / SRD-096, closes #325). |
 
 ---
 

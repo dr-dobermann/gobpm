@@ -17,6 +17,7 @@ import (
 // only asserts this interface (the scopeHost / ExternalWorker precedent).
 type callActivity interface {
 	CalledKey() string
+	CalledNamespace() string
 	CalledVersion() int
 	CallInputs() []string
 	CallOutputs() []string
@@ -80,6 +81,7 @@ func (ls *loopState) onCallWaiting(ctx context.Context, ev trackEvent) {
 
 	child, err := ls.inst.invoker.InvokeProcess(ctx, exec.ProcessCall{
 		Key:              ca.CalledKey(),
+		Namespace:        ca.CalledNamespace(),
 		Version:          ca.CalledVersion(),
 		Inputs:           inputs,
 		Outputs:          ca.CallOutputs(),
@@ -336,16 +338,41 @@ func (ls *loopState) reportCall(
 ) {
 	ca, _ := node.(callActivity)
 
+	details := map[string]string{
+		observability.AttrCalledVersion:   strconv.Itoa(child.Version()),
+		observability.AttrChildInstanceID: child.ID(),
+	}
+
+	// The RESOLVED key, not the reference the document wrote: for a qualified
+	// reference the host's resolver decided which registration this is, and an
+	// audit needs to see the one that ran (ADR-023 v.5 §2.7).
+	//
+	// A child that cannot say — a re-attached one that is not resident yet —
+	// leaves the attribute OUT rather than substituting the reference. The
+	// reference is the UNRESOLVED local part, and for a qualified call that
+	// names a different registration than the one that ran: the same call
+	// would report "audit" here and "shared.audit" once resident, so an audit
+	// trail reading both would conclude two different callables ran. An
+	// absent attribute says "not known at this phase"; a substituted one says
+	// something false. The fact still carries child_instance_id, which
+	// identifies what actually ran (ADR-022 v.3 §2.5).
+	if key := child.Key(); key != "" {
+		details[observability.AttrCalledKey] = key
+	}
+
+	// Only when the reference named another document: an absent attribute
+	// then means "unqualified", which is a fact about the file, rather than
+	// an empty one that reads as a dropped value.
+	if ns := ca.CalledNamespace(); ns != "" {
+		details[observability.AttrCalledNamespace] = ns
+	}
+
 	ls.inst.report(observability.Fact{
 		Kind:     observability.KindCall,
 		Phase:    phase,
 		NodeID:   node.ID(),
 		NodeName: node.Name(),
-		Details: map[string]string{
-			observability.AttrCalledKey:       ca.CalledKey(),
-			observability.AttrCalledVersion:   strconv.Itoa(child.Version()),
-			observability.AttrChildInstanceID: child.ID(),
-		},
+		Details:  details,
 	})
 }
 

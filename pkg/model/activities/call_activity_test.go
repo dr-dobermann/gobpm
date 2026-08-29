@@ -196,3 +196,62 @@ func TestCallActivityRuntimeSurface(t *testing.T) {
 		require.Equal(t, 2, cc.CalledVersion())
 	})
 }
+
+// TestCalledNamespace covers SRD-096 T-1 and T-2: the option that qualifies a
+// called key with the document that declared the callable.
+//
+// The empty case is refused rather than accepted-as-unqualified because the
+// two mean different things to whoever reads the model back: an absent option
+// says "this reference names a registry key", while an empty namespace says
+// "this reference is qualified by nothing", which is not a state the engine
+// has. Silently collapsing the second into the first is the class of bug
+// WithLogger(nil) once was — a bad argument quietly becoming a default.
+func TestCalledNamespace(t *testing.T) {
+	t.Run("an empty namespace is refused", func(t *testing.T) {
+		for name, ns := range map[string]string{
+			"empty":      "",
+			"whitespace": "   ",
+		} {
+			t.Run(name, func(t *testing.T) {
+				_, err := activities.NewCallActivity("call", "charge",
+					activities.WithCalledNamespace(ns))
+				require.Error(t, err,
+					"an empty namespace must not silently become an "+
+						"unqualified reference — omit the option for that")
+				require.Contains(t, err.Error(), "WithCalledNamespace",
+					"the error names the option that failed, so a caller "+
+						"passing several knows which one")
+			})
+		}
+	})
+
+	t.Run("a call activity carries it, and a clone keeps it",
+		func(t *testing.T) {
+			const ns = "http://example.com/shared"
+
+			ca, err := activities.NewCallActivity("call", "audit",
+				activities.WithCalledNamespace(ns))
+			require.NoError(t, err)
+			require.Equal(t, ns, ca.CalledNamespace())
+			require.Equal(t, "audit", ca.CalledKey(),
+				"the namespace qualifies the key, it does not replace it")
+
+			c, err := ca.Clone()
+			require.NoError(t, err)
+
+			clone, ok := c.(*activities.CallActivity)
+			require.True(t, ok)
+			require.Equal(t, ns, clone.CalledNamespace(),
+				"the call binding is immutable config: an instance's clone "+
+					"resolves the same callable as the snapshot it came from")
+		})
+
+	t.Run("without the option the reference is unqualified",
+		func(t *testing.T) {
+			ca, err := activities.NewCallActivity("call", "charge")
+			require.NoError(t, err)
+			require.Empty(t, ca.CalledNamespace(),
+				"every call that exists today is unqualified, and must stay "+
+					"byte-identical through the resolver")
+		})
+}

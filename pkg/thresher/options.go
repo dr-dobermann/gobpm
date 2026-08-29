@@ -12,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/datastore/memstore"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
@@ -33,6 +34,7 @@ import (
 // EventHub is NOT here — it stays internal and the Thresher builds it itself.
 type thresherConfig struct {
 	exprEngines       []expression.Engine
+	callableResolver  exec.CallableResolver
 	exprRegistry      *expression.Registry
 	logger            observability.Logger
 	workerErrorMapper tasks.ErrorMapper
@@ -212,6 +214,36 @@ func WithExpressionEngine(e expression.Engine) Option {
 		}
 
 		c.exprEngines = append(c.exprEngines, e)
+
+		return nil
+	}
+}
+
+// WithCallableResolver supplies the host contract that maps a Call Activity's
+// callable reference — a key, optionally qualified by the namespace of the
+// document that declared it — onto the key this engine's process registry
+// serves (ADR-023 v.5 §2.7).
+//
+// It is consulted at call time for EVERY call, qualified or not, so a host
+// that maps keys by a convention of its own (a tenant prefix, a naming scheme)
+// sees them all and its resolver can be reasoned about from its own code. The
+// engine calls it holding no lock, so a resolver may call back into the engine
+// — including into this Thresher.
+//
+// Without this option the engine uses exec.DefaultCallableResolver: an
+// unqualified reference is its own key, and a qualified one fails the call
+// naming the namespace it could not map.
+func WithCallableResolver(r exec.CallableResolver) Option {
+	return func(c *thresherConfig) error {
+		if r == nil {
+			return errs.New(
+				errs.M("WithCallableResolver: a nil CallableResolver isn't "+
+					"allowed — omit the option to keep the default, which "+
+					"resolves an unqualified reference to itself"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.callableResolver = r
 
 		return nil
 	}
@@ -582,7 +614,12 @@ func defaultConfig() thresherConfig {
 		authz:       allowall.New(),
 		dispatcher:  localdispatcher.New(nil, 0),
 		ruleEngine:  gorules.New(),
-		dataStores:  memstore.NewRegistry(),
-		taskDist:    interactor.NopDistributor(),
+		// The engine resolves an unqualified callable reference to itself
+		// and refuses a qualified one by name, so a host that never
+		// references another definitions document configures nothing
+		// (ADR-023 v.5 §2.7).
+		callableResolver: exec.DefaultCallableResolver{},
+		dataStores:       memstore.NewRegistry(),
+		taskDist:         interactor.NopDistributor(),
 	}
 }

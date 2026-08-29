@@ -44,7 +44,14 @@ fi
 trap 'rm -rf "$work"' EXIT
 
 # A module dir maps to one log and one status file; the slug keeps them flat.
-slug() { printf '%s' "$1" | tr '/.' '__'; }
+# The mapping must be INJECTIVE or two examples share a log and race on it:
+# `tr '/.' '__'` sends both "a/b" and "a.b" to "a_b". Kept identical to
+# run-modules.sh's, which is the same function for the same reason.
+slug() {
+	s=${1//_/__}
+	s=${s//\//_S_}
+	printf '%s' "${s//./_D_}"
+}
 
 # run_one is what xargs fans out: the example's combined output to its log,
 # its exit status to its status file. Never exits non-zero itself, so xargs
@@ -60,7 +67,9 @@ run_one() {
 export -f run_one slug
 export work GO EXAMPLE_TIMEOUT EXAMPLE_RUN_TIMEOUT
 
-printf '%s\n' "$@" | xargs -P "$EXAMPLE_JOBS" -I{} bash -c 'run_one "$1"' _ {}
+# NUL-delimited: xargs interprets quotes and backslashes in its input even
+# under -I{}, so a path carrying one aborts the batch instead of running it.
+printf '%s\0' "$@" | xargs -0 -P "$EXAMPLE_JOBS" -I{} bash -c 'run_one "$1"' _ {}
 
 ok=0
 failed=0

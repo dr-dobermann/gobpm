@@ -51,6 +51,10 @@ PATTERNS = {
     "Report", "Reporter",
     # renv: reaching the runtime's variables runs host-registered accessors
     "RuntimeVar",
+    # exec.CallableResolver: the host maps a callable reference onto a
+    # registry key, and may call back into the engine to do it (ADR-023 v.5
+    # §2.7 puts the call outside every lock for exactly that reason)
+    "ResolveCallable",
 }
 
 LOCK_RE = re.compile(r"\b(?:(\w+(?:\.\w+)*))\.(?:R)?Lock\(\)")

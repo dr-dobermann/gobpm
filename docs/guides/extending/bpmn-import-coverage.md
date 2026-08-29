@@ -30,7 +30,6 @@ table when its capability lands.
 
 | Construct | Why it is refused | Do this instead today | Tracking |
 |---|---|---|---|
-| `<callActivity calledElement="…">` naming anything but a literal process key; the `globalTask` family | resolving reuse-by-reference needs a registry of callable definitions ([ADR-024 §2.13](../../design/ADR-024-process-interchange-converters.md)) | call a process by its key; inline a global task's body as a task | [#325](https://github.com/dr-dobermann/gobpm/issues/325) |
 | a `<property>` as a data-association end | the model's `Property` has no `Associate*` | use a `<dataObject>` for data that flows between nodes | [#331](https://github.com/dr-dobermann/gobpm/issues/331) |
 
 ## Standing

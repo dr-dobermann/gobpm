@@ -5,40 +5,82 @@ import (
 	"testing"
 )
 
-// TestRefusalsSayWhichKindTheyAre sweeps the four things this stage
-// refuses and checks the WORDING of each, because the wording is the
-// whole deliverable: ADR-024 §2.16 says a standing boundary and a
-// capability-blocked one must not read alike, and a reader who cannot
-// tell them apart either waits for something that is not coming or
-// rebuilds something that is already correct.
+// refusalKind is what a refusal is telling its reader to do.
+type refusalKind int
+
+const (
+	// kindStanding: the answer will not change. The message offers the route
+	// that exists instead, and cites no issue — a number would read as
+	// tracked work on something nobody intends to build.
+	kindStanding refusalKind = iota
+	// kindBlocked: legal BPMN the engine could execute, waiting on a model
+	// capability. The message names the capability AND its issue, because
+	// that number is the specification of the work that removes it.
+	kindBlocked
+	// kindMalformed: the FILE is wrong, not the engine. The message says
+	// what to fix in the document and cites no issue — nothing is waiting on
+	// anyone. This kind arrived with SRD-096: reading calledElement as a
+	// QName made "the prefix is not declared" expressible for the first
+	// time.
+	kindMalformed
+)
+
+// TestRefusalsSayWhichKindTheyAre sweeps one refusal of each kind and checks
+// the WORDING, because the wording is the whole deliverable: ADR-024 §2.16
+// says the kinds must not read alike, and a reader who cannot tell them apart
+// either waits for something that is not coming, rebuilds something that is
+// already correct, or hunts for an engine bug in their own file.
 //
 // A per-refusal test proves each refuses. Only a sweep proves they still
-// differ from each other, which is what erodes.
+// differ FROM EACH OTHER, which is what erodes — and it erodes exactly when a
+// refusal is retired and its row is deleted rather than replaced, leaving the
+// sweep with nothing to contrast.
 func TestRefusalsSayWhichKindTheyAre(t *testing.T) {
 	tests := map[string]struct {
-		doc string
-		// standing: the answer will not change, so the message must offer
-		// the route that exists instead and must NOT say "yet".
-		standing bool
+		doc  string
+		kind refusalKind
 		// wants are phrases the refusal has to carry: the capability for a
-		// blocked one, the alternative for a standing one.
+		// blocked one, the alternative for a standing one, the repair for a
+		// malformed file.
 		wants []string
 	}{
 		"ad-hoc sub-process": {
 			doc: laneDoc(`    <bpmn:adHocSubProcess id="ah" name="Free"/>`),
 			// ADR-035 §2.1: entered by a host-supplied Router.
-			standing: true,
-			wants:    []string{"Router", "programmatically"},
+			kind:  kindStanding,
+			wants: []string{"Router", "programmatically"},
 		},
 		// A transaction's method=store is no longer an import refusal: the
 		// model carries any method and registration refuses one no
 		// coordinator performs (SRD-095 FR-4/FR-6; pinned by
 		// pkg/thresher TestValidateTransactionCoverage).
-		"foreign calledElement": {
+		//
+		// Nor is a foreign calledElement: SRD-096 replaced #325's refusal
+		// with the QName dispositions, so the blocked row moved to a
+		// capability that is still blocked.
+		"property as a data-association end": {
+			doc: propDoc(
+				`  <bpmn:itemDefinition id="idOrder" structureRef="xsd:string"/>`,
+				`    <bpmn:property id="p1" name="note" itemSubjectRef="idOrder"/>
+    <bpmn:task id="t1" name="Work">
+      <bpmn:ioSpecification id="io1">
+        <bpmn:dataInput id="din1" name="in" itemSubjectRef="idOrder"/>
+      </bpmn:ioSpecification>
+      <bpmn:dataInputAssociation id="dia1">
+        <bpmn:sourceRef>p1</bpmn:sourceRef>
+        <bpmn:targetRef>din1</bpmn:targetRef>
+      </bpmn:dataInputAssociation>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`),
+			kind:  kindBlocked,
+			wants: []string{"#331", "capability"},
+		},
+		"calledElement qualified by an undeclared prefix": {
 			doc: callDoc(
-				`<bpmn:callActivity id="ca" name="F" calledElement="other:Proc"/>`),
-			standing: false,
-			wants:    []string{"#325", "another definitions document"},
+				`<bpmn:callActivity id="ca" name="F" calledElement="ghost:Proc"/>`),
+			kind:  kindMalformed,
+			wants: []string{"no xmlns declaration binds", "Declare the prefix"},
 		},
 	}
 
@@ -66,14 +108,29 @@ func TestRefusalsSayWhichKindTheyAre(t *testing.T) {
 					msg)
 			}
 
-			if tc.standing && strings.Contains(msg, "#") {
-				t.Errorf("a standing refusal cites an issue, which reads as "+
-					"tracked work:\n%s", msg)
-			}
+			cites := strings.Contains(msg, "#")
 
-			if !tc.standing && !strings.Contains(msg, "#") {
-				t.Errorf("a capability-blocked refusal names no issue, so it "+
-					"reads as a verdict on the file:\n%s", msg)
+			switch tc.kind {
+			case kindStanding:
+				if cites {
+					t.Errorf("a standing refusal cites an issue, which reads "+
+						"as tracked work on something nobody intends to "+
+						"build:\n%s", msg)
+				}
+
+			case kindBlocked:
+				if !cites {
+					t.Errorf("a capability-blocked refusal names no issue, "+
+						"so it reads as a verdict on the file rather than as "+
+						"work with a name:\n%s", msg)
+				}
+
+			case kindMalformed:
+				if cites {
+					t.Errorf("a malformed-file refusal cites an issue, which "+
+						"sends the reader to the tracker for a problem in "+
+						"their own document:\n%s", msg)
+				}
 			}
 		})
 	}

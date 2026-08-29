@@ -81,6 +81,7 @@ examples/multi-instance-behavior/multi-instance-behavior
 examples/compensation-events/compensation-events
 examples/transaction-sub-process/transaction-sub-process
 examples/bpmn-convert/bpmn-convert
+examples/bpmn-callable/bpmn-callable
 examples/adhoc-subprocess/adhoc-subprocess
 examples/association-expressions/association-expressions
 

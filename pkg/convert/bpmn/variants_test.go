@@ -245,6 +245,47 @@ func TestCancelBecomesReachable(t *testing.T) {
 	})
 }
 
+// TestNestedTransactionIsTheModelsRefusal is SRD-089.E §6 T-7c, and it
+// is the same delegation T-7a/T-7b test from the other side: the
+// converter builds whatever the file contains and lets the model judge
+// the shape (ADR-028 v.2 §2.8 puts a nested Transaction out of scope).
+//
+// A model unit test already covers a nested Transaction built in Go, but
+// it never crosses the import path — so nothing proved the converter
+// passes the nesting through to be judged rather than flattening it,
+// dropping the inner container, or refusing it in its own words. The
+// refusal must arrive in the MODEL's words for the same reason T-7b's
+// does: a converter that re-implements a shape rule owns a second copy
+// of it, and the two drift.
+func TestNestedTransactionIsTheModelsRefusal(t *testing.T) {
+	_, err := importEventDoc(t, variantDocWith(
+		`<bpmn:transaction id="sub" name="Outer">`,
+		`      <bpmn:startEvent id="is"/>
+      <bpmn:transaction id="inner" name="Inner">
+        <bpmn:startEvent id="ns"/>
+        <bpmn:task id="nt" name="Work"/>
+        <bpmn:endEvent id="ne"/>
+        <bpmn:sequenceFlow id="nf1" sourceRef="ns" targetRef="nt"/>
+        <bpmn:sequenceFlow id="nf2" sourceRef="nt" targetRef="ne"/>
+      </bpmn:transaction>
+      <bpmn:endEvent id="ie"/>
+      <bpmn:sequenceFlow id="if1" sourceRef="is" targetRef="inner"/>
+      <bpmn:sequenceFlow id="if2" sourceRef="inner" targetRef="ie"/>`))
+	if err == nil {
+		t.Fatal("a <transaction> nested in a <transaction> imported; " +
+			"ADR-028 v.2 §2.8 puts that shape out of scope, so the model " +
+			"must refuse it and the converter must let it")
+	}
+
+	for _, want := range []string{"nested Transaction", "ADR-028"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want the MODEL's refusal naming %q — a "+
+				"converter-authored message here is the second copy of a "+
+				"shape rule this stage exists to avoid", err, want)
+		}
+	}
+}
+
 // TestTransactionProtocolIsCarried is SRD-095 T-7: the protocol lands on
 // the model as stated and is no longer reported as dropped.
 func TestTransactionProtocolIsCarried(t *testing.T) {

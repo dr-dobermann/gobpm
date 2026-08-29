@@ -24,6 +24,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A callable is reached by reference, across documents** (ADR-023 v.5 §2.7 /
+  ADR-024 v.7 §2.13 / SRD-096, closes #325). The `GlobalTask` family stops
+  being refused: each member imports as a callable **process** — a None start,
+  the task built by its in-process reading, a None end — registered under the
+  global task's own id, because a global task *is* a callable process and the
+  process registry already serves those. A `calledElement` is read as a QName:
+  unprefixed is the key, the document's own `targetNamespace` collapses, an
+  `<import>`ed namespace rides with the call, and an undeclared prefix is
+  refused as the malformed file it is.
+
+  Resolving a qualified reference is a host contract, `exec.CallableResolver`,
+  supplied through `thresher.WithCallableResolver` and consulted at call time
+  **outside every engine lock** — so a resolver may call back into the engine.
+  Without one, `exec.DefaultCallableResolver` keeps every existing call exact
+  and refuses a qualified reference by name rather than call whatever happens
+  to share the local part.
+
+  An imported `<callActivity>` may now declare an `<ioSpecification>`, so data
+  crosses a call boundary from a document at all: §10.4.1's containment list
+  reads as excluding it, while §10.4's own CallActivity row maps its
+  DataInputs/DataOutputs onto the callable's — and the strict reading made that
+  row unreachable. `examples/bpmn-callable` runs the whole path.
+
 - **A data association computes** (ADR-011 v.10 / SRD-097, closes #328). BPMN
   §10.4.2 gives an association three execution shapes, and the engine ran only
   the third: a **transformation** derives the whole target value from the
@@ -524,6 +547,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an instance prints as its identity rather than a page of internals.
 
 ### Changed
+
+- **Every per-module gate sweep runs in parallel** (`scripts/run-modules.sh`).
+  `tidy`, `lint`, `build` and `govulncheck` iterated the modules one at a time,
+  which is invisible across six core modules and expensive across fifty-two
+  examples: `examples-lint` alone spent 209s of a 506s gate queuing independent
+  linters behind each other. They now run `MODULE_JOBS` at a time — the CPU
+  count capped at 8, the rule `EXAMPLE_JOBS` already used — taking that step to
+  42s and the whole gate from 506s to 229s. The output discipline is
+  `run-examples.sh`'s: each module's log is buffered and printed inside its own
+  group fold, in module order, once all have finished, so a failure is never
+  interleaved with a neighbour's and a passing module prints only its markers.
+
+  `tidy` schedules in **dependency waves** rather than one flat batch, because
+  it is the sweep that *writes* `go.mod`/`go.sum` and the four adapters
+  `replace` the root: a flat batch would have the root rewriting the files they
+  read, and a drift check resolving against whichever snapshot won that race
+  can answer differently on two runs of the same tree. The waves are derived
+  from the replace edges in the `go.mod` files, so they cost one extra wave in
+  `tidy-check-core` and none in `examples-tidy` — where every replace points
+  outside the sweep, so all fifty-two still go at once (16s → 11s). A module
+  whose provider failed is reported **not run**, never passed.
+
+  `test-all` stays serial on purpose — `TEST_CPUS` pins the race run's CPU
+  budget to the CI runner's, and running several such modules at once would
+  oversubscribe the box that pinning exists to model.
 
 - **ADR-038 retired; its rule moves into ADR-024 §2.16.** The converter
   coverage-boundaries record had become a ledger — bumped to v.3 across

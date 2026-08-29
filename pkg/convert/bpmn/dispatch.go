@@ -65,12 +65,6 @@ const (
 	// meaning the same thing.
 	skipped
 
-	// notYet refuses an element that is waiting on a subsystem rather
-	// than on this converter. The same file imports unchanged once that
-	// subsystem lands, and saying so is the difference between "come
-	// back later" and "rewrite your diagram" (ADR-024 §2.13).
-	notYet
-
 	// notExpressible refuses an element whose XML form and model form do
 	// not correspond — the engine executes it, and no mechanical reading
 	// of the document can produce it. Neither waiting nor a later slice
@@ -114,17 +108,6 @@ var annotations = []string{tagExtensionElems}
 // refused — so an element appears in exactly one place and the three
 // cannot drift apart.
 var policy = map[elementKey]dispositionKind{
-	// The GlobalTask family is reuse BY REFERENCE: a task defined once at
-	// definitions level and invoked through a callActivity. Resolving that
-	// reference needs a registry of callable definitions, which is the
-	// server tier's, so these are refused as a deferral rather than as a
-	// verdict on the file.
-	{local: "globalTask", ctx: ctxDefinitions}:             notYet,
-	{local: "globalUserTask", ctx: ctxDefinitions}:         notYet,
-	{local: "globalManualTask", ctx: ctxDefinitions}:       notYet,
-	{local: "globalScriptTask", ctx: ctxDefinitions}:       notYet,
-	{local: "globalBusinessRuleTask", ctx: ctxDefinitions}: notYet,
-
 	// The complex gateway is executable here and unreachable from XML —
 	// see refusalReasons. The ad-hoc container is the same class for a
 	// different reason: its entry point is a Go closure.
@@ -275,9 +258,6 @@ func (p *parser) settle(ctx parseCtx, se xml.StartElement) error {
 
 		return p.skipElement()
 
-	case notYet:
-		return notSupportedYet(se)
-
 	case notExpressible:
 		return notExpressibleHere(se)
 	}
@@ -311,6 +291,13 @@ var definitionsParsers = func() map[string]defsParser {
 
 	for local := range defBuilders {
 		dp[local] = parseRootDefElem
+	}
+
+	// The GlobalTask family is derived from globalTaskTags rather than
+	// listed again, so the table that ROUTES the five tags and the table
+	// that says what each becomes cannot disagree about which tags exist.
+	for local := range globalTaskTags {
+		dp[local] = parseGlobalTaskElem
 	}
 
 	return dp
@@ -453,35 +440,86 @@ func buildSubProcess(
 	return activities.NewSubProcess(fallbackName(id, name), opts...)
 }
 
-// buildCallActivity builds a Call Activity keyed by calledElement.
+// buildCallActivity builds a Call Activity from calledElement, read as a
+// QName (SRD-096 FR-5, ADR-024 v.7 §2.13).
 //
 // The registry is NOT consulted, here or anywhere in the import: the
 // model resolves a callable at CALL time (ADR-023 §2.7), so the callable
 // may be registered after the file is imported, or re-versioned later. An
 // import that failed because a callable was not yet registered would make
 // import order significant, which is the property call-time resolution
-// exists to avoid.
+// exists to avoid. Reading a prefix does not change that — the converter
+// resolves the PREFIX, never the callable.
 //
 // An empty key is refused by NewCallActivity in its own words, so nothing
 // is checked for it here.
 func buildCallActivity(
-	_ *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,
+	p *parser, _ *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
-	key := strings.TrimSpace(attrValue(se, attrCalledElement))
+	key, ns, err := resolveCalledElement(p, id,
+		strings.TrimSpace(attrValue(se, attrCalledElement)))
+	if err != nil {
+		return nil, err
+	}
 
-	if prefix, _, found := strings.Cut(key, ":"); found {
-		return nil, errs.New(
-			errs.M("bpmn: callActivity %q: calledElement %q names a callable "+
-				"in another definitions document (prefix %q), which needs a "+
-				"callable-resolution seam this engine does not have (#325). "+
-				"Taking the text as a key would silently call whatever the "+
-				"host happens to have registered under it. Register the "+
-				"called process under a key and name that key",
-				id, key, prefix),
+	opts := body.opts(id)
+	if ns != "" {
+		opts = append(opts, activities.WithCalledNamespace(ns))
+	}
+
+	return activities.NewCallActivity(fallbackName(id, name), key, opts...)
+}
+
+// resolveCalledElement splits a calledElement into the registry key and the
+// namespace that qualifies it, per ADR-024 v.7 §2.13's four dispositions.
+//
+// The standard types calledElement a plain String and says nothing about a
+// prefix, so reading one is the converter's decision. It is taken because a
+// prefix is what modelers write when the callable lives in another document,
+// and because the alternative — treating "ns:P" as a key containing a colon —
+// can only call the wrong thing or nothing at all.
+//
+// What the converter will NOT do is guess which registration a foreign
+// namespace maps onto. That is the host's decision, through the engine's
+// resolver seam, and the namespace rides on the node so the host can make it.
+func resolveCalledElement(
+	p *parser, id, value string,
+) (key, ns string, err error) {
+	prefix, local, qualified := strings.Cut(value, ":")
+	if !qualified {
+		return value, "", nil
+	}
+
+	uri, declared := p.items.namespaceFor(prefix)
+	if !declared {
+		return "", "", errs.New(
+			errs.M("bpmn: callActivity %q: calledElement %q is qualified by "+
+				"prefix %q, which no xmlns declaration binds — the file is "+
+				"malformed. Declare the prefix, or name the callable by its "+
+				"bare key", id, value, prefix),
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	return activities.NewCallActivity(fallbackName(id, name), key, body.opts(id)...)
+	// Self-reference: the document qualifying its own definitions, which is
+	// what a modeling tool writes when it stamps targetNamespace on
+	// everything. The qualification carries no information, so it collapses.
+	if uri == p.items.targetNS {
+		return local, "", nil
+	}
+
+	// A reference OUT of the document is meaningful only through the
+	// <import> that declares where the other document lives; without one the
+	// file references a document it never imported.
+	if !p.items.declaresImport(uri) {
+		return "", "", errs.New(
+			errs.M("bpmn: callActivity %q: calledElement %q names a callable "+
+				"in namespace %q, which no <import> declares — a document "+
+				"this file never imported. Add the <import>, or name a "+
+				"callable of this document", id, value, uri),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	return local, uri, nil
 }
 
 // transactionOptions reads a <transaction>'s own attributes onto the model
