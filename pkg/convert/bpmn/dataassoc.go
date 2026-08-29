@@ -322,17 +322,14 @@ func extraSourceOpts(
 
 		elem, built := asm.dataElems[espec.id]
 		if !built {
-			return nil, errs.Invariant(
-				"association pass reached unbuilt data element %q", espec.id)
+			return nil, errs.Invariant("association pass reached unbuilt data element %q", espec.id)
 		}
 
 		src, ok := elem.(interface {
 			ItemAware() *data.ItemAwareElement
 		})
 		if !ok {
-			return nil, errs.Invariant(
-				"data element %q (%T) exposes no item-aware element",
-				espec.id, elem)
+			return nil, errs.Invariant("data element %q (%T) exposes no item-aware element", espec.id, elem)
 		}
 
 		opts = append(opts, data.WithSource(src.ItemAware()))
@@ -382,8 +379,7 @@ func associatedSources(
 
 	node, built := asm.byID[s.id]
 	if !built {
-		return nil, errs.Invariant(
-			"association pass reached unbuilt node %q", s.id)
+		return nil, errs.Invariant("association pass reached unbuilt node %q", s.id)
 	}
 
 	params := nodeParams(node, a.dir)

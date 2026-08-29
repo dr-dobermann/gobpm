@@ -201,6 +201,33 @@ func TestExpressionShapeOverDataStore(t *testing.T) {
 	require.Equal(t, 42, d.Value().Get(ctx))
 }
 
+// TestShapedStoreWriteFailurePropagates: the Data Store's own Put failure
+// reaches the caller with the association's target key named.
+func TestShapedStoreWriteFailurePropagates(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	store := newMemStore()
+	store.putErr = errors.New("store is full")
+
+	f := frame(t, oneStoreReg{store: store},
+		datum(t, "result", 1, data.ReadyDataState))
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(context.Context, data.Source) (data.Value, error) {
+			return values.NewVariable(1), nil
+		}})
+
+	oa := outputAssoc(t, "result", "archive",
+		data.WithDataStoreRef("store-1"),
+		data.WithTransformation(anExpr(t)))
+	src := instantiated(t, f,
+		param(t, "result", "result", 1, data.ReadyDataState), false)
+
+	err := dataflow.PushOutput(ctx, f, oa, src, owner)
+	require.ErrorContains(t, err, "archive")
+	require.ErrorContains(t, err, "store is full")
+}
+
 // TestExpressionAssociationFailsFast is SRD-097 T-7: the three ways an
 // expression-bearing association refuses, each naming what a reader needs.
 func TestExpressionAssociationFailsFast(t *testing.T) {

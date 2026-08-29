@@ -30,13 +30,14 @@ type frameSource struct {
 // frame reads (data objects, properties, puts, provider sources) AND the
 // node's own parameters.
 //
-// The parameters matter for the output direction and are why this is not
-// simply GetData. An output association's expression exists to shape what
-// the node JUST PRODUCED — its output parameter — and a frame resolves
-// scope data, properties and inputs by name, never outputs: at that point
-// in the node's life they are frame instances, not committed data. An
-// expression that cannot read them could only reshape data the node did
-// not produce, which is not what an output association is for.
+// OUTPUTS are why this is not simply GetData. An output association's
+// expression exists to shape what the node JUST PRODUCED, and a frame
+// resolves scope data, properties and INPUTS by name — never outputs: at
+// that point in the node's life they are frame instances, not committed
+// data. An expression that cannot read them could only reshape data the
+// node did not produce, which is not what an output association is for.
+// Inputs need no fallback here for the same reason: the frame already
+// answers for them.
 //
 // The lookup walks the same path resolver everything else does (ADR-011
 // §2.9.2), so "note.code" reaches into an output exactly as
@@ -48,10 +49,6 @@ func (s frameSource) Find(ctx context.Context, name string) (data.Data, error) {
 		}
 
 		if p := paramNamed(s.f.Outputs(), head); p != nil {
-			return p, nil
-		}
-
-		if p := paramNamed(s.f.Inputs(), head); p != nil {
 			return p, nil
 		}
 

@@ -703,6 +703,60 @@ func TestAssignmentSkipsUnknownBPMNChildren(t *testing.T) {
 	}
 }
 
+// TestToPathMustParse: a <to> whose path is malformed — an empty head —
+// is refused by the path parser itself, before the target comparison.
+func TestToPathMustParse(t *testing.T) {
+	err := shapedStartErr(t, `        <bpmn:assignment id="as1">
+          <bpmn:from language="gobpm:lite">s2-out</bpmn:from>
+          <bpmn:to>.status</bpmn:to>
+        </bpmn:assignment>`)
+	if err == nil || !strings.Contains(err.Error(), "isn't a data path") {
+		t.Fatalf("error = %v, want the malformed-path refusal", err)
+	}
+}
+
+// TestExtraSourceOfTheWrongKind: an extra <sourceRef> naming an id that
+// exists but is not a data element says which kind it found — the same
+// refusal the first source gets.
+func TestExtraSourceOfTheWrongKind(t *testing.T) {
+	_, err := importEventDoc(t, propDoc(eventDataDecls,
+		`    <bpmn:dataObject id="do1" name="order" itemSubjectRef="idStr"/>
+    <bpmn:intermediateThrowEvent id="t1">
+      <bpmn:messageEventDefinition messageRef="m1"/>
+      <bpmn:dataInput id="t1-in" itemSubjectRef="idStr"/>
+      <bpmn:dataInputAssociation id="ia1">
+        <bpmn:sourceRef>do1</bpmn:sourceRef>
+        <bpmn:sourceRef>s1</bpmn:sourceRef>
+        <bpmn:targetRef>t1-in</bpmn:targetRef>
+        <bpmn:transformation language="gobpm:lite">order</bpmn:transformation>
+      </bpmn:dataInputAssociation>
+    </bpmn:intermediateThrowEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`))
+	if err == nil || !strings.Contains(err.Error(), "s1") {
+		t.Fatalf("error = %v, want the wrong-kind refusal naming the ref", err)
+	}
+}
+
+// TestExtraOutputSourceMustBeDeclared: on an OUTPUT association the extra
+// <sourceRef>s name further node outputs, so one the activity does not
+// declare is refused naming it.
+func TestExtraOutputSourceMustBeDeclared(t *testing.T) {
+	_, err := importEventDoc(t, assocDoc("",
+		`      <bpmn:ioSpecification id="io1">
+        <bpmn:dataOutput id="dout1" name="a" itemSubjectRef="idOrder"/>
+      </bpmn:ioSpecification>
+      <bpmn:dataOutputAssociation id="doa1">
+        <bpmn:sourceRef>dout1</bpmn:sourceRef>
+        <bpmn:sourceRef>nosuch</bpmn:sourceRef>
+        <bpmn:targetRef>do1</bpmn:targetRef>
+        <bpmn:transformation language="gobpm:lite">a</bpmn:transformation>
+      </bpmn:dataOutputAssociation>`))
+	if err == nil || !strings.Contains(err.Error(), "nosuch") {
+		t.Fatalf("error = %v, want the undeclared-output refusal", err)
+	}
+}
+
 // TestShapeExpressionsMustBeRunnable is FR-7's language half: a shape whose
 // expression this converter cannot make runnable is refused naming the
 // association, exactly as a condition in the same language would be.
