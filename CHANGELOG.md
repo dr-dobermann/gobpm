@@ -7,20 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Removed
+## [v0.12.0] - 2026-08-29
 
-- **The legacy `flow.DataNode` association path** (SRD-097 M9). It had no
-  runtime caller — an executing process moves data through the execution
-  frame in `pkg/model/dataflow` — and only its own package tests reached it,
-  so it was two evaluators' worth of surface pretending to be one engine.
-  Removed: the `flow.DataNode` interface, `DataObject.Update`,
-  `Association.UpdateSource`, `Association.Value`, and the
-  `data.Recalculate` / `data.NoRecalculate` constants. `Association.IsReady`
-  stays — it is a state query, not part of the evaluator. Nothing in the
-  guides or examples used any of it. If you called one of these, the
-  replacement is the association's declarative surface
-  (`Transformation()`, `Assignments()`, `SourceNames()`, `TargetName()`)
-  plus letting the engine move the data.
+**A process can now be read from a `.bpmn` file, survive a restart on disk, and
+fan work out to real people.** v0.11.0 completed the element set; this release
+is about the three seams that stood between that set and running somebody's
+actual process — importing it, persisting it, and handing its work to a human.
+
+**BPMN import reaches the executable element set.** The parser was rebuilt and
+now reads a whole document — the data family and data flow, loop
+characteristics, artifacts and an annotated diagram, `implementation`, and
+callables reached **by reference across documents**. What a modeller draws is
+what the engine runs, rather than what a hand-written builder reproduces.
+
+**Durability has an adapter.** The **SQLite Repository** (ADR-037, SRD-091) is
+the first durable store behind the Repository port, so an instance's checkpoint
+outlives the process that wrote it. Its contract is stated for the SQL adapters
+that follow.
+
+**Human work fans out.** A parallel Multi-Instance over a User Task offers **one
+task per iteration**, each announced, claimed and completed on its own identity,
+each resolving its **own** performer in its own data — and those identities, and
+who may act on them, survive a dehydration. An iterated activity can now wait at
+all, which is what makes any of that reachable.
+
+**Data flows where BPMN says it does.** Events carry data, a process declares
+its own **I/O contract**, and a data association **computes** rather than merely
+copying.
+
+Highlights, for deciding whether to upgrade:
+
+- **Iteration answers three questions it could not before**: which iteration is
+  running (`ITERATION_NUMBER` / `ITERATION_ID` / `ITERATION_MODE`), what an
+  activity's iteration *did* (`RUNTIME/ITERATIONS`), and **who did which one**
+  (`RUNTIME/ITERATION_OWNERS`). A model can also declare what its iterations
+  produce — an array by ordinal, a keyed map, or the named default.
+- **The engine's data names are reserved.** A model declaring `loopCounter`, one
+  of the four `numberOf*` counts, or an `ITERATION_*` name is now refused **when
+  it is built**, naming the element — instead of colliding at runtime with the
+  wrong answer surfacing far from its cause.
+- **One word, one meaning.** An *instance* is the process instance; one pass of
+  an iterating activity is an *iteration*; the node that owns them is its
+  *host*. Fixed in SAD-001 §10.1 and applied across the documents, the examples
+  and the code. No public API moved.
+- **`flow.DataNode` is gone** — the legacy association path, removed rather than
+  deprecated.
+- **Thirty-seven fixes**, several of them correctness bugs a user could hit: a
+  checkpoint that dropped the previous activity's output, a human-task claim
+  that lapsed when the instance woke, a message that could be lost to a
+  parallel-MI iteration, an iterated Sub-Process that pinned its instance in
+  memory, and a migration that could wedge the whole database.
 
 ### Added
 
@@ -322,6 +358,238 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   encodings, the cluster declaration, and per-dialect migration
   serialization.
 
+
+- **BPMN import covers the executable element set** (SRD-089.B/.C/.D/.E,
+  part of #284). The languages: expression-language resolution with a
+  `gobpm:lite` passthrough and a JUEL→lite translator; the Camunda
+  dialect mapped where the model has a home and **reported** where it
+  does not (`convert.Dropped` — "not mapped" and "not present" no
+  longer look alike, ADR-024 §2.14). The flow nodes: script and
+  business-rule tasks, the inclusive and event-based gateways. The
+  typed events: the four catalogs, all ten event definitions, timers
+  through the model's ISO 8601 constructors, intermediate, boundary,
+  send and receive — with node construction deferred to pass 2, since
+  BPMN orders root elements freely. The containers: embedded
+  sub-processes, transactions, call activities, lanes with placement.
+  Refusals carry the BPMN § a modeler can read, and the three refusal
+  kinds — staged, capability-blocked, standing — no longer read alike
+  (ADR-038).
+
+- **BPMN import covers the data family and the data flow**
+  (SRD-089.F, SRD-089.G, ADR-038 v.2, part of #284, closes #333).
+  `<itemDefinition>` imports as a typed zero over an XSD table whose
+  every numeric is a `float64` — the one number the engine can write —
+  and an unresolvable `structureRef` becomes a fillable empty record
+  plus a report, never a nil structure that dies at registration; the
+  `<import>` it names now binds instead of being skipped.
+  `<dataObject>` lands on its container with its OWN item copy (a
+  shared pointer would make two objects one variable);
+  `<dataObjectReference>` collapses into its target per SAD-001 §14.1.
+  A `<dataStore>` is reported as the host obligation it is;
+  `<dataStoreReference>` imports carrying its ref verbatim.
+  `<property>` imports on all three owners BPMN allows — which moved
+  the process's construction to pass 2, where a leading property can
+  resolve an item declared after `</process>`. `<ioSpecification>`
+  becomes the activity's parameters with the single input/output set
+  as per-parameter `optional`/`whileExecuting` flags, and both data
+  association kinds wire through the model's own `Associate*`, so
+  scope routing (SRD-063) and store routing (SRD-068) arrive
+  untouched; an untyped parameter adopts its association partner's
+  item. What the model cannot carry refuses **naming its capability**:
+  transformation/assignment (#328), event data associations (#329),
+  process-level I/O (#330), a property end (#331). And the document's
+  ids became **one ledger** (SRD-089.F §4.11): cross-table duplicates,
+  sequence-flow, interface and association ids — previously unguarded,
+  silently mis-wiring references — now refuse at declaration.
+
+- **`activities.WithImplementation`** (SRD-089.A). BPMN carries
+  `implementation` on the `ServiceTask` itself, while gobpm derived it
+  from the Operation's `Implementor` — which an imported operation
+  deliberately lacks, so a document's own hint had nowhere to live. The
+  option gives it one; unset, the derived value stands, so no existing
+  caller changes.
+
+
+- **Adapter lifecycle and observation hooks** (SRD-088, closes #269).
+  `renv.Starter`, `renv.Stopper`, `renv.HealthChecker` and
+  `renv.RuntimeAware` join `Migrator` and `ClusterAware` in
+  `pkg/renv/capabilities.go`. All are optional and satisfied
+  structurally — an adapter implements one by having the method. The
+  engine calls them at named per-seam sites in a fixed order, because
+  shutdown has one: the message broker stops accepting before the
+  repository closes, and telemetry flushes after everything it
+  observes. `Stop` is idempotent by contract, so an adapter the host
+  started before the engine existed can be stopped by either.
+  `Thresher.HealthCheck` asks every seam and joins what they report.
+- **Four conformance helpers for adapter authors** (SRD-088):
+  `messagingtest`, `expressiontest`, `taskstest` and `authtest`, the
+  names ADR-003 §4.2 had listed but nothing provided. Each publishes
+  its port's contract as `Conformance(t, factory)` — one line in an
+  adapter's test — and each carries a negative control proving the
+  suite can fail. `messagingtest` and `taskstest` also publish
+  `Waits()`/`SetWaits()`, so an adapter over a remote backend can widen
+  bounds tuned for an in-process one.
+- **A dependency-free Script Task engine** (SRD-088):
+  `pkg/script/gofunc` runs a Go function the host registered under a
+  name, the same move `gooper` makes for Service Tasks. It is opt-in —
+  an auto-wired empty registry would be `##None` with a longer name —
+  and `adapters/lua` remains the choice for interpreted source.
+
+
+- **Leaf-activity Multi-Instance execution** (SRD-086). A sequential
+  leaf runs its passes in place (fresh frame each, split item +
+  loopCounter bound); a parallel leaf fans out per-instance scopes
+  each running one track at the task; both restore at their position
+  over the existing checkpoint schema. A leaf that **waits** was refused
+  at build time here rather than run wrongly; SRD-090.B (above) makes it
+  work natively and narrows the refusal to the two parallel shapes that
+  remain genuinely ambiguous.
+
+
+- **In-instance event delivery: per-delivery payload binding and
+  iteration-correlated routing** (ADR-006 v.5 §2.9, SRD-085, closes
+  #305). A fired definition's payload now travels with the DELIVERY —
+  captured by the receiving execution and bound from its own frame —
+  and `events.WithIterationCorrelation(keyName, expr)` routes a
+  message to exactly the matching parallel-MI iteration; a second
+  keyless concurrent waiter on one definition refuses loudly.
+
+
+- **Ad-Hoc Sub-Process checkpoint fidelity** (SRD-083, closes #307).
+  The checkpoint document (schema 5) records each open container's
+  routing state — completed counts, a manual container's pending
+  offer, a fired completion condition — and the routed tracks'
+  activity assignments; restore rebuilds the container at that
+  position, so the next Router decision sees the true cross-crash
+  progress and completed activities never re-run.
+
+- **Checkpoint fidelity for composite constructs** (SRD-082, closes
+  #277). The checkpoint document (schema 4) records every composite
+  construct's position, and restore rebuilds it there: composite
+  scopes resume their host exactly once (previously the body
+  double-executed — or the document refused to restore at all, since
+  inner nodes were unresolvable); sequential MI and Standard Loop
+  resume at the recorded pass with their collected outputs; parallel
+  MI re-opens exactly its still-open ordinals; a resolving
+  compensation sweep continues in order with its RUNNING handler
+  re-run (at-least-once over the immutable snapshot) and the
+  wait-throw resuming only after the drain; and a Call Activity child
+  is now a durable instance of its own, symmetrically linked — kill
+  an engine mid-call and the next one re-links the SAME child, never
+  a duplicate, with loud refusals when either record is missing. The
+  capture-deferral guards are fully retired: `CheckpointDeferred` now
+  means a real failure only. Discovery separates the registry:
+  `Instances(InstancesRoots/InstancesChildren)` and
+  `InstanceHandle.ParentID()/CallNodeID()`. Design: ADR-033 v.4
+  §2.10, ADR-023's restart contract.
+
+- **Incidents: a technical failure becomes durable, operable state**
+  (ADR-036, SRD-079). An unhandled failure — an in-process task error, a
+  worker whose job retries exhausted, an uncaught BPMN error — no longer
+  terminates the instance: the failing attempt's track ends and a durable
+  **incident** opens, carrying the node, the cause chain and class, the
+  attempt history and a **failure-time data snapshot** (the variables visible
+  from the failing node's scope, exactly as the attempt saw them). Sibling
+  branches keep running; the token stays visible at the node
+  (`TokenIncident`); the incident rides the checkpoint (schema 3) under a new
+  `repository.StatusActiveIncidents`, so "what needs an operator" is a store
+  query. An **incident retry policy**
+  (`activities.WithIncidentRetryPolicy` / `thresher.WithIncidentRetryPolicy`)
+  re-enters the node by respawn — lineage carried, armed boundary timers
+  transferred, never re-armed, so an SLA clock is never reset by failing —
+  and with no policy (the default) the incident waits for the operator:
+  `InstanceHandle.Incidents()`, `RetryIncident`, `ResolveIncident` (continue
+  past the node without re-executing it), `DropIncident` (a durable dead
+  letter the process never silently completes past). Ops on a parked instance
+  rebuild it from its checkpoint transparently. Three failures deliberately
+  keep the fatal path: invariant violations, an Error End Event's own
+  uncaught throw, and any failure in a called process — that one propagates
+  across the call boundary, and the incident arises at the top-level
+  caller's Call Activity, whose retry re-runs the whole child.
+  Runnable: `examples/incident-retry/`; guide:
+  `docs/guides/operating/incidents.md`.
+
+- **The documentation site gets a structured sidebar, a Russian design-docs
+  group, and rendered Mermaid diagrams** (SRD-081): sections read Home →
+  Developer Manual → Design documents → BPMN 2.0 extract → Landing records →
+  Project (curated via pinned `mkdocs-awesome-nav` + `.nav.yml` files; page
+  listings stay derived), the Manual's parts follow the index's reading
+  order, and the 84 pages with ` ```mermaid ` fences now render diagrams
+  instead of code blocks. The Russian-twin convention is enforced in the
+  tree: twins are a SAD/ADR privilege living under `docs/design/ru/`; the
+  38 stale SRD/FIX twins are removed (git history keeps them). The READMEs'
+  status line drops its hardcoded version in favor of the tag badge.
+- **The documentation publishes as a searchable site** (SRD-080):
+  <https://dr-dobermann.github.io/gobpm/> — the developer manual, the design
+  docs, and the BPMN 2.0 extract, built with MkDocs Material from the `docs/`
+  tree (`camunda7/` stays internal). A new `docs` workflow validates every
+  docs-touching PR with `mkdocs build --strict` and redeploys the site on
+  every docs-touching push to `master`; links that leave `docs/` are
+  rewritten to GitHub URLs at build time, so the Markdown sources stay
+  relative and in-repo reading is unchanged. Locally: `make docs-build` /
+  `make docs-serve` (pinned `mkdocs-material`, guarded like the Go tools).
+  The Monday pin sweep now also covers the new PyPI pin and the
+  previously-unswept `linkcheck`, and bumps only the Makefile pin line
+  itself instead of every occurrence of the version string.
+- **A durable PostgreSQL repository** (`adapters/postgres`, SRD-078,
+  closes #276). `postgres.New(db)` over a user-owned `*sql.DB` stores
+  instance checkpoints in a namespaced schema the adapter migrates
+  itself at `Run` (embedded versioned SQL under an advisory lock; a
+  failure aborts the start loud). CAS saves and ownership leases make
+  the fencing a database guarantee — proven by a real zombie-engine
+  test and a kill-and-resume e2e over postgres. Recovery is now scoped
+  to **engine groups**: records carry their creator's group, an
+  ungrouped engine is a solo group under its own id, and
+  `thresher.WithEngineGroup` / `WithExistingEngineGroup` (join-only,
+  the typo-guard) form explicit recovery clusters over one store. The
+  storage is tenant-ready (ADR-033 v.3): each record carries its
+  tenant, `""` resolves to the group's flag-designated default row,
+  and a partial unique index enforces one default per group. New
+  `pkg/renv` capabilities `Migrator` and `ClusterAware`; a published
+  conformance suite (`pkg/repository/repositorytest`) every adapter
+  runs — memrepo and postgres both pass it. `make pg-up`/`pg-down`
+  provide the disposable test database; CI runs the postgres paths on
+  every PR.
+
+- **A timer can now wait for a plain duration.** `timeDuration` alone —
+  BPMN's one-shot relative timer, *"wait five minutes, then fire"* (§10.5.5,
+  Table 10.101) — was unconstructible: the guard required a `timeCycle` beside
+  it, so the most common timer there is had no expression. It works now, and
+  nothing below the constructor changed to make it work: the waiter already
+  armed on a duration, already terminated after one delivery, and `TimerPlan`
+  already derived `now + d` for the checkpoint. Only the model layer refused.
+  Relative timers previously had to be faked with a `timeDate` expression
+  computing `time.Now().Add(d)` at evaluation time — a workaround that bypasses
+  the engine's injected `Clock`, so a substituted clock could not govern it.
+
+- **Timers can be written in ISO 8601, the notation the standard uses.**
+  `events.NewISO8601Timer("PT5M")` / `("R3/PT10H")` / `("2011-03-11T12:13:14Z")`
+  takes one string and disassembles it into the attributes the engine stores —
+  a recurrence fills both `timeCycle` and `timeDuration`, so the pair never has
+  to be written by hand. `NewISO8601TimerExpr` makes the timing **dynamic**:
+  the expression yields the ISO string when the timer arms, so a deadline can
+  come from the instance's own data. The form is named by the caller there
+  (`events.Time` / `Duration` / `Cycle`), because the value does not exist
+  until arming while the attribute is fixed at build time — which is how BPMN
+  itself resolves it. Neither path changes the runtime: a dynamic timer
+  installs an adapter expression that parses at evaluation, so the waiter
+  still reads a typed value exactly as before.
+
+  The parser (`pkg/iso8601`) refuses rather than approximates: `P1Y`/`P1M`
+  (not fixed-length), `P1W2D` (ISO makes the week form exclusive), fractional
+  components, lowercase designators, zero and negative values, and unbounded
+  recurrence `R/PT10H` — which nothing in the engine can consume safely. Each
+  refusal names its reason. No new dependency; it is hand-written over stdlib,
+  since `time.ParseDuration` reads Go's `10h` syntax and rejects every ISO form.
+
+- **`examples/usertask-sla`** — SLA warnings on a human task. Three *bounded,
+  non-interrupting* timer boundaries mark 50% / 90% / 100% of a User Task's
+  budget; the operator deliberately overruns, so every warning fires and the
+  approval **still completes**. That last part is the point: a non-interrupting
+  boundary must not cancel the work it warns about, and the run asserts it
+  rather than printing it. They are three separate bounded timers, not one
+  recurrence — 50/90/100 is not a uniform interval, so no cycle expresses it.
+
 ### Changed
 
 - **One word, one meaning: instance, iteration, host** (SAD-001 §10.1). An
@@ -357,6 +625,186 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A **structural field** is unaffected: `order.loopCounter` is reached through
   `order` and shadows nothing. No address changed — every one of these names
   resolves exactly as it did before.
+
+
+- **Every per-module gate sweep runs in parallel** (`scripts/run-modules.sh`).
+  `tidy`, `lint`, `build` and `govulncheck` iterated the modules one at a time,
+  which is invisible across six core modules and expensive across fifty-two
+  examples: `examples-lint` alone spent 209s of a 506s gate queuing independent
+  linters behind each other. They now run `MODULE_JOBS` at a time — the CPU
+  count capped at 8, the rule `EXAMPLE_JOBS` already used — taking that step to
+  42s and the whole gate from 506s to 229s. The output discipline is
+  `run-examples.sh`'s: each module's log is buffered and printed inside its own
+  group fold, in module order, once all have finished, so a failure is never
+  interleaved with a neighbour's and a passing module prints only its markers.
+
+  `tidy` schedules in **dependency waves** rather than one flat batch, because
+  it is the sweep that *writes* `go.mod`/`go.sum` and the four adapters
+  `replace` the root: a flat batch would have the root rewriting the files they
+  read, and a drift check resolving against whichever snapshot won that race
+  can answer differently on two runs of the same tree. The waves are derived
+  from the replace edges in the `go.mod` files, so they cost one extra wave in
+  `tidy-check-core` and none in `examples-tidy` — where every replace points
+  outside the sweep, so all fifty-two still go at once (16s → 11s). A module
+  whose provider failed is reported **not run**, never passed.
+
+  `test-all` stays serial on purpose — `TEST_CPUS` pins the race run's CPU
+  budget to the CI runner's, and running several such modules at once would
+  oversubscribe the box that pinning exists to model.
+
+- **ADR-038 retired; its rule moves into ADR-024 §2.16.** The converter
+  coverage-boundaries record had become a ledger — bumped to v.3 across
+  three landings while its contract never moved, and never flipped out of
+  Draft. The decision it carried (three refusal classes per construct:
+  staged / capability-blocked / standing; the converter never compensates
+  for a missing model capability; a capability lands before the converter
+  row consuming it; what each refusal owes its reader) is now one section
+  of the ADR it refined. The capability register lives only in the import
+  epic #335, one issue per row, and the new guide
+  `docs/guides/extending/bpmn-import-coverage.md` lists every refused
+  construct with its kind, the alternative today and its tracking issue.
+  References in ADR-039, its Russian twin, the SRD-089 series, SRD-092 and
+  `pkg/convert/bpmn` are retargeted; no code behaviour changes.
+
+- **Every activity now executes through one object, whatever its
+  iteration** (ADR-025 §2.13/§2.13a/§2.13b, SRD-090.A, part of #313).
+  `executeStep` used to route a node through five iteration branches —
+  a composite re-opened a child scope, a parallel leaf forked tracks, a
+  sequential leaf re-ran in place — and each mechanism carried its own
+  record shape, its own scope-open path and its own way of suppressing
+  the bookkeeping the others needed. There is now a single dispatch: the
+  step builds an executor for the node (a decorator when the node
+  iterates, a bare executor otherwise) and runs it. A decorator holds N
+  executors and implements the same interface they do, so nothing above
+  it — track, loop, instance, event hub — can tell how many instances
+  are behind the activity it is driving.
+
+  **Two behaviours are corrected as a consequence.** A Sub-Process host
+  reported as *executing* while its body ran, when what it is doing is
+  hosting a scope; and an iterated activity reported N executions of one
+  token's step, where a parallel Multi-Instance reported one and a
+  sequential one reported N — the same construct described two ways. A
+  token now has states for iterating and for hosting a scope, and an
+  activity is one step of its token however many instances run it.
+
+  **The checkpoint schema moves 5 → 7.** An iterated activity persists
+  as an executor set keyed by ordinal, replacing the per-instance track
+  records and the group record it used to be scattered across; a scope
+  record names the track that opened it and the ordinal it stands for,
+  so a restore resolves the owner by lookup rather than by derivation.
+  Documents written by the previous release still restore, including a
+  parallel leaf fan-out captured under schema 5.
+
+  Residency (an iterated Sub-Process holding parked User Tasks still
+  pins its instance in memory) and the iterated Call Activity are
+  specified in SRD-090.A and carried to #336.
+
+- **A parallel Multi-Instance leaf activity's instances are no longer
+  tracks, and no longer get a scope apiece** (ADR-025 §2.13,
+  SRD-090.A M2b, part of #313). Iterating a leaf three times used to
+  fork three tracks into three per-instance scopes, coordinated by a
+  loop-owned barrier; the activity's decorator now holds one executor
+  per instance, isolates each in its own execution frame, and runs the
+  N-of-N barrier as ordinary control flow. A track means a token
+  walking a path again.
+
+  **One behaviour changes, deliberately.** Each instance used to run in
+  a scope of its own, so anything it wrote beyond its declared
+  `outputDataItem` died when that scope closed. With no per-instance
+  scope, such a write reaches the **enclosing** scope, and for a
+  parallel activity the last writer wins — which is order-dependent.
+  The declared output collection is unaffected: it is still assembled
+  positionally by ordinal and published once, so a model that reads its
+  `loopDataOutputRef` sees exactly what it saw before. A model that
+  relied on undeclared writes vanishing now sees the last one.
+
+  The checkpoint schema moves 5 → 6 with it: an iterated leaf persists
+  as an executor set keyed by ordinal, replacing the per-instance track
+  records and the group record it used to be scattered across.
+  Documents written by the previous release still restore.
+
+- **BPMN converter: the import parser is rebuilt, and six of its own
+  defects are fixed** (ADR-024 v.4, SRD-089.A). Element dispatch is now
+  a table keyed by parse context and local name rather than six
+  disagreeing `switch` statements, and forward references (a gateway's
+  `default` today; `attachedToRef`, `calledElement` and link pairing
+  next) resolve through one mechanism that names the referring element,
+  the attribute and the missing id — and distinguishes a target of the
+  **wrong kind** from one that does not exist, since a `default` naming
+  a start event is a modeling mistake, not a typo.
+
+  Six behaviours change. **Export is deterministic**: it walked Go's
+  randomized map iteration, so two exports of one process differed and
+  an exported file could not be diffed; nodes are now emitted from the
+  start events along outgoing flows in flow-id order, unreachable ones
+  by id. A **`<task>`/`<manualTask>`/`<userTask>` with no `name`**
+  imports instead of being refused (BPMN makes `name` optional; the id
+  is the fallback, as `<process>` and `<serviceTask>` already did).
+  **`<bpmn:documentation>`** is imported onto `Docs()` and written back
+  with `textFormat`, instead of being dropped in both directions.
+  **`serviceTask@implementation`** round-trips. A **`parallelGateway`**
+  is no longer exported with a `default` attribute BPMN §13.4.1 does
+  not define. And the **purely visual artifacts** (`<textAnnotation>`,
+  `<group>`, `<category>`, plus `<relationship>`) are skipped rather
+  than refused — a runnable file was being rejected for carrying a
+  comment. `<association>` is deliberately still refused: it carries
+  compensation semantics. (`<import>` was skipped here too, until the
+  data-family entry below made it meaningful. Both dispositions were
+  since superseded by the artifact tier above: the artifacts are
+  CARRIED now, and the plain association imports.)
+
+
+- **A process whose Script Task no configured engine can run is refused
+  at registration** (SRD-088). `RegisterProcess` walks the model, nested
+  Sub-Processes included, and rejects any Script Task whose
+  `scriptFormat` no wired engine claims — naming the task, the format,
+  the formats that ARE registered, and the option to wire one. This
+  moves an existing failure earlier: it previously surfaced
+  asynchronously, inside an already-running instance, as an incident.
+  **Migration:** a model with a Script Task now needs its engine wired
+  before `RegisterProcess`, not before the token arrives.
+- **`pkg/**` may not import `internal/`** (SRD-088), enforced by
+  depguard, excepting the `pkg/thresher` facade. This is what makes a
+  bundled battery a reference implementation an outside author can
+  copy.
+- **The examples are linted** (SRD-088). An `exclusions.paths` entry had
+  been suppressing every finding across all 49 example modules, so the
+  `examples-no-internal` rule had never fired. 198 real issues surfaced
+  and are fixed.
+
+
+- **BREAKING: instance discovery queries compose** (SRD-084, closes
+  #306). `Thresher.Instances` now takes an `InstanceQuery` — four
+  ANDed axes (`Kind`, `Stage`, `ProcessID`, `ParentID`; the zero value
+  lists everything) — and returns `([]string, error)`; the single-axis
+  `InstanceFilter` enum and its five constants are removed. Migration:
+  `InstancesAll` → `InstanceQuery{}`, `InstancesRunning/Completed` →
+  `InstanceQuery{Stage: StageRunning/StageSettled}`,
+  `InstancesRoots/Children` → `InstanceQuery{Kind: KindRoots/
+  KindChildren}`. An out-of-range axis value now refuses instead of
+  silently listing everything, and handles gain `ProcessID()`.
+
+
+- **`Thresher.UpdateState` now validates the TRANSITION, not just the value**
+  (FIX-036). It accepted any legal `State` member and stored it, so a host could
+  put a never-run engine into `Started` — after which `RegisterEvent`'s
+  `State() != Started` guard admitted registrations to a hub that was never
+  started. It now admits only the operator transitions, `Started ↔ Paused`, and
+  refuses anything else with a classified `InvalidState` error naming both
+  states; starting and stopping remain the compare-and-swap ladder's alone, in
+  `Run` and `Shutdown`. A lost race re-reads and re-judges rather than failing,
+  so a concurrent pause/resume is not spuriously rejected while a concurrent
+  `Shutdown` is reported with the state it actually left behind. **Callers that
+  used `UpdateState` to start an engine must call `Run`**; the pause/resume use
+  is unaffected.
+
+- **Timer construction errors now name the rule they broke.** The three
+  rejections — attributes that are mutually exclusive, a recurrence missing its
+  interval, and nothing set at all — previously shared one message
+  (*"doesn't allow to define Timer Data or Cycle and Duration simultaneously"*),
+  which described the accepted shape without explaining it and made a missing
+  case read as an inverted boolean. Each now identifies itself, names the
+  offending attributes, and cites Table 10.101 where the standard is the reason.
 
 ### Fixed
 
@@ -564,234 +1012,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holding its locks correctly. Diagnostics improve as a side effect —
   an instance prints as its identity rather than a page of internals.
 
-### Changed
-
-- **Every per-module gate sweep runs in parallel** (`scripts/run-modules.sh`).
-  `tidy`, `lint`, `build` and `govulncheck` iterated the modules one at a time,
-  which is invisible across six core modules and expensive across fifty-two
-  examples: `examples-lint` alone spent 209s of a 506s gate queuing independent
-  linters behind each other. They now run `MODULE_JOBS` at a time — the CPU
-  count capped at 8, the rule `EXAMPLE_JOBS` already used — taking that step to
-  42s and the whole gate from 506s to 229s. The output discipline is
-  `run-examples.sh`'s: each module's log is buffered and printed inside its own
-  group fold, in module order, once all have finished, so a failure is never
-  interleaved with a neighbour's and a passing module prints only its markers.
-
-  `tidy` schedules in **dependency waves** rather than one flat batch, because
-  it is the sweep that *writes* `go.mod`/`go.sum` and the four adapters
-  `replace` the root: a flat batch would have the root rewriting the files they
-  read, and a drift check resolving against whichever snapshot won that race
-  can answer differently on two runs of the same tree. The waves are derived
-  from the replace edges in the `go.mod` files, so they cost one extra wave in
-  `tidy-check-core` and none in `examples-tidy` — where every replace points
-  outside the sweep, so all fifty-two still go at once (16s → 11s). A module
-  whose provider failed is reported **not run**, never passed.
-
-  `test-all` stays serial on purpose — `TEST_CPUS` pins the race run's CPU
-  budget to the CI runner's, and running several such modules at once would
-  oversubscribe the box that pinning exists to model.
-
-- **ADR-038 retired; its rule moves into ADR-024 §2.16.** The converter
-  coverage-boundaries record had become a ledger — bumped to v.3 across
-  three landings while its contract never moved, and never flipped out of
-  Draft. The decision it carried (three refusal classes per construct:
-  staged / capability-blocked / standing; the converter never compensates
-  for a missing model capability; a capability lands before the converter
-  row consuming it; what each refusal owes its reader) is now one section
-  of the ADR it refined. The capability register lives only in the import
-  epic #335, one issue per row, and the new guide
-  `docs/guides/extending/bpmn-import-coverage.md` lists every refused
-  construct with its kind, the alternative today and its tracking issue.
-  References in ADR-039, its Russian twin, the SRD-089 series, SRD-092 and
-  `pkg/convert/bpmn` are retargeted; no code behaviour changes.
-
-- **Every activity now executes through one object, whatever its
-  iteration** (ADR-025 §2.13/§2.13a/§2.13b, SRD-090.A, part of #313).
-  `executeStep` used to route a node through five iteration branches —
-  a composite re-opened a child scope, a parallel leaf forked tracks, a
-  sequential leaf re-ran in place — and each mechanism carried its own
-  record shape, its own scope-open path and its own way of suppressing
-  the bookkeeping the others needed. There is now a single dispatch: the
-  step builds an executor for the node (a decorator when the node
-  iterates, a bare executor otherwise) and runs it. A decorator holds N
-  executors and implements the same interface they do, so nothing above
-  it — track, loop, instance, event hub — can tell how many instances
-  are behind the activity it is driving.
-
-  **Two behaviours are corrected as a consequence.** A Sub-Process host
-  reported as *executing* while its body ran, when what it is doing is
-  hosting a scope; and an iterated activity reported N executions of one
-  token's step, where a parallel Multi-Instance reported one and a
-  sequential one reported N — the same construct described two ways. A
-  token now has states for iterating and for hosting a scope, and an
-  activity is one step of its token however many instances run it.
-
-  **The checkpoint schema moves 5 → 7.** An iterated activity persists
-  as an executor set keyed by ordinal, replacing the per-instance track
-  records and the group record it used to be scattered across; a scope
-  record names the track that opened it and the ordinal it stands for,
-  so a restore resolves the owner by lookup rather than by derivation.
-  Documents written by the previous release still restore, including a
-  parallel leaf fan-out captured under schema 5.
-
-  Residency (an iterated Sub-Process holding parked User Tasks still
-  pins its instance in memory) and the iterated Call Activity are
-  specified in SRD-090.A and carried to #336.
-
-- **A parallel Multi-Instance leaf activity's instances are no longer
-  tracks, and no longer get a scope apiece** (ADR-025 §2.13,
-  SRD-090.A M2b, part of #313). Iterating a leaf three times used to
-  fork three tracks into three per-instance scopes, coordinated by a
-  loop-owned barrier; the activity's decorator now holds one executor
-  per instance, isolates each in its own execution frame, and runs the
-  N-of-N barrier as ordinary control flow. A track means a token
-  walking a path again.
-
-  **One behaviour changes, deliberately.** Each instance used to run in
-  a scope of its own, so anything it wrote beyond its declared
-  `outputDataItem` died when that scope closed. With no per-instance
-  scope, such a write reaches the **enclosing** scope, and for a
-  parallel activity the last writer wins — which is order-dependent.
-  The declared output collection is unaffected: it is still assembled
-  positionally by ordinal and published once, so a model that reads its
-  `loopDataOutputRef` sees exactly what it saw before. A model that
-  relied on undeclared writes vanishing now sees the last one.
-
-  The checkpoint schema moves 5 → 6 with it: an iterated leaf persists
-  as an executor set keyed by ordinal, replacing the per-instance track
-  records and the group record it used to be scattered across.
-  Documents written by the previous release still restore.
-
-- **BPMN converter: the import parser is rebuilt, and six of its own
-  defects are fixed** (ADR-024 v.4, SRD-089.A). Element dispatch is now
-  a table keyed by parse context and local name rather than six
-  disagreeing `switch` statements, and forward references (a gateway's
-  `default` today; `attachedToRef`, `calledElement` and link pairing
-  next) resolve through one mechanism that names the referring element,
-  the attribute and the missing id — and distinguishes a target of the
-  **wrong kind** from one that does not exist, since a `default` naming
-  a start event is a modeling mistake, not a typo.
-
-  Six behaviours change. **Export is deterministic**: it walked Go's
-  randomized map iteration, so two exports of one process differed and
-  an exported file could not be diffed; nodes are now emitted from the
-  start events along outgoing flows in flow-id order, unreachable ones
-  by id. A **`<task>`/`<manualTask>`/`<userTask>` with no `name`**
-  imports instead of being refused (BPMN makes `name` optional; the id
-  is the fallback, as `<process>` and `<serviceTask>` already did).
-  **`<bpmn:documentation>`** is imported onto `Docs()` and written back
-  with `textFormat`, instead of being dropped in both directions.
-  **`serviceTask@implementation`** round-trips. A **`parallelGateway`**
-  is no longer exported with a `default` attribute BPMN §13.4.1 does
-  not define. And the **purely visual artifacts** (`<textAnnotation>`,
-  `<group>`, `<category>`, plus `<relationship>`) are skipped rather
-  than refused — a runnable file was being rejected for carrying a
-  comment. `<association>` is deliberately still refused: it carries
-  compensation semantics. (`<import>` was skipped here too, until the
-  data-family entry below made it meaningful. Both dispositions were
-  since superseded by the artifact tier above: the artifacts are
-  CARRIED now, and the plain association imports.)
-
-### Added
-
-- **BPMN import covers the executable element set** (SRD-089.B/.C/.D/.E,
-  part of #284). The languages: expression-language resolution with a
-  `gobpm:lite` passthrough and a JUEL→lite translator; the Camunda
-  dialect mapped where the model has a home and **reported** where it
-  does not (`convert.Dropped` — "not mapped" and "not present" no
-  longer look alike, ADR-024 §2.14). The flow nodes: script and
-  business-rule tasks, the inclusive and event-based gateways. The
-  typed events: the four catalogs, all ten event definitions, timers
-  through the model's ISO 8601 constructors, intermediate, boundary,
-  send and receive — with node construction deferred to pass 2, since
-  BPMN orders root elements freely. The containers: embedded
-  sub-processes, transactions, call activities, lanes with placement.
-  Refusals carry the BPMN § a modeler can read, and the three refusal
-  kinds — staged, capability-blocked, standing — no longer read alike
-  (ADR-038).
-
-- **BPMN import covers the data family and the data flow**
-  (SRD-089.F, SRD-089.G, ADR-038 v.2, part of #284, closes #333).
-  `<itemDefinition>` imports as a typed zero over an XSD table whose
-  every numeric is a `float64` — the one number the engine can write —
-  and an unresolvable `structureRef` becomes a fillable empty record
-  plus a report, never a nil structure that dies at registration; the
-  `<import>` it names now binds instead of being skipped.
-  `<dataObject>` lands on its container with its OWN item copy (a
-  shared pointer would make two objects one variable);
-  `<dataObjectReference>` collapses into its target per SAD-001 §14.1.
-  A `<dataStore>` is reported as the host obligation it is;
-  `<dataStoreReference>` imports carrying its ref verbatim.
-  `<property>` imports on all three owners BPMN allows — which moved
-  the process's construction to pass 2, where a leading property can
-  resolve an item declared after `</process>`. `<ioSpecification>`
-  becomes the activity's parameters with the single input/output set
-  as per-parameter `optional`/`whileExecuting` flags, and both data
-  association kinds wire through the model's own `Associate*`, so
-  scope routing (SRD-063) and store routing (SRD-068) arrive
-  untouched; an untyped parameter adopts its association partner's
-  item. What the model cannot carry refuses **naming its capability**:
-  transformation/assignment (#328), event data associations (#329),
-  process-level I/O (#330), a property end (#331). And the document's
-  ids became **one ledger** (SRD-089.F §4.11): cross-table duplicates,
-  sequence-flow, interface and association ids — previously unguarded,
-  silently mis-wiring references — now refuse at declaration.
-
-- **`activities.WithImplementation`** (SRD-089.A). BPMN carries
-  `implementation` on the `ServiceTask` itself, while gobpm derived it
-  from the Operation's `Implementor` — which an imported operation
-  deliberately lacks, so a document's own hint had nowhere to live. The
-  option gives it one; unset, the derived value stands, so no existing
-  caller changes.
-
-### Added
-
-- **Adapter lifecycle and observation hooks** (SRD-088, closes #269).
-  `renv.Starter`, `renv.Stopper`, `renv.HealthChecker` and
-  `renv.RuntimeAware` join `Migrator` and `ClusterAware` in
-  `pkg/renv/capabilities.go`. All are optional and satisfied
-  structurally — an adapter implements one by having the method. The
-  engine calls them at named per-seam sites in a fixed order, because
-  shutdown has one: the message broker stops accepting before the
-  repository closes, and telemetry flushes after everything it
-  observes. `Stop` is idempotent by contract, so an adapter the host
-  started before the engine existed can be stopped by either.
-  `Thresher.HealthCheck` asks every seam and joins what they report.
-- **Four conformance helpers for adapter authors** (SRD-088):
-  `messagingtest`, `expressiontest`, `taskstest` and `authtest`, the
-  names ADR-003 §4.2 had listed but nothing provided. Each publishes
-  its port's contract as `Conformance(t, factory)` — one line in an
-  adapter's test — and each carries a negative control proving the
-  suite can fail. `messagingtest` and `taskstest` also publish
-  `Waits()`/`SetWaits()`, so an adapter over a remote backend can widen
-  bounds tuned for an in-process one.
-- **A dependency-free Script Task engine** (SRD-088):
-  `pkg/script/gofunc` runs a Go function the host registered under a
-  name, the same move `gooper` makes for Service Tasks. It is opt-in —
-  an auto-wired empty registry would be `##None` with a longer name —
-  and `adapters/lua` remains the choice for interpreted source.
-
-### Changed
-
-- **A process whose Script Task no configured engine can run is refused
-  at registration** (SRD-088). `RegisterProcess` walks the model, nested
-  Sub-Processes included, and rejects any Script Task whose
-  `scriptFormat` no wired engine claims — naming the task, the format,
-  the formats that ARE registered, and the option to wire one. This
-  moves an existing failure earlier: it previously surfaced
-  asynchronously, inside an already-running instance, as an incident.
-  **Migration:** a model with a Script Task now needs its engine wired
-  before `RegisterProcess`, not before the token arrives.
-- **`pkg/**` may not import `internal/`** (SRD-088), enforced by
-  depguard, excepting the `pkg/thresher` facade. This is what makes a
-  bundled battery a reference implementation an outside author can
-  copy.
-- **The examples are linted** (SRD-088). An `exclusions.paths` entry had
-  been suppressing every finding across all 49 example modules, so the
-  `examples-no-internal` rule had never fired. 198 real issues surfaced
-  and are fixed.
-
-### Fixed
 
 - **`goexpr.Engine.Evaluate` panicked on a nil expression** (SRD-088)
   where `lite` returns a named error — a public extension point turning
@@ -810,199 +1030,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was stored untrimmed and looked up trimmed, so a padded registration
   failed as "no script registered" on a name plainly in the registry.
 
-### Changed
-
-- **BREAKING: instance discovery queries compose** (SRD-084, closes
-  #306). `Thresher.Instances` now takes an `InstanceQuery` — four
-  ANDed axes (`Kind`, `Stage`, `ProcessID`, `ParentID`; the zero value
-  lists everything) — and returns `([]string, error)`; the single-axis
-  `InstanceFilter` enum and its five constants are removed. Migration:
-  `InstancesAll` → `InstanceQuery{}`, `InstancesRunning/Completed` →
-  `InstanceQuery{Stage: StageRunning/StageSettled}`,
-  `InstancesRoots/Children` → `InstanceQuery{Kind: KindRoots/
-  KindChildren}`. An out-of-range axis value now refuses instead of
-  silently listing everything, and handles gain `ProcessID()`.
-
-### Added
-
-- **Leaf-activity Multi-Instance execution** (SRD-086). A sequential
-  leaf runs its passes in place (fresh frame each, split item +
-  loopCounter bound); a parallel leaf fans out per-instance scopes
-  each running one track at the task; both restore at their position
-  over the existing checkpoint schema. A leaf that **waits** was refused
-  at build time here rather than run wrongly; SRD-090.B (above) makes it
-  work natively and narrows the refusal to the two parallel shapes that
-  remain genuinely ambiguous.
-
-
-- **In-instance event delivery: per-delivery payload binding and
-  iteration-correlated routing** (ADR-006 v.5 §2.9, SRD-085, closes
-  #305). A fired definition's payload now travels with the DELIVERY —
-  captured by the receiving execution and bound from its own frame —
-  and `events.WithIterationCorrelation(keyName, expr)` routes a
-  message to exactly the matching parallel-MI iteration; a second
-  keyless concurrent waiter on one definition refuses loudly.
-
-
-- **Ad-Hoc Sub-Process checkpoint fidelity** (SRD-083, closes #307).
-  The checkpoint document (schema 5) records each open container's
-  routing state — completed counts, a manual container's pending
-  offer, a fired completion condition — and the routed tracks'
-  activity assignments; restore rebuilds the container at that
-  position, so the next Router decision sees the true cross-crash
-  progress and completed activities never re-run.
-
-- **Checkpoint fidelity for composite constructs** (SRD-082, closes
-  #277). The checkpoint document (schema 4) records every composite
-  construct's position, and restore rebuilds it there: composite
-  scopes resume their host exactly once (previously the body
-  double-executed — or the document refused to restore at all, since
-  inner nodes were unresolvable); sequential MI and Standard Loop
-  resume at the recorded pass with their collected outputs; parallel
-  MI re-opens exactly its still-open ordinals; a resolving
-  compensation sweep continues in order with its RUNNING handler
-  re-run (at-least-once over the immutable snapshot) and the
-  wait-throw resuming only after the drain; and a Call Activity child
-  is now a durable instance of its own, symmetrically linked — kill
-  an engine mid-call and the next one re-links the SAME child, never
-  a duplicate, with loud refusals when either record is missing. The
-  capture-deferral guards are fully retired: `CheckpointDeferred` now
-  means a real failure only. Discovery separates the registry:
-  `Instances(InstancesRoots/InstancesChildren)` and
-  `InstanceHandle.ParentID()/CallNodeID()`. Design: ADR-033 v.4
-  §2.10, ADR-023's restart contract.
-
-- **Incidents: a technical failure becomes durable, operable state**
-  (ADR-036, SRD-079). An unhandled failure — an in-process task error, a
-  worker whose job retries exhausted, an uncaught BPMN error — no longer
-  terminates the instance: the failing attempt's track ends and a durable
-  **incident** opens, carrying the node, the cause chain and class, the
-  attempt history and a **failure-time data snapshot** (the variables visible
-  from the failing node's scope, exactly as the attempt saw them). Sibling
-  branches keep running; the token stays visible at the node
-  (`TokenIncident`); the incident rides the checkpoint (schema 3) under a new
-  `repository.StatusActiveIncidents`, so "what needs an operator" is a store
-  query. An **incident retry policy**
-  (`activities.WithIncidentRetryPolicy` / `thresher.WithIncidentRetryPolicy`)
-  re-enters the node by respawn — lineage carried, armed boundary timers
-  transferred, never re-armed, so an SLA clock is never reset by failing —
-  and with no policy (the default) the incident waits for the operator:
-  `InstanceHandle.Incidents()`, `RetryIncident`, `ResolveIncident` (continue
-  past the node without re-executing it), `DropIncident` (a durable dead
-  letter the process never silently completes past). Ops on a parked instance
-  rebuild it from its checkpoint transparently. Three failures deliberately
-  keep the fatal path: invariant violations, an Error End Event's own
-  uncaught throw, and any failure in a called process — that one propagates
-  across the call boundary, and the incident arises at the top-level
-  caller's Call Activity, whose retry re-runs the whole child.
-  Runnable: `examples/incident-retry/`; guide:
-  `docs/guides/operating/incidents.md`.
-
-- **The documentation site gets a structured sidebar, a Russian design-docs
-  group, and rendered Mermaid diagrams** (SRD-081): sections read Home →
-  Developer Manual → Design documents → BPMN 2.0 extract → Landing records →
-  Project (curated via pinned `mkdocs-awesome-nav` + `.nav.yml` files; page
-  listings stay derived), the Manual's parts follow the index's reading
-  order, and the 84 pages with ` ```mermaid ` fences now render diagrams
-  instead of code blocks. The Russian-twin convention is enforced in the
-  tree: twins are a SAD/ADR privilege living under `docs/design/ru/`; the
-  38 stale SRD/FIX twins are removed (git history keeps them). The READMEs'
-  status line drops its hardcoded version in favor of the tag badge.
-- **The documentation publishes as a searchable site** (SRD-080):
-  <https://dr-dobermann.github.io/gobpm/> — the developer manual, the design
-  docs, and the BPMN 2.0 extract, built with MkDocs Material from the `docs/`
-  tree (`camunda7/` stays internal). A new `docs` workflow validates every
-  docs-touching PR with `mkdocs build --strict` and redeploys the site on
-  every docs-touching push to `master`; links that leave `docs/` are
-  rewritten to GitHub URLs at build time, so the Markdown sources stay
-  relative and in-repo reading is unchanged. Locally: `make docs-build` /
-  `make docs-serve` (pinned `mkdocs-material`, guarded like the Go tools).
-  The Monday pin sweep now also covers the new PyPI pin and the
-  previously-unswept `linkcheck`, and bumps only the Makefile pin line
-  itself instead of every occurrence of the version string.
-- **A durable PostgreSQL repository** (`adapters/postgres`, SRD-078,
-  closes #276). `postgres.New(db)` over a user-owned `*sql.DB` stores
-  instance checkpoints in a namespaced schema the adapter migrates
-  itself at `Run` (embedded versioned SQL under an advisory lock; a
-  failure aborts the start loud). CAS saves and ownership leases make
-  the fencing a database guarantee — proven by a real zombie-engine
-  test and a kill-and-resume e2e over postgres. Recovery is now scoped
-  to **engine groups**: records carry their creator's group, an
-  ungrouped engine is a solo group under its own id, and
-  `thresher.WithEngineGroup` / `WithExistingEngineGroup` (join-only,
-  the typo-guard) form explicit recovery clusters over one store. The
-  storage is tenant-ready (ADR-033 v.3): each record carries its
-  tenant, `""` resolves to the group's flag-designated default row,
-  and a partial unique index enforces one default per group. New
-  `pkg/renv` capabilities `Migrator` and `ClusterAware`; a published
-  conformance suite (`pkg/repository/repositorytest`) every adapter
-  runs — memrepo and postgres both pass it. `make pg-up`/`pg-down`
-  provide the disposable test database; CI runs the postgres paths on
-  every PR.
-
-- **A timer can now wait for a plain duration.** `timeDuration` alone —
-  BPMN's one-shot relative timer, *"wait five minutes, then fire"* (§10.5.5,
-  Table 10.101) — was unconstructible: the guard required a `timeCycle` beside
-  it, so the most common timer there is had no expression. It works now, and
-  nothing below the constructor changed to make it work: the waiter already
-  armed on a duration, already terminated after one delivery, and `TimerPlan`
-  already derived `now + d` for the checkpoint. Only the model layer refused.
-  Relative timers previously had to be faked with a `timeDate` expression
-  computing `time.Now().Add(d)` at evaluation time — a workaround that bypasses
-  the engine's injected `Clock`, so a substituted clock could not govern it.
-
-- **Timers can be written in ISO 8601, the notation the standard uses.**
-  `events.NewISO8601Timer("PT5M")` / `("R3/PT10H")` / `("2011-03-11T12:13:14Z")`
-  takes one string and disassembles it into the attributes the engine stores —
-  a recurrence fills both `timeCycle` and `timeDuration`, so the pair never has
-  to be written by hand. `NewISO8601TimerExpr` makes the timing **dynamic**:
-  the expression yields the ISO string when the timer arms, so a deadline can
-  come from the instance's own data. The form is named by the caller there
-  (`events.Time` / `Duration` / `Cycle`), because the value does not exist
-  until arming while the attribute is fixed at build time — which is how BPMN
-  itself resolves it. Neither path changes the runtime: a dynamic timer
-  installs an adapter expression that parses at evaluation, so the waiter
-  still reads a typed value exactly as before.
-
-  The parser (`pkg/iso8601`) refuses rather than approximates: `P1Y`/`P1M`
-  (not fixed-length), `P1W2D` (ISO makes the week form exclusive), fractional
-  components, lowercase designators, zero and negative values, and unbounded
-  recurrence `R/PT10H` — which nothing in the engine can consume safely. Each
-  refusal names its reason. No new dependency; it is hand-written over stdlib,
-  since `time.ParseDuration` reads Go's `10h` syntax and rejects every ISO form.
-
-- **`examples/usertask-sla`** — SLA warnings on a human task. Three *bounded,
-  non-interrupting* timer boundaries mark 50% / 90% / 100% of a User Task's
-  budget; the operator deliberately overruns, so every warning fires and the
-  approval **still completes**. That last part is the point: a non-interrupting
-  boundary must not cancel the work it warns about, and the run asserts it
-  rather than printing it. They are three separate bounded timers, not one
-  recurrence — 50/90/100 is not a uniform interval, so no cycle expresses it.
-
-### Changed
-
-- **`Thresher.UpdateState` now validates the TRANSITION, not just the value**
-  (FIX-036). It accepted any legal `State` member and stored it, so a host could
-  put a never-run engine into `Started` — after which `RegisterEvent`'s
-  `State() != Started` guard admitted registrations to a hub that was never
-  started. It now admits only the operator transitions, `Started ↔ Paused`, and
-  refuses anything else with a classified `InvalidState` error naming both
-  states; starting and stopping remain the compare-and-swap ladder's alone, in
-  `Run` and `Shutdown`. A lost race re-reads and re-judges rather than failing,
-  so a concurrent pause/resume is not spuriously rejected while a concurrent
-  `Shutdown` is reported with the state it actually left behind. **Callers that
-  used `UpdateState` to start an engine must call `Run`**; the pause/resume use
-  is unaffected.
-
-- **Timer construction errors now name the rule they broke.** The three
-  rejections — attributes that are mutually exclusive, a recurrence missing its
-  interval, and nothing set at all — previously shared one message
-  (*"doesn't allow to define Timer Data or Cycle and Duration simultaneously"*),
-  which described the accepted shape without explaining it and made a missing
-  case read as an inverted boolean. Each now identifies itself, names the
-  offending attributes, and cites Table 10.101 where the standard is the reason.
-
-### Fixed
 
 - **A recovering engine could half-recover a call tree** (SRD-087). In
   a multi-engine group, recovery claimed instance by instance, so a
@@ -1219,6 +1246,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the sweep cannot silently shrink again. The guard runs in the **required**
   core job, not the non-blocking examples job: a hole in that job cannot be
   guarded from inside it.
+
+### Removed
+
+- **The legacy `flow.DataNode` association path** (SRD-097 M9). It had no
+  runtime caller — an executing process moves data through the execution
+  frame in `pkg/model/dataflow` — and only its own package tests reached it,
+  so it was two evaluators' worth of surface pretending to be one engine.
+  Removed: the `flow.DataNode` interface, `DataObject.Update`,
+  `Association.UpdateSource`, `Association.Value`, and the
+  `data.Recalculate` / `data.NoRecalculate` constants. `Association.IsReady`
+  stays — it is a state query, not part of the evaluator. Nothing in the
+  guides or examples used any of it. If you called one of these, the
+  replacement is the association's declarative surface
+  (`Transformation()`, `Assignments()`, `SourceNames()`, `TargetName()`)
+  plus letting the engine move the data.
 
 ## [v0.11.0] - 2026-08-02
 
