@@ -338,16 +338,25 @@ func (ls *loopState) reportCall(
 ) {
 	ca, _ := node.(callActivity)
 
+	details := map[string]string{
+		observability.AttrCalledKey:       ca.CalledKey(),
+		observability.AttrCalledVersion:   strconv.Itoa(child.Version()),
+		observability.AttrChildInstanceID: child.ID(),
+	}
+
+	// Only when the reference named another document: an absent attribute
+	// then means "unqualified", which is a fact about the file, rather than
+	// an empty one that reads as a dropped value.
+	if ns := ca.CalledNamespace(); ns != "" {
+		details[observability.AttrCalledNamespace] = ns
+	}
+
 	ls.inst.report(observability.Fact{
 		Kind:     observability.KindCall,
 		Phase:    phase,
 		NodeID:   node.ID(),
 		NodeName: node.Name(),
-		Details: map[string]string{
-			observability.AttrCalledKey:       ca.CalledKey(),
-			observability.AttrCalledVersion:   strconv.Itoa(child.Version()),
-			observability.AttrChildInstanceID: child.ID(),
-		},
+		Details:  details,
 	})
 }
 

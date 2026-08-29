@@ -23,7 +23,7 @@ import (
 // watch handle. A missing key/version is a classified error that fails the CALL
 // (the caller track faults), not the engine. Implements exec.ProcessInvoker.
 func (t *Thresher) InvokeProcess(
-	_ context.Context,
+	ctx context.Context,
 	call exec.ProcessCall,
 ) (exec.ChildProcess, error) {
 	if call.Key == "" {
@@ -50,16 +50,21 @@ func (t *Thresher) InvokeProcess(
 		return nil, err
 	}
 
+	key, rerr := t.resolveCallable(ctx, call)
+	if rerr != nil {
+		return nil, rerr
+	}
+
 	// Resolve to a snapshot AND the concrete version bound (a latest-at-launch
 	// call records which version it actually got). Lock-confined and released
 	// before launch (the FIX-002 RC2 discipline every Start* path follows).
-	s, resolved, ok := t.resolveCallLocked(call.Key, call.Version)
+	s, resolved, ok := t.resolveCallLocked(key, call.Version)
 	if !ok {
 		return nil, errs.New(
 			errs.M("InvokeProcess: no registered version for called process "+
-				"%q (requested version %d)", call.Key, call.Version),
+				"%q (requested version %d)", key, call.Version),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D(observability.AttrCalledKey, call.Key))
+			errs.D(observability.AttrCalledKey, key))
 	}
 
 	// The callee's contract is fixed the moment its version is (ADR-019
@@ -440,3 +445,39 @@ var (
 	_ exec.ChildProcess   = (*lazyChild)(nil)
 	_ exec.ChildProcess   = (*settledChild)(nil)
 )
+
+// resolveCallable maps a call's reference onto the key this engine's registry
+// serves, through the host's CallableResolver.
+//
+// It runs HOLDING NO LOCK, and that is the point: the resolver is host code,
+// free to call back into this Thresher, so reaching it from inside a critical
+// section is the deadlock FIX-038/FIX-041 exist to forbid. `make lock-sweep`
+// checks the same rule syntactically; TestResolverMayReEnterTheEngine checks
+// it dynamically.
+func (t *Thresher) resolveCallable(
+	ctx context.Context, call exec.ProcessCall,
+) (string, error) {
+	key, err := t.cfg.callableResolver.ResolveCallable(ctx,
+		exec.CallableRef{Namespace: call.Namespace, Key: call.Key})
+	if err != nil {
+		return "", errs.New(
+			errs.M("InvokeProcess: resolving called %q failed",
+				callableName(call)),
+			errs.C(errorClass, errs.ObjectNotFound),
+			errs.D(observability.AttrCalledKey, call.Key),
+			errs.E(err))
+	}
+
+	return key, nil
+}
+
+// callableName renders a call's reference for a diagnostic: the bare key when
+// it is unqualified, and the namespace-qualified form otherwise, so a host
+// reading the error sees the same shape its resolver was handed.
+func callableName(call exec.ProcessCall) string {
+	if call.Namespace == "" {
+		return call.Key
+	}
+
+	return call.Namespace + "#" + call.Key
+}
