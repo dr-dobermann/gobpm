@@ -81,12 +81,9 @@ func parseGlobalTaskElem(p *parser, se xml.StartElement) (*assembly, error) {
 		return nil, err
 	}
 
-	// The callable's ioSpecification serves twice: as the PROCESS's declared
-	// contract and as the TASK's own parameters. It is one element in the
-	// standard — the ioSpecification belongs to the CallableElement, and for
-	// a global task the callable IS the task — so a declared output is one
-	// the task can actually produce, and the contract is not a promise
-	// nothing keeps.
+	// The callable's ioSpecification is the PROCESS's declared contract. It
+	// is not also the task's — see taskBody for why that reads well and does
+	// not work.
 	spec := procSpec{
 		id:          id,
 		name:        fallbackName(id, strings.TrimSpace(attrValue(se, "name"))),

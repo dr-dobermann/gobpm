@@ -338,8 +338,18 @@ func (ls *loopState) reportCall(
 ) {
 	ca, _ := node.(callActivity)
 
+	// The RESOLVED key, not the reference the document wrote: for a qualified
+	// reference the host's resolver decided which registration this is, and an
+	// audit needs to see the one that ran (ADR-023 v.5 §2.7). It falls back to
+	// the reference when the child cannot say — a re-attached child that is
+	// not resident yet.
+	key := child.Key()
+	if key == "" {
+		key = ca.CalledKey()
+	}
+
 	details := map[string]string{
-		observability.AttrCalledKey:       ca.CalledKey(),
+		observability.AttrCalledKey:       key,
 		observability.AttrCalledVersion:   strconv.Itoa(child.Version()),
 		observability.AttrChildInstanceID: child.ID(),
 	}

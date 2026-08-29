@@ -2,9 +2,12 @@ package bpmn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/dr-dobermann/gobpm/pkg/convert"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -111,7 +114,21 @@ func TestGlobalTaskBecomesACallableProcess(t *testing.T) {
 			nodeOf(t, p, "g1.end")
 
 			if n := len(p.Flows()); n != 2 {
-				t.Errorf("flows = %d, want 2 joining the three nodes", n)
+				t.Fatalf("flows = %d, want 2 joining the three nodes", n)
+			}
+
+			// Derived, so a re-import mints the same ids and two versions of
+			// one definition stay comparable.
+			ids := map[string]bool{}
+			for _, f := range p.Flows() {
+				ids[f.ID()] = true
+			}
+
+			for _, want := range []string{"g1.start-task", "g1.task-end"} {
+				if !ids[want] {
+					t.Errorf("no flow %q; got %v — the ids are derived from "+
+						"the global task's own", want, ids)
+				}
 			}
 		})
 	}
@@ -175,6 +192,21 @@ func TestGlobalTaskContractIsTheProcessContract(t *testing.T) {
 	if ins[0].Name() != "amount" || outs[0].Name() != "approved" {
 		t.Errorf("contract = (%q, %q), want (amount, approved)",
 			ins[0].Name(), outs[0].Name())
+	}
+}
+
+// TestGlobalTaskWithoutAContract is T-15's other half: no <ioSpecification>
+// means a contract-LESS callable, which keeps the permissive meaning a
+// process without one has always had — not an empty contract that promises
+// nothing and demands nothing.
+func TestGlobalTaskWithoutAContract(t *testing.T) {
+	p := callableOf(t, globalDoc(
+		`  <bpmn:globalTask id="g1" name="Reusable"/>`))
+
+	if ios := p.IOSpec(); ios != nil {
+		t.Errorf("IOSpec() = %v, want nil — a callable that declares nothing "+
+			"is contract-less, and a caller binds against it permissively",
+			ios)
 	}
 }
 
@@ -334,5 +366,128 @@ func TestGlobalTaskWithABadBodyRefusesInTheTaskSWords(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error = %v, want it to mention %q", err, want)
 		}
+	}
+}
+
+// TestGlobalTaskInsideAProcessIsRefused is SRD-096 T-18 and FR-10's other
+// half.
+//
+// The family is a definitions-level declaration; inside a <process> it is not
+// a flow element, and the context rule refuses it. The refusal carries an
+// EMPTY section on purpose — the vendored extract pins no § for the family,
+// and inventing one would be worse than omitting it (the same reason
+// globalChoreographyTask is pinned to "").
+func TestGlobalTaskInsideAProcessIsRefused(t *testing.T) {
+	for _, tag := range []string{"globalTask", "globalUserTask"} {
+		t.Run(tag, func(t *testing.T) {
+			doc := fmt.Sprintf(`<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="%s">
+  <bpmn:process id="P" name="P">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:%s id="g1" name="Inner"/>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`, nsBPMN, tag)
+
+			_, err := importer{}.ImportDocument(
+				context.Background(), strings.NewReader(doc))
+			if err == nil {
+				t.Fatalf("<%s> inside a <process> must be refused: it is a "+
+					"declaration, not a flow element", tag)
+			}
+
+			var uee *convert.UnsupportedElementError
+			if !errors.As(err, &uee) {
+				t.Fatalf("error = %v (%T), want an UnsupportedElementError", err, err)
+			}
+
+			if uee.Section != "" {
+				t.Errorf("Section = %q, want empty — the extract pins no § "+
+					"for the family, and an invented one is worse than none",
+					uee.Section)
+			}
+		})
+	}
+}
+
+// TestImportPicksTheDeclaredProcess is SRD-096 T-19 (a) and (b), and the
+// discriminating case for FR-9.
+//
+// A callable is invoked BY a process, never the document's own executable
+// one. Counting it would make the ordinary file — one unmarked <process>
+// beside a <globalTask> — newly ambiguous, which is the regression this
+// asserts against. The unmarked shape matters: SRD-089.I records that most
+// real single-process files never set isExecutable.
+func TestImportPicksTheDeclaredProcess(t *testing.T) {
+	for name, attr := range map[string]string{
+		"unmarked":   "",
+		"executable": ` isExecutable="true"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			doc := fmt.Sprintf(`<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="%s">
+  <bpmn:globalTask id="g1" name="Reusable"/>
+  <bpmn:process id="P" name="P"%s>
+    <bpmn:startEvent id="s1"/>
+    <bpmn:callActivity id="ca" name="Reuse" calledElement="g1"/>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="ca"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="ca" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`, nsBPMN, attr)
+
+			p, err := importer{}.Import(
+				context.Background(), strings.NewReader(doc))
+			if err != nil {
+				t.Fatalf("Import: %v — the callable is not a candidate, so "+
+					"this document has exactly one answer", err)
+			}
+
+			if p.ID() != "P" {
+				t.Errorf("Import returned %q, want the declared process P",
+					p.ID())
+			}
+		})
+	}
+}
+
+// TestGlobalTaskDeclaredIDsJoinTheLedger is SRD-096 T-23: the ids the FILE
+// writes inside a callable are claimed like any other, so a collision with a
+// document id is refused rather than silently shared.
+func TestGlobalTaskDeclaredIDsJoinTheLedger(t *testing.T) {
+	doc := fmt.Sprintf(`<?xml version="1.0"?>
+<bpmn:definitions xmlns:bpmn="%s">
+  <bpmn:globalUserTask id="g1" name="Approve">
+    <bpmn:ioSpecification id="shared.io">
+      <bpmn:dataInput id="amount" name="amount"/>
+      <bpmn:inputSet id="g1.is"><bpmn:dataInputRefs>amount</bpmn:dataInputRefs></bpmn:inputSet>
+      <bpmn:outputSet id="g1.os"/>
+    </bpmn:ioSpecification>
+  </bpmn:globalUserTask>
+  <bpmn:process id="P" name="P" isExecutable="true">
+    <bpmn:startEvent id="s1"/>
+    <bpmn:task id="t1" name="Work">
+      <bpmn:ioSpecification id="shared.io">
+        <bpmn:dataInput id="din" name="in"/>
+        <bpmn:inputSet id="is1"><bpmn:dataInputRefs>din</bpmn:dataInputRefs></bpmn:inputSet>
+        <bpmn:outputSet id="os1"/>
+      </bpmn:ioSpecification>
+    </bpmn:task>
+    <bpmn:endEvent id="e1"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>`, nsBPMN)
+
+	_, err := importer{}.ImportDocument(
+		context.Background(), strings.NewReader(doc))
+	if err == nil {
+		t.Fatal("a callable's declared ids share the document's ledger; a " +
+			"duplicate must be refused, not quietly shared")
+	}
+
+	if !strings.Contains(err.Error(), "shared.io") {
+		t.Errorf("error = %v, want it to name the duplicated id", err)
 	}
 }

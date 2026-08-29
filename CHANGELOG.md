@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A callable is reached by reference, across documents** (ADR-023 v.5 §2.7 /
+  ADR-024 v.7 §2.13 / SRD-096, closes #325). The `GlobalTask` family stops
+  being refused: each member imports as a callable **process** — a None start,
+  the task built by its in-process reading, a None end — registered under the
+  global task's own id, because a global task *is* a callable process and the
+  process registry already serves those. A `calledElement` is read as a QName:
+  unprefixed is the key, the document's own `targetNamespace` collapses, an
+  `<import>`ed namespace rides with the call, and an undeclared prefix is
+  refused as the malformed file it is.
+
+  Resolving a qualified reference is a host contract, `exec.CallableResolver`,
+  supplied through `thresher.WithCallableResolver` and consulted at call time
+  **outside every engine lock** — so a resolver may call back into the engine.
+  Without one, `exec.DefaultCallableResolver` keeps every existing call exact
+  and refuses a qualified reference by name rather than call whatever happens
+  to share the local part.
+
+  An imported `<callActivity>` may now declare an `<ioSpecification>`, so data
+  crosses a call boundary from a document at all: §10.4.1's containment list
+  reads as excluding it, while §10.4's own CallActivity row maps its
+  DataInputs/DataOutputs onto the callable's — and the strict reading made that
+  row unreachable. `examples/bpmn-callable` runs the whole path.
+
 - **A Transaction carries its `method` and `protocol`, and binds its abort
   to a coordinator** (ADR-028 v.2 / SRD-095, part of #324). The
   `isTransaction` flag becomes `activities.TransactionCharacteristics` —

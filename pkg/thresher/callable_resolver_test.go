@@ -17,6 +17,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 	"github.com/stretchr/testify/require"
 )
@@ -406,4 +407,117 @@ func TestUnqualifiedResolverFailureNamesTheBareKey(t *testing.T) {
 		"an unqualified reference is named as the bare key")
 	require.NotContains(t, cause, "#calc",
 		"and never as a namespace-qualified form with the namespace missing")
+}
+
+// TestCallFactNamesTheResolvedCallable is SRD-096 T-6's third clause and
+// FR-4's audit half.
+//
+// The document said "audit, in namespace .../shared"; the host's resolver
+// answered "shared.audit". An operator asking what actually ran needs the
+// SECOND — the reference alone names a registration that may not exist under
+// that key at all — and needs the namespace too, so the reference in the file
+// can still be recognised. So the fact carries the resolved key, and the
+// namespace beside it.
+func TestCallFactNamesTheResolvedCallable(t *testing.T) {
+	var saw atomic.Int64
+
+	const ns = "http://example.com/shared"
+
+	callee := scaleCallee(t, "shared.calc", 2)
+	caller := qualifiedCaller(t, "calc", ns, &saw)
+
+	resolver := exec.CallableResolverFunc(
+		func(_ context.Context, ref exec.CallableRef) (string, error) {
+			if ref.Namespace == ns {
+				return "shared." + ref.Key, nil
+			}
+
+			return ref.Key, nil
+		})
+
+	th, err := thresher.New("call-fact",
+		thresher.WithCallableResolver(resolver))
+	require.NoError(t, err)
+
+	fw := &factWatch{}
+	sub := th.Observe(fw)
+
+	t.Cleanup(sub.Cancel)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	_, err = th.RegisterProcess(callee)
+	require.NoError(t, err)
+	_, err = th.RegisterProcess(caller)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(caller.ID())
+	require.NoError(t, err)
+
+	wctx, wcancel := context.WithTimeout(ctx, 10*time.Second)
+	defer wcancel()
+
+	_, err = h.WaitCompletion(wctx)
+	require.NoError(t, err)
+
+	starts := fw.callStarts()
+	require.NotEmpty(t, starts, "a call emits a started fact")
+
+	f := starts[0]
+	require.Equal(t, "shared.calc", f.Details[observability.AttrCalledKey],
+		"the fact names the RESOLVED key — the registration that ran, not "+
+			"the reference the document wrote")
+	require.Equal(t, ns, f.Details[observability.AttrCalledNamespace],
+		"and the namespace beside it, so the file's own reference is still "+
+			"recognisable in the audit")
+
+	require.NoError(t, th.Shutdown(context.Background()))
+}
+
+// TestUnqualifiedCallFactCarriesNoNamespace: the attribute is absent, not
+// empty, when nothing qualified the reference — an absent attribute reads as
+// "unqualified", which is a fact about the file; an empty one reads as a
+// value that got dropped.
+func TestUnqualifiedCallFactCarriesNoNamespace(t *testing.T) {
+	var saw atomic.Int64
+
+	callee := scaleCallee(t, "calc", 2)
+	caller := qualifiedCaller(t, "calc", "", &saw)
+
+	th, err := thresher.New("call-fact-plain")
+	require.NoError(t, err)
+
+	fw := &factWatch{}
+	sub := th.Observe(fw)
+
+	t.Cleanup(sub.Cancel)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	_, err = th.RegisterProcess(callee)
+	require.NoError(t, err)
+	_, err = th.RegisterProcess(caller)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(caller.ID())
+	require.NoError(t, err)
+
+	wctx, wcancel := context.WithTimeout(ctx, 10*time.Second)
+	defer wcancel()
+
+	_, err = h.WaitCompletion(wctx)
+	require.NoError(t, err)
+
+	starts := fw.callStarts()
+	require.NotEmpty(t, starts)
+
+	_, present := starts[0].Details[observability.AttrCalledNamespace]
+	require.False(t, present,
+		"an unqualified reference carries no namespace attribute at all")
+
+	require.NoError(t, th.Shutdown(context.Background()))
 }

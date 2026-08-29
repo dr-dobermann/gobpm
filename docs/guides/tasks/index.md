@@ -180,11 +180,11 @@ constructor once per use site; that is the point of it being a constructor.
 
 **Reuse by copy vs by reference.** The pattern above is reuse **by copy**: each
 call site gets its own node, built from one definition in your code. BPMN's
-`GlobalTask` is reuse **by reference** — one registered definition, many callers
-— and that needs a registry of callable definitions, which is
-[server-tier functionality](../../design/SAD-001-vision-and-architecture.md)
-rather than library. Today the only by-reference path is `CallActivity`, and it
-resolves against the **process** registry, so it launches a child instance:
+`GlobalTask` is reuse **by reference** — one registered definition, many callers.
+That needs a registry of callable definitions, and the **process registry is
+one**: a global task is a callable process whose body is that one task, so the
+by-reference path is `CallActivity` against the process registry, and it
+launches a child instance:
 
 ```go
 // by reference — but the target is a registered PROCESS, so this call
@@ -194,9 +194,15 @@ call, err := activities.NewCallActivity("do-approval", "approval-process")
 
 Wrapping a single task in a one-activity process is a legitimate model, but be
 aware of what it costs: an instance per call, with its own scope and fact
-stream. For a step used in many places, prefer the constructor. When the server's
-task registry lands, `CallActivity` will resolve a key to a task directly and
-`GlobalTask` becomes accessible with no change to your models.
+stream. For a step used in many places in **your own code**, prefer the
+constructor — it is cheaper and can be parameterized.
+
+Reuse by reference is what a **document** needs, because XML has no functions:
+a `.bpmn` file cannot call a Go constructor, so the standard gives it
+`GlobalTask` instead. An imported `<globalTask>` (and its four siblings)
+therefore becomes exactly the one-activity process described above, built for
+you and registered under the global task's own id — see
+[`examples/bpmn-callable`](https://github.com/dr-dobermann/gobpm/tree/master/examples/bpmn-callable).
 
 ## What every member implements
 

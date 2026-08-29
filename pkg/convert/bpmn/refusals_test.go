@@ -118,9 +118,14 @@ func TestComplexGatewayIsRefusedAsInexpressible(t *testing.T) {
 	}
 }
 
-// TestTheThreeRefusalsAreDistinguishable is the invariant NFR-3 asks for:
-// a host must be able to tell "wait", "rewrite" and "check the roadmap"
-// apart, because they lead to three different actions.
+// TestTheThreeRefusalsAreDistinguishable is the invariant NFR-3 asks for: a
+// host must be able to tell the refusal kinds apart, because they lead to
+// different actions.
+//
+// "Wait" is no longer one of them — SRD-096 retired the notYet disposition
+// with the last refusal that used it — so what remains is "this shape is not
+// mapped", "these two forms do not correspond" and "the engine will not take
+// a Go value from a document".
 func TestTheThreeRefusalsAreDistinguishable(t *testing.T) {
 	doc := func(inner, defs string) string {
 		return fmt.Sprintf(`<?xml version="1.0"?>

@@ -184,6 +184,9 @@ type childProcess struct {
 // ID returns the child instance id.
 func (c *childProcess) ID() string { return c.inst.ID() }
 
+// Key returns the resolved registry key the call bound.
+func (c *childProcess) Key() string { return c.inst.ProcessID() }
+
 // Version returns the resolved 1-based version the call bound.
 func (c *childProcess) Version() int { return c.version }
 
@@ -308,6 +311,16 @@ type lazyChild struct {
 
 func (c *lazyChild) ID() string { return c.id }
 
+// Key returns the resolved registry key, read from the instance once it is
+// resident — "" while it is not, the same shape Version answers with.
+func (c *lazyChild) Key() string {
+	if inst, err := c.thr.instanceByID(c.id); err == nil {
+		return inst.ProcessID()
+	}
+
+	return ""
+}
+
 func (c *lazyChild) Done() <-chan struct{} { return c.settled }
 
 func (c *lazyChild) Version() int {
@@ -355,6 +368,7 @@ type settledChild struct {
 	failure error
 	settled chan struct{}
 	id      string
+	key     string
 	version int
 }
 
@@ -373,6 +387,7 @@ func newSettledChild(
 	c := &settledChild{
 		outputs: map[string]data.Data{},
 		id:      id,
+		key:     doc.ProcessID,
 		version: doc.Version,
 		settled: make(chan struct{}),
 	}
@@ -412,6 +427,9 @@ func newSettledChild(
 }
 
 func (c *settledChild) ID() string { return c.id }
+
+// Key returns the resolved registry key the terminal record carries.
+func (c *settledChild) Key() string { return c.key }
 
 func (c *settledChild) Version() int { return c.version }
 

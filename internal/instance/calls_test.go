@@ -46,7 +46,12 @@ func newFakeChild(id string, version int) *fakeChild {
 	return &fakeChild{id: id, version: version, done: make(chan struct{})}
 }
 
-func (c *fakeChild) ID() string            { return c.id }
+func (c *fakeChild) ID() string { return c.id }
+
+// Key answers the resolved registry key. The double reports its id, which is
+// what a real child does when the reference resolved to itself.
+func (c *fakeChild) Key() string { return c.id }
+
 func (c *fakeChild) Version() int          { return c.version }
 func (c *fakeChild) Done() <-chan struct{} { return c.done }
 func (c *fakeChild) Failed() error         { return c.err }

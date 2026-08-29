@@ -285,8 +285,8 @@ passed to the resolver.
   and `<ioSpecification>` the way `procBuild` does, then the body via
   `parseNodeBody`, and records into a fresh assembly: one `procSpec` (id,
   name, docs, `io`), one `nodeSpec` for the task with `se.Name.Local`
-  **rewritten** to the in-process tag (FR-7) and the same `io`, and two
-  `flowSpec`s. Pass 2 then builds it with `constructProcess` → `buildNodes`
+  **rewritten** to the in-process tag (FR-7) and the io stripped (FR-7a —
+  `taskBody`), and two `flowSpec`s. Pass 2 then builds it with `constructProcess` → `buildNodes`
   → `linkFlow` → `Validate` unchanged — including `paramOwners` and
   `buildIOParams` (`buildNode` (`importer.go`)), which is why the rewrite is
   the whole of the mechanism.
@@ -353,28 +353,31 @@ reference (one registration, N callers, ADR-019 versions), and is what
 ADR-023 v.5 §2.7 decides. ADR-024 v.7 §4 row M records the reversal of
 the v.4 refusal.
 
-### §4.5 Why one `<ioSpecification>` serves both the process and the task
+### §4.5 Why the `<ioSpecification>` is the process's alone
 
 A `GlobalTask` is a `CallableElement`, not an `Activity`
-(`activities.md:646`): it carries **one** `ioSpecification` and no data
-associations. The engine's realization has two things that want it — the
-process contract (inputs bind into the root scope at launch, outputs are
-read from it at completion, SRD-093 FR-8) and the task's own parameters —
-and the standard has only one element, so it feeds both (FR-7a).
+(`activities.md`): it carries **one** `ioSpecification` and no data
+associations. The engine's realization has two candidates for it — the process
+contract a caller binds against, and the task's own parameters — and it goes to
+the process.
 
-That is not redundancy, it is the only shape that works. Giving the task no
-parameters was the first draft of this section, and it cannot satisfy a
-declared **output**: a process output is read from the root scope, and what
-puts a value there is a node's output parameter (the precedent is
-`examples/process-io`, whose child fills `total` from a service task's
-returned item, `handlers.go`). A parameter-less task writes nothing,
-so every global task with a declared output would import and then fail its
-own contract at completion. Feeding the same declaration to both ends makes
-the callable's promise the task's obligation, which is what the standard
-means by putting the `ioSpecification` on the callable that *is* the task.
+*This section argued the opposite until M5 ran the thing.* The case for giving
+it to both was that a declared **output** needs a node output parameter to fill
+it, or the callable promises what nothing produces. That is true of a task fed
+by **data associations**, and a callable declares none: with parameters and no
+associations the task's required input is declared and unfillable, so the
+callable faults on its own contract — `required input "amount" of task "Add
+tax" is unavailable` — before doing any work, on a document that is perfectly
+well-formed.
 
-*Rejected — a second, converter-invented declaration on the task*: it would
-be a shape the file does not contain, and the two could then disagree.
+The output is filled anyway, because that is not how a task's work reaches the
+contract. What the contract reads at completion is the datum in the **root
+scope** under the declared name, and that is exactly where a task's work lands:
+a rule task's decision row, a script task's outputs. The contract is fulfilled
+by what the task DOES, not by what it declares.
+
+*Rejected — a second, converter-invented declaration on the task*: it would be
+a shape the file does not contain, and the two could then disagree.
 
 ### §4.6 Why the ids are derived and claimed, not generated
 
@@ -544,14 +547,13 @@ not assumptions:
   export rides ADR-024 slice 3). The import-coverage guide already says a
   transaction's `method`/`protocol` are not a refusal. No change.
 - **The epic #335 register**: three capability-blocked rows remain (#325,
-  #328, #331); this SRD consumes #325. `conformance.md:141` still says
-  "server tier" for the family, and **[SAD-001 v.1.3](../design/SAD-001-vision-and-architecture.md)
-  §14 says the converter must refuse a `<globalTask>` loudly**, the family
-  waiting on a server-side task registry. Both predate ADR-023 v.5's decision
-  that a global task is a callable process, and both now contradict it.
-  `conformance.md` is this branch's to fix (M6); the **SAD-001 §14 row is a
-  parent-document edit** and is raised for the owner's decision rather than
-  made here.
+  #328, #331); this SRD consumes #325. `conformance.md`'s family row, the
+  import-coverage row, `conformance-status.md`'s row 1 and the tasks guide all
+  said the family was server-tier and waiting on a task registry; all four are
+  corrected in M6. **[SAD-001 v.1.3](../design/SAD-001-vision-and-architecture.md)
+  §14 carried the same reading and was corrected first**, with the owner's
+  agreement, because a parent document cannot be left contradicting the ADR
+  that refines it.
 
 ## §8 Cross-doc
 
@@ -564,6 +566,7 @@ not assumptions:
 | side | [SRD-050](SRD-050-call-activity.md) | the caller-side call path (frozen) |
 | side | [SRD-093](SRD-093-process-io-contract.md) | the process-level `ioSpecification` build reused (frozen) |
 | side | [SRD-089.E](SRD-089.E-bpmn-import-containers-and-lanes.md) §4.6, [SRD-089.C](SRD-089.C-bpmn-import-flow-nodes.md) §4.2 | the refusals this supersedes (frozen; their text stays as the record of the earlier decision) |
+| side | [SRD-089.G](SRD-089.G-bpmn-import-data-flow.md) | the parameter machinery reused; its §4.7a containment row is superseded in part by FR-7b (frozen, annotated in place) |
 | side | [SRD-089.I](SRD-089.I-bpmn-import-definitional-collaboration.md) | the multi-process document result the synthesized processes join (frozen) |
 
 No downward references.
@@ -583,10 +586,67 @@ No downward references.
 
 ## §10 Implementation summary
 
-*Filled at landing.*
+| M | Commit | What landed |
+|---|---|---|
+| M0a | `98221c2b` | ADR-024 §2.10: the `${…}` delimiters decide the language whatever is declared — the order the converter has used since SRD-089.B's own M3, which no document said |
+| M0b/M0c | `4bd92b4f` | the two §6 scenarios SRD-089.C and .E specified and never delivered, plus the dialect assertion that stood in for one |
+| M0d | `ac9fc301` | the five SRD-089 stages say what landed |
+| M0e | `2c41c1ed`, `c10f6e91` | .A/.B/.C accepted, then .D/.E after two further audit rounds; the symbol-not-line convention that ends the largest defect class |
+| M1 | `2d2e4b12` | `exec.CallableRef`/`CallableResolver`/`DefaultCallableResolver`, `ProcessCall.Namespace`, `activities.WithCalledNamespace`, the loop carrying it |
+| M2 | `1d46ac13` | `thresher.WithCallableResolver`; resolution in `InvokeProcess` outside every lock; `called_namespace` on the call fact; `lock-sweep` taught `ResolveCallable` |
+| M3 | `0940da70` | `targetNamespace`, `resolveCalledElement`, the four QName dispositions; the refusal-wording sweep restructured into three kinds |
+| M4 | `cf350c35` | the five global tags as processes; `Import`'s pick ignoring them; `notYet` retired; ADR-022 v.3 registers `called_namespace`, which `internal/lintcfg` requires of every `Attr*` |
+| M5 | `a5e730ce` | `examples/bpmn-callable` |
+| M5a | `e736e2eb` | an imported `<callActivity>` declares what it passes; FR-7a corrected |
+| M6 | *this commit* | the guides, `conformance.md`, the READMEs and the changelog |
+
+### §10.1 Where the plan was wrong
+
+**FR-7a, and the run is what found it.** The draft gave the callable's
+`<ioSpecification>` to both the process and the task inside it, on a
+`/review-srd` argument that a declared output otherwise cannot be filled. That
+argument holds for a task fed by data associations and fails for a callable,
+which declares none: the parameters are required-and-unfillable, and the
+callable faults on its own contract before doing any work. The first draft had
+it right. No static check caught the regression — the code was consistent, the
+tests passed, the document read well — and M5's example failed on it in thirty
+seconds.
+
+**An imported call could not pass data at all**, which M5 also surfaced:
+§10.4.1's containment list reads as excluding a `<callActivity>` while §10.4's
+own CallActivity row maps its DataInputs/DataOutputs onto the callable's. The
+strict reading made that row dead letter and the contract half of this SRD
+unreachable from any file. Landed as M5a, superseding SRD-089.G §4.7a's row.
+
+**`.in`/`.out` were bad derived ids.** The example's own fixture collided:
+`<dataInput id="tax.in">` is an entirely natural thing to write. The refusal
+was correct (T-16 working); the suffixes now name their endpoints.
+
+**M0 was not housekeeping.** The five SRD-089 flips were expected to be a
+status change; an audit found each doc short of its own DoD, including two
+scenarios a Definition of Done had required and nobody had written, and a
+validation three passages asserted that does not exist (#357). Five audit
+rounds and six commits later they are accurate. The largest single defect class
+across them was line-pin rot, which is why `CLAUDE.md` now requires symbols.
+
+### §10.2 Verification
+
+`go test ./...` green across the root module; `golangci-lint` 0 issues in the
+root module and in `examples/bpmn-callable`; `make lock-sweep` clean with
+`ResolveCallable` in its set; `make link-check` clean; the example runs to exit
+0 and asserts the value that crossed the call boundary. Per-function coverage
+on everything this SRD added is 100% except `parseGlobalTaskElem` (85.7%) and
+`addGlobalTaskGraph` (90%), whose uncovered lines are bare `return nil, err`
+that the diff-coverage gate excludes.
+
+`make ci` is unreliable in this environment for reasons this branch does not
+cause: `internal/instance` flakes at about one package run in three (#356) and
+`govulncheck` intermittently cannot reach its database. Judge a red run by
+which step and package failed.
 
 ## Open questions
 
-None. §4.2 (every call, not only qualified ones) and §4.5 (no parameters
-on the inner task) are the two points with a defensible alternative; both
-are decided above with the alternative recorded.
+None. §4.2 (the resolver is consulted on every call, not only qualified ones)
+and §4.5 (the `<ioSpecification>` is the process's alone) are the two points
+with a defensible alternative; both are decided above with the alternative
+recorded, and §4.5's was decided the hard way — see §10.1.
