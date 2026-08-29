@@ -32,8 +32,7 @@ func TestNewAssignment(t *testing.T) {
 		require.Equal(t, from, a.From())
 		require.Equal(t, "order.status", a.To())
 
-		head, rest, err := a.ToHead()
-		require.NoError(t, err)
+		head, rest := a.ToHead()
 		require.Equal(t, "order", head)
 		require.Equal(t, "status", rest)
 	})
@@ -42,8 +41,7 @@ func TestNewAssignment(t *testing.T) {
 		a, err := data.NewAssignment(from, "order")
 		require.NoError(t, err)
 
-		head, rest, err := a.ToHead()
-		require.NoError(t, err)
+		head, rest := a.ToHead()
 		require.Equal(t, "order", head)
 		require.Empty(t, rest, "no steps: the whole value is replaced")
 	})

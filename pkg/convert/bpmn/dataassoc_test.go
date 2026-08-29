@@ -507,8 +507,27 @@ func TestTransformationImports(t *testing.T) {
 	a := shapedStart(t, "",
 		`        <bpmn:transformation language="gobpm:lite">order</bpmn:transformation>`)
 
-	if a.Transformation() == nil {
-		t.Error("Transformation() = nil, want the mapped expression")
+	fe := a.Transformation()
+	if fe == nil {
+		t.Fatal("Transformation() = nil, want the mapped expression")
+	}
+
+	// Non-nil proves only that SOMETHING was mapped. The id proves it came
+	// from THIS element — the converter mints an expression under its
+	// owner's id and role when the document declares none — and the
+	// language proves the resolution ran rather than a default being
+	// assumed. (A lite expression evaluates only through the engine
+	// registry, so a converter test cannot run its body; that the body
+	// itself computes is proven end to end by
+	// examples/association-expressions.)
+	if got := fe.ID(); got != "oa1:transformation" {
+		t.Errorf("Transformation().ID() = %q, want it minted from the "+
+			"association that carried it", got)
+	}
+
+	if got := fe.Language(); !strings.Contains(strings.ToLower(got), "lite") {
+		t.Errorf("Transformation().Language() = %q, want the resolved "+
+			"language", got)
 	}
 
 	if len(a.Assignments()) != 0 {
@@ -540,8 +559,17 @@ func TestAssignmentImports(t *testing.T) {
 			as[0].To(), as[1].To())
 	}
 
-	if as[0].From() == nil || as[1].From() == nil {
-		t.Error("From() = nil, want the mapped expressions")
+	// Each <from> is minted under its own <assignment>'s declared id, which
+	// is what proves the two did not collapse into one expression.
+	for i, want := range []string{"as1:from", "as2:from"} {
+		if as[i].From() == nil {
+			t.Fatalf("assignment #%d: From() = nil", i)
+		}
+
+		if got := as[i].From().ID(); got != want {
+			t.Errorf("assignment #%d: From().ID() = %q, want %q — the two "+
+				"<from>s must map to distinct expressions", i, got, want)
+		}
 	}
 
 	// the second from is JUEL, translated on the way in like any other
@@ -761,23 +789,32 @@ func TestExtraOutputSourceMustBeDeclared(t *testing.T) {
 // expression this converter cannot make runnable is refused naming the
 // association, exactly as a condition in the same language would be.
 func TestShapeExpressionsMustBeRunnable(t *testing.T) {
-	tests := map[string]string{
-		"transformation": `        <bpmn:transformation language="xpath">/a/b</bpmn:transformation>`,
-		"assignment from": `        <bpmn:assignment id="as1">
+	tests := map[string]struct{ shape, names string }{
+		"transformation": {
+			`        <bpmn:transformation language="xpath">/a/b</bpmn:transformation>`,
+			"oa1",
+		},
+		"assignment from": {
+			`        <bpmn:assignment id="as1">
           <bpmn:from language="xpath">/a/b</bpmn:from>
           <bpmn:to>order</bpmn:to>
         </bpmn:assignment>`,
+			"as1",
+		},
 	}
 
-	for name, shape := range tests {
+	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			err := shapedStartErr(t, shape)
+			err := shapedStartErr(t, tc.shape)
 			if err == nil {
 				t.Fatal("an unrunnable expression must be refused")
 			}
 
-			if !strings.Contains(err.Error(), "oa1") {
-				t.Errorf("error = %v, want it naming the association", err)
+			// The refusal names the element that CARRIES the expression:
+			// the association for a transformation, the assignment for a
+			// from — a modeler edits the one the message points at.
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("error = %v, want it naming %q", err, tc.names)
 			}
 		})
 	}

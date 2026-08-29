@@ -228,6 +228,155 @@ func TestShapedStoreWriteFailurePropagates(t *testing.T) {
 	require.ErrorContains(t, err, "store is full")
 }
 
+// TestAssignmentIntoStoreKeepsTheRestOfTheRecord is the review's finding:
+// assignments write INSIDE the target, so a store-backed one must start
+// from the store's current value. Writing into a clone of the produced
+// output would address a different shape and drop every field the
+// assignments do not touch, because Put replaces the whole key.
+func TestAssignmentIntoStoreKeepsTheRestOfTheRecord(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	store := newMemStore()
+	store.m["archive"] = record(t, "archive",
+		values.F("status", values.NewVariable("old")),
+		values.F("clerk", values.NewVariable("ann")))
+
+	f := frame(t, oneStoreReg{store: store},
+		datum(t, "result", 1, data.ReadyDataState))
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(context.Context, data.Source) (data.Value, error) {
+			return values.NewVariable("new"), nil
+		}})
+
+	oa := outputAssoc(t, "result", "archive",
+		data.WithDataStoreRef("store-1"),
+		data.WithAssignments(assign(t, "archive.status")))
+
+	src := instantiated(t, f,
+		param(t, "result", "result", 1, data.ReadyDataState), false)
+
+	require.NoError(t, dataflow.PushOutput(ctx, f, oa, src, owner))
+
+	kept, ok := store.m["archive"]
+	require.True(t, ok)
+
+	rec, ok := kept.Value().Get(ctx).(map[string]any)
+	if !ok {
+		// the record's Get shape varies by implementation; assert through
+		// the value's own reader instead
+		st, err := kept.Value().(interface {
+			Field(context.Context, string) (data.Value, error)
+		}).Field(ctx, "status")
+		require.NoError(t, err)
+		require.Equal(t, "new", st.Get(ctx))
+
+		cl, err := kept.Value().(interface {
+			Field(context.Context, string) (data.Value, error)
+		}).Field(ctx, "clerk")
+		require.NoError(t, err)
+		require.Equal(t, "ann", cl.Get(ctx),
+			"the field the assignment did not touch survives")
+
+		return
+	}
+
+	require.Equal(t, "new", rec["status"])
+	require.Equal(t, "ann", rec["clerk"])
+}
+
+// TestStoreBackedSourceFeedsTheExpression is the review's second finding: a
+// store's data lives in the engine registry, not in scope, so an expression
+// over a store-backed association must resolve its sources there.
+func TestStoreBackedSourceFeedsTheExpression(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	store := newMemStore()
+	store.m["counter"] = datum(t, "counter", 41, data.ReadyDataState)
+
+	f := frame(t, oneStoreReg{store: store})
+
+	var saw any
+
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(ctx context.Context, src data.Source) (data.Value, error) {
+			d, err := src.Find(ctx, "counter")
+			require.NoError(t, err, "a store-backed source resolves")
+			saw = d.Value().Get(ctx)
+
+			return values.NewVariable(saw.(int) + 1), nil
+		}})
+
+	ia := inputAssoc(t, "counter", "amount",
+		data.WithDataStoreRef("store-1"),
+		data.WithTransformation(anExpr(t)))
+	dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+	require.NoError(t, dataflow.FillInput(ctx, f, ia, dst, nil, owner))
+	require.Equal(t, 41, saw)
+	require.Equal(t, 42, dst.Value().Get(ctx))
+}
+
+// TestOutputParameterWinsOverScope is the review's third finding: an output
+// association's expression exists to shape what the node JUST produced, so
+// the node's own output must win over a scope datum of the same name —
+// otherwise the expression reads the value it is about to overwrite.
+func TestOutputParameterWinsOverScope(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	f := frame(t, nil, datum(t, "note", "STALE", data.ReadyDataState))
+
+	var saw any
+
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(ctx context.Context, src data.Source) (data.Value, error) {
+			d, err := src.Find(ctx, "note")
+			require.NoError(t, err)
+			saw = d.Value().Get(ctx)
+
+			return values.NewVariable("done"), nil
+		}})
+
+	oa := outputAssoc(t, "note", "note",
+		data.WithTransformation(anExpr(t)))
+
+	// the node's output is called "note", exactly like the scope datum
+	src := instantiated(t, f,
+		param(t, "note", "note-item", "FRESH", data.ReadyDataState), false)
+
+	require.NoError(t, dataflow.PushOutput(ctx, f, oa, src, owner))
+	require.Equal(t, "FRESH", saw,
+		"the node's own output shadows the scope datum of the same name")
+}
+
+// TestShapedMovementsNameWhatTheyRead is the review's fourth finding: a
+// movement fact must say what it actually read — a store-backed
+// association's sources are store reads, a scope-backed one's are not.
+func TestShapedMovementsNameWhatTheyRead(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	f := frame(t, nil, datum(t, "order", 1, data.ReadyDataState))
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(context.Context, data.Source) (data.Value, error) {
+			return values.NewVariable(2), nil
+		}})
+
+	ia := inputAssoc(t, "order", "amount",
+		data.WithTransformation(anExpr(t)))
+	dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+	require.NoError(t, dataflow.FillInput(ctx, f, ia, dst, nil, owner))
+
+	mm := f.DataMovements()
+	require.Len(t, mm, 1)
+	require.False(t, mm[0].EngineStore,
+		"a scope-backed source is not a store read")
+	require.Empty(t, mm[0].StoreRef)
+}
+
 // TestExpressionAssociationFailsFast is SRD-097 T-7: the three ways an
 // expression-bearing association refuses, each naming what a reader needs.
 func TestExpressionAssociationFailsFast(t *testing.T) {

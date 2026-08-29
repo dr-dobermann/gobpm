@@ -2,6 +2,7 @@ package bpmn
 
 import (
 	"encoding/xml"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -731,7 +732,9 @@ func (p *parser) parseDataAssocChild(
 		return nil
 
 	case tagTransformation:
-		return p.assocExpr(&spec.transformation, spec.id, "transformation", se)
+		return p.assocExpr(
+			&spec.transformation, assocTag(spec.dir), spec.id,
+			"transformation", se)
 
 	case tagAssignment:
 		return p.parseAssignment(spec, se)
@@ -750,7 +753,7 @@ func (p *parser) parseDataAssocChild(
 // assocExpr reads one expression child of a data association — a
 // <transformation>, or an <assignment>'s <from> — into dst.
 func (p *parser) assocExpr(
-	dst **exprSpec, ownerID, role string, se xml.StartElement,
+	dst **exprSpec, ownerKind, ownerID, role string, se xml.StartElement,
 ) error {
 	body, err := p.readText(se)
 	if err != nil {
@@ -762,7 +765,7 @@ func (p *parser) assocExpr(
 	}
 
 	*dst = &exprSpec{
-		ownerKind: tagDataInputAssoc,
+		ownerKind: ownerKind,
 		ownerID:   ownerID,
 		role:      role,
 		id:        attrValue(se, "id"),
@@ -781,6 +784,16 @@ func (p *parser) parseAssignment(
 ) error {
 	as := assignSpec{toID: attrValue(se, "id")}
 
+	// The <from> of EACH assignment is its own expression, so each needs
+	// its own identity: the expression layer mints an id from its owner
+	// and role when the document declares none, and every assignment of
+	// one association shares both. The assignment's own id distinguishes
+	// them when it has one; its position does when it does not.
+	owner := as.toID
+	if owner == "" {
+		owner = fmt.Sprintf("%s:assignment[%d]", spec.id, len(spec.assignments))
+	}
+
 	for {
 		tok, err := p.token()
 		if err != nil {
@@ -797,7 +810,7 @@ func (p *parser) parseAssignment(
 				continue
 			}
 
-			if err := p.assignmentChild(&as, spec.id, t); err != nil {
+			if err := p.assignmentChild(&as, owner, t); err != nil {
 				return err
 			}
 
@@ -811,13 +824,23 @@ func (p *parser) parseAssignment(
 	}
 }
 
+// assocTag names the association tag a direction was written as, so a
+// refusal quotes the element the file actually contains.
+func assocTag(dir data.Direction) string {
+	if dir == data.Output {
+		return tagDataOutputAssoc
+	}
+
+	return tagDataInputAssoc
+}
+
 // assignmentChild reads one child of an <assignment>.
 func (p *parser) assignmentChild(
-	as *assignSpec, assocID string, se xml.StartElement,
+	as *assignSpec, owner string, se xml.StartElement,
 ) error {
 	switch se.Name.Local {
 	case tagFrom:
-		return p.assocExpr(&as.from, assocID, "assignment.from", se)
+		return p.assocExpr(&as.from, tagAssignment, owner, "from", se)
 
 	case tagTo:
 		body, err := p.readText(se)

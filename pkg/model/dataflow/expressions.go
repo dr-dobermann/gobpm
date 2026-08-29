@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -24,6 +25,13 @@ import (
 // other consumer reads through (§2.9.2).
 type frameSource struct {
 	f exec.Frame
+	// store is the engine Data Store the association is backed by, nil for
+	// a scope-backed one. A store's data lives in the engine registry, not
+	// in scope, so an expression over a store-backed association resolves
+	// its names THERE — otherwise the one association shape that reads a
+	// store could not read the value it is about (§10.4.2 gates on the
+	// sources it names, wherever they live).
+	store datastore.DataStore
 }
 
 // Find resolves name against the activity's data context: the scope the
@@ -44,12 +52,24 @@ type frameSource struct {
 // "order.total" reaches into a data object.
 func (s frameSource) Find(ctx context.Context, name string) (data.Data, error) {
 	return data.ResolvePath(ctx, name, func(head string) (data.Data, error) {
-		if d, err := s.f.GetData(head); err == nil {
-			return d, nil
-		}
-
+		// The node's own OUTPUT wins over a same-named datum in scope, and
+		// the order is the point: an output association's expression exists
+		// to shape what the node just produced, and a Data Object commonly
+		// carries the name of the thing the node produces. Resolving the
+		// scope first would hand the expression the value the association
+		// is about to overwrite.
 		if p := paramNamed(s.f.Outputs(), head); p != nil {
 			return p, nil
+		}
+
+		if s.store != nil {
+			if d, ok, err := s.store.Get(ctx, head); err == nil && ok {
+				return d, nil
+			}
+		}
+
+		if d, err := s.f.GetData(head); err == nil {
+			return d, nil
 		}
 
 		return nil, errs.New(
@@ -81,9 +101,29 @@ func shaped(a *data.Association) bool {
 // The engine rides the frame (SRD-097 FR-2) and is nil on a transient
 // evaluation frame; an association carrying an expression cannot execute
 // there, and says so naming itself rather than dereferencing nothing.
+// sourceFor builds the data context one association evaluates against: the
+// frame, plus the engine Data Store when the association is backed by one.
+// A store the registry cannot produce is left nil rather than failing here —
+// unreadySource reports it against the source that needs it, which names
+// something the reader can act on.
+func sourceFor(f exec.Frame, a *data.Association) frameSource {
+	src := frameSource{f: f}
+
+	if ref := a.DataStoreRef(); ref != "" {
+		if reg := f.DataStores(); reg != nil {
+			if store, err := reg.Store(ref); err == nil {
+				src.store = store
+			}
+		}
+	}
+
+	return src
+}
+
 func evaluate(
 	ctx context.Context,
 	f exec.Frame,
+	a *data.Association,
 	fe data.FormalExpression,
 	assocID, owner string,
 ) (data.Value, error) {
@@ -96,7 +136,7 @@ func evaluate(
 			errs.C(errorClass, errs.InvalidState))
 	}
 
-	v, err := ee.Evaluate(ctx, fe, frameSource{f: f})
+	v, err := ee.Evaluate(ctx, fe, sourceFor(f, a))
 	if err != nil {
 		return nil, errs.New(
 			errs.M("association %q of %s: expression evaluation failed",
@@ -130,8 +170,10 @@ func evaluate(
 // produced yet. Collapsing them into "not Ready" sends the reader looking
 // for the wrong thing.
 func unreadySource(f exec.Frame, a *data.Association) string {
+	src := sourceFor(f, a)
+
 	for _, name := range a.SourceNames() {
-		d, err := f.GetData(name)
+		d, err := src.Find(context.Background(), name)
 		if err != nil {
 			return fmt.Sprintf("source %q cannot be resolved here (%v)",
 				name, err)
@@ -163,7 +205,7 @@ func applyShape(
 	targetName, owner string,
 ) error {
 	if t := a.Transformation(); t != nil {
-		v, err := evaluate(ctx, f, t, a.ID(), owner)
+		v, err := evaluate(ctx, f, a, t, a.ID(), owner)
 		if err != nil {
 			return err
 		}
@@ -196,10 +238,7 @@ func applyAssignment(
 	targetName, owner string,
 	idx int,
 ) error {
-	head, rest, err := as.ToHead()
-	if err != nil {
-		return opErr("assignment #"+strconv.Itoa(idx)+" of "+owner, err)
-	}
+	head, rest := as.ToHead()
 
 	if head != targetName {
 		return errs.New(
@@ -210,7 +249,7 @@ func applyAssignment(
 			errs.C(errorClass, errs.InvalidObject))
 	}
 
-	v, err := evaluate(ctx, f, as.From(), a.ID(), owner)
+	v, err := evaluate(ctx, f, a, as.From(), a.ID(), owner)
 	if err != nil {
 		return err
 	}

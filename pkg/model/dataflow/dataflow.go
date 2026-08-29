@@ -161,8 +161,13 @@ func fillByShape(
 		return opErr("couldn't mark input "+dst.Name()+" of "+owner+" Ready", err)
 	}
 
+	// One fact per source, each labeled by what it actually is: a
+	// store-backed association reads the engine store, any other reads a
+	// per-instance Data Object, and recording the association's store ref
+	// against a Data Object would name a store nothing was read from.
+	store := ia.DataStoreRef()
 	for _, name := range ia.SourceNames() {
-		f.RecordDataMovement(false, false, name, ia.DataStoreRef())
+		f.RecordDataMovement(store != "", false, name, store)
 	}
 
 	return nil
@@ -227,11 +232,17 @@ func pushShapedToStore(
 		return err
 	}
 
-	// A Ready output instance always clones; said in the form the coverage
-	// gate reads.
-	datum, err := src.Clone()
+	// WHAT the shape writes into differs by shape, and the difference is
+	// the standard's own (§10.4.2). A transformation REPLACES the target,
+	// so a clone of the output instance is the right canvas — nothing of
+	// the store's previous value survives a replace. Assignments write
+	// INSIDE the target, so they need the store's CURRENT value: writing
+	// them into a clone of the source would both address a different shape
+	// and drop every field the assignments do not touch, because Put
+	// replaces the whole key.
+	datum, err := storeTarget(ctx, store, oa, src, ref, owner)
 	if err != nil {
-		return opErr("couldn't clone output "+src.Name()+" of "+owner+" for DataStore "+ref, err)
+		return err
 	}
 
 	if err := applyShape(
@@ -251,6 +262,46 @@ func pushShapedToStore(
 	f.RecordDataMovement(true, true, oa.TargetName(), ref)
 
 	return nil
+}
+
+// storeTarget is the value an output shape writes into: the store's
+// current value under the association's key when the shape writes inside
+// it, a clone of the produced output when the shape replaces it whole.
+//
+// A missing key is not an error for either: an assignment into a key the
+// store does not hold yet writes into the produced output's clone, which
+// is the only shape available — the alternative would be refusing the
+// first write to a store.
+func storeTarget(
+	ctx context.Context,
+	store datastore.DataStore,
+	oa *data.Association,
+	src *data.Parameter,
+	ref, owner string,
+) (data.Data, error) {
+	if len(oa.Assignments()) != 0 {
+		current, ok, err := store.Get(ctx, oa.TargetName())
+		if err != nil {
+			return nil, errs.New(
+				errs.M("couldn't read DataStore %q key %q for %s before "+
+					"writing its assignments", ref, oa.TargetName(), owner),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+
+		if ok {
+			return current, nil
+		}
+	}
+
+	// A Ready output instance always clones; said in the form the coverage
+	// gate reads.
+	datum, err := src.Clone()
+	if err != nil {
+		return nil, opErr("couldn't clone output "+src.Name()+" of "+owner+" for DataStore "+ref, err)
+	}
+
+	return datum, nil
 }
 
 // fillFromStore is FillInput's Data Store half: the value is read by the

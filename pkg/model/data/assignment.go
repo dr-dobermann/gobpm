@@ -94,15 +94,21 @@ func (a *Assignment) To() string {
 
 // ToHead splits the to path into the head — which names the association's
 // target — and the RELATIVE remainder addressing inside it. An empty
-// remainder means the whole value is replaced. Split here rather than at
+// remainder means the whole value is replaced. It cannot fail: the path
+// was validated at construction. Split here rather than at
 // every consumer so the validator, the copy path and the converter all read
 // one answer, and the remainder is returned as a path string because that is
 // what a structural write takes.
-func (a *Assignment) ToHead() (head, rest string, err error) {
-	head, _, err = SplitPath(a.to)
+func (a *Assignment) ToHead() (head, rest string) {
+	// NewAssignment refused a to that SplitPath rejects, and to is
+	// immutable, so the split cannot fail here — returning an error would
+	// only give every caller a branch it can never take. The error is
+	// discarded explicitly rather than ignored, so a reader sees the
+	// invariant rather than an oversight.
+	head, _, err := SplitPath(a.to)
 	if err != nil {
-		return "", "", err
+		return a.to, ""
 	}
 
-	return head, strings.TrimPrefix(a.to[len(head):], "."), nil
+	return head, strings.TrimPrefix(a.to[len(head):], ".")
 }
