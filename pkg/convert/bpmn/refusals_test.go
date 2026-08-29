@@ -8,48 +8,61 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/convert"
+	"github.com/dr-dobermann/gobpm/pkg/model/process"
 )
 
-// TestGlobalTaskFamilyIsRefusedAsADeferral covers SRD-089.C §FR-5.
+// TestGlobalTaskFamilyImports replaces the deferral SRD-089.C §FR-5 pinned.
 //
-// The distinction from an ordinary refusal is the point: a global task is
-// waiting on the server tier's definition registry, so the file is fine
-// and the reader should wait — where an unsupported element means the
-// converter does not map that shape at all.
-func TestGlobalTaskFamilyIsRefusedAsADeferral(t *testing.T) {
-	family := []string{
-		"globalTask", "globalUserTask", "globalManualTask",
-		"globalScriptTask", "globalBusinessRuleTask",
-	}
-
-	for _, tag := range family {
+// That refusal said the family was waiting on a registry of callable
+// definitions. The registry it was waiting for turned out to be the process
+// registry, which has always existed — ADR-023 v.5 §2.7 decides a global task
+// IS a callable process — so each member now imports as one (SRD-096 FR-6),
+// and the file that used to be refused is read whole.
+func TestGlobalTaskFamilyImports(t *testing.T) {
+	for _, tag := range []string{
+		"globalTask", "globalManualTask", "globalUserTask",
+	} {
 		t.Run(tag, func(t *testing.T) {
 			doc := fmt.Sprintf(`<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="%s">
   <bpmn:%s id="g1" name="Reusable"/>
-  <bpmn:process id="P" name="P">
+  <bpmn:process id="P" name="P" isExecutable="true">
     <bpmn:startEvent id="s1"/>
     <bpmn:endEvent id="e1"/>
     <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="e1"/>
   </bpmn:process>
 </bpmn:definitions>`, nsBPMN, tag)
 
-			_, err := importer{}.Import(context.Background(), strings.NewReader(doc))
-			if err == nil {
-				t.Fatalf("<%s> imported; it must be refused", tag)
+			res, err := importer{}.ImportDocument(
+				context.Background(), strings.NewReader(doc))
+			if err != nil {
+				t.Fatalf("ImportDocument: %v — the family imports now", err)
 			}
 
-			if !strings.Contains(err.Error(), "not supported yet") {
-				t.Errorf("refusal %q does not say the support is pending", err)
+			if len(res.Processes) != 2 {
+				t.Fatalf("Processes = %d, want 2: the declared one and the "+
+					"callable the global task became", len(res.Processes))
 			}
 
-			// NOT an UnsupportedElementError: a host branching on that type
-			// to mean "this shape is not mapped" would draw the wrong
-			// conclusion about a file that is perfectly fine.
-			var uee *convert.UnsupportedElementError
-			if errors.As(err, &uee) {
-				t.Errorf("<%s> refused as UnsupportedElementError; a deferral is "+
-					"a different claim about the file", tag)
+			// The callable is registered under the global task's OWN id, which
+			// is the key a callActivity names it by.
+			var callable *process.Process
+
+			for _, pr := range res.Processes {
+				if pr.ID() == "g1" {
+					callable = pr
+				}
+			}
+
+			if callable == nil {
+				t.Fatalf("no process with id g1; got %v",
+					[]string{res.Processes[0].ID(), res.Processes[1].ID()})
+			}
+
+			if n := len(callable.Nodes()); n != 3 {
+				t.Errorf("the callable holds %d nodes, want 3 — a None start, "+
+					"the task, a None end (§13.3.4 enters a called process by "+
+					"its None start)", n)
 			}
 		})
 	}
@@ -127,9 +140,6 @@ func TestTheThreeRefusalsAreDistinguishable(t *testing.T) {
 	}{
 		"not in the subset": {
 			doc(`<bpmn:participant id="part"/>`, ""), true, "unsupported element",
-		},
-		"waiting on a subsystem": {
-			doc("", `<bpmn:globalTask id="g" name="R"/>`), false, "not supported yet",
 		},
 		"forms do not correspond": {
 			doc(`<bpmn:complexGateway id="cg"/>`, ""), false, "cannot be imported",

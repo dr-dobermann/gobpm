@@ -62,29 +62,48 @@ func (imp importer) Import(ctx context.Context, r io.Reader) (*process.Process, 
 	// nothing existing breaks on a flag nobody sets — and a multi-process
 	// one returns the single process marked executable. Anything else is
 	// the ambiguity the document-level call exists for.
-	if len(procs) == 1 {
-		return procs[0], nil
-	}
+	//
+	// A GlobalTask's process is not a candidate at all: it is a callable
+	// something else invokes, so a document of one unmarked <process> and
+	// one <globalTask> still has exactly one answer (SRD-096 FR-9).
+	declared := make([]*process.Process, 0, len(procs))
+	executable := 0
 
 	var chosen *process.Process
 
-	executable := 0
-
 	for i, asm := range p.asms {
+		if asm.spec.synthesized {
+			continue
+		}
+
+		declared = append(declared, procs[i])
+
 		if asm.spec.executable {
 			executable++
 			chosen = procs[i]
 		}
 	}
 
+	if len(declared) == 1 {
+		return declared[0], nil
+	}
+
 	if executable == 1 {
 		return chosen, nil
+	}
+
+	if len(declared) == 0 {
+		return nil, errs.New(
+			errs.M("bpmn: the document declares no <process> — its %d "+
+				"callable(s) are invoked by one, not run on their own; use "+
+				"ImportDocument to read them", len(procs)),
+			errs.C(errorClass, errs.InvalidObject))
 	}
 
 	return nil, errs.New(
 		errs.M("bpmn: the document carries %d processes, %d marked "+
 			"isExecutable; Import returns THE process of a document — use "+
-			"ImportDocument for the set", len(procs), executable),
+			"ImportDocument for the set", len(declared), executable),
 		errs.C(errorClass, errs.InvalidObject))
 }
 
@@ -803,6 +822,12 @@ type procSpec struct {
 	// executable is <process isExecutable>, read only by Import's
 	// selection rule (SRD-089.I §4.2).
 	executable bool
+	// synthesized marks a process no <process> element declared — the one
+	// a GlobalTask becomes (SRD-096 FR-6). It is a callable, never the
+	// document's own executable process, so Import's pick ignores it: a
+	// file of one unmarked <process> and one <globalTask> is the ordinary
+	// case, and counting the callable would make it ambiguous.
+	synthesized bool
 }
 
 // newAssembly builds the pass-1 state the flow elements are parsed into.

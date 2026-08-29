@@ -65,12 +65,6 @@ const (
 	// meaning the same thing.
 	skipped
 
-	// notYet refuses an element that is waiting on a subsystem rather
-	// than on this converter. The same file imports unchanged once that
-	// subsystem lands, and saying so is the difference between "come
-	// back later" and "rewrite your diagram" (ADR-024 §2.13).
-	notYet
-
 	// notExpressible refuses an element whose XML form and model form do
 	// not correspond — the engine executes it, and no mechanical reading
 	// of the document can produce it. Neither waiting nor a later slice
@@ -114,17 +108,6 @@ var annotations = []string{tagExtensionElems}
 // refused — so an element appears in exactly one place and the three
 // cannot drift apart.
 var policy = map[elementKey]dispositionKind{
-	// The GlobalTask family is reuse BY REFERENCE: a task defined once at
-	// definitions level and invoked through a callActivity. Resolving that
-	// reference needs a registry of callable definitions, which is the
-	// server tier's, so these are refused as a deferral rather than as a
-	// verdict on the file.
-	{local: "globalTask", ctx: ctxDefinitions}:             notYet,
-	{local: "globalUserTask", ctx: ctxDefinitions}:         notYet,
-	{local: "globalManualTask", ctx: ctxDefinitions}:       notYet,
-	{local: "globalScriptTask", ctx: ctxDefinitions}:       notYet,
-	{local: "globalBusinessRuleTask", ctx: ctxDefinitions}: notYet,
-
 	// The complex gateway is executable here and unreachable from XML —
 	// see refusalReasons. The ad-hoc container is the same class for a
 	// different reason: its entry point is a Go closure.
@@ -275,9 +258,6 @@ func (p *parser) settle(ctx parseCtx, se xml.StartElement) error {
 
 		return p.skipElement()
 
-	case notYet:
-		return notSupportedYet(se)
-
 	case notExpressible:
 		return notExpressibleHere(se)
 	}
@@ -311,6 +291,13 @@ var definitionsParsers = func() map[string]defsParser {
 
 	for local := range defBuilders {
 		dp[local] = parseRootDefElem
+	}
+
+	// The GlobalTask family is derived from globalTaskTags rather than
+	// listed again, so the table that ROUTES the five tags and the table
+	// that says what each becomes cannot disagree about which tags exist.
+	for local := range globalTaskTags {
+		dp[local] = parseGlobalTaskElem
 	}
 
 	return dp
