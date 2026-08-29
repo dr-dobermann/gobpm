@@ -369,10 +369,18 @@ its id and name are the global task's, its declared contract is the global task'
 Event, the task, and a None End Event joined by two sequence flows. The task is
 built by **the same reading as its in-process counterpart**, so the family adds no
 second mapping of any construct and inherits unchanged whatever that counterpart
-refuses. The callable's `ioSpecification` serves twice — as the process's declared
-contract and as the task's own parameters — because it is one element in the
-standard: the callable *is* the task, and a contract the task cannot fill would be
-a promise nothing keeps. The elements synthesized inside the process take ids
+refuses. The callable's `ioSpecification` becomes the **process's** declared contract, and
+is not copied onto the task inside it: a task's parameters are filled by data
+associations, a callable declares none, and what the contract reads at completion
+is the root scope — which is where the task's own work lands.
+
+**A `<callActivity>`'s `<ioSpecification>` imports** as the parameters that carry
+data across the call boundary — the direct mapping, with no data associations.
+§10.4.1's containment list names only Tasks and CallableElements and so reads as
+excluding a Call Activity, but §10.4's own CallActivity row maps its
+DataInputs/DataOutputs onto the callable's, which presupposes it has them. Under
+the strict reading that row is unreachable and no imported document could hand
+data to a callable at all, so "Tasks" is read as the activities that do work. The elements synthesized inside the process take ids
 derived from the global task's id, and a document that already uses one of them is
 refused for the duplicate rather than silently rewired.
 

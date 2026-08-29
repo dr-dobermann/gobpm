@@ -4,6 +4,7 @@
     xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
     xmlns:tns="http://example.com/orders"
     xmlns:ext="http://example.com/shared"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
     targetNamespace="http://example.com/orders">
 
   <!-- Where the callables of another document live. A calledElement
@@ -13,18 +14,58 @@
       location="shared.bpmn"
       importType="http://www.omg.org/spec/BPMN/20100524/MODEL"/>
 
+  <!-- What the numbers crossing the call boundary are. An imported
+       parameter takes its type from the itemDefinition it names; without
+       one it is an empty record and accepts nothing. -->
+  <bpmn:itemDefinition id="num" structureRef="xsd:int"/>
+
   <!-- Reuse BY REFERENCE: declared once, called from anywhere, and with no
        flow of its own. The importer gives it one — a None start, this task,
        a None end — because §13.3.4 enters a called process by its None
        start, so a callable without one is not callable at all. -->
   <bpmn:globalBusinessRuleTask id="tax" name="Add tax"
-      camunda:decisionRef="tax"/>
+      camunda:decisionRef="tax">
+    <bpmn:ioSpecification id="tax.io">
+      <bpmn:dataInput id="tax.amount" name="amount" itemSubjectRef="num"/>
+      <bpmn:dataOutput id="tax.total" name="total" itemSubjectRef="num"/>
+      <bpmn:inputSet id="tax.is">
+        <bpmn:dataInputRefs>tax.amount</bpmn:dataInputRefs>
+      </bpmn:inputSet>
+      <bpmn:outputSet id="tax.os">
+        <bpmn:dataOutputRefs>tax.total</bpmn:dataOutputRefs>
+      </bpmn:outputSet>
+    </bpmn:ioSpecification>
+  </bpmn:globalBusinessRuleTask>
 
   <bpmn:process id="quote" name="quote" isExecutable="true">
+    <!-- The caller's own contract: the host binds "amount" at launch, and
+         "total" is what it promises to have produced by the end. -->
+    <bpmn:ioSpecification id="quote.io">
+      <bpmn:dataInput id="quote.amount" name="amount" itemSubjectRef="num"/>
+      <bpmn:dataOutput id="quote.total" name="total" itemSubjectRef="num"/>
+      <bpmn:inputSet id="quote.is">
+        <bpmn:dataInputRefs>quote.amount</bpmn:dataInputRefs>
+      </bpmn:inputSet>
+      <bpmn:outputSet id="quote.os">
+        <bpmn:dataOutputRefs>quote.total</bpmn:dataOutputRefs>
+      </bpmn:outputSet>
+    </bpmn:ioSpecification>
+
     <bpmn:startEvent id="s1"/>
 
     <!-- An UNQUALIFIED reference: the key the registry serves directly. -->
-    <bpmn:callActivity id="addTax" name="Add tax" calledElement="tax"/>
+    <bpmn:callActivity id="addTax" name="Add tax" calledElement="tax">
+      <bpmn:ioSpecification id="addTax.io">
+        <bpmn:dataInput id="addTax.amount" name="amount" itemSubjectRef="num"/>
+        <bpmn:dataOutput id="addTax.total" name="total" itemSubjectRef="num"/>
+        <bpmn:inputSet id="addTax.is">
+          <bpmn:dataInputRefs>addTax.amount</bpmn:dataInputRefs>
+        </bpmn:inputSet>
+        <bpmn:outputSet id="addTax.os">
+          <bpmn:dataOutputRefs>addTax.total</bpmn:dataOutputRefs>
+        </bpmn:outputSet>
+      </bpmn:ioSpecification>
+    </bpmn:callActivity>
 
     <!-- A QUALIFIED reference: "audit" in another document's namespace. The
          engine owns no convention for turning that into a registry key, so
@@ -36,7 +77,18 @@
          targetNamespace, so it collapses to the bare key and needs no
          resolver at all. -->
     <bpmn:callActivity id="again" name="Add tax again"
-        calledElement="tns:tax"/>
+        calledElement="tns:tax">
+      <bpmn:ioSpecification id="again.io">
+        <bpmn:dataInput id="again.amount" name="amount" itemSubjectRef="num"/>
+        <bpmn:dataOutput id="again.total" name="total" itemSubjectRef="num"/>
+        <bpmn:inputSet id="again.is">
+          <bpmn:dataInputRefs>again.amount</bpmn:dataInputRefs>
+        </bpmn:inputSet>
+        <bpmn:outputSet id="again.os">
+          <bpmn:dataOutputRefs>again.total</bpmn:dataOutputRefs>
+        </bpmn:outputSet>
+      </bpmn:ioSpecification>
+    </bpmn:callActivity>
 
     <bpmn:endEvent id="e1"/>
 

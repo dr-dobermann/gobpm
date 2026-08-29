@@ -4,8 +4,13 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
+
+// startAmount is what the host binds into the caller at launch; the imported
+// callable adds a fifth of it as tax and hands "total" back.
+const startAmount = 100.0
 
 // runQuote starts the imported caller and checks BOTH calls did their work.
 //
@@ -15,7 +20,8 @@ import (
 // produced is read back out and checked, which is the only evidence the
 // reference reached the right definition.
 func runQuote(ctx context.Context, engine *thresher.Thresher) error {
-	h, err := engine.StartLatest("quote")
+	h, err := engine.StartLatest("quote",
+		thresher.WithStartInput("amount", startAmount))
 	if err != nil {
 		return fmt.Errorf("start quote: %w", err)
 	}
@@ -30,8 +36,27 @@ func runQuote(ctx context.Context, engine *thresher.Thresher) error {
 			state, thresher.StateCompleted)
 	}
 
-	// The evidence that matters: WHICH definitions the three references
-	// reached. A completed instance proves the tokens moved; these counters
+	// The caller's own declared output, which only exists because the
+	// callable produced it and the direct mapping carried it back. This is
+	// the half that was unreachable from a document until the call activity
+	// was allowed to say what it passes.
+	total, err := h.Data().GetData("total")
+	if err != nil {
+		return fmt.Errorf("read total: %w — the callable's declared output "+
+			"should have crossed back into the caller", err)
+	}
+
+	got, err := data.As[float64](ctx, total.Value())
+	if err != nil {
+		return fmt.Errorf("total is not a number: %w", err)
+	}
+
+	if want := startAmount + startAmount/5; got != want {
+		return fmt.Errorf("total = %v, want %v — the call reached a "+
+			"different callable than the reference named", got, want)
+	}
+
+	// And WHICH definitions the three references reached. A completed instance proves the tokens moved; these counters
 	// prove they moved through the callables the document named.
 	if got := taxRuns.Load(); got != 2 {
 		return fmt.Errorf("the imported callable ran %d times, want 2 — "+
@@ -43,7 +68,9 @@ func runQuote(ctx context.Context, engine *thresher.Thresher) error {
 			"1 — the qualified reference did not reach shared.audit", got)
 	}
 
-	fmt.Print("\n  the unqualified call ran the imported callable\n")
+	fmt.Printf("\n  data crossed the call boundary: %v + tax = %v\n",
+		startAmount, got)
+	fmt.Print("  the unqualified call ran the imported callable\n")
 	fmt.Print("  the self-qualified call collapsed to the same key and ran " +
 		"it again\n")
 	fmt.Print("  the qualified call reached shared.audit through the " +

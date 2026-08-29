@@ -111,6 +111,20 @@ var memberRefTags = map[string]bool{
 // call activity, an event, a gateway) is the containment rule's to
 // refuse (§4.7a; semantics/data.md:96-98).
 var paramOwners = map[string]bool{
+	// A Call Activity carries them too, and the standard is in two minds
+	// about it: §10.4.1's containment list names only Tasks and
+	// CallableElements, while §10.4's own CallActivity row says its
+	// "DataInputs / DataOutputs are mapped to corresponding elements in the
+	// CallableElement without any explicit DataAssociation".
+	//
+	// The second rule presupposes what the first appears to forbid, and
+	// reading the first strictly makes the second dead letter: a call would
+	// be the one activity that cannot say what it passes, so no imported
+	// document could ever hand data to a callable. gobpm reads "Tasks" as
+	// the activities that do work — a Call Activity among them — because
+	// that is the reading under which both sentences mean something
+	// (ADR-024 v.7 §2.13; supersedes SRD-089.G §4.7a's containment reading).
+	tagCallActivity:     true,
 	tagTask:             true,
 	tagManualTask:       true,
 	tagUserTask:         true,
@@ -166,13 +180,14 @@ const (
 	tagTargetRef = "targetRef"
 )
 
-// ioSpecMisplaced refuses an <ioSpecification> on a node the standard
-// does not give one to — "Only Tasks and CallableElements (Processes,
-// GlobalTasks) MAY define DataInputs/DataOutputs … Embedded SubProcesses
-// MUST NOT define DataInputs/DataOutputs directly" (§10.4.1,
-// semantics/data.md:96-98). The standard's refusal, not the engine's: an
-// embedded container reaches data through its parent scope, and an
-// event's I/O is its own form, not an ioSpecification.
+// ioSpecMisplaced refuses an <ioSpecification> on a node the standard does
+// not give one to — "Embedded SubProcesses MUST NOT define
+// DataInputs/DataOutputs directly" (§10.4.1). The standard's refusal, not the
+// engine's: an embedded container reaches data through its parent scope, and
+// an event's I/O is its own form, not an ioSpecification.
+//
+// A Call Activity is NOT in this set, though a strict reading of §10.4.1's
+// containment list would put it there — see paramOwners for why.
 func ioSpecMisplaced(s *nodeSpec) error {
 	return errs.New(
 		errs.M("bpmn: <%s> %q carries an <ioSpecification>, which §10.4.1 "+

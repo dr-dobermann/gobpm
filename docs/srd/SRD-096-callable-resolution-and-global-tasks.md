@@ -126,18 +126,34 @@ registry lives and where the call is resolved.
   identically. Data associations are not read on the global form: a
   `CallableElement` is not an `Activity` and has none
   (`activities.md:646`).
-- **FR-7a — One `<ioSpecification>`, two roles.** The callable's
-  `<ioSpecification>` is parsed **once** (its own id and its sets' ids
-  claimed once, as `parseIOSpecification` and `parseIOSet` in `dataflow.go`
-  already do) and used twice: as the **process
-  contract** (FR-6) and as the **task's own parameters**. This is one
-  element in the standard — the `ioSpecification` belongs to the
-  `CallableElement`, and for a global task the callable *is* the task
-  (`activities.md:644-660`) — so a declared output is one a task can
-  actually produce: the task's output commits into the root scope under its
-  name, which is where the process contract reads it at completion
-  (SRD-093 FR-8). With no `<ioSpecification>` the task is built exactly as
-  a bare in-process task is.
+- **FR-7a — The `<ioSpecification>` is the PROCESS's contract, not the
+  task's.** The callable's `<ioSpecification>` becomes the synthesized
+  process's declared contract (FR-6) and is **not** copied onto the task
+  inside it.
+
+  *Corrected at M5, by running it.* The draft gave it to both, reasoning that
+  a declared output needs a node output parameter to fill it. That is true of
+  a task fed by **data associations** and false here: a callable declares
+  none, so parameters on the task are required-and-unfillable and the callable
+  faults on its own contract before doing any work. What the contract actually
+  needs at completion is the datum in the **root scope** under the declared
+  name — which is exactly where a task's work lands (a rule task's decision
+  row, a script task's outputs). The contract is fulfilled by what the task
+  DOES, not by what it declares.
+- **FR-7b — An imported `<callActivity>` declares what it passes.**
+  `<ioSpecification>` on a call activity imports as its call parameters, which
+  the instance loop binds into the child's root scope and reads back at
+  completion — the direct mapping of ADR-023 §2.7, with no data associations,
+  as §10.4 describes.
+
+  §10.4.1's containment list names only Tasks and CallableElements, and read
+  strictly it excludes a Call Activity — which is how SRD-089.G §4.7a read it.
+  But §10.4's own CallActivity row says its DataInputs/DataOutputs *"are
+  mapped to corresponding elements in the CallableElement"*, which presupposes
+  it has them, and under the strict reading that row is unreachable: no
+  imported document could hand data to a callable at all, and the whole
+  contract half of this SRD would be dead on arrival. gobpm reads "Tasks" as
+  the activities that do work.
 - **FR-8 — Derived ids.** The process takes the global task's id; the five
   elements inside it take **five derived ids** — `<id>.start`, `<id>.task`,
   `<id>.end`, `<id>.start-task`, `<id>.task-end` (the None Start, the task

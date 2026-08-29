@@ -222,3 +222,43 @@ func TestBoundaryEventOnACallActivity(t *testing.T) {
 
 	nodeByID(t, res, "b1")
 }
+
+// TestCallActivityCarriesItsParameters is SRD-096 M5a: an imported call
+// activity declares what it passes.
+//
+// §10.4.1's containment list names only Tasks and CallableElements, and read
+// strictly that would exclude a Call Activity — but §10.4's own CallActivity
+// row says its "DataInputs / DataOutputs are mapped to corresponding elements
+// in the CallableElement without any explicit DataAssociation", which
+// presupposes it has them. Under the strict reading that row is unreachable
+// and no imported document can hand data to a callable at all, so gobpm reads
+// "Tasks" as the activities that do work.
+func TestCallActivityCarriesItsParameters(t *testing.T) {
+	ca := callActivityOf(t, callDoc(
+		`<bpmn:callActivity id="ca" name="C" calledElement="rate">
+      <bpmn:ioSpecification id="ca.io">
+        <bpmn:dataInput id="ca.in" name="amount"/>
+        <bpmn:dataOutput id="ca.out" name="total"/>
+        <bpmn:inputSet id="ca.is">
+          <bpmn:dataInputRefs>ca.in</bpmn:dataInputRefs>
+        </bpmn:inputSet>
+        <bpmn:outputSet id="ca.os">
+          <bpmn:dataOutputRefs>ca.out</bpmn:dataOutputRefs>
+        </bpmn:outputSet>
+      </bpmn:ioSpecification>
+    </bpmn:callActivity>`))
+
+	// CallInputs/CallOutputs are what the instance loop hands the invoker:
+	// the names it binds into the child's root scope, and the names it reads
+	// back. They are the direct mapping §10.4 describes.
+	ins, outs := ca.CallInputs(), ca.CallOutputs()
+
+	if len(ins) != 1 || ins[0] != "amount" {
+		t.Errorf("CallInputs() = %v, want [amount] — the name the callable's "+
+			"own contract declares", ins)
+	}
+
+	if len(outs) != 1 || outs[0] != "total" {
+		t.Errorf("CallOutputs() = %v, want [total]", outs)
+	}
+}

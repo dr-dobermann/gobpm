@@ -138,7 +138,7 @@ func (p *parser) addGlobalTaskGraph(
 
 	asm.specs = append(asm.specs,
 		nodeSpec{se: synthElement(tagStartEvent), id: startID, name: startID},
-		nodeSpec{se: inner, id: taskID, name: name, body: body},
+		nodeSpec{se: inner, id: taskID, name: name, body: taskBody(body)},
 		nodeSpec{se: synthElement(tagEndEvent), id: endID, name: endID})
 
 	asm.flows = append(asm.flows,
@@ -155,4 +155,24 @@ func (p *parser) addGlobalTaskGraph(
 // scaffolding around it.
 func synthElement(tag string) xml.StartElement {
 	return xml.StartElement{Name: xml.Name{Space: nsBPMN, Local: tag}}
+}
+
+// taskBody is the callable's body as the TASK gets it: everything the file
+// wrote, minus the <ioSpecification>.
+//
+// The ioSpecification is the CALLABLE's contract, and it belongs to the
+// process — not to the task inside it. Handing it to the task as well reads
+// well and does not work: a task's parameters are filled by data
+// associations, a callable declares none, so a required input would be
+// declared and unfillable and the callable would fault on its own contract.
+//
+// Nothing is lost by leaving it off. What the contract needs at completion is
+// the datum in the ROOT SCOPE under the declared name, and that is exactly
+// where a task's work lands — a rule task's decision row, a script task's
+// outputs. The contract is fulfilled by what the task DOES, not by what it
+// declares.
+func taskBody(b nodeBody) nodeBody {
+	b.io = nil
+
+	return b
 }

@@ -143,11 +143,13 @@ func TestGlobalScriptTaskCarriesItsScript(t *testing.T) {
 // caller binds against, and as the task's own parameters, which is what
 // actually produces a declared output.
 //
-// This asserts the first. The second is not observable from here — an
-// activity's parameters have no exported accessor — and asserting it by
-// proxy would be worse than not asserting it: what matters is not that the
-// parameters exist but that the task can FILL the contract, which only a run
-// shows. examples/bpmn-callable is that run.
+// It belongs to the PROCESS, and not also to the task inside it. Copying it
+// onto the task was the draft's reading and it does not run: a task's
+// parameters are filled by data associations, a callable declares none, so a
+// required input would be declared and unfillable. What the contract reads at
+// completion is the root scope, which is where the task's work lands anyway
+// — proven by examples/bpmn-callable, where the value crosses the boundary
+// and comes back.
 func TestGlobalTaskContractIsTheProcessContract(t *testing.T) {
 	p := callableOf(t, globalDoc(
 		`  <bpmn:globalUserTask id="g1" name="Approve">

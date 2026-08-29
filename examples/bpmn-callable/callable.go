@@ -36,10 +36,26 @@ func decisions() rules.Engine {
 	reg := gorules.New()
 
 	if err := reg.Register("tax",
-		func(_ context.Context, _ service.DataReader) (rules.Row, error) {
+		func(ctx context.Context, r service.DataReader) (rules.Row, error) {
 			taxRuns.Add(1)
 
-			return rules.Row{"rate": values.NewVariable(20)}, nil
+			// The datum the CALLER passed, bound into this callable's own
+			// root scope at launch by the direct mapping §10.4 describes.
+			d, err := r.GetData("amount")
+			if err != nil {
+				return nil, fmt.Errorf("read amount: %w", err)
+			}
+
+			amount, err := data.As[float64](ctx, d.Value())
+			if err != nil {
+				return nil, fmt.Errorf("amount is not an int: %w", err)
+			}
+
+			// "total" is what this callable's contract promises, so the name
+			// is the contract — the caller reads it back by it.
+			return rules.Row{
+				"total": values.NewVariable(amount + amount/5),
+			}, nil
 		}); err != nil {
 		panic(fmt.Sprintf("register decision: %v", err))
 	}
