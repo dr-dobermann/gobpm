@@ -1,22 +1,10 @@
 package flow
 
 import (
-	"context"
-
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 )
 
 type (
-	// DataNode represents a BPMN data node interface.
-	DataNode interface {
-		Element
-
-		// Update recalculates the value of the DataNode according
-		// to values of incoming data association and updates value and
-		// state of outgoing data associations.
-		Update(ctx context.Context) error
-	}
-
 	// AssociationSource is implemented by Nodes which provides output parameters
 	// as sources for DataNode over outgoing data associations.
 	AssociationSource interface {

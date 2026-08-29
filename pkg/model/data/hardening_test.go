@@ -69,20 +69,21 @@ func TestAssociationErrorPaths(t *testing.T) {
 		data.WithTransformation(mockdata.NewMockFormalExpression(t)))
 	require.Error(t, err)
 
-	// UpdateSource with a nil ItemDefinition
+	// Find on an unknown source id
 	a, err := data.NewAssociation(newTarget(),
 		data.WithSource(src("s", 5, data.ReadyDataState)))
 	require.NoError(t, err)
-	require.Error(t, a.UpdateSource(context.Background(), nil, false))
 
-	// Find on an unknown source id
 	_, err = a.Find(context.Background(), "missing")
 	require.Error(t, err)
 
-	// calculate on a single non-Ready source → not-ready error surfaced via Value
+	// Find refuses a source that is not Ready — the availability gate an
+	// expression reads through (ADR-011 §2.4).
 	aNR, err := data.NewAssociation(newTarget(),
 		data.WithSource(src("nr", 7, data.UndefinedSrcState)))
 	require.NoError(t, err)
-	_, err = aNR.Value(context.Background())
+
+	_, err = aNR.Find(context.Background(), "nr")
 	require.Error(t, err)
+	require.False(t, aNR.IsReady())
 }

@@ -1,7 +1,6 @@
 package data
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,19 +15,6 @@ func TestAssociationNilTargetGuards(t *testing.T) {
 
 	require.False(t, a.IsReady())
 	require.Equal(t, "", a.TargetItemDefID())
-
-	_, err := a.Value(context.Background())
-	require.Error(t, err)
-}
-
-// TestAssociationCalculateNoSources covers calculate's no-sources guard: no
-// transformation and an empty source set. Unreachable through NewAssociation
-// (which requires a source or a transformation), it guards a would-be
-// index-out-of-range on SourcesIDs()[0] and returns a classified error instead.
-func TestAssociationCalculateNoSources(t *testing.T) {
-	a := &Association{} // nil transformation, empty sources
-
-	require.Error(t, a.calculate(context.Background()))
 }
 
 // TestAssocConfigValidateNilTarget covers Validate's target==nil guard.
@@ -39,22 +25,4 @@ func TestAssocConfigValidateNilTarget(t *testing.T) {
 	cfg := asscConfig{src: []*ItemAwareElement{{}}}
 
 	require.ErrorContains(t, cfg.Validate(), "target isn't defined")
-}
-
-// TestCalculateRefusesAssignments covers the legacy path's refusal
-// (SRD-097 FR-6): calculate has no expression engine, so an association
-// carrying the assignment shape is refused rather than plain-copied, which
-// would silently discard the declared mapping. Reached white-box because
-// flow.DataNode.Update — the only caller — has no runtime caller of its own.
-func TestCalculateRefusesAssignments(t *testing.T) {
-	require.NoError(t, CreateDefaultStates())
-
-	a := &Association{
-		assignments: []*Assignment{{to: "target"}},
-		target:      &ItemAwareElement{},
-	}
-
-	err := a.calculate(context.Background())
-	require.ErrorContains(t, err, "assignments")
-	require.ErrorContains(t, err, "expression engine")
 }

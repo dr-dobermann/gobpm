@@ -6,19 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
-)
-
-const (
-	// Recalculate indicates that data association should recalculate.
-	Recalculate bool = true
-	// NoRecalculate indicates that data association should not recalculate.
-	NoRecalculate = false
 )
 
 // ============================================================================
@@ -172,104 +164,15 @@ func NewAssociation(
 	return aCfg.newAssociation()
 }
 
-// UpdateSource updates association source and target with a new value.
-//
-// Part of the legacy flow.DataNode path (see calculate): an executing
-// process fills and pushes associations through pkg/model/dataflow.
-func (a *Association) UpdateSource(
-	ctx context.Context,
-	iDef *ItemDefinition,
-	recalculate bool,
-) error {
-	if iDef == nil {
-		return errs.New(
-			errs.M("empty itemDefinition"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	if err := a.updateSrc(ctx, iDef); err != nil {
-		return errs.New(
-			errs.M("source updating failed"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err),
-			errs.D(observability.AttrAssociationSourceID, iDef.ID()),
-			errs.D(observability.AttrAssociationID, a.ID()))
-	}
-
-	if err := a.target.UpdateState(UnavailableDataState); err != nil {
-		return errs.New(
-			errs.M("association target state update failed"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.D(observability.AttrAssociationID, a.ID()),
-			errs.E(err))
-	}
-
-	if recalculate {
-		if err := a.calculate(ctx); err != nil {
-			return errs.New(
-				errs.M("association target value recalculation failed"),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.D(observability.AttrAssociationID, a.ID()),
-				errs.E(err))
-		}
-	}
-
-	return nil
-}
-
-// updateSrc updates value and state of single source.
-func (a *Association) updateSrc(
-	ctx context.Context,
-	iDef *ItemDefinition,
-) error {
-	// find correlated source ItemAwareElement
-	iae, ok := a.sources[iDef.ID()]
-	if !ok {
-		return fmt.Errorf("source isn't found in association")
-	}
-
-	// update source and its status
-	if err := iae.Value().Update(ctx, iDef.structure.Get(ctx)); err != nil {
-		return fmt.Errorf("source updating failed: %w", err)
-	}
-
-	if err := iae.UpdateState(ReadyDataState); err != nil {
-		return fmt.Errorf("source state update failed: %w", err)
-	}
-
-	return nil
-}
-
-// IsReady checks if the Association's target is ready.
+// IsReady reports whether the association's target holds a Ready value. It
+// is the only read of the target's state on this type, and the association
+// keeps the target private.
 func (a *Association) IsReady() bool {
 	if a.target == nil {
 		return false
 	}
 
 	return a.target.State().Name() == ReadyDataState.Name()
-}
-
-// Value returns recalculated IDef's value of the association's target.
-//
-// Part of the legacy flow.DataNode path (see calculate): an executing
-// process fills and pushes associations through pkg/model/dataflow.
-func (a *Association) Value(ctx context.Context) (*ItemDefinition, error) {
-	if a.target == nil {
-		return nil,
-			errs.New(
-				errs.M("association #%s target isn't defined", a.ID()))
-	}
-
-	if err := a.calculate(ctx); err != nil {
-		return nil,
-			errs.New(
-				errs.M("target calculation failed"),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.D(observability.AttrAssociationID, a.ID()),
-				errs.E(err))
-	}
-
-	return a.target.Subject(), nil
 }
 
 // TargetItemDefID returns id of the Association's target ItemDefiniiton.
@@ -295,74 +198,6 @@ func (a *Association) SourcesIDs() []string {
 func (a *Association) HasSourceID(id string) bool {
 	_, ok := a.sources[id]
 	return ok
-}
-
-// calculate actualizes target based on current source value.
-// if there is no readness of source error isn't occurred and
-// associateion target state becomes Unavailable.
-// calculate returns error only if transformation or assignment are
-// failed.
-//
-// THIS IS THE LEGACY flow.DataNode PATH, not the one an executing process
-// runs. A running instance moves data through pkg/model/dataflow, which
-// evaluates BOTH expression shapes against the execution frame (ADR-011
-// §2.4, SRD-097). calculate reaches no frame, and therefore no expression
-// engine, so it can only evaluate what a FormalExpression evaluates on its
-// own — a transformation over the association's own sources.
-//
-// An assignment shape is REFUSED here rather than ignored. Doing the plain
-// copy instead would silently discard a declared mapping, which is the one
-// outcome the shapes exist to prevent; and quietly evaluating a different
-// shape than the document declared is how two evaluators drift (ADR-024
-// §2.16, one layer down). Nothing in the engine reaches this refusal —
-// flow.DataNode.Update has no runtime caller — and that is exactly why it
-// must not lie if something ever does.
-func (a *Association) calculate(ctx context.Context) error {
-	var srcV Value
-
-	if len(a.assignments) != 0 {
-		return fmt.Errorf(
-			"association #%s carries assignments, which this path does not "+
-				"evaluate: it has no expression engine (ADR-011 §2.4) — a "+
-				"running process moves data through the execution frame",
-			a.ID())
-	}
-
-	if a.transformation == nil {
-		if len(a.sources) == 0 {
-			return fmt.Errorf("no sources")
-		}
-
-		s := a.sources[a.SourcesIDs()[0]]
-
-		if s.dataState.name != ReadyDataState.name {
-			return fmt.Errorf(
-				"source #%s isn't in Ready state (actual state: %s)",
-				s.ItemDefinition().ID(), s.dataState.name)
-		}
-
-		srcV = s.Value()
-	} else {
-		var err error
-
-		srcV, err = a.transformation.Evaluate(ctx, a)
-		if err != nil {
-			return fmt.Errorf("target evaluation failed: %w", err)
-		}
-	}
-
-	if err := a.target.ItemDefinition().structure.Update(ctx,
-		srcV.Get(ctx)); err != nil {
-		return fmt.Errorf("target #%s update failed: %w",
-			a.target.subject.ID(), err)
-	}
-
-	if err := a.target.UpdateState(ReadyDataState); err != nil {
-		return fmt.Errorf("target #%s state updating failed: %w",
-			a.target.subject.ID(), err)
-	}
-
-	return nil
 }
 
 // --------------------------- Source interface -------------------------------

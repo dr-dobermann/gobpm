@@ -158,10 +158,15 @@ the association's own sources) and **refuses an assignment-bearing
 association**, because plain-copying one would silently discard a declared
 mapping and evaluating a different shape than the document declared is how
 two evaluators drift (ADR-024 §2.16, one layer down). `calculate`,
-`Value`, `UpdateSource` and `DataObject.Update` say in their doc comments
-which path they are and which one an executing process runs. Retiring the
-dead path outright is a public-interface removal (`flow.DataNode.Update`)
-and its own decision — left to its own issue rather than smuggled in here.
+M9 then deleted the path outright rather than leaving a bounded corpse
+behind: code with no value is not kept. `flow.DataNode`,
+`DataObject.Update`, `Association.UpdateSource`/`Value`/`calculate` and the
+`Recalculate`/`NoRecalculate` constants are gone — 527 lines removed against
+27 added. It is a removal from an exported surface, which at v0.11.0 carries
+no compatibility promise, and nothing in the repository, the guides or the
+examples used any of it. `Association.IsReady` survives: it is a plain state
+query, the only read of the target's state on the type, and live tests use
+it.
 
 **FR-7 — the importer maps all three constructs.** `<transformation>` and
 each `<assignment>`'s `<from>`/`<to>` are parsed for real (body + language,
@@ -416,6 +421,8 @@ No downward references.
 | M7 | `97ca4310` | the independent review's six findings (see §10.2) |
 | — | `1b21f016` | the downstream docs synced with the shapes |
 | M8 | `b3675717` | the gate's heartbeat, which was dead on macOS (see §10.2) |
+| — | `f08e987c` | §10.3 points at the run that verified the tip |
+| M9 | (below) | the dead `flow.DataNode` evaluator deleted (see §10.2) |
 
 ### §10.2 Where reality diverged from the draft
 
@@ -425,16 +432,31 @@ No downward references.
   construction — and inventing a second wiring style for the same kind of
   engine-global seam is worse than following the one that exists.
 
-- **FR-6 bounds the second evaluator instead of merging it.** The SRD asked
-  for one evaluator. `Association.calculate` belongs to the legacy
-  `flow.DataNode` path (`DataObject.Update`), which has **no runtime
-  caller** — only its own two package tests — and the dispatch reads the
-  engine off the execution frame, which that path has none of. So
-  `calculate` keeps the transformation branch it can honestly evaluate and
-  **refuses** an assignment-bearing association; the four entry points say
-  which path they are. Retiring the dead path is a public-interface removal
-  and belongs in its own issue rather than smuggled in here; the handover
-  carries the issue text, since this branch does not open one.
+- **FR-6 deletes the second evaluator rather than merging or bounding it.**
+  The SRD asked for one evaluator. M4 bounded the legacy one — it kept the
+  transformation branch it could honestly evaluate and refused an
+  assignment-bearing association — and deferred the removal as "a
+  public-interface change and its own decision". That deferral did not
+  survive review: code with no caller has no value, and keeping it means the
+  next reader must work out which of two evaluators is real. **M9 removes
+  it**: `flow.DataNode`, `DataObject.Update`,
+  `Association.UpdateSource`/`updateSrc`/`Value`/`calculate` and the
+  `Recalculate`/`NoRecalculate` constants, 527 lines out against 27 in.
+  Nothing outside the deleted code used any of it — no guide, no example, no
+  runtime path — and at v0.11.0 an exported-surface removal carries no
+  compatibility promise. `Association.IsReady` stays: it is a state query
+  independent of the evaluator, the only read of the target's state on the
+  type, and `pkg/model/events` asserts through it.
+
+  Three test suites had been asserting the deleted path's **side effects**
+  without saying so. `activities.TestTaskData` asserted a task input held
+  `100` after an association was merely bound — it held that only because
+  `ia.Value(ctx)`, called two lines earlier, ran `calculate` and wrote the
+  target. Binding moves no data, so the assertion now reads `42`, the
+  declared value, with the reason written down. `data_objects.TestUpdate`
+  tested the deleted method and is gone; the transformation mocks that
+  survive in that package are marked `Maybe()`, because a model-only test
+  carries an expression and never evaluates it.
 
 - **FR-7's multi-source needed two things the draft did not name.** The
   parse collapsed several parameter-side refs into one (`setEnd` overwrote

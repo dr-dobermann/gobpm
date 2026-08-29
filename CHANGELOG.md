@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **The legacy `flow.DataNode` association path** (SRD-097 M9). It had no
+  runtime caller — an executing process moves data through the execution
+  frame in `pkg/model/dataflow` — and only its own package tests reached it,
+  so it was two evaluators' worth of surface pretending to be one engine.
+  Removed: the `flow.DataNode` interface, `DataObject.Update`,
+  `Association.UpdateSource`, `Association.Value`, and the
+  `data.Recalculate` / `data.NoRecalculate` constants. `Association.IsReady`
+  stays — it is a state query, not part of the evaluator. Nothing in the
+  guides or examples used any of it. If you called one of these, the
+  replacement is the association's declarative surface
+  (`Transformation()`, `Assignments()`, `SourceNames()`, `TargetName()`)
+  plus letting the engine move the data.
+
 ### Added
 
 - **A data association computes** (ADR-011 v.10 / SRD-097, closes #328). BPMN

@@ -2,7 +2,6 @@
 package dataobjects
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strconv"
@@ -304,62 +303,10 @@ func (do *DataObject) ID() string {
 	return do.BaseElement.ID()
 }
 
-// ------------------------ flow.DataNode -------------------------------------
-
-// Update updates the DataObject state.
-//
-// The legacy flow.DataNode path: it recalculates the object from its
-// incoming association and pushes it into the outgoing ones. NOTHING in the
-// engine calls it — an executing process moves data through the execution
-// frame (pkg/model/dataflow, SRD-063/SRD-097) — so an association carrying
-// the assignment shape is refused here rather than silently mis-evaluated
-// (data.Association.calculate says why).
-func (do *DataObject) Update(ctx context.Context) error {
-	if do.incoming != nil {
-		if err := do.UpdateState(data.UnavailableDataState); err != nil {
-			return fmt.Errorf("DataObject state updating failed: %w", err)
-		}
-
-		v, err := do.incoming.Value(ctx)
-		if err != nil {
-			return fmt.Errorf(
-				"couldn't get value of incoming data association: %w",
-				err)
-		}
-
-		if err := do.ItemDefinition().
-			Structure().
-			Update(ctx, v.Structure().Get(ctx)); err != nil {
-			return fmt.Errorf("DataObject value updating failed: %w", err)
-		}
-
-		if err := do.UpdateState(data.ReadyDataState); err != nil {
-			return fmt.Errorf("DataObject state updating failed: %w", err)
-		}
-	}
-
-	if do.State().Name() != data.ReadyDataState.Name() {
-		return fmt.Errorf(
-			"DataObject state isn't Ready (actual state: %s)",
-			do.State().Name())
-	}
-
-	for _, oa := range do.outgoing {
-		if err := oa.UpdateSource(ctx, do.ItemDefinition(), data.Recalculate); err != nil {
-			return fmt.Errorf(
-				"association #%s source #%q updating failed: %w",
-				oa.ID(), do.ItemDefinition().ID(), err)
-		}
-	}
-
-	return nil
-}
-
 // ----------------------------------------------------------------------------
 
 // interfaces test for DataObject.
 var (
-	_ flow.Element  = (*DataObject)(nil)
-	_ data.Data     = (*DataObject)(nil)
-	_ flow.DataNode = (*DataObject)(nil)
+	_ flow.Element = (*DataObject)(nil)
+	_ data.Data    = (*DataObject)(nil)
 )
