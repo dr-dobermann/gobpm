@@ -396,7 +396,105 @@ No downward references.
 
 ## §10 Implementation summary
 
-_Filled at landing._
+### §10.1 Milestones as landed (branch `feat/association-expressions`)
+
+| M | Commit | Landed |
+|---|---|---|
+| doc | `a387c087`, `e068c077` | ADR-011 v.10, and the correction the SRD review found in it |
+| doc | `c344dbfd` | this document |
+| M1 | `314cdc69` | `data.Assignment`, `WithAssignments`, the shape and cardinality rules; T-1, T-2 |
+| M2 | `44ff0df3` | `exec.Frame.ExpressionEngine()`, wired through `instanceScope`; T-3 |
+| M3 | `0dc125ea` | the dispatch: `frameSource`, `evaluate`, `applyShape`, all four copy paths; T-4…T-8 |
+| M3a | `a7c870c0` | a pre-existing flake in the transaction restore captures (see §10.2) |
+| — | `dacf74b8` | the defensive `opErr` returns on one line, the form the coverage gate reads |
+| M4 | `4cc6215d` | the legacy evaluator bounded; T-6's refusal |
+| M5 | `33f1e713` | the importer maps all three shapes; the three refusals retired; T-9…T-11 |
+| M6 | `44f645b8` | `examples/association-expressions`, both shapes end to end |
+| M6a | `99119659` | the diff-coverage gaps closed |
+| — | `a70c7cc5` | master merged (PR #358, SRD-090.D) |
+
+### §10.2 Where reality diverged from the draft
+
+- **FR-2 is a setter, not a constructor parameter.** §3.2 said `NewFrame`
+  would take the engine. It does not take the Data Store registry either —
+  `instanceScope.openFrameAt` wires that with `SetDataStores` after
+  construction — and inventing a second wiring style for the same kind of
+  engine-global seam is worse than following the one that exists.
+
+- **FR-6 bounds the second evaluator instead of merging it.** The SRD asked
+  for one evaluator. `Association.calculate` belongs to the legacy
+  `flow.DataNode` path (`DataObject.Update`), which has **no runtime
+  caller** — only its own two package tests — and the dispatch reads the
+  engine off the execution frame, which that path has none of. So
+  `calculate` keeps the transformation branch it can honestly evaluate and
+  **refuses** an assignment-bearing association; the four entry points say
+  which path they are. Retiring the dead path is a public-interface removal
+  and was filed as its own issue rather than smuggled in here.
+
+- **FR-7's multi-source needed two things the draft did not name.** The
+  parse collapsed several parameter-side refs into one (`setEnd` overwrote
+  `paramRef`), so an OUTPUT association silently lost its extra sources —
+  `extraParams` now keeps them, and they resolve to item ids because that is
+  what `Associate*` matches on. And an INPUT association's extra sources
+  reach the model as `data.WithSource` options through M5's `shape` tail, for
+  which `DataObject` and `DataStoreReference` gained `ItemAware()`. Neither
+  needed a new attach API. A first attempt fed `extraSources` to
+  `AssociateSource` — wrong on both counts, since on an output association
+  those refs are extra *targets*, which §10.4.1 forbids and the converter now
+  refuses.
+
+- **The item-match rule was too broad.** §10.4.1's "the two ends'
+  itemDefinitions must match" holds for a plain copy only: a transformation
+  replaces the target and an assignment writes what its own expression
+  produced, so neither is a copy between two items. The converter's check now
+  skips a shaped association.
+
+- **M6 forced two engine changes no unit test could have demanded.** An
+  expression now resolves the **node's own parameters** as well as the scope:
+  an output association's `from` exists to shape what the node just produced,
+  and at that moment the output is a frame instance, which the scope does not
+  hold by name — so `from` could read anything except the value it was
+  written for. And an unavailable source now says **which** source and
+  **why**: the check returned a bool and the caller reported "not Ready" for
+  both a name the data context does not hold (a modeling error) and a datum
+  not produced yet. They need different fixes, and the conflation cost a
+  debugging round.
+
+- **Two pre-existing test flakes were fixed** (the no-pre-existing-errors
+  rule). `atHold`, the capture predicate the transaction restore tests share
+  (mine, from SRD-095), matched a shape that is also true *before* the
+  activity ledgers, so under load the capture returned a document with no
+  ledger entry; it now requires a track parked at the wait.
+  `TestCompositeHostReportsHostingScope` found the host track and then
+  asserted `TrackHostingScope` immediately, which is a window the flip has
+  not always entered; the state is now part of the predicate.
+
+- **The merge brought reserved data names** (`pkg/model/data/reserved.go`,
+  SRD-090.D): names the engine owns and a model may not declare. They compose
+  with this landing without a change — an assignment's `to` head must equal
+  its association's target name, and a target cannot *be* a reserved name, so
+  those paths are refused transitively; a `from` expression, meanwhile, can
+  now read `loopCounter` and its siblings through the frame.
+
+- **A model constraint worth knowing.** An association keys its sources by
+  `ItemDefinition` id, so two sources of the *same* item type collide with
+  the model's own "duplicate source" error. Distinct item definitions per
+  source is the common case and the one the tests and the example use.
+
+### §10.3 Verification
+
+`make ci` at `a70c7cc5` (the merge of master): **PASS — 14/14 steps** in
+8m54s (`.ci/last-run.json`), race tests green, diff-coverage **98.4% of 437
+changed coverable lines** (min 95%), govulncheck clean, **53/53** examples
+executed end to end by the run sweep, `make lock-sweep` clean, `make
+link-check` clean.
+
+Every §6 test row exists and passes; the twelve are spread across
+`pkg/model/data`, `internal/scope`, `pkg/model/dataflow` and
+`pkg/convert/bpmn`. The FR→test traceability is complete: FR-1/FR-5 → T-1,
+T-2; FR-2 → T-3; FR-3/FR-4 → T-4…T-7; FR-6 → the legacy path's refusal test;
+FR-7/FR-8 → T-9…T-11 plus the eight importer refusals; NFR-2 → T-8 and the
+untouched SRD-063/068/094 suites.
 
 ## Open questions
 
