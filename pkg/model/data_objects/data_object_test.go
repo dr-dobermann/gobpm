@@ -32,6 +32,12 @@ func TestNew(t *testing.T) {
 			_, err = dataobjects.New("a/b", nil, nil)
 			require.Error(t, err)
 
+			// a RESERVED runtime name: the engine publishes these itself,
+			// so a model that declared one would collide with the value the
+			// engine puts there (SRD-090.D FR-2).
+			_, err = dataobjects.New(data.IterationNumberName, nil, nil)
+			require.ErrorContains(t, err, data.IterationNumberName)
+
 			// no IAE
 			_, err = dataobjects.New("no IAE", nil, nil)
 			require.Error(t, err)

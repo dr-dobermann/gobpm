@@ -141,9 +141,16 @@ pages):
 | `WithCompletionCondition(expr)` | short-circuit the remaining instances when the condition holds. |
 | `WithBehavior(b)` | event-throwing behavior on instance completion — `BehaviorAll` (default, none) / `BehaviorNone` / `BehaviorOne` / `BehaviorComplex`. |
 
+## What an iteration publishes
+
+Both kinds publish runtime values a model can read — which instance is running,
+how many there are, how many are done. The names, their addresses and their
+lifetimes are one table: [Iteration runtime variables](runtime-variables.md).
+
 ## See also
 
 - Members: [Standard Loop](standard-loop.md) · [Multi-Instance](multi-instance.md)
+- [Iteration runtime variables](runtime-variables.md) — what an iteration publishes
 - Related guides: [Activities taxonomy](../tasks/index.md) · [Embedded Sub-Process](../subprocesses/embedded.md)
 - Design: [ADR-025 — Activity Iteration: Standard Loop & Multi-Instance](../../design/ADR-025-activity-iteration-loop-and-multi-instance.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/activities`

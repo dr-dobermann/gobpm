@@ -3,7 +3,6 @@ package snapshot
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -366,29 +365,34 @@ func checkUncorrelatedParallelMessage(n flow.Node) error {
 		return nil
 	}
 
-	// A CAPABILITY-PARKED ACTIVITY cannot fan out at all yet. A human task
-	// and an external-worker Service Task park through their own capability
-	// rather than an event subscription, and the identity that addresses the
-	// parked work — `track.taskID` — is one slot on the host track. N
-	// instances parking at once therefore announce ONE task between them:
-	// measured, a three-item parallel Multi-Instance over a User Task
-	// announces a single task and the process runs to completion without
-	// anyone completing it. Three approvals modeled, none performed.
+	// A CAPABILITY-PARKED FAN-OUT is one step from working, and the reason it
+	// is still refused is now narrow.
 	//
-	// That is the silent wrong answer the blanket refusal used to prevent,
-	// and it was reachable between SRD-090.B M3 (which deleted that refusal)
-	// and this guard. A SEQUENTIAL iteration is unaffected — one instance
-	// parks at a time, each pass registers its own entry, and each requires
-	// its own completion.
-	if parksOnCapability(n) {
+	// Its instances DO classify and park their own nodes, mint their own
+	// identities and announce one task each; a completion reaches the
+	// instance that owns it. What is missing is RESTORE: the identities are
+	// recorded per instance but a rehydrated fan-out does not take them back,
+	// so a dehydration part-way through the approvals leaves every
+	// outstanding task handle naming nothing.
+	//
+	// That matters more here than for most waits, because a human task is the
+	// wait most likely to dehydrate — a fan-out of approvals is exactly the
+	// case that sits idle for days. Refused until the identities survive the
+	// round trip.
+	// A PARALLEL fan-out over EXTERNAL-WORKER work still has one identity for
+	// N instances (see parksOnWorker), so N of them would dispatch a single
+	// job and the rest would complete without anyone doing the work — the
+	// silent wrong answer this guard exists to prevent. It names the
+	// sequential shape, which is correct: one instance dispatches at a time
+	// and each pass is reported on its own.
+	if parksOnWorker(n) {
 		return errs.New(
-			errs.M("activity %q is a PARALLEL Multi-Instance over work that "+
-				"parks outside the event system (a User Task or an "+
-				"external-worker Service Task): its instances would share "+
-				"one task identity, so only one is addressable and the rest "+
-				"complete without being done. Make the Multi-Instance "+
-				"sequential — one instance parks at a time there, and each "+
-				"pass is completed on its own", n.Name()),
+			errs.M("activity %q is a PARALLEL Multi-Instance over an "+
+				"external-worker Service Task: its instances would share one "+
+				"job identity, so a single report would complete work nobody "+
+				"performed. Make the Multi-Instance sequential — one instance "+
+				"dispatches at a time there, and each pass is reported on its "+
+				"own", n.Name()),
 			errs.C(errorClass, errs.InvalidObject),
 			errs.D(observability.AttrNodeID, n.ID()))
 	}
@@ -412,25 +416,6 @@ func checkUncorrelatedParallelMessage(n flow.Node) error {
 			"there, so each pass consumes one message", n.Name()),
 		errs.C(errorClass, errs.InvalidObject),
 		errs.D(observability.AttrNodeID, n.ID()))
-}
-
-// parksOnCapability reports whether executing this node parks through a
-// capability rather than an event subscription — a human task, or a Service
-// Task dispatched to an external worker. Both are addressed by a task
-// identity the host track holds one of.
-func parksOnCapability(n flow.Node) bool {
-	if _, human := n.(interactor.HumanTask); human {
-		return true
-	}
-
-	ew, ok := n.(tasks.ExternalWorker)
-	if !ok {
-		return false
-	}
-
-	_, isWorker := ew.WorkerTopic()
-
-	return isWorker
 }
 
 // parallelMultiInstance reports the node's Multi-Instance characteristics
@@ -463,6 +448,30 @@ func hasMessageTrigger(en flow.EventNode) bool {
 	}
 
 	return false
+}
+
+// parksOnWorker reports whether executing this node parks by dispatching a job
+// to an EXTERNAL WORKER — a wait addressed by a job identity rather than an
+// event definition.
+//
+// A human task used to be here too, and no longer is: its identity is held per
+// instance now, so a fan-out over one announces a task per instance and each is
+// completed on its own. A worker job is still keyed to the TRACK — `ls.jobs`
+// maps a job id to a track, with no ordinal — so N instances of one activity
+// would share a single job and the rest would finish without anyone doing the
+// work.
+//
+// A deferral, not a limit: the mechanism the human fan-out landed is what this
+// path needs, one register down. Tracked by #355.
+func parksOnWorker(n flow.Node) bool {
+	ew, ok := n.(tasks.ExternalWorker)
+	if !ok {
+		return false
+	}
+
+	_, isWorker := ew.WorkerTopic()
+
+	return isWorker
 }
 
 // declaresIterationCorrelation reports whether the node says how a

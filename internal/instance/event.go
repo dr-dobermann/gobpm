@@ -18,9 +18,21 @@ type trackEvent struct {
 	compRef      string
 	mergedIDs    []string
 	compSnapshot []data.Data
-	succs        []successor
-	msgDefIDs    []string
-	condDefs     []*events.ConditionalEventDefinition
+
+	// iterLocal is the ITERATION's own data, carried with an announcement so
+	// its eligibility is resolved in the data context that iteration runs in
+	// (ADR-025 §2.15, SRD-090.D FR-10).
+	//
+	// It has to travel: eligibility is assessed ONCE, when the task is
+	// announced, and at that moment the iteration has no frame — parking
+	// happens before its node executes. Without it a performer expression
+	// resolves at the activity's scope, where the per-iteration element is
+	// not visible, and every iteration of a fan-out names the same people or
+	// nobody at all.
+	iterLocal []data.Data
+	succs     []successor
+	msgDefIDs []string
+	condDefs  []*events.ConditionalEventDefinition
 	// iterProc names the DECORATOR a delivery arrived through, when the
 	// subscriber was an iterated activity rather than a track (ADR-006
 	// §2.9.5). nil for every other delivery, which is every delivery today:
@@ -29,6 +41,12 @@ type trackEvent struct {
 	// there.
 	iterProc iterProcessor
 	changes  []data.Change
+	// ord is the INSTANCE a capability wait belongs to, when the parking
+	// activity iterates (ADR-020 §2.12). Zero for a lone activity, which is
+	// also instance 0's ordinal — the two are indistinguishable here and do
+	// not need distinguishing: a lone activity has exactly one execution, so
+	// "instance 0" names it correctly.
+	ord      int
 	compWait bool
 	kind     trackEventKind
 }

@@ -79,6 +79,33 @@ type Document struct {
 	// in the case it exists for: a LATER node asking who performed an earlier task.
 	CompletedBy map[string]string `json:"completed_by,omitempty"`
 
+	// IterationOwners records who completed each INSTANCE of an iterated
+	// activity — activity id → (ordinal → user id) (ADR-025 §2.15,
+	// SRD-090.D FR-4). It rides the checkpoint for CompletedBy's reason, and
+	// more so: a fan-out over human work exists because N approvals take
+	// days, so dehydration is its ordinary state rather than an edge one. A
+	// register rebuilt empty would answer "nobody did any of it" for exactly
+	// the workload it was built for.
+	//
+	// CompletedBy cannot stand in for it: that keys by node, so an iterated
+	// activity has one entry however many instances ran.
+	//
+	// Empty on a checkpoint written before this field existed, which restores
+	// as it did then: no answer rather than a wrong one.
+	IterationOwners map[string]map[string]string `json:"iteration_owners,omitempty"`
+
+	// Iterations records what each iterated activity DID — activity id →
+	// its account (ADR-025 §2.9.2, SRD-090.D FR-4). It rides the checkpoint
+	// for IterationOwners' reason: the register answers a question asked
+	// AFTER the activity finished, by a node that may well be running in a
+	// rebuilt instance, and one rebuilt empty would report an activity that
+	// processed three items as having processed none.
+	//
+	// It is not TrackRecord.Iteration, which is a live activity's POSITION —
+	// where a fan-out has got to, so it can resume. This is the account it
+	// leaves behind, and it outlives the track that produced it.
+	Iterations map[string]ActivityIteration `json:"iterations,omitempty"`
+
 	InstanceID string `json:"instance_id"`
 	// ParentID/CallNodeID record child linkage informationally (a child
 	// instance is its own record; re-linking a live call is SRD-071+).
@@ -270,9 +297,68 @@ type MIRecord struct {
 // (ADR-025 §2.4 fixes cardinality once, so the collection cannot
 // shift underneath).
 type IterationInstance struct {
+	// Eligible is the verdict this iteration's announcement RESOLVED — who
+	// may act on its task (ADR-020 §2.7).
+	//
+	// It rides the checkpoint because eligibility is assessed ONCE, at the
+	// announcement, in the data context of the iteration being announced. A
+	// restore cannot recompute it: the element the iteration was seeded with
+	// is frame-local to an execution that no longer exists, so a re-resolution
+	// reads the host's scope instead and a performer expression naming "the
+	// reviewer this one is for" resolves to nobody — locking every holder out
+	// of the task their inbox is still showing them.
+	//
+	// Optional: a document written before this field restores as it always
+	// did, resolving at the host's scope, which is all it ever recorded.
+	Eligible *TaskEligibility `json:"eligible,omitempty"`
+
 	State   string `json:"state"` // running | waiting | completed
 	ChildID string `json:"child_id,omitempty"`
-	Ordinal int    `json:"ordinal"`
+
+	// TaskID is this instance's parked-work identity, when it is waiting on
+	// a capability rather than an event — a human task, an external worker
+	// (ADR-020 §2.12).
+	//
+	// Recorded per INSTANCE because the identity is per instance: a fan-out
+	// holds N of them, and the track's single slot can carry only one. The id
+	// outlives the instance's residency in the distributor's inbox, so a
+	// restore that minted fresh ones would invalidate every reference a
+	// person or a UI is holding — the same rule SRD-071 FR-8 states for a
+	// lone task, at iteration granularity.
+	TaskID string `json:"task_id,omitempty"`
+
+	Ordinal int `json:"ordinal"`
+}
+
+// ActivityIteration is what one iterated activity DID: the shape it ran in,
+// how many instances it froze at, and how they ended. The durable half of
+// BPMN's §2.9 counts, which end with the activation they describe.
+//
+// Not to be read as IterationRecord below, which is a live activity's
+// POSITION — where it has got to, so it can resume. This is the account it
+// leaves behind, and it outlives the track that produced it.
+type ActivityIteration struct {
+	Kind       string `json:"kind"`
+	Total      int    `json:"total"`
+	Completed  int    `json:"completed"`
+	Terminated int    `json:"terminated"`
+}
+
+// TaskEligibility is a resolved assignment triad, as the announcement froze it
+// (ADR-020 §2.7). Identifier sets only — the expressions that produced them are
+// the model's and are not persisted.
+type TaskEligibility struct {
+	Assignee        []string `json:"assignee,omitempty"`
+	CandidateUsers  []string `json:"candidate_users,omitempty"`
+	CandidateGroups []string `json:"candidate_groups,omitempty"`
+	Roles           []string `json:"roles,omitempty"`
+
+	// the Declared flags: a slot resolving to nobody and a slot the task does
+	// not carry authorize differently, so which it was has to survive.
+	AssigneeDeclared        bool `json:"assignee_declared,omitempty"`
+	CandidateUsersDeclared  bool `json:"candidate_users_declared,omitempty"`
+	CandidateGroupsDeclared bool `json:"candidate_groups_declared,omitempty"`
+	RolesDeclared           bool `json:"roles_declared,omitempty"`
 }
 
 // IterationRecord is an iterated activity's live instances (Schema 6,

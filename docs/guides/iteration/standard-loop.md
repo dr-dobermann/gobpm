@@ -9,7 +9,9 @@ A **Standard Loop** re-runs a single activity in place, one pass at a time, for
 as long as a boolean condition holds — the BPMN counterpart of a `while` or
 `do…while` (§13.3.6). You mark an activity with loop characteristics instead of
 drawing the same task twice; the engine drives the passes and publishes a
-0-based `loopCounter` the condition and the body can read. This page is the
+0-based `loopCounter` the condition and the body can read (with the rest of
+what a loop publishes — see
+[Iteration runtime variables](runtime-variables.md)). This page is the
 developer reference — the type, its constructor, the marker contract, its
 options, and its runtime behavior.
 
@@ -176,6 +178,26 @@ Behavior worth knowing:
   Task, Sub-Process, or Call Activity. An **Event Sub-Process cannot** carry
   loop characteristics — it is instantiated by its event trigger, not reached by
   a token and iterated.
+
+## What the passes produce
+
+By default the last write wins, which for a loop is the useful behaviour: pass
+*k* reads what pass *k-1* committed, so the loop accumulates in the enclosing
+scope. That fold is the shape's whole point, and `WithLoopResultReduce(name)`
+names it — it changes nothing, and exists so a model can state the intent it is
+relying on rather than leaving a reader to rediscover it by experiment.
+
+Where every pass's own result matters, declare one:
+
+- `WithLoopResultArray(name, item)` — indexed by pass ordinal.
+- `WithLoopResultMap(name, item, key, …)` — keyed by an expression evaluated in
+  the completing pass's own frame.
+
+Both are an **engine extension**: BPMN gives a Standard Loop no output
+aggregation at all, only a Multi-Instance. The rules — an empty key refuses, a
+duplicate overwrites unless `ErrorOnKeyRewrite`, and the assembled value
+publishes once at completion — are the same either way, and are written up
+under [Multi-Instance](multi-instance.md#what-the-iterations-produce).
 
 ## Restarts
 

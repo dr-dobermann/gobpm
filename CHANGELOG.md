@@ -84,6 +84,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs the whole contract end to end, including publishing the engine's
   `RUNTIME/STARTED_AT` under a declared output.
 
+- **A parallel Multi-Instance over a User Task** (SRD-090.D FR-10, ADR-025
+  §2.15/§2.15a, ADR-020 §2.12, part of #340). Three approvals offered at once
+  are three addressable tasks: each is announced, claimed and completed on its
+  own identity — the identity its holder keeps across a dehydration — and the
+  activity finishes only when every one of them has actually been done.
+
+  Each iteration resolves its OWN performer, in the data context it runs in:
+  an assignee expression reading the element that iteration was seeded with
+  names a different person per iteration. Eligibility is assessed once, at the
+  announcement, and checked from that verdict afterwards — including across a
+  dehydration, since the verdict rides the checkpoint beside the identity it
+  was announced under. Resolving it again on the way back would read the
+  host's scope rather than the iteration's, where a per-iteration performer
+  resolves to nobody and locks every holder out of their own task.
+
+  The host is the node to everything outside it. It holds the N waits and
+  applies their completions **serially, on its own goroutine**: the iterations
+  are state it owns rather than goroutines running a node they share. That is
+  what keeps one approver's outputs out of another iteration's frame, and it
+  is the arrangement ADR-025 §2.15a prescribes — the race is removed rather
+  than synchronised.
+
+  A fan-out that holds no wait is unaffected: a Script or Service Task
+  iteration does its work rather than waiting for somebody, and those still
+  overlap.
+
+- **A model declares what its iterations produce** (SRD-090.D FR-7/FR-8,
+  ADR-025 §2.6.1, part of #340). The default is unchanged and stated plainly:
+  last write wins, which makes a sequential iteration a fold and a parallel one
+  order-dependent. A model that needs every iteration's result now says so and
+  gets a deterministic one.
+
+  A **map** keys results by a per-iteration expression, evaluated in the
+  completing iteration's own frame — so the key can use something that
+  iteration produced, an approver's answer being the motivating case. An empty key
+  refuses; a duplicate overwrites by default, or faults naming both ordinals
+  and the key under `ErrorOnKeyRewrite`. A Standard Loop also gains an
+  **array** indexed by ordinal, which BPMN does not give it; a Multi-Instance
+  keeps the standard's own `loopDataOutputRef` assembly for that.
+  **reduce** names the default so a model can state the fold it relies on.
+
+  A declared result publishes ONCE, at activity completion — never
+  incrementally, so nothing can read a half-assembled collection.
+
+- **An iterating activity publishes which iteration is running** (SRD-090.D,
+  ADR-025 §2.9.2, part of #340). Beside BPMN's `loopCounter`, every iteration
+  of a Standard Loop or Multi-Instance now reads `ITERATION_NUMBER`, its
+  stable `ITERATION_ID` and its `ITERATION_MODE` (`std_loop` /
+  `mi_sequential` / `mi_parallel`) as plain names — each iteration seeing its
+  own, on every publication path.
+
+  `ITERATION_ID` is derived rather than minted: enclosing scope path +
+  activity id + ordinal, all of which already survive a checkpoint, so it is
+  stable across a restart with nothing stored for it.
+
+  Both registers ride the checkpoint: they are read AFTER the activity, so a
+  process that waited on anything is answering in a rebuilt instance.
+
+  New `RUNTIME/ITERATIONS` answers what an activity's iteration *did* —
+  `{kind, total, completed, terminated}` keyed by activity id — from any node
+  after it. That is the question the `numberOf*` counts cannot answer at any
+  address, since they end with the activation they describe. Keyed by
+  activity id so it stays unambiguous when two activities iterate at once.
+
+  New `RUNTIME/ITERATION_OWNERS` answers *who did which iteration* — activity
+  id → (ordinal → the actor who completed it). `COMPLETED_BY` cannot: it keys
+  by node, so an iterated activity has one entry however many iterations ran
+  and whoever did them, and the last completion wins. Three approvals are
+  three pieces of work by three people.
+
+  Documented in one place: [Iteration runtime variables](docs/guides/iteration/runtime-variables.md).
+
 - **The standard's artifacts are carried, and an annotated diagram
   imports** (ADR-039 v.1 / SRD-092, closes #323). BPMN §8.4.1's three
   artifacts — `Association` (plain shape), `TextAnnotation`, `Group` —
@@ -121,13 +193,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a mechanism. A **parallel** fan-out over a Message catch with no
   `WithIterationCorrelation` is ambiguous by construction — a message is
   point-to-point, so nothing says which envelope belongs to which of N
-  waiting instances. A **parallel** fan-out over work that parks outside
-  the event system — a User Task, an external-worker Service Task — would
-  have its instances share one parked-work identity, so only one would be
-  addressable and the rest would complete without anyone doing them; make
-  it sequential, or model N tasks. ADR-025 §2.15 and ADR-020 §2.12 decide
-  what that fan-out means, and the refusal lifts when each instance owns
-  its identity.
+  waiting instances. A **parallel** fan-out over an **external-worker**
+  Service Task would have its instances share one job identity — a job is
+  keyed to the track, with no ordinal — so a single report would complete
+  work nobody performed; make it sequential, or model N tasks. That one is a
+  deferral rather than a limit, tracked by
+  [#355](https://github.com/dr-dobermann/gobpm/issues/355).
+
+  The User Task half of that second refusal has since lifted, now that each
+  instance owns its identity — see below.
 - **BPMN import covers the loop characteristics** (SRD-089.H, part of
   #284). `<standardLoopCharacteristics>` maps onto `NewStandardLoop` —
   condition, `testBefore`, `loopMaximum` — and
@@ -187,6 +261,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuse-vs-warn split for required settings, portable value
   encodings, the cluster declaration, and per-dialect migration
   serialization.
+
+### Changed
+
+- **The engine's data names are reserved** (SRD-090.D FR-6, ADR-025 §2.9.2).
+  A process property, data object, data store reference or activity **output**
+  named `loopCounter`, one of the four `numberOf*` counts, `ITERATION_NUMBER`,
+  `ITERATION_ID`, `ITERATION_MODE` or `ITERATIONS` is now refused when the
+  process is built, naming the element. `data.ReservedNames()` lists them.
+
+  This is what protects the counts, which stay readable by plain name at the
+  activity's own scope — a `completionCondition` and the body of an iterated
+  Sub-Process both reach them by walk-up. Without the refusal, a declared
+  output named `numberOfCompletedInstances` commits to that same scope and a
+  completion condition then stops on a number the model chose, silently.
+
+  A **structural field** is unaffected: `order.loopCounter` is reached through
+  `order` and shadows nothing. No address changed — every one of these names
+  resolves exactly as it did before.
 
 ### Fixed
 
