@@ -525,13 +525,18 @@ No downward references.
 
 ### §10.3 Verification
 
-`make ci` at `1b21f016` (the branch tip): **PASS — 14/14 steps**
-(`.ci/last-run.json`), race tests green, diff-coverage **97.1% of 491 changed
-coverable lines** (min 95%), govulncheck clean, all examples executed end to
-end by the run sweep, `make lock-sweep` clean, `make link-check` clean. The
-prior full run at `a70c7cc5` (the merge of master) was PASS 14/14 in 8m54s at
-98.4% of 437 lines; M7 added 54 changed lines and the two rejected findings
-none.
+`make ci` at `81a55cb7` (the last doc commit): **PASS — 14/14 steps** in
+5m50s (`.ci/last-run.json`), race tests green, diff-coverage **97.1% of 491
+changed coverable lines** (min 95%), govulncheck clean, all examples executed
+end to end by the run sweep, `make lock-sweep` clean, `make link-check`
+clean. That run is also M8's own verification: it printed six heartbeat lines
+and no `setsid` diagnostic, where the run before the fix printed fourteen
+diagnostics and no heartbeat.
+
+Two earlier full runs bracket the work: `a70c7cc5` (the merge of master) was
+PASS 14/14 in 8m54s at 98.4% of 437 changed lines, and `1b21f016` (before the
+gate fix) PASS 14/14 at the same 97.1% of 491 — M7 added 54 changed lines,
+and the two rejected review findings added none.
 
 Every §6 test row exists and passes; the twelve are spread across
 `pkg/model/data`, `internal/scope`, `pkg/model/dataflow` and
