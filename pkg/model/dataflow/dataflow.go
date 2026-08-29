@@ -137,12 +137,12 @@ func fillByShape(
 	gating map[string]bool,
 	owner string,
 ) error {
-	if !sourcesReady(f, ia) {
+	if why := unreadySource(f, ia); why != "" {
 		if gating[ia.TargetItemDefID()] {
 			return errs.New(
-				errs.M("required input %q of %s is unavailable: a source of "+
-					"association %q is not Ready (gobpm does not wait for data)",
-					dst.Name(), owner, ia.ID()),
+				errs.M("required input %q of %s is unavailable: association "+
+					"%q has no value to evaluate — %s (gobpm does not wait "+
+					"for data)", dst.Name(), owner, ia.ID(), why),
 				errs.C(errorClass, errs.ConditionFailed))
 		}
 

@@ -384,6 +384,119 @@ func TestExpressionAssociationFailsFast(t *testing.T) {
 	})
 }
 
+// TestExpressionReadsTheNodesOwnParameters is FR-4's other half: the data
+// context an expression evaluates against includes the node's own
+// parameters, not only the scope. An OUTPUT association's expression
+// exists to shape what the node just produced, and an output parameter is
+// a frame instance at that point — nothing the scope resolves by name.
+func TestExpressionReadsTheNodesOwnParameters(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	f := frame(t, nil, datum(t, "note", "old", data.ReadyDataState))
+
+	var saw any
+
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(ctx context.Context, src data.Source) (data.Value, error) {
+			d, err := src.Find(ctx, "result")
+			require.NoError(t, err, "the node's own output resolves")
+			saw = d.Value().Get(ctx)
+
+			return values.NewVariable("seen"), nil
+		}})
+
+	oa := outputAssoc(t, "result", "note",
+		data.WithAssignments(assign(t, "note")))
+
+	src := instantiated(t, f,
+		param(t, "result", "result", 7, data.ReadyDataState), false)
+
+	require.NoError(t, dataflow.PushOutput(ctx, f, oa, src, owner))
+	require.Equal(t, 7, saw, "the expression read the output parameter")
+}
+
+// TestExpressionContextResolution covers the rest of the data context an
+// expression sees: an INPUT parameter by name, a path INTO a parameter,
+// and a name nothing holds — which is refused naming what was looked for.
+func TestExpressionContextResolution(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	f := frame(t, nil,
+		record(t, "order", values.F("total", values.NewVariable(9))),
+		datum(t, "note", "old", data.ReadyDataState))
+
+	in := instantiated(t, f,
+		param(t, "in", "in-item", 3, data.ReadyDataState), true)
+	require.NotNil(t, in)
+
+	var (
+		fromInput any
+		fromPath  any
+		missing   error
+	)
+
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(ctx context.Context, src data.Source) (data.Value, error) {
+			d, err := src.Find(ctx, "in")
+			require.NoError(t, err, "an input parameter resolves by name")
+			fromInput = d.Value().Get(ctx)
+
+			d, err = src.Find(ctx, "order.total")
+			require.NoError(t, err, "a path into scope data resolves")
+			fromPath = d.Value().Get(ctx)
+
+			_, missing = src.Find(ctx, "nowhere")
+
+			return values.NewVariable("done"), nil
+		}})
+
+	oa := outputAssoc(t, "result", "note",
+		data.WithTransformation(anExpr(t)))
+
+	src := instantiated(t, f,
+		param(t, "result", "result", 1, data.ReadyDataState), false)
+
+	require.NoError(t, dataflow.PushOutput(ctx, f, oa, src, owner))
+
+	require.Equal(t, 3, fromInput)
+	require.Equal(t, 9, fromPath)
+	require.ErrorContains(t, missing, "not in this activity's data context")
+}
+
+// TestUnreadySourceNamesWhy is FR-4's refusal detail: the two ways a source
+// can be unavailable need different fixes, so the message distinguishes a
+// name the context does not hold from a datum that is not Ready yet.
+func TestUnreadySourceNamesWhy(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	gating := map[string]bool{"amount": true}
+
+	t.Run("a source the context does not hold", func(t *testing.T) {
+		f := frame(t, nil)
+		ia := inputAssoc(t, "missing", "amount",
+			data.WithTransformation(anExpr(t)))
+		dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+		err := dataflow.FillInput(ctx, f, ia, dst, gating, owner)
+		require.ErrorContains(t, err, "cannot be resolved here")
+		require.ErrorContains(t, err, "missing")
+	})
+
+	t.Run("a source that is not Ready yet", func(t *testing.T) {
+		f := frame(t, nil, datum(t, "order", 1, data.UndefinedSrcState))
+		ia := inputAssoc(t, "order", "amount",
+			data.WithTransformation(anExpr(t)))
+		dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+		err := dataflow.FillInput(ctx, f, ia, dst, gating, owner)
+		require.ErrorContains(t, err, "not Ready")
+		require.ErrorContains(t, err, "order")
+	})
+}
+
 // TestPlainAssociationUnchanged is SRD-097 T-8 / NFR-2: an association with
 // neither shape takes the copy path it always took — the value copied, one
 // movement recorded, no engine consulted.

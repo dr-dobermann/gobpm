@@ -2,6 +2,7 @@ package dataflow
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -25,9 +26,51 @@ type frameSource struct {
 	f exec.Frame
 }
 
-// Find resolves name against the activity's data context.
-func (s frameSource) Find(_ context.Context, name string) (data.Data, error) {
-	return s.f.GetData(name)
+// Find resolves name against the activity's data context: the scope the
+// frame reads (data objects, properties, puts, provider sources) AND the
+// node's own parameters.
+//
+// The parameters matter for the output direction and are why this is not
+// simply GetData. An output association's expression exists to shape what
+// the node JUST PRODUCED — its output parameter — and a frame resolves
+// scope data, properties and inputs by name, never outputs: at that point
+// in the node's life they are frame instances, not committed data. An
+// expression that cannot read them could only reshape data the node did
+// not produce, which is not what an output association is for.
+//
+// The lookup walks the same path resolver everything else does (ADR-011
+// §2.9.2), so "note.code" reaches into an output exactly as
+// "order.total" reaches into a data object.
+func (s frameSource) Find(ctx context.Context, name string) (data.Data, error) {
+	return data.ResolvePath(ctx, name, func(head string) (data.Data, error) {
+		if d, err := s.f.GetData(head); err == nil {
+			return d, nil
+		}
+
+		if p := paramNamed(s.f.Outputs(), head); p != nil {
+			return p, nil
+		}
+
+		if p := paramNamed(s.f.Inputs(), head); p != nil {
+			return p, nil
+		}
+
+		return nil, errs.New(
+			errs.M("%q is not in this activity's data context: neither the "+
+				"scope nor the node's own parameters hold it", head),
+			errs.C(errorClass, errs.ObjectNotFound))
+	})
+}
+
+// paramNamed picks the parameter called name, or nil.
+func paramNamed(params []*data.Parameter, name string) *data.Parameter {
+	for _, p := range params {
+		if p.Name() == name {
+			return p
+		}
+	}
+
+	return nil
 }
 
 // shaped reports whether the association carries an expression shape and so
@@ -75,21 +118,35 @@ func evaluate(
 	return v, nil
 }
 
-// sourcesReady reports whether every source of an expression-bearing
-// association is available. §10.4.2 gates the WHOLE association on ALL its
-// sources — "if any of the sources is in the state of unavailable, the data
-// association cannot be executed" — which the plain-copy path expresses by
-// checking the one source it reads. A transformation may name none of them
-// and still be gated by all.
-func sourcesReady(f exec.Frame, a *data.Association) bool {
+// unreadySource names the first source of an expression-bearing
+// association that cannot be read, and why — "" when every one is
+// available. §10.4.2 gates the WHOLE association on ALL its sources ("if
+// any of the sources is in the state of unavailable, the data association
+// cannot be executed"), which the plain-copy path expresses by checking
+// the one source it reads; a transformation may name none of them and
+// still be gated by all.
+//
+// It returns the reason rather than a bool because the two ways a source
+// can be unavailable need different fixes: one is a name the scope does
+// not hold (a modeling error — the wrong name, or a data object that is
+// not in this scope), the other is a datum that exists and has not been
+// produced yet. Collapsing them into "not Ready" sends the reader looking
+// for the wrong thing.
+func unreadySource(f exec.Frame, a *data.Association) string {
 	for _, name := range a.SourceNames() {
 		d, err := f.GetData(name)
-		if err != nil || d.State().Name() != data.ReadyDataState.Name() {
-			return false
+		if err != nil {
+			return fmt.Sprintf("source %q cannot be resolved here (%v)",
+				name, err)
+		}
+
+		if d.State().Name() != data.ReadyDataState.Name() {
+			return fmt.Sprintf("source %q is %s, not Ready",
+				name, d.State().Name())
 		}
 	}
 
-	return true
+	return ""
 }
 
 // applyShape writes the association's expression result into target — the
