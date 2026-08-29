@@ -99,6 +99,9 @@ const (
 	attrImportType    = "importType"
 	attrLocation      = "location"
 	attrNamespace     = "namespace"
+	// attrTargetNamespace is <definitions targetNamespace> — the namespace
+	// the document's own definitions live in.
+	attrTargetNamespace = "targetNamespace"
 
 	// The item-aware flow elements and the two references they carry.
 	// <dataState> is a child rather than an attribute, and is reported

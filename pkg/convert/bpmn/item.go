@@ -110,6 +110,10 @@ type importSpec struct {
 // items is the document's type vocabulary: the item definitions, the
 // imports they may name, and the namespace prefixes that connect the two.
 type items struct {
+	// targetNS is <definitions targetNamespace>, the namespace the document's
+	// OWN definitions live in. A calledElement qualified by a prefix bound to
+	// it is self-reference, and collapses to a bare key (SRD-096 FR-5).
+	targetNS string
 	// prefixes maps an xmlns prefix to its namespace URI, collected from
 	// the elements that declare one. A structureRef's prefix is XML text
 	// inside an ATTRIBUTE VALUE, which the decoder does not resolve — only
@@ -147,6 +151,26 @@ func (it *items) declareNamespaces(se xml.StartElement) {
 			it.prefixes[a.Name.Local] = a.Value
 		}
 	}
+}
+
+// namespaceFor resolves an attribute-value prefix to the namespace URI it is
+// bound to, and reports whether any binding exists.
+//
+// It is separate from importFor because a callable reference asks a different
+// question: importFor wants the <import> a type came from, while this wants
+// the namespace itself — a prefix may legitimately resolve to the document's
+// own targetNamespace, which no <import> declares.
+func (it *items) namespaceFor(prefix string) (string, bool) {
+	ns, ok := it.prefixes[prefix]
+
+	return ns, ok
+}
+
+// declaresImport reports whether an <import> declared ns.
+func (it *items) declaresImport(ns string) bool {
+	_, ok := it.imports[ns]
+
+	return ok
 }
 
 // parseImportElem parses one definitions-level <import>.

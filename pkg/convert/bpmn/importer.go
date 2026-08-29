@@ -490,6 +490,12 @@ func (p *parser) rootElement() (xml.StartElement, error) {
 		// prefix inside an attribute VALUE is ours to resolve.
 		p.items.declareNamespaces(se)
 
+		// The document's own namespace, so a calledElement qualified by a
+		// prefix bound to it reads as the self-reference it is rather than
+		// as a reference out of the document (SRD-096 §4a).
+		p.items.targetNS = strings.TrimSpace(
+			attrValue(se, attrTargetNamespace))
+
 		// <definitions> carries dialect attributes too (a modeler's own
 		// bookkeeping); they are reported against the document.
 		p.reportUnmappedAttrs(se, attrValue(se, "id"), nil)
