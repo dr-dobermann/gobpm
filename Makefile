@@ -349,14 +349,25 @@ mock-check:
 # Multi-module targets (iterate over every module in the monorepo)
 # These are the source of truth used by .github/workflows/check.yml so that
 # local `make` runs match what CI runs (no drift between local and GitHub).
+#
+# The per-module sweeps below run MODULE_JOBS modules at a time through
+# scripts/run-modules.sh, which buffers each module's output and prints it
+# inside that module's own group fold, in $(MODULES) order, once all have
+# finished. Serially these cost what the slowest module costs times the module
+# count, which is nothing across six core modules and 3.5 minutes of examples-
+# lint across fifty-two. `test-all` is deliberately NOT among them: TEST_CPUS
+# pins the race run's CPU budget to the CI runner's, and running several such
+# modules at once would oversubscribe the box the pinning exists to model.
 # ---------------------------------------------------------------------------
 
+# How many modules a per-module sweep runs at once. Unset = the CPU count,
+# capped at 8 — the same rule EXAMPLE_JOBS uses, and for the same reason: the
+# work is independent processes, and a 2-core runner gets 2.
+MODULE_JOBS ?=
+
 build-all:
-	@set -e; for dir in $(MODULES); do \
-		echo "::group::build $$dir"; \
-		(cd $$dir && $(GO) build -v ./...) || exit 1; \
-		echo "::endgroup::"; \
-	done
+	@MODULE_JOBS="$(MODULE_JOBS)" ./scripts/run-modules.sh build \
+		'$(GO) build -v ./...' $(MODULES)
 .PHONY: build-all
 
 # TEST_CPUS pins the race test run's CPU budget to what the GitHub runner
@@ -384,19 +395,23 @@ test-all:
 
 lint-all-modules:
 	$(call require-go-tool,golangci-lint,github.com/golangci/golangci-lint/v2,$(GOLANGCI_VERSION))
-	@set -e; for dir in $(MODULES); do \
-		echo "::group::lint $$dir"; \
-		(cd $$dir && golangci-lint run --timeout=10m --config=$(CURDIR)/.golangci.yml) || exit 1; \
-		echo "::endgroup::"; \
-	done
+	@MODULE_JOBS="$(MODULE_JOBS)" ./scripts/run-modules.sh lint \
+		'golangci-lint run --timeout=10m --config=$(CURDIR)/.golangci.yml' \
+		$(MODULES)
 .PHONY: lint-all-modules
 
+# The one sweep that WRITES go.mod/go.sum, so it is the one that runs in
+# dependency waves (MODULE_ORDER=deps) rather than as a flat batch: the four
+# adapters `replace` the root, and a flat batch would have the root rewriting
+# the files they read. cmd/go locks those files, so the exposure is not a
+# corrupt write but a drift check resolving against whichever snapshot won the
+# race — and a check that can answer differently on two runs of the same tree
+# is worth nothing. The scheduler derives the order from the go.mod files, so
+# it costs one extra wave here (root+runtime, then the adapters) and none at
+# all in examples-tidy, where every replace points outside the sweep.
 tidy-check-all:
-	@set -e; for dir in $(MODULES); do \
-		echo "::group::tidy $$dir"; \
-		(cd $$dir && $(GO) mod tidy) || exit 1; \
-		echo "::endgroup::"; \
-	done
+	@MODULE_JOBS="$(MODULE_JOBS)" MODULE_ORDER=deps \
+		./scripts/run-modules.sh tidy '$(GO) mod tidy' $(MODULES)
 	@echo "Checking for go.mod/go.sum drift after 'go mod tidy'..."
 	@git diff --exit-code -- '**/go.mod' '**/go.sum' go.mod go.sum || \
 		(echo "ERROR: go.mod or go.sum drifted after 'go mod tidy'. Commit the changes."; exit 1)
@@ -404,11 +419,8 @@ tidy-check-all:
 
 vuln:
 	$(call require-go-tool,govulncheck,golang.org/x/vuln,$(GOVULNCHECK_VERSION))
-	@set -e; for dir in $(MODULES); do \
-		echo "::group::govulncheck $$dir"; \
-		(cd $$dir && govulncheck ./...) || exit 1; \
-		echo "::endgroup::"; \
-	done
+	@MODULE_JOBS="$(MODULE_JOBS)" ./scripts/run-modules.sh govulncheck \
+		'govulncheck ./...' $(MODULES)
 .PHONY: vuln
 
 # consumer-smoke proves gobpm is cleanly consumable via `go get` (FIX-024): a

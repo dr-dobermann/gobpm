@@ -181,10 +181,37 @@ make ci
 
 On macOS, install GNU coreutils once with `brew install coreutils`;
 `run-examples` detects its `gtimeout` command automatically. Linux already
-provides `timeout`. The examples run in parallel — `EXAMPLE_JOBS` at a time,
-default the CPU count capped at 8 — with each example's output buffered and
-printed in its own group fold in module order once all have finished, so a
-failure is never interleaved with a neighbour's log (`scripts/run-examples.sh`).
+provides `timeout`.
+
+**Every per-module sweep runs in parallel** — the examples run
+(`scripts/run-examples.sh`, `EXAMPLE_JOBS`) and the tidy, lint, build and
+govulncheck sweeps over both halves (`scripts/run-modules.sh`, `MODULE_JOBS`).
+Both default to the CPU count capped at 8, and both buffer each module's output
+and print it inside that module's own group fold, in module order, once all have
+finished — so a failure is never interleaved with a neighbour's log and a fold
+is never torn open mid-write. The cost of *not* doing this was `examples-lint`:
+fifty-two independent linters queued behind each other for 209s of a 506s gate,
+four times what every other example step costs together. A passing module now
+prints only its group markers — `go build -v`'s per-package chatter sits in the
+buffer, shown if and only if that module fails.
+
+**`tidy` is the one sweep that schedules in dependency waves**
+(`MODULE_ORDER=deps`), because it is the one that *writes* `go.mod`/`go.sum`.
+The four adapter modules `replace` the root, so a flat batch would have the
+root rewriting the files they read — and while `cmd/go` locks those files, a
+drift check that resolves against whichever snapshot won the race can answer
+differently on two runs of the same tree. The scheduler reads the replace edges
+out of the `go.mod` files themselves, so it costs one extra wave in
+`tidy-check-core` (root + runtime, then the four adapters) and none at all in
+`examples-tidy`, where every replace points outside the sweep and all
+fifty-two still go at once. If a module fails, the modules that `replace` it
+are reported **not run** rather than passed.
+
+The one sweep that stays serial is **`test-all`**. `TEST_CPUS` pins the race
+run's CPU budget to what the CI runner exposes, precisely so that
+scheduling-sensitive tests behave the same locally and on GitHub; running
+several such modules at once would oversubscribe the box that pinning exists to
+model.
 
 **Parity rules (do not break these — they exist because a silent local
 no-op once let broken code reach CI):**
