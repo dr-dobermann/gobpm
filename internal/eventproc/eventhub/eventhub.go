@@ -1,5 +1,5 @@
 /*
-Package eventhub provides event hub implementation for BPMN processes.
+Package eventhub provides an event hub implementation for BPMN processes.
 
 This package is part of GoBPM - Business Process Management Engine for Go.
 See LICENSE file for license information.

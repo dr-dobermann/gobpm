@@ -1,4 +1,4 @@
-// Dehydration: a long wait costs no goroutines.
+// Command dehydration demonstrates that a long wait costs no goroutines.
 //
 // An instance whose every live track is parked on a wait that is both
 // DEHYDRATABLE (the element allows it) and HELD (the engine can wake it)
@@ -6,9 +6,8 @@
 // is the wake source. This example walks every holder kind and, for timers,
 // both sides of the threshold.
 //
-// It drives a CONTROLLED clock so a two-hour wait demonstrates in
-// milliseconds. In production you use the default wall clock and change
-// nothing else.
+// It drives a CONTROLLED clock so a two-hour wait runs in milliseconds.
+// In production you use the default wall clock and change nothing else.
 package main
 
 import (

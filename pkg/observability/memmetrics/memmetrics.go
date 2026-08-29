@@ -1,7 +1,7 @@
 // Package memmetrics provides the engine's default MetricsRecorder: an
 // in-memory, queryable registry. It keeps current counter sums, last gauge
 // values, and histogram distributions in memory, readable via Snapshot for
-// diagnostics and tests. To bound memory under high-cardinality attribute sets
+// diagnostics and tests. To bound memory under high-cardinality attribute sets,
 // it caps the total number of series, dropping new series past the cap and
 // logging a single warning (ADR-002 §4.2).
 package memmetrics

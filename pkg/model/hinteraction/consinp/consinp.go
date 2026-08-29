@@ -1,4 +1,4 @@
-// Package consinp implements Rendered interface for user input from console.
+// Package consinp implements the Rendered interface for user input from the console.
 package consinp
 
 import (

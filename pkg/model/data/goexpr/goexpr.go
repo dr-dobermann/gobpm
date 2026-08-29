@@ -1,6 +1,6 @@
-// Package goexpr is a reference implementation of
-// bpmncommon.FormalExpression interface to support go function
-// as FormalExpression evaluation core.
+// Package goexpr is a reference implementation of the
+// bpmncommon.FormalExpression interface to support Go functions
+// as the FormalExpression evaluation core.
 package goexpr
 
 import (
