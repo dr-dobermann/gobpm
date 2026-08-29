@@ -44,6 +44,13 @@ func TestGlobalTaskFamilyImports(t *testing.T) {
 					"callable the global task became", len(res.Processes))
 			}
 
+			// In DOCUMENT order, which is what Result.Processes promises:
+			// this fixture declares the global task first.
+			if got := res.Processes[0].ID(); got != "g1" {
+				t.Errorf("Processes[0] = %q, want g1 — the set is in "+
+					"document order, and the callable is declared first", got)
+			}
+
 			// The callable is registered under the global task's OWN id, which
 			// is the key a callActivity names it by.
 			var callable *process.Process

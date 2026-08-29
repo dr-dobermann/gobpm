@@ -562,6 +562,7 @@ not assumptions:
 | up | [ADR-023 v.5](../design/ADR-023-sub-process-and-call-activity.md) §2.7 | the callable reference, the resolver seam, the global task as a process |
 | up | [ADR-024 v.7](../design/ADR-024-process-interchange-converters.md) §2.13, §2.9, §2.15, §2.16 | the family's import disposition, the QName table, the document result, the register row |
 | up | [ADR-040 v.2](../design/ADR-040-process-io-contract.md) | the process contract a global task's `ioSpecification` becomes |
+| up | [ADR-022 v.3](../design/ADR-022-error-propagation-and-logging-policy.md) | the observability vocabulary `called_namespace` joins; `internal/lintcfg` refuses an `Attr*` the ADR does not register |
 | up | [ADR-019 v.1](../design/ADR-019-definition-versioning.md) | the key; latest-at-launch; ids never generated |
 | side | [SRD-050](SRD-050-call-activity.md) | the caller-side call path (frozen) |
 | side | [SRD-093](SRD-093-process-io-contract.md) | the process-level `ioSpecification` build reused (frozen) |

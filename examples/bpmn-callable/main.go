@@ -72,6 +72,13 @@ func run() error {
 		fmt.Printf("    %-8s %q (%d nodes)\n", p.ID(), p.Name(), len(p.Nodes()))
 	}
 
+	// First WITHOUT a resolver, because what the engine does on its own is
+	// half the story: the qualified reference has no answer it could invent,
+	// and the fault says which namespace a host has to teach it about.
+	if uerr := showUnresolvable(ctx, res.Processes); uerr != nil {
+		return uerr
+	}
+
 	engine, err := thresher.New("bpmn-callable",
 		thresher.WithoutBanner(),
 		thresher.WithoutStartupConfig(),
