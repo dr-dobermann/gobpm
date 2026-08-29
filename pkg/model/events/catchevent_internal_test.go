@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/stretchr/testify/require"
 )
@@ -53,6 +54,7 @@ func (f *fakeFrame) Outputs() []*data.Parameter                   { return f.out
 func (f *fakeFrame) GetDataByID(string) (data.Data, error)        { return nil, nil }
 func (f *fakeFrame) GetData(string) (data.Data, error)            { return nil, nil }
 func (f *fakeFrame) DataStores() datastore.Registry               { return nil }
+func (f *fakeFrame) ExpressionEngine() expression.Engine          { return nil }
 func (f *fakeFrame) RecordDataMovement(_, _ bool, _, _ string)    {}
 func (f *fakeFrame) SetReceived(i *data.ItemDefinition)           { f.received = i }
 func (f *fakeFrame) Received() *data.ItemDefinition               { return f.received }

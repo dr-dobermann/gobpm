@@ -243,20 +243,34 @@ func TestDataAssociationParses(t *testing.T) {
 
 // TestDataAssociationRecordsTheRefusableShapes: transformation,
 // assignment and extra sources are read as flags for §4.6's refusals —
-// M3 refuses them; the parse must see them to name them.
-func TestDataAssociationRecordsTheRefusableShapes(t *testing.T) {
+// SRD-097 M5 maps them; the parse reads their bodies, not just their
+// presence.
+func TestDataAssociationRecordsTheShapes(t *testing.T) {
 	spec, err := assocFrag(t, data.Input, tagDataInputAssoc,
 		`<bpmn:sourceRef>do1</bpmn:sourceRef>
 		 <bpmn:sourceRef>do2</bpmn:sourceRef>
 		 <bpmn:targetRef>din1</bpmn:targetRef>
 		 <bpmn:transformation>a + b</bpmn:transformation>
-		 <bpmn:assignment id="as1"/>`)
+		 <bpmn:assignment id="as1">
+		   <bpmn:from>a</bpmn:from>
+		   <bpmn:to>din1.field</bpmn:to>
+		 </bpmn:assignment>`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 
-	if !spec.hasTransformation || !spec.hasAssignment {
-		t.Errorf("flags = %+v, want both shapes recorded", spec)
+	if spec.transformation == nil || spec.transformation.body != "a + b" {
+		t.Errorf("transformation = %+v, want its body read", spec.transformation)
+	}
+
+	if len(spec.assignments) != 1 {
+		t.Fatalf("assignments = %+v, want one", spec.assignments)
+	}
+
+	as := spec.assignments[0]
+	if as.from == nil || as.from.body != "a" || as.to != "din1.field" ||
+		as.toID != "as1" {
+		t.Errorf("assignment = %+v, want from/to/id read", as)
 	}
 
 	if len(spec.extraSources) != 1 || spec.extraSources[0] != "do2" {

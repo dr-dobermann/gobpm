@@ -61,11 +61,16 @@ type Instance struct {
 	// performers records who completed each human task, served read-only through
 	// the RUNTIME subtree and carried across a hydrate (ADR-020 v.2 §2.4.2).
 	performers *performers
-	now        func() time.Time
-	tracksSnap atomic.Pointer[[]*track]
-	lastErr    atomic.Pointer[error]
-	s          *snapshot.Snapshot
-	tracks     map[string]*track
+	// iterations records what each iterated activity did — the durable half of
+	// §2.9's attributes, keyed by activity id so two concurrent iterations
+	// stay distinguishable (ADR-025 §2.9.2).
+	iterations      *iterations
+	iterationOwners *iterationOwners
+	now             func() time.Time
+	tracksSnap      atomic.Pointer[[]*track]
+	lastErr         atomic.Pointer[error]
+	s               *snapshot.Snapshot
+	tracks          map[string]*track
 	// incidents is the durable record of unhandled failures (ADR-036 §2.1),
 	// keyed by incident id. Mutated only on the loop goroutine; carried into
 	// the checkpoint by the persistence slice (SRD-079 §3.3). openIncCount
@@ -587,10 +592,13 @@ func New(
 	// inst escapes via &inst below (the instanceScope loader takes it the same way).
 	inst.corr = correlator{inst: &inst, keys: map[string]string{}}
 	inst.performers = newPerformers()
+	inst.iterations = newIterations()
+	inst.iterationOwners = newIterationOwners()
 
 	if err := inst.sc.load(
 		parentRoot, inst.s.ProcessName, inst.s.Properties,
-		inst.s.DataObjects, inst.DataStores(), &inst); err != nil {
+		inst.s.DataObjects, inst.DataStores(), inst.ExpressionEngine(),
+		&inst); err != nil {
 		return nil, errs.New(
 			errs.M("couldn't load process'es properties into Instance scope"),
 			errs.E(err),

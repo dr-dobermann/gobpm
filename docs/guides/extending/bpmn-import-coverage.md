@@ -30,7 +30,6 @@ table when its capability lands.
 
 | Construct | Why it is refused | Do this instead today | Tracking |
 |---|---|---|---|
-| `<assignment>`, `<transformation>`, or a data association with several sources | the scope-routed copy path evaluates no expression (SRD-063 §10.3's follow-up) | align the two ends' `itemDefinition`s and copy plainly, or map through a script task before or after the activity | [#328](https://github.com/dr-dobermann/gobpm/issues/328) |
 | a `<property>` as a data-association end | the model's `Property` has no `Associate*` | use a `<dataObject>` for data that flows between nodes | [#331](https://github.com/dr-dobermann/gobpm/issues/331) |
 
 ## Standing

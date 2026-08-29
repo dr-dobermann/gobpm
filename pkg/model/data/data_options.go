@@ -76,6 +76,9 @@ type (
 		trans FormalExpression
 		trg   *ItemAwareElement
 		src   []*ItemAwareElement
+		// assigns are the association's from→to mappings (ADR-011 §2.4
+		// rule 2); mutually exclusive with trans.
+		assigns []*Assignment
 
 		dataStoreRef string
 		baseOptions  []options.Option
@@ -100,6 +103,7 @@ func (aCfg *asscConfig) newAssociation() (*Association, error) {
 	a := Association{
 		BaseElement:    *be,
 		transformation: aCfg.trans,
+		assignments:    aCfg.assigns,
 		sources:        map[string]*ItemAwareElement{},
 		target:         aCfg.trg,
 		dataStoreRef:   aCfg.dataStoreRef,
@@ -110,6 +114,26 @@ func (aCfg *asscConfig) newAssociation() (*Association, error) {
 	}
 
 	return &a, nil
+}
+
+// WithAssignments adds from→to mappings to the Association (BPMN §10.4.2
+// rule 2, ADR-011 §2.4). Mutually exclusive with WithTransformation, which
+// the association's validation enforces.
+func WithAssignments(assigns ...*Assignment) options.Option {
+	f := func(cfg *asscConfig) error {
+		for i, a := range assigns {
+			if a == nil {
+				return fmt.Errorf(
+					"WithAssignments: a nil Assignment isn't allowed (#%d)", i)
+			}
+
+			cfg.assigns = append(cfg.assigns, a)
+		}
+
+		return nil
+	}
+
+	return asscOption(f)
 }
 
 // WithTransformation set transformation for the Association.
@@ -181,9 +205,22 @@ func (asscOption) Option() {}
 // --------------------- options.Configurator interface -----------------------
 
 func (aCfg *asscConfig) Validate() error {
-	if aCfg.trans == nil && len(aCfg.src) != 1 {
+	// §10.4.2 rule 3: with NEITHER expression shape exactly one source is
+	// legal — several sources are meaningful only when something combines
+	// them, which is what a transformation (or an assignment's own
+	// expression) does.
+	if aCfg.trans == nil && len(aCfg.assigns) == 0 && len(aCfg.src) != 1 {
 		return fmt.Errorf("association could have only 1 source " +
-			"without transformation")
+			"without transformation or assignments")
+	}
+
+	// ADR-011 §2.4's engine choice: one shape at a time. The standard
+	// numbers the cases without forbidding the combination, but fixes no
+	// order for it, so a mapping whose two halves fight over one target is
+	// refused where it is built.
+	if aCfg.trans != nil && len(aCfg.assigns) != 0 {
+		return fmt.Errorf("association carries a transformation AND " +
+			"assignments; one shape at a time (ADR-011 §2.4)")
 	}
 
 	if aCfg.trg == nil {

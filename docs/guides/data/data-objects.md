@@ -64,9 +64,9 @@ association's target; `AssociateSource` builds that link:
 
 | Method | Role |
 |---|---|
-| `AssociateSource(n flow.AssociationSource, sourceIDs []string, transformation data.FormalExpression) error` | make node `n`'s outputs (named by `sourceIDs`) the source; the DataObject is the target. The common case. |
-| `AssociateTarget(n flow.AssociationTarget, transformation data.FormalExpression) error` | the reverse — feed the DataObject's value into node `n`'s input. |
-| `AssociateTargetInput(n flow.AssociationTarget, inputID string, transformation data.FormalExpression) error` | the reverse, naming the input by its **id** — for a throw event, whose input carries its definition's item ([Event data](event-data.md)). |
+| `AssociateSource(n flow.AssociationSource, sourceIDs []string, transformation data.FormalExpression, shape ...options.Option) error` | make node `n`'s outputs (named by `sourceIDs`) the source; the DataObject is the target. The common case. |
+| `AssociateTarget(n flow.AssociationTarget, transformation data.FormalExpression, shape ...options.Option) error` | the reverse — feed the DataObject's value into node `n`'s input. |
+| `AssociateTargetInput(n flow.AssociationTarget, inputID string, transformation data.FormalExpression, shape ...options.Option) error` | the reverse, naming the input by its **id** — for a throw event, whose input carries its definition's item ([Event data](event-data.md)). |
 | `Update(ctx context.Context) error` | recompute the object's state. |
 
 ```go
@@ -74,6 +74,7 @@ func (do *DataObject) AssociateSource(
     n flow.AssociationSource,
     sourceIDs []string,
     transformation data.FormalExpression,
+    shape ...options.Option,
 ) error
 ```
 
@@ -82,6 +83,26 @@ func (do *DataObject) AssociateSource(
 | `n` | the producing node — anything implementing `flow.AssociationSource` (e.g. a `ServiceTask`). |
 | `sourceIDs` | the ids of `n`'s output parameters whose values flow into the object. The id is the wiring: it must match the DataObject's item-definition id. |
 | `transformation` | a `data.FormalExpression` applied as the value flows in; `nil` for a straight copy. |
+| `shape` | the association's other two shapes — `data.WithAssignments(...)` for field-level writes, `data.WithSources(...)` for a second source. Optional; see below. |
+
+### The three shapes
+
+BPMN gives an association exactly one execution shape ([§10.4.2](https://www.omg.org/spec/BPMN/2.0.2/)),
+and gobpm accepts one at a time:
+
+- **a transformation** — one expression produces the whole target value. Pass
+  it positionally; the sources are what it may read.
+- **assignments** — `data.WithAssignments(data.MustAssignment(from, "quote.status"))`
+  writes each `from` into the path its `to` names, leaving the rest of the
+  target untouched.
+- **a plain copy** — neither, and then exactly one source, whose value is
+  copied as it is.
+
+Passing both a transformation and assignments is refused when the association
+is built, not at run time. Several sources (`data.WithSources`) are only
+meaningful under a transformation or assignments — a plain copy has nothing to
+combine them with. A worked example of the first two is
+[`examples/association-expressions/`](../../../examples/association-expressions/).
 
 ## Build it
 

@@ -111,6 +111,20 @@ func (ios *InputOutputSpecification) AddParameter(
 		return err
 	}
 
+	// A DECLARED parameter is a model's name, and an output's commits to the
+	// enclosing scope — the very scope an iterated activity publishes its
+	// counts at, so a declaration of one of those names would overwrite the
+	// engine's value and a completionCondition would then stop on a number
+	// the model chose (ADR-025 §2.9.2).
+	//
+	// Guarded here rather than in NewParameter because the engine builds
+	// parameters through the same constructor to PUBLISH its own values;
+	// AddParameter is reached only from the modeling options, so it
+	// separates declaring a name from serving one.
+	if err := CheckReservedName(p.Name(), errorClass); err != nil {
+		return err
+	}
+
 	pp, ok := ios.params[dir]
 	if !ok {
 		ios.params[dir] = []*Parameter{p}

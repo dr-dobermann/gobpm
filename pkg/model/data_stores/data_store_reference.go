@@ -52,6 +52,10 @@ func New(
 		return nil, err
 	}
 
+	if err := data.CheckReservedName(name, errorClass); err != nil {
+		return nil, err
+	}
+
 	dataStoreRef = strings.TrimSpace(dataStoreRef)
 	if err := errs.CheckStr(
 		dataStoreRef,
@@ -115,6 +119,13 @@ func (r *DataStoreReference) Docs() []*foundation.Documentation {
 	return r.BaseElement.Docs()
 }
 
+// ItemAware returns the reference's item-aware element — what an
+// association names when it takes this reference as a SOURCE (SRD-097
+// FR-7), the peer of DataObject.ItemAware.
+func (r *DataStoreReference) ItemAware() *data.ItemAwareElement {
+	return &r.ItemAwareElement
+}
+
 // AssociateSource binds Node n's output (by source id) into this reference —
 // the produced value is written to the engine Data Store (Node → DataStore).
 // The association carries this reference's dataStoreRef so the task reroute writes
@@ -123,6 +134,7 @@ func (r *DataStoreReference) AssociateSource(
 	n flow.AssociationSource,
 	sourceIDs []string,
 	transformation data.FormalExpression,
+	shape ...options.Option,
 ) error {
 	if n == nil {
 		return errs.New(
@@ -152,6 +164,8 @@ func (r *DataStoreReference) AssociateSource(
 		opts = append(opts, data.WithTransformation(transformation))
 	}
 
+	opts = append(opts, shape...)
+
 	a, err := data.NewAssociation(&r.ItemAwareElement, opts...)
 	if err != nil {
 		return fmt.Errorf("association building failed: %w", err)
@@ -174,13 +188,14 @@ func (r *DataStoreReference) AssociateSource(
 func (r *DataStoreReference) AssociateTarget(
 	n flow.AssociationTarget,
 	transformation data.FormalExpression,
+	shape ...options.Option,
 ) error {
 	itemID := r.ItemDefinition().ID()
 
 	return r.associateTarget(n, transformation, "#"+itemID,
 		func(iae *data.ItemAwareElement) bool {
 			return iae.ItemDefinition().ID() == itemID
-		})
+		}, shape)
 }
 
 // AssociateTargetInput binds this reference as a source into the Node n's
@@ -191,11 +206,12 @@ func (r *DataStoreReference) AssociateTargetInput(
 	n flow.AssociationTarget,
 	inputID string,
 	transformation data.FormalExpression,
+	shape ...options.Option,
 ) error {
 	return r.associateTarget(n, transformation, strconv.Quote(inputID),
 		func(iae *data.ItemAwareElement) bool {
 			return iae.ID() == inputID
-		})
+		}, shape)
 }
 
 // associateTarget is the body of the two AssociateTarget forms: the node's
@@ -205,6 +221,7 @@ func (r *DataStoreReference) associateTarget(
 	transformation data.FormalExpression,
 	want string,
 	pick func(*data.ItemAwareElement) bool,
+	shape []options.Option,
 ) error {
 	if n == nil {
 		return errs.New(
@@ -230,6 +247,8 @@ func (r *DataStoreReference) associateTarget(
 	if transformation != nil {
 		opts = append(opts, data.WithTransformation(transformation))
 	}
+
+	opts = append(opts, shape...)
 
 	a, err := data.NewAssociation(inputs[idx], opts...)
 	if err != nil {

@@ -277,6 +277,19 @@ func hostMI(d *checkpoint.Document, key string) *checkpoint.IterationRecord {
 	return nil
 }
 
+// parked reports whether a track is held at a wait — the recorded evidence
+// that the body pass before it is done. A capture predicate must require the
+// state its test then asserts, or it can match an earlier checkpoint.
+func parked(d *checkpoint.Document) bool {
+	for _, tr := range d.Tracks {
+		if tr.State == TrackWaitForEvent.String() {
+			return true
+		}
+	}
+
+	return false
+}
+
 // TestCompositeRestoreRunsBodyOnce is the T-3 double-execution
 // regression: a plain composite captured mid-body restores with the
 // drained scope resuming its host exactly once — the body's work is
@@ -286,8 +299,14 @@ func TestCompositeRestoreRunsBodyOnce(t *testing.T) {
 
 	s := gatedBodyProcess(t, "cr-plain", countOp(t, &count), &gate, nil)
 
+	// The capture must require the PARKED catch, not merely two tracks: the
+	// host-opens-scope checkpoint also carries an open scope and two tracks
+	// (host + the body track, mid-flight), and restoring from THAT one
+	// re-runs the body correctly — it records no body pass. Polling caught
+	// it under gate load, and the test read the re-execution as the FR-5
+	// regression it exists to catch (#356).
 	doc := captureAt(t, s, func(d *checkpoint.Document) bool {
-		return openScope(d) && len(d.Tracks) == 2 // host + parked catch
+		return openScope(d) && len(d.Tracks) == 2 && parked(d)
 	})
 
 	require.Equal(t, int32(1), count.Load(), "one body pass before the crash")

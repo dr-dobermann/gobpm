@@ -10,6 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
@@ -37,6 +38,9 @@ type instanceScope struct {
 	plane      *scope.Scope
 	reader     service.DataReader
 	dataStores datastore.Registry
+	// exprEngine is wired onto every frame this scope opens, so an
+	// association's transformation or assignment can evaluate (SRD-097 FR-2).
+	exprEngine expression.Engine
 	root       scope.DataPath
 }
 
@@ -50,9 +54,11 @@ func (sc *instanceScope) load(
 	props []*data.Property,
 	dobjs []*dataobjects.DataObject,
 	stores datastore.Registry,
+	ee expression.Engine,
 	supplier scope.RuntimeVarsSupplier,
 ) error {
 	sc.dataStores = stores
+	sc.exprEngine = ee
 
 	root := parentRoot
 	if root == scope.EmptyDataPath {
@@ -125,8 +131,11 @@ func (sc *instanceScope) openFrameAt(
 	}
 
 	// wire the engine-global Data Store registry so a DataStoreReference
-	// association resolves its store at read/write (SRD-068 FR-4).
+	// association resolves its store at read/write (SRD-068 FR-4), and the
+	// expression engine an association's transformation or assignment
+	// evaluates through (SRD-097 FR-2).
 	f.SetDataStores(sc.dataStores)
+	f.SetExpressionEngine(sc.exprEngine)
 
 	return f, nil
 }
@@ -209,7 +218,7 @@ func (sc *instanceScope) bindValueAt(
 func (sc *instanceScope) bindLoopCounterAt(
 	path scope.DataPath, counter int,
 ) error {
-	return sc.bindDataItemAt(path, "loopCounter", counter)
+	return sc.bindDataItemAt(path, data.LoopCounterName, counter)
 }
 
 // bindRootData commits the caller-resolved Call Activity inputs into the

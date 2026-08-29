@@ -164,7 +164,11 @@ task, plus a **DataObject** per branch — a scope-resident named container each
 task writes to and is read back by name),
 [`examples/data-store/`](examples/data-store/) (an engine-global **DataStore** —
 a value one instance writes is read by a *separate* instance through a shared
-`DataStoreReference`), and the timer examples
+`DataStoreReference`),
+[`examples/association-expressions/`](examples/association-expressions/) (a data
+association that **computes**: a **transformation** derives the target value
+from its sources, an **assignment** writes one named field and leaves the rest
+of the record untouched), and the timer examples
 [`examples/simple-timer/`](examples/simple-timer/) ·
 [`examples/timer-event/`](examples/timer-event/) ·
 [`examples/usertask-sla/`](examples/usertask-sla/) (three **non-interrupting**

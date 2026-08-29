@@ -287,6 +287,6 @@ denial — the task stays parked, waiting for the right actor.
 ## See also
 
 - Examples: [`examples/usertask/`](../../../examples/usertask/) (console-driven approval)
-- Related guides: [Service Task](service-task.md) · [Human tasks](../operating/human-tasks.md) · [Process, instance, track, token](../concepts/execution-model.md) · [Boundary events](../events/boundary.md)
+- Related guides: [Service Task](service-task.md) · [Human tasks](../operating/human-tasks.md) · [Process, instance, track, token](../concepts/execution-model.md) · [Boundary events](../events/boundary.md) · [Multi-Instance](../iteration/multi-instance.md) — a User Task over a collection offers one task per item, all at once, each completed on its own
 - Design: [ADR-020 — Human interaction execution model](../../design/ADR-020-human-interaction-execution-model.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/activities`

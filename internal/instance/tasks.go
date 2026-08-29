@@ -67,6 +67,13 @@ type taskEntry struct {
 	// §2.7). Write-once and read-only afterwards, so the engine-level registry may
 	// hold the same value without a consistency hazard (SRD-073 FR-5a).
 	eligible interactor.Eligibility
+
+	// ord is the instance of an iterated activity this task belongs to
+	// (ADR-020 §2.12). N instances of one activity share a track, so the
+	// track alone cannot say which of them a completion is for — and
+	// delivering to the track would hand it to whichever instance read
+	// first. Zero for a lone activity, which has one execution anyway.
+	ord int
 }
 
 // Take authorizes actor against the parked UserTask taskID and, on success,
@@ -251,6 +258,7 @@ func (ls *loopState) completeTask(
 	// Record WHO performed the work before resuming. It is written here, past every
 	// rejectable stage, so only an accepted completion leaves a record (ADR-020 v.2
 	// §2.4.2).
+
 	ls.inst.recordCompletedBy(entry.node, req.actor)
 
 	// A task in the registry is always still parked: onTaskWaiting adds it to both
@@ -258,9 +266,9 @@ func (ls *loopState) completeTask(
 	// on this loop goroutine. So flip it out and deliver on its own evtCh, where the
 	// loop is the sole sender and it is parked-and-undelivered (SRD-027). The track
 	// wakes, ProcessEvent binds the outputs, Exec advances.
-	ls.flipNotParked(entry.track)
 	delete(ls.tasks, req.taskID)
-	entry.track.evtCh <- interactor.NewTaskCompletion(req.outputs)
+	ls.deliverCompletion(
+		entry, interactor.NewTaskCompletion(req.outputs), req.actor.UserID())
 
 	// The actor completed the task; the parked track resumes (SRD-041 §3.4).
 	// The following withdrawTask additionally emits Withdrawn — the distributor
@@ -276,6 +284,63 @@ func (ls *loopState) completeTask(
 	ls.inst.withdrawTask(ctx, req.taskID)
 
 	req.reply <- taskReply{}
+}
+
+// deliverCompletion hands an accepted completion to the execution that owns the
+// task, and takes the track out of the parked set only when nothing else does.
+//
+// Both halves matter once an activity can hold N tasks at once (ADR-020 §2.12):
+//
+//   - delivering on the TRACK's channel would hand the outcome to whichever
+//     instance happened to read first, which is not necessarily the one whose
+//     task was completed;
+//   - flipping the track out on the FIRST completion would drop every
+//     sibling's delivery at the dispatch gate, because a track that is no
+//     longer parked is no longer a delivery target.
+//
+// A lone activity has one instance and no decorator, so it keeps the track's
+// own channel and flips out immediately — the path is unchanged for it.
+func (ls *loopState) deliverCompletion(
+	entry taskEntry, completion flow.EventDefinition, owner string,
+) {
+	sub := entry.track.ownerIfResolved()
+
+	// AN ITERATED ACTIVITY THAT IS NOT RUNNING ITS INSTANCES YET holds the
+	// completion on its track until its decorator starts (SRD-090.B FR-3).
+	//
+	// Resolving an executor lazily here — which is what asking the track for
+	// its owner used to do — builds one nobody runs and hands the completion
+	// to it: the work is marked performed, the task withdrawn, and the
+	// activity waits forever for an approval nobody can give again. It is the
+	// ordinary case rather than a rare one, because a restored fan-out is
+	// rebuilt by the very action being applied to it.
+	if sub == nil && fansOut(entry.node) {
+		entry.track.holdCompletion(entry.ord, completion)
+
+		return
+	}
+
+	if sub == nil {
+		ls.flipNotParked(entry.track)
+		entry.track.evtCh <- completion
+
+		return
+	}
+
+	// The handover and the end of the wait are ONE step — see eventSubs.deliver.
+	//
+	// The identity is not dropped here: the instance has not finished, and its
+	// recorded state does not become `completed` until the barrier accounts
+	// for the report (took). Dropping it now would leave a window in which a
+	// checkpoint records that instance as RUNNING WITH NO IDENTITY, and a
+	// restore would mint a fresh one for work whose handle its holder is
+	// still carrying.
+	sub.completeInstance(entry.ord, completion, owner)
+
+	// the track leaves the parked set only when NO instance still holds work.
+	if !sub.anyWaiting() {
+		ls.flipNotParked(entry.track)
+	}
 }
 
 // recordCompletedBy notes the completing actor in the instance's performer register,
@@ -306,6 +371,68 @@ func performerKey(node flow.Node) string {
 	return node.ID()
 }
 
+// registerTask records the routing entry for a parked UserTask and returns the
+// announcement built for it, WITHOUT announcing. Splitting the two is what lets
+// a restored fan-out re-register tasks already sitting in the distributor's
+// inbox (adoptRestoredTasks). Nil means there was nothing to register.
+//
+// Resolve the triad once, here, and keep the snapshot on the registry entry:
+// every later check reads it instead of re-resolving (ADR-020 v.2 §2.7).
+func (ls *loopState) registerTask(
+	ctx context.Context,
+	taskID string,
+	tr *track,
+	node flow.Node,
+	ord int,
+	iterLocal []data.Data,
+) *interactor.TaskInfo {
+	if taskID == "" {
+		return nil // not a human task — nothing to register
+	}
+
+	info := ls.inst.buildTaskInfo(ctx, taskID, node, iterLocal)
+
+	ls.tasks[taskID] = taskEntry{
+		track:    tr,
+		node:     node,
+		ord:      ord,
+		eligible: info.Eligible,
+	}
+
+	return &info
+}
+
+// adoptTask re-registers a RESTORED iteration's task under the eligibility its
+// announcement resolved, without re-resolving and without announcing.
+//
+// A restore that resolved the triad again would do it outside the iteration's
+// data — the element it was seeded with is frame-local to an execution that no
+// longer exists — so a per-iteration performer resolves to nobody and locks
+// every holder out of a task their inbox still shows. Only a document written
+// before the verdict was recorded falls back to resolving; there the host's
+// scope is all there ever was.
+func (ls *loopState) adoptTask(
+	ctx context.Context,
+	taskID string,
+	tr *track,
+	node flow.Node,
+	ord int,
+) {
+	frozen := tr.seededEligibility(ord)
+	if frozen == nil {
+		ls.registerTask(ctx, taskID, tr, node, ord, nil)
+
+		return
+	}
+
+	ls.tasks[taskID] = taskEntry{
+		track:    tr,
+		node:     node,
+		ord:      ord,
+		eligible: thawEligibility(frozen),
+	}
+}
+
 // addTask records a parked UserTask in the loop-owned registry and announces it
 // to the TaskDistributor. Called on the loop goroutine (evTaskWaiting / spawn).
 func (ls *loopState) addTask(
@@ -313,22 +440,16 @@ func (ls *loopState) addTask(
 	taskID string,
 	tr *track,
 	node flow.Node,
+	ord int,
+	iterLocal []data.Data,
 ) {
-	if taskID == "" {
-		return // not a human task — nothing to register
+	built := ls.registerTask(ctx, taskID, tr, node, ord, iterLocal)
+	if built == nil {
+		return
 	}
 
+	info := *built
 	inst := ls.inst
-
-	// Resolve the triad once, here, and keep the snapshot on the registry entry:
-	// every later check reads it instead of re-resolving (ADR-020 v.2 §2.7).
-	info := inst.buildTaskInfo(ctx, taskID, node)
-
-	ls.tasks[taskID] = taskEntry{
-		track:    tr,
-		node:     node,
-		eligible: info.Eligible,
-	}
 
 	dctx, cancel := context.WithTimeout(ctx, distributorTimeout)
 	defer cancel()
@@ -346,6 +467,55 @@ func (ls *loopState) addTask(
 		NodeName: node.Name(),
 		Details:  map[string]string{observability.AttrTaskID: taskID},
 	})
+}
+
+// adoptRestoredTasks re-registers a restored FAN-OUT's parked-work identities,
+// one per instance that still holds work (ADR-020 §2.12). Runs at loop start,
+// on the loop goroutine, before the loop serves its first request.
+//
+// The timing is the whole point. What hydrates a dehydrated instance is
+// usually an action ON one of these tasks, and that action is answered out of
+// ls.tasks. A fan-out's instances re-park on their own goroutines when the
+// decorator runs, which is far too late: the registry is still empty when the
+// request arrives, and a Complete on a task somebody is holding in their inbox
+// comes back "not found or already completed".
+//
+// Only a fan-out is adopted here. A track carrying no iteration seed has no
+// per-instance identities to restore, and its own wait re-registers on the
+// path it always did.
+func (ls *loopState) adoptRestoredTasks(ctx context.Context, initial []*track) {
+	for _, t := range initial {
+		ids := t.seededTaskIDs()
+		if len(ids) == 0 {
+			continue
+		}
+
+		step := t.currentStep()
+		if step == nil {
+			continue
+		}
+
+		// only a HUMAN task has a parked-work identity to re-register; an
+		// iterated activity over anything else records no task ids at all.
+		if _, human := step.node.(interactor.HumanTask); !human {
+			continue
+		}
+
+		for ord, id := range ids {
+			// REGISTERED, not announced. The task is already in the
+			// distributor's inbox — announced when its instance first parked
+			// and never withdrawn, which is the point of a wait that outlives
+			// its instance's residency (ADR-020 §2.1.1). Re-announcing says
+			// nothing new, and the iterations announce for themselves when
+			// they re-park.
+			//
+			// The verdict is the one the ANNOUNCEMENT froze, taken from the
+			// checkpoint rather than resolved again: this runs outside the
+			// iteration's data, where a per-iteration performer expression
+			// has nothing to resolve against.
+			ls.adoptTask(ctx, id, t, step.node, ord)
+		}
+	}
 }
 
 // recordBornWaiter registers a track that begins already parked (a wait node or
@@ -425,7 +595,23 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 		}
 	}
 
-	ls.addTask(ctx, t.taskID, t, node)
+	// Only a HUMAN task has a parked-work identity. Every other born waiter —
+	// an event catch, a compensation throw — parks on a subscription and must
+	// not be registered as a task; asking for an identity here would mint one
+	// for it and announce a task nobody modeled.
+	if _, human := node.(interactor.HumanTask); !human {
+		return
+	}
+
+	// the same identity rule as a mid-run park: an ITERATED activity's task
+	// belongs to the instance, a lone one to the track (ADR-020 §2.12). A
+	// restored execution adopts its recorded id inside, so a rehydrated task
+	// keeps the handle its inbox entry carries.
+	// no executor here: a born-parked waiter is the track's own, and a
+	// restored fan-out re-classifies per instance when its decorator runs.
+	taskID, ord := t.humanTaskIdentity(nil)
+
+	ls.addTask(ctx, taskID, t, node, ord, nil)
 }
 
 // onTaskWaiting records a parked UserTask and announces it to the distributor,
@@ -438,7 +624,7 @@ func (ls *loopState) onTaskWaiting(ctx context.Context, ev trackEvent) {
 	}
 
 	ls.waiting[ev.track.ID()] = struct{}{}
-	ls.addTask(ctx, ev.taskID, ev.track, ev.node)
+	ls.addTask(ctx, ev.taskID, ev.track, ev.node, ev.ord, ev.iterLocal)
 }
 
 // withdrawAllTasks withdraws every parked task and clears the registry, used on
@@ -497,13 +683,14 @@ func (inst *Instance) buildTaskInfo(
 	ctx context.Context,
 	taskID string,
 	node flow.Node,
+	iterLocal []data.Data,
 ) interactor.TaskInfo {
 	ht, _ := node.(interactor.HumanTask)
 
 	return interactor.TaskInfo{
 		TaskRef:  inst.taskRef(taskID, node),
 		Roles:    ht.Roles(),
-		Eligible: inst.resolveEligibility(ctx, taskID, node),
+		Eligible: inst.resolveEligibility(ctx, taskID, node, iterLocal),
 		Priority: ht.TaskPriority(),
 	}
 }
@@ -521,6 +708,7 @@ func (inst *Instance) resolveEligibility(
 	ctx context.Context,
 	taskID string,
 	node flow.Node,
+	iterLocal []data.Data,
 ) interactor.Eligibility {
 	ht, _ := node.(interactor.HumanTask)
 
@@ -530,6 +718,20 @@ func (inst *Instance) resolveEligibility(
 	}
 
 	defer frame.Discard()
+
+	// AN ITERATION RESOLVES ITS OWN PERFORMER, in the data context it runs in
+	// (ADR-025 §2.15, SRD-090.D FR-10): the element it was seeded with is
+	// frame-local to it, so without this the expression reads the activity's
+	// scope, where that element is not visible.
+	//
+	// Bound rather than resolved later because eligibility is assessed ONCE,
+	// at the announcement — the verdict is frozen on the registry entry and
+	// every later check reads that snapshot (ADR-020 v.2 §2.7).
+	if len(iterLocal) > 0 {
+		if berr := frame.BindLocal(iterLocal...); berr != nil {
+			return inst.denyByResolutionFailure(taskID, node, berr)
+		}
+	}
 
 	return ht.ResolveEligibility(
 		ctx, newExecEnv(inst, frame, nil), inst.ExpressionEngine())

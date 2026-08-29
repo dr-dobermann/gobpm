@@ -235,6 +235,41 @@ Detailed in **ADR-001 v.3 Execution Model** (Accepted). Key points captured here
 - **On runtime start / restart**, the runtime queries `Repository` for in-flight instances and rehydrates them. Recovery should be straightforward and bounded — not a fragile dance.
 - **Instances are created by an explicit start *or* by an event.** Beyond `StartProcess`, a **message start event** or an instantiating `ReceiveTask` spawns an instance when a matching message arrives — the instance is *born from the event* (the start node pre-fired, its payload bound), created by a definition-level **instance-starter** (ADR-014/ADR-015). **Message correlation** (ADR-016) decides whether a message creates a new instance or routes to an existing one, by a composite key derived from the payload; a `WithManualStart` registration opts a process out of auto-instantiation (tests / back-pressure).
 
+### 10.1 What "instance" means, and what the other things are called
+
+Three different runtime objects were all being called an *instance*, and the
+overload cost real work: a document could say "each instance resolves its own
+performer" and be read three ways, one of which was implemented and two of
+which were not. The vocabulary is therefore fixed here, once, for every
+document and every identifier in the tree.
+
+| Term | What it is | What it is NOT |
+|---|---|---|
+| **Instance** | A **process instance** — one execution of a process definition, owning its event loop, its data plane and its checkpoint. | Nothing else. This is the only thing the word names. |
+| **Node executor** (a *node unit* where it is decorated) | The runtime object that runs ONE node once and owns that node's wait (ADR-025 §2.13). | Not an "instance of a node". Gateways and events have executors too, and no decorator — so *unit* is reserved for the decorated case rather than used as a synonym. |
+| **Iteration** | One execution of an activity that iterates — one pass of a Standard Loop, one member of a Multi-Instance. It has its own frame, its own ordinal, its own parked-work identity. | Not an "instance", and not a track: a leaf iteration has no track of its own. |
+| **Host** (the *decorator*) | The object that owns an activity's iterations: it holds their waits, applies their completions serially, and answers for them to everything outside the node (ADR-025 §2.13b.1, §2.15a). | Not a scheduler over N independent things — the iterations run under its control, not beside it. |
+
+**Why the distinction is load-bearing rather than tidy.** A process instance is
+what the engine persists, restores and counts. A node executor is what owns a
+wait. An iteration is what a person is actually working on when three approvals
+are offered at once — and it is what an identity, a performer and a result are
+*per*. Collapsing the three into one word made it possible to write a
+requirement about iterations, implement it for the process instance, and have
+both readings look correct on the page.
+
+**Eligibility follows from this.** A human task's eligibility is resolved ONCE,
+at the announcement, in the data context of the **iteration** being announced —
+so a fan-out over three reviewers names three different people. It is frozen on
+the registry entry and only *checked* afterwards; the host is what routes an
+action to the iteration it belongs to (ADR-020 §2.7, ADR-025 §2.15).
+
+**Where the tree still says otherwise.** Identifiers predating this section
+retain the older spelling in places (`activityInstance`, `instanceOutputs`).
+They are being renamed as the code around them is touched rather than in one
+sweep, because a rename that large is a poor thing to review alongside
+behaviour. New code uses the vocabulary above.
+
 ## 11. Extension Model (overview)
 
 Detailed in **ADR-002 Extension Architecture**. Key points:

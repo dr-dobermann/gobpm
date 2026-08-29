@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.9 |
-| Date | 2026-08-26 |
+| Version | v.10 |
+| Date | 2026-08-27 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) |
 
@@ -241,6 +241,67 @@ an execution error, never a wait. The expression-driven shapes evaluate through
 the engine's `ExpressionEngine` (ADR-002), so the transformation/assignment
 language is swappable.
 
+**What each expression may be (v.10).** §2.4 named the three shapes; it did
+not say what the expressions in them address, and the two halves of an
+`assignment` are not the same kind of thing.
+
+- A **`transformation`**, and an assignment's **`from`**, are ordinary
+  expressions: evaluated through the `ExpressionEngine` against the
+  **activity's data context** — the same resolver every other consumer reads
+  through (§2.9.2), so a mapping expression reads the association's sources,
+  the node's own data and structural paths into any of them, and
+  `order.items[0].price` resolves exactly as it does in a gateway condition.
+  The result is a value. The association's **sources** decide whether the
+  association may execute at all (the availability gate below); they do not
+  narrow what its expression may see — §10.4.2 constrains the gate, not the
+  visibility.
+- An assignment's **`to` is a data path, not an arbitrary expression.** It
+  addresses where the value lands — the association's target itself (a path
+  with no steps, which is the whole-value write), or a field or element
+  inside it — and it resolves through the same walk, writing by
+  §2.9.3's rule: the walk reaches the **parent** and mutates through its
+  capability, so the owner enforces its own shape (a typed value rejects an
+  unknown field by construction; a dynamic record accepts an assembled one),
+  and a violating write is an error rather than a silent coercion.
+
+The narrowing is an **engine choice**, and a deliberate one. §10.4.2 defines
+`to` as an Expression evaluating to "any element in context or sub-element of
+it", which in the general case demands an evaluator that yields a location
+rather than a value — a second, lvalue-shaped contract on top of the one
+expression seam this engine has. The narrowing costs nothing a modeller
+reaches for: a path already addresses every element and sub-element the
+engine holds (§2.9.2/§2.9.3 exist precisely for that), and **practice agrees**
+— Camunda 7's input/output mapping, the mainstream substitute for these
+shapes, takes a plain variable **name** as its target
+([camunda7/input-output-mapping.md](../camunda7/input-output-mapping.md) §1).
+A path is strictly more than that name and strictly less than an lvalue
+evaluator. A document whose `to` is not a resolvable path is refused where it
+is read, never silently copied whole.
+
+**One shape at a time.** An association carries a `transformation` **or**
+`assignment`s, never both. §10.4.2 numbers the three cases without forbidding
+the combination, and its rules would compose — the transformation replaces the
+target, then each assignment writes into the result — but nothing in the
+standard fixes that order, no practice exercises it
+([camunda7/input-output-mapping.md](../camunda7/input-output-mapping.md) §2),
+and a mapping whose two halves fight over one target is a modelling mistake
+worth catching. So this is an **engine choice**, refused where the association
+is built. It is the reversible direction: admitting the combination later
+needs only a decision, while inventing an order now would fix one nobody
+asked for.
+
+**Sources follow the shape.** With neither expression shape, **exactly one**
+source is legal — the standard's own rule 3
+([data.md](../bpmn-spec/semantics/data.md) §10.4.2, p225) — which is why a
+multi-source association is legal only in the company of a transformation.
+Under a transformation the sources gate availability whether or not the
+expression names them (rule 1: "sources are used as scope-availability gate
+but need not be referenced inside the Expression"), and the spec body puts
+their cardinality at "zero (0) to many" — a clause the vendored extract does
+not carry, quoted in full at `pkg/model/data/association.go`'s package
+documentation. Availability gating itself is unchanged by this section: an
+unavailable source fails fast rather than waiting, per §2.3.
+
 ### 2.5 Events carry data without sets
 
 Throw and catch events follow the standard's event model (§10.4.2): a throw
@@ -388,6 +449,14 @@ target shapes (the implementing SRD does the file-level work):
   trade-off for the simpler single-set model (§2.7). This deviation and the
   no-wait deviation (§2.3) are registered in the engine's conformance scope
   ([SAD-001 v.1 §14.1](SAD-001-vision-and-architecture.md)).
+- **Mapping a vendor's own I/O mapping onto these shapes (v.10).** Once an
+  association evaluates expressions, a vendor construct that does the same
+  thing — Camunda 7's `camunda:inputOutput` — has, for the first time, a home
+  in this model. Whether the converter maps it is **not decided here**: it is
+  a converter-dialect question, governed by
+  [ADR-024](ADR-024-process-interchange-converters.md) §2.14's rule that the
+  dialect never motivates a new model type but maps what already exists. This
+  ADR only makes the home exist.
 - **Where data lives and the runtime contract** — ADR-010 (container scopes, the
   data plane, frames, copy/commit, last-committed-wins). This ADR evaluates
   *against* that contract.
@@ -523,7 +592,8 @@ process-local `order` value is walked natively.
 The path resolves on **both** sides. Read: address a leaf or subtree. Write:
 `WithOutputMapping` (and a `DataOutputAssociation`) MAY target a nested field —
 set `order.items[0].price`, or **assemble** a record/list output — closing the
-write-gap (today mapping and associations replace **whole** values only). The
+write-gap that the pre-v.6 model had, where mapping and associations could
+replace **whole** values only. The
 write walks to the **parent** and mutates through its capability (`SetField` /
 the collection's index write), so the owner enforces its own shape: a **typed**
 value rejects an unknown field or a type clash *by construction* (its `SetField`
@@ -942,6 +1012,8 @@ Advisory, not gating — conventions the landing SRD(s) and later work should fo
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.10 | 2026-08-28 | Ruslan Gabitov | **Accepted** — landed by SRD-097 across M1 (`data.Assignment`, `WithAssignments`, the shape and cardinality rules), M2 (the expression engine reachable from the execution frame), M3 (the copy path evaluating all three shapes), M4 (the legacy evaluator bounded), M5 (the importer mapping `<transformation>` and `<assignment>` and retiring the three refusals), M6 (the worked example) and M7 (the independent review's findings). §2.4's narrowing of `to` to a data path, the one-shape-at-a-time rule and the source cardinality are all enforced where the association is built. Two engine readings the landing forced, recorded in SRD-097 §10.2: the activity's data context includes the node's **own** output parameters, which win over a same-named scope datum, and an assignment whose target is a Data Store reads the record before writing it back, so the fields it does not name survive. `make ci` green. |
+| v.10 | 2026-08-27 | Ruslan Gabitov | **§2.4 says what the association expressions address.** The three shapes were prescribed in v.1 and their two expression-driven forms were never given a contract: a `transformation` and an assignment's `from` are ordinary expressions evaluated through the `ExpressionEngine` against the association as data source, reading sources by name and by **path**; an assignment's **`to` is a data path**, resolved by the same walk and written through §2.9.3's parent-capability rule, so the owner enforces shape and a violating write errors. The narrowing of §10.4.2's "any element in context" to a path is an explicit **engine choice** — the general form demands an lvalue-shaped evaluator this engine has no seam for, a path already addresses everything the engine holds, and practice agrees (Camunda 7's I/O mapping targets a plain variable name — vendored as `docs/camunda7/input-output-mapping.md` so the claim is checkable). Expressions evaluate against the **activity's data context**, not against the association alone: the sources gate execution, they do not narrow visibility. An association carries a transformation **or** assignments, never both — an engine choice, since the standard fixes no order for the combination and nothing exercises it. Sources follow the shape: many are legal only under a transformation, exactly one with neither (§10.4.2 rule 3), which is why a multi-source association travels with a transformation. §2.8 records that mapping a vendor's own I/O mapping onto these shapes is an ADR-024 §2.14 question, not one this ADR decides. No change to §2.1–§2.3, §2.5–§2.7 or §2.9. |
 | v.9 | 2026-08-27 | Ruslan Gabitov | §2.5's Start/End special case no longer "stays scheduled": it is decided by [ADR-040 v.2](ADR-040-process-io-contract.md) §2.7 — an event's data parameters are association ends, the process's own Start/End events wire to its contract, an event-born launch fills the contract from the payload. Pointer only; no data-flow semantics change. |
 | v.8 | 2026-08-26 | Ruslan Gabitov | §2.5's "lands with the messaging/call-activity work" resolved: the process-level I/O — the process's own declared inputs and outputs, bound at launch, read at completion — is decided by [ADR-040 v.1](ADR-040-process-io-contract.md); the Start/End event-association special case stays scheduled, now against the event attachment capability (#329). Pointer and re-schedule only; no data-flow semantics change. |
 | v.7 | 2026-07-19 | Ruslan Gabitov | **Accepted** (landed whole via SRD-047 — the S5 slice; five milestones, `make ci` green, diff-coverage 98.9%). Added §2.9.7 — the **map kind**, un-deferring the §2.8 "map / dictionary value kind" non-goal now that its stated driver arrived (processes holding data-keyed dictionaries; the landed S4 adapter tier leaving `map[string]V` fields opaque). The kind set becomes `scalar｜list｜record｜map` (§2.9.1): **`data.Map`** is the fourth capability — homogeneous values under **data** keys (a record's keys are schema; a map's keys are data), with key enumeration, entry read/upsert, and **first-class deletion** (keys are data, so entries legitimately disappear). **Determinism over Go's randomized iteration:** every enumeration surface (Keys, walk/shape helpers, commit-diff) uses **sorted key order** — the one order stable across clones/commits/restarts. Dynamic concrete: generic **`values.Map[T]`** mirroring `Array[T]` (homogeneity by type parameter; `Map[any]` for assembled data); whole-value `Update` **replaces** the entry set (the `values.Record` merge rationale does not transfer — a map has no unknown keys to reject, and merge could never delete). Path grammar gains the **`["key"]`** step (double-quoted, backslash-escapable) with bracket disambiguation — bare number = list index, quoted string = map key; write upserts and a following `["key"]` step vivifies an empty dynamic map (§2.9.2/§2.9.3). Commit-diff walks maps per entry (union of keys) emitting the existing `ChangeType` vocabulary (§2.9.4). Adapter tier lifts **`map[string]V`** fields to navigable maps over the live value; **non-string-keyed maps stay opaque leaves** — key stringification rejected as silent, format-ambiguous, irreversible coercion (new §2.8 non-goal; per-type custom adapter is the lift). Standard grounding: BPMN/XSD is record+list and silent on dictionaries (§8.4.10) — the map kind is a recorded **engine choice**, not a conformance item. Phasing gains **S5** (§2.9.6), additive over landed S1–S4. Amends §1.2/§1.3/§2.8/§2.9.1/§2.9.2/§2.9.3/§2.9.6/§3/§6; adds §2.9.7. Lands via the accompanying maps SRD. |
