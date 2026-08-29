@@ -140,8 +140,10 @@ registry lives and where the call is resolved.
   a bare in-process task is.
 - **FR-8 — Derived ids.** The process takes the global task's id; the five
   elements inside it take **five derived ids** — `<id>.start`, `<id>.task`,
-  `<id>.end`, `<id>.in`, `<id>.out` (the None Start, the task node, the
-  None End, and the two flows) — each claimed in the document's id ledger,
+  `<id>.end`, `<id>.start-task`, `<id>.task-end` (the None Start, the task
+  node, the None End, and the two flows — the flows name their endpoints
+  because `.in`/`.out` collide with the `<dataInput id="x.in">` a file may
+  perfectly well declare) — each claimed in the document's id ledger,
   so a collision with a declared id is refused rather than silently rewired
   (ADR-024 v.7 §2.13). The ids the file itself declares inside the callable
   (its `<ioSpecification>`, its sets, its parameters) are claimed as they

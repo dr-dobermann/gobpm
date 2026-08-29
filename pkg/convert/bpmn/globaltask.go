@@ -37,8 +37,12 @@ const (
 	globalStartSuffix = ".start"
 	globalTaskSuffix  = ".task"
 	globalEndSuffix   = ".end"
-	globalInSuffix    = ".in"
-	globalOutSuffix   = ".out"
+	// The flows name their endpoints rather than a direction: ".in" and
+	// ".out" read well until a file declares <dataInput id="tax.in">, which
+	// is an entirely natural thing to write and collides. Both suffixes are
+	// still derived and stable; they are simply harder to type by accident.
+	globalInSuffix  = ".start-task"
+	globalOutSuffix = ".task-end"
 )
 
 // parseGlobalTaskElem parses one definitions-level GlobalTask into a process

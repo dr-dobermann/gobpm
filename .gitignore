@@ -80,6 +80,7 @@ examples/multi-instance-behavior/multi-instance-behavior
 examples/compensation-events/compensation-events
 examples/transaction-sub-process/transaction-sub-process
 examples/bpmn-convert/bpmn-convert
+examples/bpmn-callable/bpmn-callable
 examples/adhoc-subprocess/adhoc-subprocess
 
 # the link checker's built binary (built by `make link-check` via `go run`,

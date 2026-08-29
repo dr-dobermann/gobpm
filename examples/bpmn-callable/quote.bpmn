@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions
+    xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+    xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+    xmlns:tns="http://example.com/orders"
+    xmlns:ext="http://example.com/shared"
+    targetNamespace="http://example.com/orders">
+
+  <!-- Where the callables of another document live. A calledElement
+       qualified by ext: is meaningful only because this declaration says
+       the namespace exists; without it the reference is refused. -->
+  <bpmn:import namespace="http://example.com/shared"
+      location="shared.bpmn"
+      importType="http://www.omg.org/spec/BPMN/20100524/MODEL"/>
+
+  <!-- Reuse BY REFERENCE: declared once, called from anywhere, and with no
+       flow of its own. The importer gives it one — a None start, this task,
+       a None end — because §13.3.4 enters a called process by its None
+       start, so a callable without one is not callable at all. -->
+  <bpmn:globalBusinessRuleTask id="tax" name="Add tax"
+      camunda:decisionRef="tax"/>
+
+  <bpmn:process id="quote" name="quote" isExecutable="true">
+    <bpmn:startEvent id="s1"/>
+
+    <!-- An UNQUALIFIED reference: the key the registry serves directly. -->
+    <bpmn:callActivity id="addTax" name="Add tax" calledElement="tax"/>
+
+    <!-- A QUALIFIED reference: "audit" in another document's namespace. The
+         engine owns no convention for turning that into a registry key, so
+         the host's CallableResolver decides — and refuses by name if the
+         host never taught it this namespace. -->
+    <bpmn:callActivity id="audit" name="Audit" calledElement="ext:audit"/>
+
+    <!-- A self-qualified reference: tns: is this document's OWN
+         targetNamespace, so it collapses to the bare key and needs no
+         resolver at all. -->
+    <bpmn:callActivity id="again" name="Add tax again"
+        calledElement="tns:tax"/>
+
+    <bpmn:endEvent id="e1"/>
+
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="addTax"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="addTax" targetRef="audit"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="audit" targetRef="again"/>
+    <bpmn:sequenceFlow id="f4" sourceRef="again" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>
