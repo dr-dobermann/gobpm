@@ -1,4 +1,4 @@
-// Package set provides generic set data structure for comparable types.
+// Package set provides a generic set data structure for comparable types.
 package set
 
 // Set provides standard set functionality for any comparable type.

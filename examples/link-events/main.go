@@ -5,8 +5,8 @@
 // broadcast, no correlation, no subscription; the throw simply redirects.
 //
 // This example builds an ON-PAGE LOOP with a Link, the canonical use: instead
-// of a long sequence-flow line looping back, an initial throw"repeat" and a
-// back-edge throw"repeat" both redirect to one catch"repeat", so the work task
+// of a long sequence-flow line looping back, an initial throw "repeat" and a
+// back-edge throw "repeat" both redirect to one catch "repeat", so the work task
 // runs each iteration until a data condition exits (§10.5.1 "looping
 // situations"). It shows the many-sources → one-target pairing and re-entrancy.
 //

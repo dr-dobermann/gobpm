@@ -1,37 +1,38 @@
-// Track represents a single flow of process.
-// Every process has one or a few entry points (event, nodes with no
-// incoming sequence flow). Those entry points becomes a begin of
+// Track represents a single execution flow of a process.
+// Every process has one or more entry points (e.g., events or nodes with no
+// incoming sequence flows). These entry points become the beginning of a
 // track.
 //
-// Track starts execution from a start node.
+// A track starts execution from a start node.
 //
-//   - If node awaits an event to continue, then it event definition
-//     registered in instance and track state becomes to TrackAwaitEvent.
-//     Once event sent to track via ProcessEvent, then track continues.
+//   - If a node awaits an event to continue, its event definition is
+//     registered in the instance, and the track state changes to TrackAwaitEvent.
+//     Once the event is sent to the track via ProcessEvent, the track continues.
 //
 //   - Node execution is a single Execute step: the track loads the node's
 //     incoming data, runs the node's Exec, and uploads its outgoing data. On
-//     success Exec returns a list of outgoing flows.
+//     success, Exec returns a list of outgoing flows.
 //
-// If number of outgoing flows is not zero, then they processed as followed:
+// If the number of outgoing flows is not zero, they are processed as follows:
 //
-//   - first flow becomes the next step of the track.
-//     If there is a cyclic flow to node itself, then the first of them would
-//     be the next step of the track. If there is more than on cyclic flow,
-//     goBpm has no mechanism to set priority between them.
+//   - The first flow becomes the next step of the track.
+//     If there is a cyclic flow to the node itself, the first one will
+//     be the next step of the track. If there is more than one cyclic flow,
+//     GoBPM has no mechanism to set priority between them.
 //
-//   - for the rest of the outgoing flows new tracks would be created and
+//   - For the rest of the outgoing flows, new child tracks are created and
 //     added to the instance.
 //
-//   - token in the track would split on number of flows and first one will
-//     assign to the track itself in next step, and the rest of them will
-//     be set to the others child tracks.
+//   - The token in the track splits according to the number of flows. The first
+//     token is assigned to the current track for the next step, and the rest
+//     are assigned to the newly created child tracks.
 //
-// if there is no outgoing flows, then track ends and token died.
+// If there are no outgoing flows, the track ends and the token dies.
 //
 // ## Human interaction
 //
-// If node needs to interact with the human, then it should support
+// If a node needs to interact with a human, it should support the
+// interactor.HumanTask interface.
 //
 
 package instance
