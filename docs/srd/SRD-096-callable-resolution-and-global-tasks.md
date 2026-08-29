@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-27 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-023 v.5](../design/ADR-023-sub-process-and-call-activity.md) §2.7 (the callable reference, the resolver seam, the global task as a process), [ADR-024 v.7](../design/ADR-024-process-interchange-converters.md) §2.13 (the family's import, the QName reading of `calledElement`) |

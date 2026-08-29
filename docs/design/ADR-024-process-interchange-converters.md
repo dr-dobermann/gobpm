@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (v.7 — flips to Accepted when the v.7 changes land) |
+| Status | Accepted |
 | Version | v.7 |
 | Date | 2026-08-28 |
 | Owner | Ruslan Gabitov |
