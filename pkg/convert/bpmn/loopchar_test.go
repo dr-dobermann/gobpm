@@ -896,9 +896,9 @@ func TestMIBehaviorErrors(t *testing.T) {
 		attrs string
 		want  string
 	}{
-		"unknown behavior":  {attrs: `behavior="Sometimes"`, want: "All, None, One or Complex"},
-		"dangling ref":      {attrs: `behavior="None" noneBehaviorEventRef="ghost"`, want: "no such element is declared"},
-		"wrong-kind ref":    {attrs: `behavior="None" noneBehaviorEventRef="t1"`, want: `"t1" is a task`},
+		"unknown behavior":        {attrs: `behavior="Sometimes"`, want: "All, None, One or Complex"},
+		"dangling ref":            {attrs: `behavior="None" noneBehaviorEventRef="ghost"`, want: "no such element is declared"},
+		"wrong-kind ref":          {attrs: `behavior="None" noneBehaviorEventRef="t1"`, want: `"t1" is a task`},
 		"source without behavior": {attrs: `noneBehaviorEventRef="def1"`, want: "no behavior event may be set"},
 	}
 

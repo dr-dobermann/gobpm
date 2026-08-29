@@ -56,7 +56,7 @@ func standardLoopOf(node flow.Node) standardLoop {
 //
 // ONE decision, with no exceptions left (SRD-090.A FR-2/FR-11). The leaf
 // Standard Loop was the last one driven from here — it re-ran its node in
-// place, with no per-instance object — and it is a loopDecorator over node
+// place, with no per-iteration object — and it is a loopDecorator over node
 // executors now, which is the same shape every other iterated activity
 // already had.
 func (t *track) executeStep(
@@ -97,7 +97,7 @@ func (t *track) awaits() awaitKind {
 // loopDecorator drives a COMPOSITE activity's Standard Loop, holding the
 // executor for the pass currently running (ADR-025 §2.13, BPMN §13.3.6).
 // It is the condition-driven sibling of iterDecorator: where a Multi-Instance
-// resolves its instance count once and gives each instance its own slice of
+// resolves its iteration count once and gives each iteration its own slice of
 // the input, a Standard Loop runs passes until its loopCondition says stop
 // and gives them nothing but the ordinal.
 //
@@ -280,9 +280,9 @@ func (d *loopDecorator) iterKind() string {
 	return iterKindStdLoop
 }
 
-// completeInstance hands the completion to the pass that is parked on it — a
-// Standard Loop runs one at a time. See iterDecorator.completeInstance.
-func (d *loopDecorator) completeInstance(
+// completeIteration hands the completion to the pass that is parked on it — a
+// Standard Loop runs one at a time. See iterDecorator.completeIteration.
+func (d *loopDecorator) completeIteration(
 	ord int, def flow.EventDefinition, owner string,
 ) {
 	d.t.recordIterationOwner(d.step.node, ord, owner)
@@ -300,7 +300,7 @@ func (d *loopDecorator) deliverTo(_ int, eDef flow.EventDefinition) bool {
 // activity, held across its passes (SRD-090.B FR-1/FR-2).
 func (d *loopDecorator) subscriber() activitySubscriber { return d }
 
-// runPass runs one pass as its own instance: the executor opens that pass's
+// runPass runs one pass as its own iteration: the executor opens that pass's
 // child scope and parks for its drain.
 func (d *loopDecorator) runPass(ctx context.Context, pass int) error {
 	// the field says "nil between passes" and now is: the loop asks what
@@ -397,10 +397,10 @@ func (d *loopDecorator) awaits() awaitKind {
 // state reports the ACTIVITY's iteration state: the live pass's ordinal and
 // what it is doing. Its own ordinal is 0 — the activity is one instance of
 // itself from the track's point of view.
-func (d *loopDecorator) state() instanceState {
+func (d *loopDecorator) state() iterationState {
 	h := d.live.Load()
 	if h == nil {
-		return instanceState{ordinal: 0, await: awaitNothing}
+		return iterationState{ordinal: 0, await: awaitNothing}
 	}
 
 	return h.e.state()

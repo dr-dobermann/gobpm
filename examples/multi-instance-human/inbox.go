@@ -10,7 +10,7 @@ import (
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 )
 
-// reviewer is one acting human. Each instance of the fan-out is completed by
+// reviewer is one acting human. Each iteration of the fan-out is completed by
 // the reviewer it was offered to, which is the whole point of the construct:
 // three approvals, three people, at the same time.
 type reviewer struct{ id string }
@@ -54,7 +54,7 @@ func (i *inbox) Distribute(
 	i.mu.Unlock()
 
 	// The announcement carries the eligibility the engine RESOLVED for this
-	// instance — so the inbox knows whose work it is without opening it, and
+	// iteration — so the inbox knows whose work it is without opening it, and
 	// three instances of one activity name three different people.
 	who := task.Eligible.Assignee.IDs
 	if len(who) != 1 {

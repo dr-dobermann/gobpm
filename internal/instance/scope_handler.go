@@ -26,7 +26,7 @@ type scopeHandlerWatch struct {
 	loopOwned bool                 // Conditional — armed via a condWatch, not the hub
 	// interrupting is the triggered start's isInterrupting (SRD-053): an
 	// interrupting fire runs cancel-and-run; a non-interrupting fire forks a
-	// concurrent handler instance and leaves the watch armed.
+	// concurrent handler iteration and leaves the watch armed.
 	interrupting bool
 }
 
@@ -55,7 +55,7 @@ func (w *scopeHandlerWatch) ProcessEvent(
 // armScopeHandlers arms every Event Sub-Process declared directly in nodes at
 // the scope path (SRD-052 FR-5): the boundary-watch pattern lifted from an
 // activity's window to a scope's window. Called when a scope opens (the
-// enclosing composite's inner nodes) and at instance start (the process's
+// enclosing composite's inner nodes) and at iteration start (the process's
 // top-level nodes at the root path). A scope with no event sub-processes arms
 // nothing (NFR-3). Runs on the loop goroutine.
 func (ls *loopState) armScopeHandlers(
@@ -201,7 +201,7 @@ func (ls *loopState) fireScopeHandler(ctx context.Context, ev trackEvent) {
 		return
 	}
 
-	// non-interrupting: fork a concurrent handler instance and leave the watch
+	// non-interrupting: fork a concurrent handler iteration and leave the watch
 	// armed to fire again — no budget, no sibling-cancel, no disarm (SRD-053
 	// FR-3/FR-5), the scope-level twin of a non-interrupting boundary.
 	if !w.interrupting {
@@ -221,14 +221,14 @@ func (ls *loopState) fireScopeHandler(ctx context.Context, ev trackEvent) {
 	ls.runScopeHandler(ctx, w, ev.eDef)
 }
 
-// runNonInterruptingHandler forks a concurrent handler instance for a
+// runNonInterruptingHandler forks a concurrent handler iteration for a
 // non-interrupting fire (SRD-053 FR-3/FR-4): it spawns the handler as a track in
 // the enclosing scope with a UNIQUE child-scope segment (so concurrent fires of
 // the same handler open distinct scopes instead of serializing through the
 // re-entry queue) and that fire's own payload bound into its own scope — and it
 // does NOT touch the scope's sibling tracks, the interrupting budget, or the
 // watch (which stays armed, multi-shot). The enclosing scope's drain accounting
-// holds it open until every live handler instance also drains (FR-6). Runs on
+// holds it open until every live handler iteration also drains (FR-6). Runs on
 // the loop goroutine.
 func (ls *loopState) runNonInterruptingHandler(
 	ctx context.Context,
@@ -248,7 +248,7 @@ func (ls *loopState) runNonInterruptingHandler(
 
 	// bind the trigger payload into the enclosing scope, read by the handler's
 	// inner nodes via walk-up (as the interrupting handler does). Concurrent
-	// non-interrupting instances share this binding; per-instance payload
+	// non-interrupting instances share this binding; per-iteration payload
 	// isolation is a deferred refinement (SRD-053 §4.3).
 	if payload != nil {
 		if err := ls.inst.sc.bindEventPayloadAt(w.path, payload); err != nil {
@@ -294,7 +294,7 @@ func (ls *loopState) runScopeHandler(
 
 	// bind the trigger's payload into the enclosing scope, so the handler's
 	// inner nodes observe the event data by walking up from their own child
-	// scope (FR-7; one scope down from a born-from-event instance's root bind).
+	// scope (FR-7; one scope down from a born-from-event iteration's root bind).
 	if payload != nil {
 		if err = ls.inst.sc.bindEventPayloadAt(w.path, payload); err != nil {
 			ls.inst.fail(err)
@@ -408,7 +408,7 @@ func (ls *loopState) handlerWatchFor(node flow.Node) *scopeHandlerWatch {
 }
 
 // disarmAllScopeHandlers tears down every armed handler across all scopes — the
-// instance is terminating (drop), so no handler guards anything (SRD-052 FR-5).
+// iteration is terminating (drop), so no handler guards anything (SRD-052 FR-5).
 func (ls *loopState) disarmAllScopeHandlers() {
 	for path := range ls.scopeHandlers {
 		ls.disarmScopeHandlers(path)

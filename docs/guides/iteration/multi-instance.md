@@ -6,7 +6,7 @@ description: Fan an activity over a collection, sequentially or in parallel.
 # Multi-Instance
 
 A **Multi-Instance** marker runs an activity a *fixed* number of times — one
-instance per element of a collection, decided once at activation. It is the
+iteration per element of a collection, decided once at activation. It is the
 collection fan-out counterpart of the condition-driven
 [Standard Loop](standard-loop.md): reach for it when you have N items and want
 the same activity applied to each, either one after another (**sequential**) or
@@ -63,25 +63,25 @@ Most Multi-Instance markers need only these:
 | Option | When you reach for it |
 |---|---|
 | `WithInputCollection(ref, item)` | count = size of the `ref` collection; bind each element to `item`. |
-| `WithOutputCollection(ref, item)` | assemble each instance's `item` output — positionally — into `ref`. |
-| `WithSequential()` | run instances one at a time; omit for parallel (the §13.3.7 default). |
-| `WithCompletionCondition(expr)` | stop early once a boolean holds after an instance completes. |
+| `WithOutputCollection(ref, item)` | assemble each iteration's `item` output — positionally — into `ref`. |
+| `WithSequential()` | run iterations one at a time; omit for parallel (the §13.3.7 default). |
+| `WithCompletionCondition(expr)` | stop early once a boolean holds after an iteration completes. |
 
 The full family, from `MultiInstanceOption`:
 
 | Option | Effect |
 |---|---|
 | `WithCardinality(expr data.FormalExpression)` | count from an integer expression (XOR the input collection). |
-| `WithInputCollection(ref, item string)` | count = collection size; element *i* bound to `item` in instance *i*'s scope. |
-| `WithOutputCollection(ref, item string)` | assemble each instance's `item` into `ref`, in input order. |
-| `WithSequential()` | sequential execution; instance *i+1* opens only after *i* drains. |
+| `WithInputCollection(ref, item string)` | count = collection size; element *i* bound to `item` in iteration *i*'s scope. |
+| `WithOutputCollection(ref, item string)` | assemble each iteration's `item` into `ref`, in input order. |
+| `WithSequential()` | sequential execution; iteration *i+1* opens only after *i* drains. |
 | `WithCompletionCondition(expr data.FormalExpression)` | boolean re-evaluated after each completion; `true` finishes the activity now. |
 | `WithBehavior(b MultiInstanceBehavior)` | select the completion-event behavior (below). |
 | `WithComplexBehavior(defs ...*ComplexBehaviorDefinition)` | the `BehaviorComplex` entries. |
 | `WithNoneBehaviorEvent(def flow.EventDefinition)` | the event thrown by `BehaviorNone`. |
 | `WithOneBehaviorEvent(def flow.EventDefinition)` | the event thrown by `BehaviorOne`. |
 
-`MultiInstanceBehavior` governs whether an event is thrown as instances complete
+`MultiInstanceBehavior` governs whether an event is thrown as iterations complete
 (§13.3.7, [ADR-025](../../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.8):
 
 | Constant | Throws |
@@ -106,14 +106,14 @@ proc, _ := process.New("multi-instance-sequential",
         data.ReadyDataState)))
 ```
 
-The body's task reads its per-instance `amount` **by name** and returns the
+The body's task reads its per-iteration `amount` **by name** and returns the
 `withTax` item the marker assembles into `taxed`:
 
 ```go
 op, _ := gooper.New("tax",
     func(ctx context.Context, r service.DataReader,
         _ *data.ItemDefinition) (*data.ItemDefinition, error) {
-        d, _ := r.GetData("amount")            // this instance's element
+        d, _ := r.GetData("amount")            // this iteration's element
         amount, _ := d.Value().Get(ctx).(int)
         withTax := amount + amount/5           // +20%
         fmt.Printf("    order: amount=%d → withTax=%d\n", amount, withTax)
@@ -129,7 +129,7 @@ task, _ := activities.NewServiceTask("tax", op, activities.WithoutParams())
 cd examples/multi-instance-sequential && go run .
 ```
 
-The three instances run in order, and the assembled collection appears only
+The three iterations run in order, and the assembled collection appears only
 after the last one drains — the *visibility barrier*:
 
 ```
@@ -142,15 +142,15 @@ after the last one drains — the *visibility barrier*:
 
 ## Execution modes
 
-**Sequential** (`WithSequential()`) — instance *i+1* opens only after *i*
+**Sequential** (`WithSequential()`) — iteration *i+1* opens only after *i*
 drains. `WithCompletionCondition` here simply *stops launching* the remaining
-instances.
+iterations.
 
-**Parallel** (the default — omit `WithSequential`) — all N instances start at
+**Parallel** (the default — omit `WithSequential`) — all N iterations start at
 activation, each in its **own child scope**, and the activity completes when the
 last drains. Print order varies run to run, yet positional assembly keeps the
 output in input order. `WithCompletionCondition` here **cancels** the
-still-running instances (their scopes torn down, counted in
+still-running iterations (their scopes torn down, counted in
 `numberOfTerminatedInstances`). See
 [`examples/multi-instance-parallel/`](../../../examples/multi-instance-parallel/):
 
@@ -163,7 +163,7 @@ mi, _ := activities.NewMultiInstance(
 
 ## The behavior contract
 
-A Multi-Instance can throw a **boundary-catchable** event as instances complete
+A Multi-Instance can throw a **boundary-catchable** event as iterations complete
 — a progress signal — via `WithBehavior` + a `ComplexBehaviorDefinition`. The
 event is a `*events.ImplicitThrowEvent` (never reached by a token; emitted by
 the engine), and the condition is any boolean `data.FormalExpression`:
@@ -200,7 +200,7 @@ and consults these accessors:
 |---|---|
 | `IsSequential() bool` | sequential vs parallel. |
 | `LoopCardinality()` / `LoopDataInputRef()` | the cardinality source in use. |
-| `InputDataItem()` / `OutputDataItem()` | the per-instance element / result names. |
+| `InputDataItem()` / `OutputDataItem()` | the per-iteration element / result names. |
 | `LoopDataOutputRef()` | the output collection ref. |
 | `CompletionCondition()` | the early-stop boolean, if any. |
 | `Behavior()` / `ComplexBehavior()` | the completion-event behavior + its entries. |
@@ -211,11 +211,11 @@ Behavior worth knowing:
 - **Cardinality is fixed at activation** from exactly one source — an integer
   `WithCardinality(expr)` or the size of `WithInputCollection(ref, item)`.
 - **The output collection is assembled positionally** (output slot = input
-  ordinal), so the result is deterministic even when parallel instances complete
+  ordinal), so the result is deterministic even when parallel iterations complete
   out of order. It is published **once** at completion — never visible mid-run.
-- **Each instance publishes runtime attributes** readable by name:
+- **Each iteration publishes runtime attributes** readable by name:
   `loopCounter` and the engine's `ITERATION_NUMBER` / `ITERATION_ID` /
-  `ITERATION_MODE` are the *instance's own*; `numberOfInstances`,
+  `ITERATION_MODE` are the *iteration's own*; `numberOfInstances`,
   `numberOfActiveInstances`, `numberOfCompletedInstances` and
   `numberOfTerminatedInstances` belong to the activity. All of them end with
   the activity; `RUNTIME/ITERATIONS` is what a later node reads. The full
@@ -224,7 +224,7 @@ Behavior worth knowing:
   reserved: a model declaring one is refused at build time.
 
 > The marker works on any activity, but a composite (Sub-Process / Call
-> Activity) **opens a child scope per instance**, so the iterations are
+> Activity) **opens a child scope per iteration**, so the iterations are
 > individually observable. To watch progress, read a runtime attribute or throw
 > a behavior event — reading the output collection mid-run sees nothing until
 > the barrier lifts. An Event Sub-Process cannot carry Multi-Instance: it is
@@ -235,32 +235,32 @@ Behavior worth knowing:
 MI decorates ANY activity, and since SRD-086 a leaf means what it
 declares: a **sequential leaf** re-runs the task in place — each pass
 in a fresh frame with its split item and `loopCounter` — and a
-**parallel leaf** fans out per-instance scopes, each running one track
+**parallel leaf** fans out per-iteration scopes, each running one track
 at the task. Before SRD-086 a leaf MI silently executed ONCE.
 
 **A leaf that WAITS can be iterated** (SRD-090.B). The decorator owns the
 node's event registration across iterations, so it is the single event
 processor for the activity: it holds one subscription per definition and
-routes each delivery to the instance that was waiting for it. A sequential
+routes each delivery to the iteration that was waiting for it. A sequential
 Multi-Instance over a `ReceiveTask` consumes one message per pass, and a
 Standard Loop over one does the same.
 
 Two shapes are still refused at `snapshot.New`, and for different reasons:
 
 - **A parallel fan-out over a Message catch with no iteration correlation.**
-  A message is point-to-point, so with N instances waiting at once nothing
+  A message is point-to-point, so with N iterations waiting at once nothing
   says which envelope belongs to which. Declare
   `activities.WithIterationCorrelation` (see *Events in a parallel body*)
   and it builds; leave it out and any choice would be a coin toss.
-- **A parallel fan-out over an external-worker Service Task.** Its instances
+- **A parallel fan-out over an external-worker Service Task.** Its iterations
   would share one job identity — a job is keyed to the track it belongs to,
   with no ordinal — so a single worker report would complete work nobody
-  performed. Make it **sequential** — one instance dispatches at a time and
+  performed. Make it **sequential** — one iteration dispatches at a time and
   each pass is reported on its own — or model N tasks. Lifting this is
   [#355](https://github.com/dr-dobermann/gobpm/issues/355).
 
 A parallel fan-out over a **User Task** used to be refused for the same
-reason, and no longer is: every instance now owns its parked identity.
+reason, and no longer is: every iteration now owns its parked identity.
 
 ```go
 // works: one message consumed per pass
@@ -411,7 +411,7 @@ The iteration position is part of the instance checkpoint (ADR-033
 v.4 §2.10): a **sequential** MI restored mid-flight resumes at its
 recorded pass with the outputs collected so far — completed passes
 never re-run, and a fired `completionCondition` is honored; a
-**parallel** MI re-opens exactly its still-open instances at their
+**parallel** MI re-opens exactly its still-open iterations at their
 recorded ordinals, with completed slots' outputs (and canceled slots'
 holes) intact in the assembled output.
 

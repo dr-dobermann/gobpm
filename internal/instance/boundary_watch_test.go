@@ -25,7 +25,7 @@ import (
 
 // SRD-029 M3b — boundary watchers: arm on arrival, fire (interrupting), tear down.
 // The deterministic unit tests drive applyEvent / the boundary helpers directly with
-// bare tracks; the end-to-end test runs a real instance and fires through the watch's
+// bare tracks; the end-to-end test runs a real iteration and fires through the watch's
 // own ProcessEvent (exactly what the hub does on a fire).
 
 var errRegRejected = errors.New("registration rejected")

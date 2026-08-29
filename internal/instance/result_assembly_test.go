@@ -22,8 +22,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 )
 
-// ownerKey keys a result by the person who completed that instance — the
-// motivating case for evaluating the key in the completing instance's own
+// ownerKey keys a result by the person who completed that iteration — the
+// motivating case for evaluating the key in the completing iteration's own
 // frame, since an assignee is not known until the task is claimed.
 func ownerKey(t *testing.T) data.FormalExpression {
 	t.Helper()
@@ -195,7 +195,7 @@ func answerAll(
 
 // TestADeclaredMapKeysByTheCompletingInstancesExpression (SRD-090.D T-11,
 // ADR-025 §2.6.1): the key is evaluated in the instance's OWN frame, at its
-// completion, so it can use something that instance produced.
+// completion, so it can use something that iteration produced.
 func TestADeclaredMapKeysByTheCompletingInstancesExpression(t *testing.T) {
 	s := resultProc(t, "rs-map",
 		activities.WithResultMap("byAnswer", "result", ownerKey(t)))
@@ -427,7 +427,7 @@ func TestAnEmptyResultKeyRefuses(t *testing.T) {
 
 // TestAnInstanceThatProducedNoResultLeavesItsSlotEmpty: an activity whose
 // output is optional is not an error here — the slot stays empty, as a
-// canceled instance's does.
+// canceled iteration's does.
 //
 // The strategy names an item this task never writes, which is the same
 // situation from the assembly's side.
@@ -456,8 +456,8 @@ func TestAnInstanceThatProducedNoResultLeavesItsSlotEmpty(t *testing.T) {
 // It is DERIVED — enclosing scope path, activity id, ordinal — and all three
 // already survive a checkpoint, so the identity comes back without the engine
 // persisting it. The check rides a map result strategy because its key is
-// evaluated in the completing instance's own frame: the keys ARE what each
-// instance read for its own ITERATION_ID, one of them before the release and
+// evaluated in the completing iteration's own frame: the keys ARE what each
+// iteration read for its own ITERATION_ID, one of them before the release and
 // two after.
 func TestIterationIDIsStableAcrossARebuild(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
@@ -552,7 +552,7 @@ func TestIterationIDIsStableAcrossARebuild(t *testing.T) {
 	// The identity is DERIVED — enclosing scope path, activity id, ordinal —
 	// so the three keys differ only in the ordinal they end with. Asserting
 	// the shape rather than a remembered string is the point: nothing was
-	// stored for these, and a rebuilt instance re-derived every one.
+	// stored for these, and a rebuilt iteration re-derived every one.
 	var prefix string
 
 	for key := range got {

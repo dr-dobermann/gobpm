@@ -18,7 +18,7 @@ import (
 // boundaryWatch is the hub-facing processor for one interrupting boundary event
 // guarding a running activity. It is a loop-owned catch subscription over the
 // host activity's execution window — not a node a token flows into. On a fire it
-// does NOT touch instance state: it emits evBoundary to the per-instance loop
+// does NOT touch iteration state: it emits evBoundary to the per-instance loop
 // (the boundary peer of track.ProcessEvent), which arbitrates the
 // completion-vs-fire race and applies the interruption on its single-writer
 // goroutine (SRD-029 FR-5/FR-8).
@@ -167,7 +167,7 @@ func (ls *loopState) planBoundary(w *boundaryWatch) {
 // second delivery route into a restored instance — hydration is the whole wake.
 //
 // A loop-owned Conditional boundary is never holdable: its trigger is the
-// instance's own data commits, so nothing outside the loop could evaluate it —
+// iteration's own data commits, so nothing outside the loop could evaluate it —
 // exactly as a Conditional catch is unholdable (holdWait).
 func (ls *loopState) holdBoundary(w *boundaryWatch) bool {
 	inst := ls.inst
@@ -470,7 +470,7 @@ func (ls *loopState) disarmBoundaries(trackID string) {
 // single writer, so it arbitrates the completion-vs-fire race: if the host's window
 // already closed (its watchers were torn down between the watch emitting evBoundary
 // and this point), the fire lost and is dropped (FR-8). Otherwise it continues the
-// instance on the boundary's outgoing flow as a fresh track lineaged from the host,
+// iteration on the boundary's outgoing flow as a fresh track lineaged from the host,
 // then discriminates on cancelActivity:
 //
 //   - interrupting: also cancel the guarded track (M2's per-track cancel) — its
@@ -490,7 +490,7 @@ func (ls *loopState) fireBoundary(ctx context.Context, ev trackEvent) {
 
 	// ev.node is the boundaryWatch's own boundary (set in ProcessEvent). A
 	// different node here means the fire was routed to the wrong watch — the
-	// instance cannot reason about which boundary caught, so it fails rather
+	// iteration cannot reason about which boundary caught, so it fails rather
 	// than guessing.
 	be, ok := ev.node.(flow.BoundaryEvent)
 	if !ok {
@@ -564,13 +564,13 @@ func (ls *loopState) hostChildScope(host *track) (scope.DataPath, bool) {
 // any — the interrupting-fire and error-catch companion (SRD-049 FR-10).
 // Runs on the loop goroutine.
 func (ls *loopState) cancelHostScope(host *track) {
-	// a FANNED-OUT host has N distinct instance scopes, not the single
+	// a FANNED-OUT host has N distinct iteration scopes, not the single
 	// default sp-<id> segment hostChildScope computes — tear down all of
 	// them (SRD-056.A FR-10). The lookup is the entries themselves, which is
 	// what makes this the same teardown a fired completionCondition asks for
 	// (SRD-090.A M3b); the two used to be separate mechanisms over one
 	// question.
-	if open := ls.instanceScopesOf(host); len(open) > 0 {
+	if open := ls.iterationScopesOf(host); len(open) > 0 {
 		for _, p := range open {
 			ls.cancelScope(p, observability.PhaseCanceled)
 		}

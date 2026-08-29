@@ -739,7 +739,7 @@ func TestWorkerBpmnErrorUnmatchedFaultsInstance(t *testing.T) {
 }
 
 // TestWorkerReportStatusCompletes covers FR-2/FR-5 end-to-end: a worker Business
-// Status writes the WithStatus variable into the real instance scope and the task
+// Status writes the WithStatus variable into the real iteration scope and the task
 // completes normally (proving re.Find/Put for a free-named var).
 func TestWorkerReportStatusCompletes(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())

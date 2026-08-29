@@ -34,7 +34,7 @@ type iterMirror struct {
 	// invisible the same way in the window before its first scope opens.
 	// Empty for a SERIAL composite, whose one live pass is its open scope
 	// and whose position rides the drain protocol.
-	instances    []checkpoint.IterationInstance
+	instances    []checkpoint.IterationEntry
 	n            int
 	completed    int
 	conditionMet bool
@@ -80,7 +80,7 @@ func (ls *loopState) ensureIterMirror(
 // markIterDrain records one completed serial pass (SRD-082 FR-2). Runs
 // on the loop goroutine from completeScope, before the runner resumes.
 //
-// A FANNED-OUT instance is not a serial pass and is skipped: the host's
+// A FANNED-OUT iteration is not a serial pass and is skipped: the host's
 // loopCounter stands still for the whole fan-out, so it cannot say how many
 // instances are done, and the decorator posts that set itself
 // (postPosition). Deriving it here would overwrite the truth with a zero

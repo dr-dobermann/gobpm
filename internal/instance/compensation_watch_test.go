@@ -297,7 +297,7 @@ func TestCompensateUnresolvedLogsNoFault(t *testing.T) {
 
 // T-9: a failing handler aborts the sweep and faults through the Error chain
 // — the thrower resumes (no hang) and the uncaught fault terminates the
-// instance with the handler's code.
+// iteration with the handler's code.
 func TestCompensateHandlerFailureFaults(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 

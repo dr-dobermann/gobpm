@@ -119,7 +119,7 @@ func TestMonitoring(t *testing.T) {
 			// however many activities iterate, and a key disambiguates two
 			// iterating at once where a flat name could not.
 			instance.Iterations,
-			// The completion account (ADR-025 §2.15) — who did each instance
+			// The completion account (ADR-025 §2.15) — who did each iteration
 			// of an iterated activity. COMPLETED_BY keys by node, so it holds
 			// one answer however many instances ran; this keys by activity and
 			// then by ordinal, so three approvals keep three names.
@@ -143,7 +143,7 @@ func TestMonitoring(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// test instance run
+	// test iteration run
 	err = inst.Run(ctx)
 	require.NoError(t, err)
 
@@ -154,7 +154,7 @@ func TestMonitoring(t *testing.T) {
 	cancel()
 }
 
-// TestObserveAccessors covers the SRD-018 instance-side observe accessors
+// TestObserveAccessors covers the SRD-018 iteration-side observe accessors
 // (Done + DataReader) within the instance package, so diff-coverage attributes
 // them — they are otherwise exercised only cross-package, through the thresher
 // InstanceHandle.

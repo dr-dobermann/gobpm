@@ -81,14 +81,14 @@ func TestSubProcessDataObjectSeeding(t *testing.T) {
 	var ran atomic.Int32
 	after := hitTask(t, "after", &ran, "", 0)
 
-	inst := runInstance(t, wrapSP(t, "subproc-do-seed", sub, after))
+	inst := runIteration(t, wrapSP(t, "subproc-do-seed", sub, after))
 	require.Equal(t, Completed, inst.State())
 	require.EqualValues(t, 7, saw.Load(),
 		"the body task must read the sub-process DataObject seeded into its scope")
 }
 
 // TestProcessDataObjectSeeding (SRD-063 FR-3): a Process-level DataObject is
-// seeded into the root scope at instance start, so a task resolves its seeded
+// seeded into the root scope at iteration start, so a task resolves its seeded
 // value by name via the walk-up (the instanceScope.load seed path).
 func TestProcessDataObjectSeeding(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
@@ -116,7 +116,7 @@ func TestProcessDataObjectSeeding(t *testing.T) {
 	linkAll(t,
 		[2]flow.Element{start, reader}, [2]flow.Element{reader, end})
 
-	inst := runInstance(t, p)
+	inst := runIteration(t, p)
 	require.Equal(t, Completed, inst.State())
 	require.EqualValues(t, 11, saw.Load(),
 		"the task must read the Process-level DataObject seeded into root scope")

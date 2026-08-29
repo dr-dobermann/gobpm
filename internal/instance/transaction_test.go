@@ -154,7 +154,7 @@ func TestTransactionCancelNoBoundary(t *testing.T) {
 	}
 	linkAll(t, [2]flow.Element{start, tx}, [2]flow.Element{tx, end})
 
-	inst := runInstance(t, p)
+	inst := runIteration(t, p)
 
 	require.Equal(t, Completed, inst.State(),
 		"the abort tears the host down; with no token left the instance settles")
@@ -194,7 +194,7 @@ func TestTransactionCancelNoCompensation(t *testing.T) {
 		[2]flow.Element{cb, cancelledTask},
 		[2]flow.Element{cancelledTask, cxEnd})
 
-	inst := runInstance(t, p)
+	inst := runIteration(t, p)
 
 	require.Equal(t, Completed, inst.State())
 	require.NoError(t, inst.LastErr())

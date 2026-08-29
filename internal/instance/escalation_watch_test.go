@@ -120,7 +120,7 @@ func TestEscalationInterruptingBoundaryCatches(t *testing.T) {
 	p, excEndID, normalEndID := escGuarded(t, "esc-int", body, "E", true,
 		hitTask(t, "handle", &handled, "", 0))
 
-	inst := runInstance(t, p)
+	inst := runIteration(t, p)
 
 	require.Equal(t, Completed, inst.State(),
 		"a caught escalation does not fault the instance")
@@ -158,7 +158,7 @@ func TestEscalationNonInterruptingBoundaryForks(t *testing.T) {
 	p, _, _ := escGuarded(t, "esc-non-int", body, "E", false,
 		hitTask(t, "handle", &handled, "", 0))
 
-	inst := runInstance(t, p)
+	inst := runIteration(t, p)
 
 	require.Equal(t, Completed, inst.State())
 	require.NoError(t, inst.LastErr())
@@ -201,7 +201,7 @@ func TestEscalationScopeChainCatches(t *testing.T) {
 	p, excEndID, _ := escGuarded(t, "esc-chain", body, "E", true,
 		hitTask(t, "handle", &handled, "", 0))
 
-	inst := runInstance(t, p)
+	inst := runIteration(t, p)
 
 	require.Equal(t, Completed, inst.State())
 	require.NoError(t, inst.LastErr())
@@ -306,7 +306,7 @@ func TestEscalationEventSubCatchesOnChain(t *testing.T) {
 	linkAll(t, [2]flow.Element{sStart, throw}, [2]flow.Element{throw, sEnd})
 
 	var after atomic.Int32
-	inst := runInstance(t,
+	inst := runIteration(t,
 		wrapSP(t, "esc-eventsub", sp, hitTask(t, "after", &after, "", 0)))
 
 	require.Equal(t, Completed, inst.State())
@@ -341,7 +341,7 @@ func TestEscalationEventSubNonInterrupting(t *testing.T) {
 		[2]flow.Element{charge, sEnd})
 
 	var after atomic.Int32
-	inst := runInstance(t,
+	inst := runIteration(t,
 		wrapSP(t, "esc-eventsub-ni", sp, hitTask(t, "after", &after, "", 0)))
 
 	require.Equal(t, Completed, inst.State())
@@ -376,7 +376,7 @@ func TestEscalationHandlerBeatsBoundary(t *testing.T) {
 	p, _, _ := escGuarded(t, "esc-precedence", sp, "E9", true,
 		hitTask(t, "boundary", &boundaryRan, "", 0))
 
-	inst := runInstance(t, p)
+	inst := runIteration(t, p)
 
 	require.Equal(t, Completed, inst.State())
 	require.NoError(t, inst.LastErr())

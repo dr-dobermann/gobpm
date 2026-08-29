@@ -21,7 +21,7 @@ import (
 	engrenv "github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
-// WithCheckpointCursor seeds the restored instance's CAS record version
+// WithCheckpointCursor seeds the restored iteration's CAS record version
 // and lease incarnation from the claimed record (SRD-070 FR-7) — the
 // engine passes what its claim advanced them to, so the instance's next
 // checkpoint continues the fencing chain.
@@ -279,13 +279,13 @@ func ledgerEntryFromRecord(
 	return entry, nil
 }
 
-// legacyLeafInstances names the track records a SCHEMA-5 document carries for
+// legacyLeafIterations names the track records a SCHEMA-5 document carries for
 // the instances of a parallel LEAF Multi-Instance, which must not be rebuilt
 // as tracks (SRD-090.A FR-7).
 //
-// Schema 5 spawned a track per instance of a parallel leaf and kept it out of
+// Schema 5 spawned a track per iteration of a parallel leaf and kept it out of
 // the iteration routing with a `leafPlain` marker. SRD-090.A M2b made a leaf
-// instance an execution rather than a track and deleted both — so restoring
+// iteration an execution rather than a track and deleted both — so restoring
 // such a record now produces a track standing on the iterated node, which
 // reaches execFor, builds a decorator of its OWN over the same activity, and
 // fans the whole thing out again. The body runs N extra times per stray
@@ -297,11 +297,11 @@ func ledgerEntryFromRecord(
 // its host is the only track that was ever recorded for the node.
 //
 // The records are not merely dropped: for a leaf they ARE the executor set,
-// since the group's Open list names scopes and a leaf instance had none. Each
+// since the group's Open list names scopes and a leaf iteration had none. Each
 // carries its ordinal as its LoopCounter, so the second return maps a group's
 // host to the ordinals still running — which adoptRestoredGroups needs to
 // resume exactly those and no others.
-func legacyLeafInstances(
+func legacyLeafIterations(
 	inst *Instance, doc *checkpoint.Document,
 ) (map[string]bool, map[string][]int) {
 	if len(doc.MIGroups) == 0 {
@@ -370,13 +370,13 @@ func (inst *Instance) restoreTracks(
 	// simply re-arms fresh, which is what that document was written expecting.
 	inst.seedBoundaryPlans(doc.Boundaries)
 
-	legacy, ordinals := legacyLeafInstances(inst, doc)
+	legacy, ordinals := legacyLeafIterations(inst, doc)
 	inst.restoredLeafOrdinals = ordinals
 
 	for i := range doc.Tracks {
 		rec := &doc.Tracks[i]
 
-		// a Schema-5 parallel LEAF instance is not a track any more
+		// a Schema-5 parallel LEAF iteration is not a track any more
 		// (SRD-090.A FR-7) — rebuilding it as one would re-decorate the
 		// activity, see below.
 		if legacy[rec.ID] {
@@ -476,7 +476,7 @@ func (inst *Instance) continuationTrack(
 	// restored the ordinary way does (SRD-090.A FR-7). Without it the
 	// decorator resumes from zero — re-running instances a restore had
 	// already found complete — and, for a fan-out over human work, every
-	// instance mints a fresh parked-work identity, so the task handles the
+	// iteration mints a fresh parked-work identity, so the task handles the
 	// distributor is holding name nothing (ADR-020 §2.12).
 	//
 	// It is easy to miss here because a continuation is built from the wake
@@ -510,7 +510,7 @@ func (inst *Instance) continuationTrack(
 
 	// A woken MESSAGE runs the same correlation rule a resident delivery does
 	// (ADR-016) — the continuation fork bypasses the loop's dispatch gate, so
-	// it is applied here instead, on the rebuilt instance: the conversation
+	// it is applied here instead, on the rebuilt iteration: the conversation
 	// keys this message derives are ASSOCIATED (a first message joins the
 	// conversation), and a mismatch refuses the wake. The engine's holder-side
 	// gate is the cheap early-out that avoids rebuilding for a foreign

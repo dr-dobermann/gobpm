@@ -618,18 +618,18 @@ pass, and after a restart every waiting instance must be re-armed **before any
 delivery is accepted** (ADR-025 v.3 §2.13) — not because an unmatched envelope
 would be lost, since the broker buffers one until a matching subscription
 appears, but because a partially armed set can match it into the wrong
-instance. With each execution registering as itself
+iteration. With each execution registering as itself
 there is no party responsible for either, which is precisely why the engine
-refuses an iterated *waiting* activity today: a second instance either never
+refuses an iterated *waiting* activity today: a second iteration either never
 armed or served the first one's subscription. The decorator is that party.
 
 **One subscription per definition, and the decorator dispatches it.** The
-decorator holds **one** subscription per definition and fans an arriving
-delivery out to the instances waiting on it — not one subscription per waiting
-instance.
+host holds **one** subscription per definition and fans an arriving
+delivery out to the iterations waiting on it — not one subscription per waiting
+iteration.
 
 The reason is the same one that made the decorator the subscriber at all:
-**the hub must not learn that an activity iterates.** Giving the hub's entry an instance-ordinal
+**the hub must not learn that an activity iterates.** Giving the hub's entry an iteration-ordinal
 **discriminator** — the alternative, and the one this section first reached
 for — would put the iteration vocabulary into registration, matching and
 unregistration, which is iteration knowledge in a driver: the thing ADR-025
@@ -644,38 +644,38 @@ Three problems disappear rather than being solved:
   iterated waiting activity unsupported. A subscription scoped to the ACTIVITY
   is armed once and outlives every pass, so there is no per-pass arming to
   forget.
-- **Re-arming after a restart.** "Every waiting instance re-armed before any
+- **Re-arming after a restart.** "Every waiting iteration re-armed before any
   delivery is accepted" becomes one registration, satisfied by construction
   rather than by ordering care across N.
 - **A sibling's wait torn down.** Unregistration names the activity's
   subscription, and there is no sibling subscription to name by accident.
 
-**The subscription lives while ANY instance awaits it.** Not for the
-activity's whole execution: the decorator registers when its first instance
+**The subscription lives while ANY iteration awaits it.** Not for the
+activity's whole execution: the host registers when its first iteration
 waits and unregisters once none does. An iteration whose passes only sometimes
 reach the catch therefore holds nothing while it is not waiting.
 
 **Dispatch is by the trigger's nature, not by a mechanism.** A **Signal** is a
 broadcast (§2.9.2 already serves it to every subscription), so the decorator
-delivers it to every instance waiting on that definition; **Timer** and
-**Conditional** likewise, each instance's trigger being its own. A **Message**
+delivers it to every iteration waiting on that definition; **Timer** and
+**Conditional** likewise, each iteration's trigger being its own. A **Message**
 is point-to-point — one envelope, one receiver — so it goes to exactly one
-instance: the one whose iteration correlation matches (§2.9.3), or, when the
-instances are indistinguishable, the FIRST still waiting in instance order.
+iteration: the one whose iteration correlation matches (§2.9.3), or, when the
+iterations are indistinguishable, the FIRST still waiting in ordinal order.
 
-**Instance order is the only order available, so it is the specified one.**
-When nothing distinguishes the instances, nothing but their ordinals can
-decide which receives an indistinguishable envelope. The decorator therefore
+**Ordinal order is the only order available, so it is the specified one.**
+When nothing distinguishes the iterations, nothing but their ordinals can
+decide which receives an indistinguishable envelope. The host therefore
 fans out in ordinal order — deterministic, reproducible across a restore, and
 the same order the compensation sweep and the teardown already rely on. A
 concurrent or arrival-ordered dispatch would make two runs of one model
 disagree with no way for a reader to predict either.
 
 **Consequently a parallel Multi-Instance over a Message catch REQUIRES an
-iteration correlation key.** N instances waiting point-to-point with no way to
+iteration correlation key.** N iterations waiting point-to-point with no way to
 tell them apart is ambiguous in the model, not merely in this engine:
 "first in ordinal order" is a defensible rule for a sequential iteration,
-where exactly one instance waits at a time and each pass consumes one
+where exactly one iteration waits at a time and each pass consumes one
 envelope, and an arbitrary one where N wait at once. The model declares the
 key (`WithIterationCorrelation`) or the engine refuses the construct.
 

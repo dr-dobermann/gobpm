@@ -119,9 +119,9 @@ func NewMultiInstance(
 Every marker embeds `foundation.BaseElement`, so it carries the common id /
 documentation attributes of any BPMN element. Beyond that the two kinds share
 nothing structurally — Standard Loop is a condition + optional maximum + a
-pre/post-test flag; Multi-Instance is a cardinality/collection + per-instance
+pre/post-test flag; Multi-Instance is a cardinality/collection + per-iteration
 data items + a completion condition + a completion **behavior** (whether and when
-it throws an event as instances finish). Those member-specific attributes and
+it throws an event as iterations finish). Those member-specific attributes and
 their full option sets live on the two pages.
 
 A taste of each option set (curated — the complete catalogs are on the member
@@ -134,16 +134,16 @@ pages):
 
 | Multi-Instance option | Effect |
 |---|---|
-| `WithCardinality(expr)` | fixed instance count from an integer expression. |
-| `WithInputCollection(ref, item)` | one instance per element of the `ref` collection, bound as `item`. |
-| `WithOutputCollection(ref, item)` | assemble each instance's `item` back into the `ref` collection. |
-| `WithSequential()` | run instances one at a time; without it a Multi-Instance is parallel. |
-| `WithCompletionCondition(expr)` | short-circuit the remaining instances when the condition holds. |
-| `WithBehavior(b)` | event-throwing behavior on instance completion — `BehaviorAll` (default, none) / `BehaviorNone` / `BehaviorOne` / `BehaviorComplex`. |
+| `WithCardinality(expr)` | fixed iteration count from an integer expression. |
+| `WithInputCollection(ref, item)` | one iteration per element of the `ref` collection, bound as `item`. |
+| `WithOutputCollection(ref, item)` | assemble each iteration's `item` back into the `ref` collection. |
+| `WithSequential()` | run iterations one at a time; without it a Multi-Instance is parallel. |
+| `WithCompletionCondition(expr)` | short-circuit the remaining iterations when the condition holds. |
+| `WithBehavior(b)` | event-throwing behavior on iteration completion — `BehaviorAll` (default, none) / `BehaviorNone` / `BehaviorOne` / `BehaviorComplex`. |
 
 ## What an iteration publishes
 
-Both kinds publish runtime values a model can read — which instance is running,
+Both kinds publish runtime values a model can read — which iteration is running,
 how many there are, how many are done. The names, their addresses and their
 lifetimes are one table: [Iteration runtime variables](runtime-variables.md).
 

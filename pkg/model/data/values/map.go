@@ -15,7 +15,7 @@ import (
 // structural kind (ADR-011 v.7 §2.9.7, SRD-047 FR-2): homogeneous T values
 // under non-empty string data keys. It mirrors Array[T] — homogeneity is
 // enforced by the type parameter, Map[any] is the zero-setup dictionary for
-// engine-assembled data — and, unlike Collection, carries no iteration
+// engine-assembled data — and, unlike Collection, carries no instance
 // cursor: sorted Keys plus Entry is the complete, stateless enumeration.
 type Map[T any] struct {
 	entries map[string]T

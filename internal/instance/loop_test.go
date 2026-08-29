@@ -11,7 +11,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
-// newBareLoopInstance builds the minimal Instance a direct loop-method call
+// newBareLoopInstance builds the minimal Iteration a direct loop-method call
 // needs: the loop channels and an empty tracks registry, no engine wiring.
 func newBareLoopInstance() *Instance {
 	return &Instance{
@@ -21,7 +21,7 @@ func newBareLoopInstance() *Instance {
 		tracks:   map[string]*track{},
 		loopDone: make(chan struct{}),
 
-		// the engine-published registers a real instance always has: code
+		// the engine-published registers a real iteration always has: code
 		// under test writes them without checking, because New and Restore
 		// both build them.
 		performers:      newPerformers(),

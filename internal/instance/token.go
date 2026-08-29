@@ -8,7 +8,7 @@ import (
 )
 
 // TokenState represents the current state of a token in the process
-// instance execution flow.
+// iteration execution flow.
 type TokenState uint8
 
 // Token state constants define the possible states of a token during

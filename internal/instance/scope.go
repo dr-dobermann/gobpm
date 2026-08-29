@@ -141,7 +141,7 @@ func (sc *instanceScope) openFrameAt(
 }
 
 // bindEventPayload binds the payload carried by a born-from-event start into the
-// instance root scope: each item the fired event definition carries is committed
+// iteration root scope: each item the fired event definition carries is committed
 // as a Ready datum keyed by its item id (the msgflow.Bind shape, at root), so a
 // downstream node reading that item observes the message payload (SRD-015 §4.4).
 func (sc *instanceScope) bindEventPayload(eDef flow.EventDefinition) error {
@@ -222,7 +222,7 @@ func (sc *instanceScope) bindLoopCounterAt(
 }
 
 // bindRootData commits the caller-resolved Call Activity inputs into the
-// instance root scope at construction (SRD-050 FR-4): each datum becomes a Ready
+// iteration root scope at construction (SRD-050 FR-4): each datum becomes a Ready
 // root datum a child node reads by name, the call contract's inputs. Like
 // bindEventPayload it is a birth-init commit (initial state, no DataChange
 // facts). The data crossed the call boundary already cloned (the isolation

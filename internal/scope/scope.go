@@ -14,7 +14,7 @@ import (
 // dataFinder reports whether a data.Data item matches a lookup criterion.
 type dataFinder func(data.Data) bool
 
-// Scope is the per-instance data plane: the container-scope tree and the
+// Scope is the per-iteration data plane: the container-scope tree and the
 // single authority for persistent process data (ADR-010 §2.2, SRD-007 FR-1).
 // Every operation runs atomically under the plane's own mutex — no compound
 // operation spans lock acquisitions, so concurrent tracks cannot interleave

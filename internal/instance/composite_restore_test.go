@@ -150,7 +150,7 @@ func gatedBodyProcess(
 	return s
 }
 
-// captureAt runs an armed instance until the repository holds a
+// captureAt runs an armed iteration until the repository holds a
 // checkpoint matching want, returns a deep copy of that document, and
 // abandons the run (cancel without waiting — the crash shape).
 func captureAt(
@@ -218,7 +218,7 @@ func captureAt(
 }
 
 // restoreToDone restores doc over the SAME snapshot and runs the
-// instance to completion.
+// iteration to completion.
 func restoreToDone(
 	t *testing.T, doc *checkpoint.Document, s *snapshot.Snapshot,
 ) *Instance {
@@ -696,7 +696,7 @@ func TestIncidentPinHoldsRestoredScope(t *testing.T) {
 		"an open incident's pin must survive the restore")
 
 	// timing-independent anchors (review note T2): after the window the
-	// instance still runs Active and the incident is still open — a
+	// iteration still runs Active and the incident is still open — a
 	// broken pin fails these regardless of scheduler load.
 	require.Equal(t, Active, restored.State())
 
@@ -949,7 +949,7 @@ func TestCaptureDefersOnUncodableStaging(t *testing.T) {
 		"the deferral must carry the ENCODE reason (review note T3)")
 }
 
-// parallelCapturedDoc runs a 3-instance parallel MI to "one completed,
+// parallelCapturedDoc runs a 3-iteration parallel MI to "one completed,
 // two parked" and captures that document.
 func parallelCapturedDoc(
 	t *testing.T, key string, withOutput bool,
@@ -1012,7 +1012,7 @@ func parallelCapturedDoc(
 
 // fanOutRecord finds the executor set a fanned-out host recorded — the
 // document's whole account of a parallel Multi-Instance's position now that
-// the group record is gone (SRD-090.A FR-6). Its still-open instance scopes
+// the group record is gone (SRD-090.A FR-6). Its still-open iteration scopes
 // are in the Scopes table, named by their ordinals.
 func fanOutRecord(
 	d *checkpoint.Document, nodeID string,
@@ -1034,7 +1034,7 @@ func runningOrdinals(rec *checkpoint.IterationRecord) []int {
 	var out []int
 
 	for _, inst := range rec.Instances {
-		if inst.State == instanceRunning {
+		if inst.State == iterationRunning {
 			out = append(out, inst.Ordinal)
 		}
 	}
@@ -1046,7 +1046,7 @@ func runningOrdinals(rec *checkpoint.IterationRecord) []int {
 
 // TestParallelMIRestoresOpenSet is T-5: the restored group re-opens
 // exactly the still-open ordinals over their restored data, the
-// completed instance's staged output survives, nothing re-executes,
+// completed iteration's staged output survives, nothing re-executes,
 // and the assembled output is complete and uniform.
 func TestParallelMIRestoresOpenSet(t *testing.T) {
 	doc, s, count, gate := parallelCapturedDoc(t, "cr-par", true)
@@ -1145,7 +1145,7 @@ func asSchemaFive(
 
 // TestParallelMIRestoresFromASchemaFiveGroup: a document that carries the
 // retired group record still restores — its open set is translated into the
-// instance entries and executor set the decorator now expects (FR-7).
+// iteration entries and executor set the decorator now expects (FR-7).
 func TestParallelMIRestoresFromASchemaFiveGroup(t *testing.T) {
 	doc, s, count, gate := parallelCapturedDoc(t, "cr-parold", true)
 	doc = asSchemaFive(t, doc, "cr-parold-body")
@@ -1279,10 +1279,10 @@ func TestDrainBeforeReAttachSerial(t *testing.T) {
 }
 
 // TestDrainBeforeReAttachParallel: the fanned-out counterpart — a restored
-// instance scope that drains BEFORE its executor re-attaches holds the
+// iteration scope that drains BEFORE its executor re-attaches holds the
 // completion, and the re-attaching open releases it.
 //
-// Each instance holds its own: the hold is per-entry, so one instance
+// Each iteration holds its own: the hold is per-entry, so one instance
 // draining early says nothing about its siblings, where the group's
 // re-attach released the whole set at once.
 func TestDrainBeforeReAttachParallel(t *testing.T) {
@@ -1293,7 +1293,7 @@ func TestDrainBeforeReAttachParallel(t *testing.T) {
 	host := trackByID(initial, hostTrackOf(t, doc, "cr-parhold-body"))
 	require.NotNil(t, host)
 
-	open := ls.instanceScopesOf(host)
+	open := ls.iterationScopesOf(host)
 	require.Len(t, open, 2, "two instances were live at the capture")
 
 	path, other := open[0], open[1]

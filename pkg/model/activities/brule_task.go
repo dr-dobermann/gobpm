@@ -69,7 +69,7 @@ func (bt *BusinessRuleTask) Node() flow.Node {
 	return bt
 }
 
-// Clone returns a per-instance copy of the BusinessRuleTask (a fresh activity
+// Clone returns a per-iteration copy of the BusinessRuleTask (a fresh activity
 // shell over the shared config).
 func (bt *BusinessRuleTask) Clone() (flow.Node, error) {
 	t, err := bt.clone()

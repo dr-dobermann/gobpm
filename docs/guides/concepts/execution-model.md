@@ -27,6 +27,13 @@ The worked run is a parallel-gateway process:
 | **Token** | The "here is where control is" marker. It enters at a start event and flows node → node along the sequence flows. In gobpm a token is a *derived projection* of a track's position, not a stored object. | Alive while its track advances; Consumed when merged or ended. |
 | **Track** | The goroutine that carries a token. A diverging parallel gateway spawns one track per outgoing branch, so branches run *concurrently*; a converging gateway waits for every inbound track before one token leaves. | One per active branch. |
 
+**"Instance" means the process instance, and nothing else.** An iterating
+activity — a Standard Loop, a Multi-Instance — runs **iterations**, and the node
+that owns them is their **host**. An iteration is not an instance and not a
+track: a fan-out over three approvals is one instance, one track, three
+iterations. [Multi-Instance](../iteration/multi-instance.md) is where that
+matters in practice.
+
 ```mermaid
 flowchart LR
     s((start)) --> sp{split}

@@ -2,7 +2,7 @@ package instance
 
 // SRD-079 M1 — the incident entity and the raise path (ADR-036). A technical
 // failure ends its track in TrackIncident and opens a durable incident on the
-// instance instead of faulting it (T-1); an uncaught BpmnError does the same
+// iteration instead of faulting it (T-1); an uncaught BpmnError does the same
 // (T-2); an invariant violation keeps the fatal path (T-3); a worker's terminal
 // fault — the dispatcher's retries-exhausted delivery — raises the incident at
 // the service task (T-4). The raise emits the KindFault/PhaseIncident fact
@@ -915,7 +915,7 @@ func flakyOp(t *testing.T, n int32) service.Operation {
 }
 
 // lineInstance builds start → task(op, extra opts) → end and returns the
-// unstarted instance (on rt) with the task id.
+// unstarted iteration (on rt) with the task id.
 func lineInstance(
 	t *testing.T,
 	rt *enginert.Runtime,
@@ -1045,7 +1045,7 @@ func TestIncidentRetryPolicySchedules(t *testing.T) {
 }
 
 // T-6b: a scheduled retry survives a restart — the checkpoint carries the
-// deadline, and the restored instance fires it to completion.
+// deadline, and the restored iteration fires it to completion.
 func TestIncidentScheduledRetryRecovery(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 

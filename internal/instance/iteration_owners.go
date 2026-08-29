@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-// iterationOwners records WHO did each instance's work: for every iterated
+// iterationOwners records WHO did each iteration's work: for every iterated
 // activity, the ordinal that was completed and the actor who completed it
 // (ADR-025 §2.15, SRD-090.D FR-4).
 //
@@ -37,7 +37,7 @@ func newIterationOwners() *iterationOwners {
 	return &iterationOwners{byActivity: map[string]map[string]string{}}
 }
 
-// record notes that owner completed instance ord of activity id.
+// record notes that owner completed iteration ord of activity id.
 //
 // An empty owner or activity records nothing: a completion with no actor is
 // not somebody's work, and an entry naming nobody would answer "who did this"
@@ -61,7 +61,7 @@ func (o *iterationOwners) record(id string, ord int, owner string) {
 	byOrdinal[strconv.Itoa(ord)] = owner
 }
 
-// restore adopts the account a checkpoint recorded, so who did which instance
+// restore adopts the account a checkpoint recorded, so who did which iteration
 // survives the instance being released and rebuilt — the ordinary case for a
 // fan-out over human work, whose approvals take days.
 func (o *iterationOwners) restore(byActivity map[string]map[string]string) {
@@ -83,7 +83,7 @@ func (o *iterationOwners) restore(byActivity map[string]map[string]string) {
 }
 
 // snapshot copies the register for a RUNTIME read; nil when nobody has
-// completed an iterated instance yet, so an empty map never reaches a reader.
+// completed an iterated iteration yet, so an empty map never reaches a reader.
 func (o *iterationOwners) snapshot() map[string]map[string]string {
 	o.m.Lock()
 	defer o.m.Unlock()

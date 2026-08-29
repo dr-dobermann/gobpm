@@ -424,15 +424,23 @@ Task in place, a composite by re-opening its child scope per iteration —
 exposing a 0-based `loopCounter` to the condition and the activity each pass
 ([`examples/standard-loop/`](examples/standard-loop/)). A **Multi-Instance**
 (§13.3.7) instead runs the activity once per element of a collection (or a fixed
-count), binding each element by name and assembling the per-instance outputs
+count), binding each element by name and assembling the per-iteration outputs
 into an output collection — **sequentially**
 ([`examples/multi-instance-sequential/`](examples/multi-instance-sequential/)) or
-**in parallel**, all instances at once in distinct scopes with a
+**in parallel**, all iterations at once in distinct scopes with a
 `completionCondition` that cancels the remainder
 ([`examples/multi-instance-parallel/`](examples/multi-instance-parallel/)). A
 Multi-Instance `behavior` can additionally throw a **boundary-catchable** event as
-instances complete — e.g. a *quorum-reached* signal caught by a non-interrupting
+iterations complete — e.g. a *quorum-reached* signal caught by a non-interrupting
 boundary ([`examples/multi-instance-behavior/`](examples/multi-instance-behavior/)).
+Over human work a parallel Multi-Instance offers **one task per iteration**, each
+with its own performer, identity and result
+([`examples/multi-instance-human/`](examples/multi-instance-human/)).
+
+Throughout the documentation an **instance** is the *process* instance and
+nothing else; one pass of an iterating activity is an **iteration**, and the node
+that owns them is their **host**
+([SAD-001 §10.1](docs/design/SAD-001-vision-and-architecture.md)).
 
 For conditional events (**data-driven waiting** — a wait released by the
 process's own committed data, no polling), see

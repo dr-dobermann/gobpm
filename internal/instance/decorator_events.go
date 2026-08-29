@@ -16,21 +16,21 @@ import (
 // ONE entry per definition, never one per instance. The hub sees a single
 // processor holding a single subscription — exactly what it sees for a plain
 // node — which is what keeps the iteration invisible to it: an entry per
-// instance would need an ordinal to tell the entries apart, and an ordinal in
+// iteration would need an ordinal to tell the entries apart, and an ordinal in
 // the hub's registry is iteration vocabulary in a driver (ADR-025 §2.13a).
 type iterSubscription struct {
 	def flow.EventDefinition
 
 	// waiting is the ordinals parked on this definition, ascending. Empty
 	// means the subscription is due to be unregistered: its lifetime is
-	// "while any instance awaits", not "while the activity runs"
+	// "while any iteration awaits", not "while the activity runs"
 	// (SRD-090.B FR-2).
 	waiting []int
 }
 
-// instanceDelivery is one delivery waiting to be applied, and the instance it
+// iterationDelivery is one delivery waiting to be applied, and the instance it
 // belongs to.
-type instanceDelivery struct {
+type iterationDelivery struct {
 	def flow.EventDefinition
 	ord int
 }
@@ -62,7 +62,7 @@ type eventSubs struct {
 	// lifetimes separate is what prevents it recurring.
 	capParked map[int]bool
 
-	// taskIDs is each capability-parked instance's own parked-work identity,
+	// taskIDs is each capability-parked iteration's own parked-work identity,
 	// keyed by ordinal (ADR-020 §2.12).
 	//
 	// The identity is what a person or a UI is holding, and what Withdraw and
@@ -79,8 +79,8 @@ type eventSubs struct {
 	//
 	// It exists because the loop's `waiting` entry is ONE entry standing for
 	// N waiters, so it cannot say "this activity is parked, except for the
-	// instance now being handed its completion". Between the send and the
-	// instance waking, the activity looks fully parked from the loop — and a
+	// iteration now being handed its completion". Between the send and the
+	// iteration waking, the activity looks fully parked from the loop — and a
 	// dehydration there takes the track away mid-delivery: the instance wakes
 	// on dehydrateCh instead of its box, its completion is lost, and the
 	// person who did the work is asked to do it again.
@@ -90,7 +90,7 @@ type eventSubs struct {
 	//
 	// Declared after the maps so the struct's pointer fields stay contiguous
 	// (govet fieldalignment).
-	// staged holds a completion that arrived BEFORE its instance had a box to
+	// staged holds a completion that arrived BEFORE its iteration had a box to
 	// receive it, keyed by ordinal.
 	//
 	// A restored fan-out is rebuilt by the very action being applied to it: a
@@ -106,7 +106,7 @@ type eventSubs struct {
 	// LOOP is the sender and must never stall on an activity's goroutine.
 	ready chan struct{}
 
-	// id is "<instance>/<node>": stable across the activity's passes and
+	// id is "<iteration>/<node>": stable across the activity's passes and
 	// across a restore, distinct per process instance.
 	id string
 
@@ -120,13 +120,13 @@ type eventSubs struct {
 	// place to wait its turn.
 	//
 	// It also removes a whole class of ordering bug by construction. While
-	// each instance owned a channel, a delivery could arrive before that
+	// each iteration owned a channel, a delivery could arrive before that
 	// channel existed (a restored fan-out is rebuilt by the very action being
 	// applied to it) or after it was released, and either way it was silently
 	// dropped: the work was marked performed and the activity waited forever
 	// for an approval nobody could give again. A queue owned by the decorator
 	// has no such window — it exists for as long as the activity does.
-	pending []instanceDelivery
+	pending []iterationDelivery
 
 	// mu guards subs. The HUB's goroutine reads through ProcessEvent while
 	// the decorator's own goroutine arms and disarms.
@@ -153,7 +153,7 @@ func newEventSubs(instanceID, nodeID string) eventSubs {
 // Tolerant of a track that carries no instance, and of no track at all: the
 // package's tests build bare decorators to ask them a question that has
 // nothing to do with subscriptions — what kind they iterate, what their live
-// instance awaits — and a constructor that panics on those would make the
+// iteration awaits — and a constructor that panics on those would make the
 // event work reach into every unrelated fixture. Such a decorator gets an
 // identity naming only its node, which is exactly as much as it can know and
 // is never registered with anything.
@@ -177,8 +177,8 @@ func (es *eventSubs) ID() string {
 	return es.id
 }
 
-// awaiting records that instance ord is now parked on def, and reports
-// whether this is the FIRST instance to wait on it — which is when the
+// awaiting records that iteration ord is now parked on def, and reports
+// whether this is the FIRST iteration to wait on it — which is when the
 // decorator must register with the hub (SRD-090.B FR-2).
 func (es *eventSubs) awaiting(def flow.EventDefinition, ord int) bool {
 	es.mu.Lock()
@@ -201,7 +201,7 @@ func (es *eventSubs) awaiting(def flow.EventDefinition, ord int) bool {
 	return false
 }
 
-// parking records that instance ord is parked on a CAPABILITY — a human task
+// parking records that iteration ord is parked on a CAPABILITY — a human task
 // awaiting a completion, an external-worker task awaiting a report — and opens
 // its delivery box.
 //
@@ -216,8 +216,8 @@ func (es *eventSubs) parking(ord int) {
 	es.capParked[ord] = true
 }
 
-// deliver queues instance ord's completion for the decorator to apply, and
-// closes out that instance's capability wait.
+// deliver queues iteration ord's completion for the decorator to apply, and
+// closes out that iteration's capability wait.
 //
 // It never blocks and never drops. The LOOP is the caller, so blocking it on
 // an activity's goroutine would stall every other track in the instance; and
@@ -225,11 +225,11 @@ func (es *eventSubs) parking(ord int) {
 // for a restored fan-out, which is rebuilt by the action being applied to it —
 // simply waits its turn in the queue.
 func (es *eventSubs) deliver(ord int, def flow.EventDefinition) {
-	es.queue(instanceDelivery{ord: ord, def: def})
+	es.queue(iterationDelivery{ord: ord, def: def})
 }
 
 // queue appends a delivery and rings the doorbell.
-func (es *eventSubs) queue(d instanceDelivery) {
+func (es *eventSubs) queue(d iterationDelivery) {
 	es.mu.Lock()
 	delete(es.capParked, d.ord)
 	es.pending = append(es.pending, d)
@@ -242,7 +242,7 @@ func (es *eventSubs) queue(d instanceDelivery) {
 }
 
 // takeDeliveries hands the decorator everything queued since it last looked.
-func (es *eventSubs) takeDeliveries() []instanceDelivery {
+func (es *eventSubs) takeDeliveries() []iterationDelivery {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
@@ -255,12 +255,12 @@ func (es *eventSubs) takeDeliveries() []instanceDelivery {
 // deliveries is the doorbell the decorator selects on.
 func (es *eventSubs) deliveries() <-chan struct{} { return es.ready }
 
-// taskIDFor returns instance ord's parked-work identity, minting one on first
+// taskIDFor returns iteration ord's parked-work identity, minting one on first
 // ask and returning the same value while the instance stays parked.
 //
 // Stability is the requirement: the id is a reference a human or a UI holds,
 // so re-minting it mid-wait would invalidate the very thing they are about to
-// act on. A restored instance is given its recorded id through adoptTaskID
+// act on. A restored iteration is given its recorded id through adoptTaskID
 // before anything asks, for the same reason (SRD-071 FR-8).
 func (es *eventSubs) taskIDFor(ord int) string {
 	es.mu.Lock()
@@ -276,7 +276,7 @@ func (es *eventSubs) taskIDFor(ord int) string {
 	return id
 }
 
-// adoptTaskID gives instance ord the identity a checkpoint recorded, so a
+// adoptTaskID gives iteration ord the identity a checkpoint recorded, so a
 // rehydrated task keeps the id its inbox entry already carries.
 func (es *eventSubs) adoptTaskID(ord int, id string) {
 	if id == "" {
@@ -289,7 +289,7 @@ func (es *eventSubs) adoptTaskID(ord int, id string) {
 	es.taskIDs[ord] = id
 }
 
-// delivering records that a completion is on its way to instance ord. Called
+// delivering records that a completion is on its way to iteration ord. Called
 // by the LOOP, before the send.
 func (es *eventSubs) delivering() {
 	es.mu.Lock()
@@ -298,7 +298,7 @@ func (es *eventSubs) delivering() {
 	es.inFlight++
 }
 
-// delivered records that instance ord has taken its envelope and is executing
+// delivered records that iteration ord has taken its envelope and is executing
 // again. Called by the INSTANCE, once awaitTrigger has returned it.
 func (es *eventSubs) delivered() {
 	es.mu.Lock()
@@ -309,7 +309,7 @@ func (es *eventSubs) delivered() {
 	}
 }
 
-// busy reports whether any instance of this activity is executing rather than
+// busy reports whether any iteration of this activity is executing rather than
 // parked — either mid-handoff, or already awake and running its node.
 func (es *eventSubs) busy() bool {
 	es.mu.Lock()
@@ -321,7 +321,7 @@ func (es *eventSubs) busy() bool {
 // taskIDSnapshot copies the live parked-work identities, keyed by ordinal, for
 // the checkpoint to record (ADR-020 §2.12).
 //
-// A restore MUST give each instance back the id it was announced under: the
+// A restore MUST give each iteration back the id it was announced under: the
 // task outlives the instance's residency in the distributor's inbox, so a
 // fresh mint would invalidate every reference a person or a UI is holding.
 // The track's single recorded id can carry one of N, which is why this is per
@@ -342,7 +342,7 @@ func (es *eventSubs) taskIDSnapshot() map[int]string {
 	return out
 }
 
-// dropTaskID forgets instance ord's identity once its work is done, so a later
+// dropTaskID forgets iteration ord's identity once its work is done, so a later
 // pass of the same activity mints its own rather than reusing a handle that
 // now names nothing (ADR-020 §2.12).
 func (es *eventSubs) dropTaskID(ord int) {
@@ -352,7 +352,7 @@ func (es *eventSubs) dropTaskID(ord int) {
 	delete(es.taskIDs, ord)
 }
 
-// stopped records that instance ord is no longer parked on def, and reports
+// stopped records that iteration ord is no longer parked on def, and reports
 // whether NONE now is — which is when the decorator unregisters. An unknown
 // definition or ordinal is not an error: an instance that faulted before it
 // parked has nothing to withdraw.
@@ -379,7 +379,7 @@ func (es *eventSubs) stopped(def flow.EventDefinition, ord int) bool {
 	return true
 }
 
-// waitingFor reports whether instance ord holds a wait — on a definition or a
+// waitingFor reports whether iteration ord holds a wait — on a definition or a
 // capability. An instance that holds none has nothing to be delivered and is
 // simply run.
 func (es *eventSubs) waitingFor(ord int) bool {
@@ -406,7 +406,7 @@ func (es *eventSubs) waitsAnywhereLocked(ord int) bool {
 	return false
 }
 
-// deliverTo hands eDef to instance ord, reporting whether it landed. False
+// deliverTo hands eDef to iteration ord, reporting whether it landed. False
 // means the instance is no longer waiting — a losing arm, or a sibling that
 // completed while the delivery was in flight — which is a drop, not an error
 // (SRD-027 FR-4's rule at iteration granularity).
@@ -430,12 +430,12 @@ func (es *eventSubs) deliverTo(ord int, eDef flow.EventDefinition) bool {
 		return false
 	}
 
-	es.queue(instanceDelivery{ord: ord, def: eDef})
+	es.queue(iterationDelivery{ord: ord, def: eDef})
 
 	return true
 }
 
-// anyWaiting reports whether ANY instance of this activity is parked on any
+// anyWaiting reports whether ANY iteration of this activity is parked on any
 // of its definitions — which is what decides the engine hold's lifetime
 // (SRD-090.B FR-2).
 //
@@ -474,7 +474,7 @@ func (es *eventSubs) waitingOn(defID string) []int {
 // the track, owns the activity's waits (SRD-090.B FR-1).
 //
 // An EventProcessor the hub can register, plus the two bookkeeping questions
-// only the owner can answer: is this the FIRST instance to wait on the
+// only the owner can answer: is this the FIRST iteration to wait on the
 // definition — so the hub registration is due — and was that the LAST — so
 // the withdrawal is. That is FR-2's lifetime, expressed as the two moments it
 // turns on and off.
@@ -493,11 +493,11 @@ type activitySubscriber interface {
 	// awaiting/stopped because such a wait has no definition to register.
 	parking(ord int)
 
-	// completeInstance hands one instance its completion. The DECORATOR
+	// completeIteration hands one instance its completion. The DECORATOR
 	// decides where it goes: a fan-out queues it for serial application, and
 	// every other shape runs one pass at a time, which is parked on the
 	// track's own channel.
-	completeInstance(ord int, def flow.EventDefinition, owner string)
+	completeIteration(ord int, def flow.EventDefinition, owner string)
 
 	// delivering and delivered bracket the handoff, so the loop can tell a
 	// fully parked activity from one with work in flight.
@@ -507,7 +507,7 @@ type activitySubscriber interface {
 
 	// taskIDFor, adoptTaskID and dropTaskID own the parked-work identity of
 	// one instance (ADR-020 §2.12); taskIDSnapshot hands the set to the
-	// checkpoint so a restore returns each instance the id it was announced
+	// checkpoint so a restore returns each iteration the id it was announced
 	// under.
 	taskIDFor(ord int) string
 	adoptTaskID(ord int, id string)

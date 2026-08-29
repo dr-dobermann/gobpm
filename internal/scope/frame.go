@@ -70,7 +70,7 @@ type DataMovement struct {
 
 // RecordDataMovement notes a Data Object / Data Store read or write for
 // observability (SRD-063 / SRD-068). engineStore distinguishes the engine-global
-// Data Store from a per-instance Data Object; write distinguishes an outbound
+// Data Store from a per-iteration Data Object; write distinguishes an outbound
 // (Node → data) from an inbound (data → Node) movement. storeRef is empty for a
 // Data Object.
 func (f *Frame) RecordDataMovement(engineStore, write bool, name, storeRef string) {
@@ -174,7 +174,7 @@ func (f *Frame) NodeID() string {
 
 // InstantiateInputs builds the frame's input parameter instances from the
 // node's immutable input definitions. The definitions stay untouched — the
-// instance shares the definition's identity (ids) but carries its own value.
+// iteration shares the definition's identity (ids) but carries its own value.
 func (f *Frame) InstantiateInputs(defs []*data.Parameter) error {
 	return f.instantiateParams("InstantiateInputs", defs, f.inputs)
 }
@@ -224,7 +224,7 @@ func (f *Frame) LoadProperties(defs []*data.Property) error {
 // It is how ONE instance of an iterated activity carries its own data (the
 // 0-based loopCounter, the split input item) when the instances share a
 // container scope: binding those at the scope is safe only while one
-// instance runs at a time, and N concurrent instances would overwrite each
+// iteration runs at a time, and N concurrent instances would overwrite each
 // other's. The frame is the isolation (ADR-025 §2.2), and this is the
 // door into it.
 //
@@ -405,7 +405,7 @@ func (f *Frame) Discard() {
 }
 
 // lookup searches the frame's own groups in resolution order: inputs,
-// properties, puts. OUTPUTS are deliberately excluded — an output instance
+// properties, puts. OUTPUTS are deliberately excluded — an output iteration
 // is a write target, and resolving it would let a not-yet-filled output
 // shadow the data meant to fill it (the producer stage looks the fill value
 // up by the output's own ItemDefinition id).
@@ -482,7 +482,7 @@ func (f *Frame) instantiateParams(
 	return nil
 }
 
-// instantiate builds a fresh per-frame instance of a definition: same
+// instantiate builds a fresh per-frame iteration of a definition: same
 // identity (element and ItemDefinition ids), independent value (the clobber
 // surface of shared in-place mutation ends here).
 func instantiate(

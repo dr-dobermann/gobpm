@@ -121,7 +121,7 @@ func (c *correlator) associate(name, value string) bool {
 }
 
 // values returns a snapshot of the instance's conversation key values
-// (SRD-017 §4.3): the keys its in-instance message receivers subscribe on so a
+// (SRD-017 §4.3): the keys its in-iteration message receivers subscribe on so a
 // follow-up message routes to this instance. An instance with no established
 // key returns nil (a wildcard subscription). Taken under c.m — forked tracks
 // run on concurrent goroutines.
@@ -192,7 +192,7 @@ var _ eventproc.EventProcessor = (*Instance)(nil)
 
 // ProcessEvent (eventproc.EventProcessor) is the hub-facing entry for a Message catch: the
 // Instance is the registered processor (SRD-027 FR-8), because message correlation state is
-// instance-owned. It does NOT touch track state — it emits the fired event to its own loop
+// iteration-owned. It does NOT touch track state — it emits the fired event to its own loop
 // carrying NO track; the loop resolves the parked track via its msgEDef→track index and runs
 // validateAndAssociate before dispatch. Returns once enqueued, not once applied.
 func (inst *Instance) ProcessEvent(
@@ -211,7 +211,7 @@ func (inst *Instance) ProcessEvent(
 	return nil
 }
 
-// CorrelationKeys returns the conversation key values this instance has established
+// CorrelationKeys returns the conversation key values this iteration has established
 // (SRD-017 §4.3, SRD-027 FR-8). The message waiter reads it structurally (the "declared
 // filter") to subscribe this receiver keyed to its conversation; an instance with no keys
 // yields none, leaving a wildcard subscription. Ownership moved here from track when the
@@ -223,7 +223,7 @@ func (inst *Instance) CorrelationKeys() []string {
 // validateAndAssociate applies the conversation-token rules on a received
 // message (SRD-017 §4.5, BPMN §8.4.2). It derives every declared correlation key
 // from the message payload in two passes: first it checks for a mismatch — a key
-// this instance already holds whose derived value differs — and, if any, reports
+// this iteration already holds whose derived value differs — and, if any, reports
 // mismatch=true and associates nothing (the message isn't for this conversation,
 // so the caller rejects it); otherwise it associates each not-yet-held value
 // (lazy secondary-key initialization), extending currently-parked receivers so
@@ -301,7 +301,7 @@ func (c *correlator) validateAndAssociate(
 		}
 	}
 
-	// The message correlated to this instance's conversation (no mismatch, at
+	// The message correlated to this iteration's conversation (no mismatch, at
 	// least one declared key derived): announce Matched (SRD-041 §3.4).
 	if len(derived) != 0 {
 		c.inst.report(observability.Fact{
@@ -325,7 +325,7 @@ func (c *correlator) held(name string) (string, bool) {
 	return v, ok
 }
 
-// extendReceivers adds a newly-learned correlation value to every in-instance
+// extendReceivers adds a newly-learned correlation value to every in-iteration
 // message receiver's broker subscription (SRD-017 §4.5), so a follow-up carrying
 // it routes here. It reaches the EventHub's optional AddEventKey capability
 // structurally (no interface change). A receiver that isn't parked yet has no

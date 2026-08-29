@@ -122,13 +122,13 @@ const (
 	// MORE THAN ONCE — a Multi-Instance or a Standard Loop (ADR-025
 	// §2.13b.1e). It is a live, working state, like TrackExecutingStep, and
 	// it exists because an activity is ONE step of its token however many
-	// instances run it: without it, each instance's execution reported a
-	// step of its own, and a decorator had to reach into every instance and
+	// instances run it: without it, each iteration's execution reported a
+	// step of its own, and a decorator had to reach into every iteration and
 	// suppress the transition.
 	//
-	// Per-instance executions fall BELOW this state's granularity — the
+	// Per-iteration executions fall BELOW this state's granularity — the
 	// machine simply does not accept a step transition while a track is
-	// iterating (see stepTransitionsVisible). What each instance is doing
+	// iterating (see stepTransitionsVisible). What each iteration is doing
 	// travels as attributes rather than as states (§2.13b.1f).
 	TrackIterating
 
@@ -294,7 +294,7 @@ type track struct {
 	// sequential decorator needs only the completed count (miSeed carries
 	// it), but a parallel one completes out of order — the count alone
 	// cannot say WHICH ordinals are done, and re-running a completed
-	// instance is exactly what FR-7 forbids. Consumed once, by the
+	// iteration is exactly what FR-7 forbids. Consumed once, by the
 	// activity the track was restored on (takeIterSeed).
 	iterSeed *checkpoint.IterationRecord
 
@@ -599,7 +599,7 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 
 // checkNodeTypeFor classifies node on behalf of ONE execution.
 //
-// A CONCURRENT instance classifies its own node, because parking is per
+// A CONCURRENT iteration classifies its own node, because parking is per
 // execution: the activity is classified once when the token arrives, so
 // without this N instances of a fan-out would announce one task between them
 // and the rest would complete without anyone doing them. `e` is nil for every
@@ -778,7 +778,7 @@ func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error
 
 	for _, d := range defs {
 		// A SIBLING ALREADY ARMED THIS DEFINITION. Its hold and its hub
-		// subscription serve this instance too, because both belong to the
+		// subscription serve this iteration too, because both belong to the
 		// activity rather than to one of its instances (SRD-090.B FR-2) —
 		// so recording the waiter is all this pass owes. Arming again would
 		// take a second hold under the same (instance, track) key, and the
@@ -836,7 +836,7 @@ func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error
 // the subscription set records a waiter under (SRD-090.B FR-2/FR-3).
 //
 // Asked of the executor, which is the only thing that knows: a decorator's
-// live instance reports its own ordinal, and a plain activity is instance
+// live iteration reports its own ordinal, and a plain activity is iteration
 // zero of one.
 func (t *track) execOrdinal() int {
 	h := t.exec.Load()
@@ -877,7 +877,7 @@ func (t *track) activityOwner() activitySubscriber {
 // this runs on the loop goroutine before the track's own starts. The seed is
 // still in place — the decorator takes it later, on the track's goroutine.
 //
-// A COMPLETED instance is skipped: its task was withdrawn when it was done,
+// A COMPLETED iteration is skipped: its task was withdrawn when it was done,
 // and re-registering it would offer work nobody can do.
 func (t *track) seededTaskIDs() map[int]string {
 	if t.iterSeed == nil {
@@ -887,7 +887,7 @@ func (t *track) seededTaskIDs() map[int]string {
 	ids := map[int]string{}
 
 	for _, in := range t.iterSeed.Instances {
-		if in.TaskID == "" || in.State == instanceCompleted {
+		if in.TaskID == "" || in.State == iterationCompleted {
 			continue
 		}
 
@@ -897,7 +897,7 @@ func (t *track) seededTaskIDs() map[int]string {
 	return ids
 }
 
-// seededEligibility returns the verdict the checkpoint recorded for instance
+// seededEligibility returns the verdict the checkpoint recorded for iteration
 // ord's announcement, or nil if it recorded none — a document written before
 // the field existed, which restores as it always did.
 func (t *track) seededEligibility(ord int) *checkpoint.TaskEligibility {
@@ -914,15 +914,15 @@ func (t *track) seededEligibility(ord int) *checkpoint.TaskEligibility {
 	return nil
 }
 
-// instancesBusy reports whether an iterated activity on this track has an
-// instance executing rather than parked — one being handed a completion, or
+// iterationsBusy reports whether an iterated activity on this track has an
+// iteration executing rather than parked — one being handed a completion, or
 // one already awake and running its node.
 //
 // The loop asks before releasing a track for dehydration. The track's own
 // state cannot answer: it reads WaitForEvent because its OTHER instances are
 // parked, and its single `waiting` entry stands for all N, so neither can say
 // that one of them is working.
-func (t *track) instancesBusy() bool {
+func (t *track) iterationsBusy() bool {
 	h := t.exec.Load()
 	if h == nil {
 		return false
@@ -933,7 +933,7 @@ func (t *track) instancesBusy() bool {
 		return false
 	}
 
-	return d.busyInstances()
+	return d.busyIterations()
 }
 
 // holdCompletion keeps a completion for an iterated activity that is not
@@ -975,7 +975,7 @@ func (t *track) offerToPass(eDef flow.EventDefinition) bool {
 	}
 }
 
-// recordIterationOwner notes who completed instance ord of the iterated
+// recordIterationOwner notes who completed iteration ord of the iterated
 // activity at node (SRD-090.D FR-4).
 //
 // On the track rather than in the decorator's own state because the register
@@ -1001,8 +1001,8 @@ func iterationDataOf(e *nodeExec) []data.Data {
 	return e.local
 }
 
-// rememberTaskID records instance ord's parked-work identity as it is minted
-// or adopted, so the checkpoint records what each instance was announced under
+// rememberTaskID records iteration ord's parked-work identity as it is minted
+// or adopted, so the checkpoint records what each iteration was announced under
 // (ADR-020 §2.12).
 func (t *track) rememberTaskID(ord int, id string) {
 	if id == "" {
@@ -1019,7 +1019,7 @@ func (t *track) rememberTaskID(ord int, id string) {
 	t.parkedTaskIDs[ord] = id
 }
 
-// forgetTaskID drops instance ord's identity once it is accounted for: a later
+// forgetTaskID drops iteration ord's identity once it is accounted for: a later
 // pass of the same activity mints its own rather than reusing a handle that
 // now names nothing.
 func (t *track) forgetTaskID(ord int) {
@@ -1244,7 +1244,7 @@ func (t *track) checkActivityWaitKind(
 		// An ITERATED activity is parked by its INSTANCES, not by the arrival
 		// that reaches the activity. Arrival happens once however many times
 		// the node runs, so parking here would announce one task for the
-		// activity on top of the one each instance announces for itself —
+		// activity on top of the one each iteration announces for itself —
 		// and that activity-level task belongs to no execution, so nothing
 		// would ever complete it.
 		//
@@ -1352,7 +1352,7 @@ func (t *track) parkHumanTask(e *nodeExec, node flow.Node) error {
 	taskID, ord := t.humanTaskIdentity(e)
 
 	// THIS execution is what is waiting (ADR-025 §2.13). A concurrent
-	// instance records it on itself, so the decorator's await is the
+	// iteration records it on itself, so the decorator's await is the
 	// conjunction over its instances rather than one instance's answer
 	// standing for all of them (§2.13b.1e).
 	if e != nil {
@@ -1410,15 +1410,15 @@ func (t *track) humanTaskIdentity(e *nodeExec) (string, int) {
 		return t.taskID, 0
 	}
 
-	// a CONCURRENT instance knows its own ordinal; the track's current
+	// a CONCURRENT iteration knows its own ordinal; the track's current
 	// executor is the decorator, whose ordinal is the activity's, not this
-	// instance's.
+	// iteration's.
 	ord := t.execOrdinal()
 	if e != nil {
 		ord = e.ord
 	}
 
-	// a restored instance adopts the id its checkpoint recorded before it is
+	// a restored iteration adopts the id its checkpoint recorded before it is
 	// asked for one, so the recorded value wins over a fresh mint.
 	t.m.RLock()
 	recorded := t.taskID
@@ -1567,11 +1567,11 @@ func (t *track) parkForDelivery(
 	ctx context.Context, step *stepInfo, e *nodeExec,
 ) (*data.ItemDefinition, error) {
 	// AN INSTANCE OF A FAN-OUT DOES NOT WAIT HERE. Its wait is the
-	// DECORATOR's, which holds every instance's and applies their
+	// DECORATOR's, which holds every iteration's and applies their
 	// completions serially on its own goroutine (ADR-025 §2.15a) — by the
 	// time this runs, the delivery has already arrived and is being applied.
 	//
-	// It waited here while each instance was a goroutine of its own, and
+	// It waited here while each iteration was a goroutine of its own, and
 	// that is the arrangement the ADR rules out: the node, the step list and
 	// the track's own fields are the TOKEN's, not an instance's, and N
 	// goroutines traversing them is a race with no natural owner.
@@ -1588,7 +1588,7 @@ func (t *track) parkForDelivery(
 	}
 
 	// THIS EXECUTION IS RUNNING AGAIN. The flag is what a sequential
-	// decorator reads to refuse advancing past a waiting instance
+	// decorator reads to refuse advancing past a waiting iteration
 	// (refuseIfParked), so leaving it set after the delivery arrived would
 	// stop the iteration one pass in.
 	if e != nil {
@@ -1596,7 +1596,7 @@ func (t *track) parkForDelivery(
 	}
 
 	// and the handover this pass was counted for is over — see
-	// iterDecorator.completeInstance. Balanced rather than reset: the count
+	// iterDecorator.completeIteration. Balanced rather than reset: the count
 	// belongs to the activity, not to this one wait.
 	if sub := t.ownerIfResolved(); sub != nil {
 		sub.delivered()
@@ -1680,7 +1680,7 @@ func (t *track) awaitTrigger(
 	//
 	// For a sequential activity that is exact: one instance waits, so both
 	// channels mean the same waiter. A PARALLEL one sharing this channel
-	// would hand a holder-delivered trigger to an arbitrary instance —
+	// would hand a holder-delivered trigger to an arbitrary iteration —
 	// which is M6's, with the restore and residency work that owns the
 	// holder seam.
 	case eDef, ok := <-t.evtCh:
@@ -1793,12 +1793,12 @@ func (t *track) run(
 }
 
 // discardOrFail classifies a non-nil executeNode error (SRD-029 §3.7/§4.5): a
-// canceled context is a DISCARD — a boundary fire (or instance terminate)
+// canceled context is a DISCARD — a boundary fire (or iteration terminate)
 // interrupted the activity in its execution phase, so the track ends
 // TrackCanceled and the result is abandoned; the exception flow, if any, is the
 // loop's own action (it applied the fire), so the discard never needs to know
 // why it was canceled. Any other error is a genuine failure (TrackFailed) for
-// the loop's Error-boundary / instance-fault path.
+// the loop's Error-boundary / iteration-fault path.
 func (t *track) discardOrFail(ctx context.Context, err error) {
 	if ctx.Err() != nil {
 		t.updateState(TrackCanceled)
@@ -1908,7 +1908,7 @@ func (t *track) synchronize(step *stepInfo) (proceed bool) {
 // synchronizeActivation handles a converging Complex gateway (ADR-005 v.3 §2.11): it
 // records this arrival and — unless the gateway already fired (a trailing token, then
 // consumed) — parks, like the OR-join. The fire/abort decision is the loop's recheck,
-// which owns reachability + guard evaluation and instance failure (a guard error or an
+// which owns reachability + guard evaluation and iteration failure (a guard error or an
 // unsatisfiable rule is surfaced there, the single writer of lastErr; SRD-023).
 func (t *track) synchronizeActivation(
 	step *stepInfo, aj exec.ActivationJoin,
@@ -1977,14 +1977,14 @@ func (t *track) executeNode(
 // state (the compensation seed, the received item, the step, the history);
 // the unit owns the ORDER, which is what makes it wrappable.
 //
-// ai carries what distinguishes this instance from its siblings: the data
+// ai carries what distinguishes this iteration from its siblings: the data
 // only it sees, and the capture that takes its result before the commit makes
 // the output's name a shared one. A plain node is the degenerate case — one
 // instance, no local data.
 func (t *track) executeNodeAs(
 	ctx context.Context,
 	step *stepInfo,
-	ai activityInstance,
+	ai activityIteration,
 ) ([]*flow.SequenceFlow, error) {
 	// THE UNIT PARKS ITS OWN PASS (SRD-090.B FR-2). Before this, parking was
 	// the run loop's pre-step gate — once per STEP, above executeStep — so
@@ -2000,7 +2000,7 @@ func (t *track) executeNodeAs(
 		return nil, err
 	}
 
-	// a fan-out's instance arrives with its payload already in hand: the
+	// a fan-out's iteration arrives with its payload already in hand: the
 	// decorator took the delivery and is applying it (ADR-025 §2.15a).
 	if received != nil {
 		ai.received = received
@@ -2026,7 +2026,7 @@ func (t *track) executeNodeAs(
 				errs.E(err))
 	}
 
-	// Stage this instance's payload as soon as its frame exists, not at
+	// Stage this iteration's payload as soon as its frame exists, not at
 	// finalize: the node's own Exec reads it through the execution
 	// environment (execEnv.ReceivedItem), which resolves from the FRAME —
 	// per execution — before falling back to the track's single slot. A
@@ -2065,7 +2065,7 @@ func (t *track) executeNodeAs(
 	nexts, err := t.executeNodeCore(ctx, step, ne, f)
 
 	// SRD-029 §3.7/§4.5 interruption checkpoint: cancellation wins over the
-	// returned error AND over success. A boundary fire (or instance terminate)
+	// returned error AND over success. A boundary fire (or iteration terminate)
 	// cancels t.ctx; a ctx-honoring op returns early, a ctx-ignoring op returns
 	// late — either way the result is abandoned BEFORE finalize, so no output is
 	// committed (the deferred f.Discard rolls the frame back) and no flow is
@@ -2088,9 +2088,9 @@ func (t *track) executeNodeAs(
 	return nexts, nil
 }
 
-// activityInstance is what distinguishes ONE instance of an activity from its
+// activityIteration is what distinguishes ONE instance of an activity from its
 // siblings when a decorator drives several of them (ADR-025 §2.13).
-type activityInstance struct {
+type activityIteration struct {
 	// exec is the EXECUTOR running this instance, when one owns it. It rides
 	// here so a park is recorded against the execution that is waiting rather
 	// than against the track its siblings share (ADR-025 §2.13: "a node
@@ -2103,17 +2103,17 @@ type activityInstance struct {
 	// has produced its outputs and BEFORE they commit to the shared
 	// container scope. It is how a decorator takes ONE instance's declared
 	// output for positional assembly (ADR-025 §2.6): with no
-	// per-instance scope to read it from, concurrent siblings overwrite the
+	// per-iteration scope to read it from, concurrent siblings overwrite the
 	// output's name in the container scope, so the value has to be taken
-	// while it is still this instance's own.
+	// while it is still this iteration's own.
 	capture func(f *scope.Frame) error
 
-	// local is this instance's own data — the 0-based loopCounter and, for a
+	// local is this iteration's own data — the 0-based loopCounter and, for a
 	// collection-driven Multi-Instance, its split input item. Bound
 	// frame-local, so a sibling cannot overwrite it and it never reaches the
 	// shared container scope (SRD-090.A FR-4).
 	// received is the payload THIS execution's delivery carried, taken off
-	// the track by parkForDelivery and bound into this instance's own frame
+	// the track by parkForDelivery and bound into this iteration's own frame
 	// (ADR-006 §2.9.1, SRD-090.B M5a). nil for a node that did not wait.
 	received *data.ItemDefinition
 
@@ -2143,7 +2143,7 @@ func (t *track) prepareNodeExecution(
 // It is false exactly while the track is ITERATING: an activity is one step
 // of its token however many instances run it, so the instances fall below
 // the state machine's granularity (ADR-025 §2.13b.1e). Reporting each one
-// would say a five-instance activity was five step executions, and the
+// would say a five-iteration activity was five step executions, and the
 // history entry is a read-copy-store over an atomic pointer rather than a
 // CAS — so concurrent instances would drop entries rather than miscount
 // loudly.
@@ -2223,7 +2223,7 @@ func (t *track) finalizeNodeExecution(
 	ctx context.Context,
 	step *stepInfo,
 	f *scope.Frame,
-	ai activityInstance,
+	ai activityIteration,
 ) error {
 	step.state = StepEnded
 
@@ -2247,7 +2247,7 @@ func (t *track) finalizeNodeExecution(
 		return err
 	}
 
-	// take this instance's own output before the commit makes the name a
+	// take this iteration's own output before the commit makes the name a
 	// shared one (ADR-025 §2.6).
 	if ai.capture != nil {
 		if cerr := ai.capture(f); cerr != nil {
@@ -2341,7 +2341,7 @@ func (t *track) advance(succs []successor) error {
 	// Report the advance to the loop — the sole owner of the position view
 	// (ADR-017 Rule 2, SRD-028 FR-2). The node is carried in the event so the
 	// loop never reads currentStep cross-goroutine. Reached only from run()
-	// (instance Active), so no construction gating.
+	// (iteration Active), so no construction gating.
 	//
 	// Emitted BEFORE checkNodeType, and the order is load-bearing (SRD-095
 	// FR-8). For a wait node checkNodeType declares the wait and emits
@@ -2379,7 +2379,7 @@ func (t *track) advance(succs []successor) error {
 
 	// the remaining successors fork: build a fresh slice (don't mutate the
 	// caller's) and hand it to the loop, which constructs the new tracks. The
-	// track never mutates instance state itself.
+	// track never mutates iteration state itself.
 	extras := make([]successor, 0, len(succs)-1)
 	for i, s := range succs {
 		if i != nextNode {
@@ -2414,9 +2414,9 @@ func (t *track) unregisterEvent(n flow.Node) error {
 		// Symmetric with arming (SRD-090.B FR-2): when the ACTIVITY owns the
 		// subscription, the withdrawal is due only once none of its
 		// instances waits on the definition any more. Withdrawing on the
-		// first instance to finish would take its siblings' wait with it —
+		// first iteration to finish would take its siblings' wait with it —
 		// the failure ADR-006 §2.9.5 names, and the reason the entry's
-		// lifetime is stated as "while any instance awaits" rather than
+		// lifetime is stated as "while any iteration awaits" rather than
 		// per-pass.
 		proc := eventproc.EventProcessor(t)
 
@@ -2475,7 +2475,7 @@ func (t *track) uploadOutgoingData(
 // --------------------- exec.EventProcessor interface -------------------------
 
 // ProcessEvent (eventproc.EventProcessor) is called by a Signal/Timer producer on its OWN
-// goroutine when an event fires (Message is registered at instance granularity instead —
+// goroutine when an event fires (Message is registered at iteration granularity instead —
 // SRD-027 FR-8). It does NOT touch track state: it hands the event to the per-instance loop
 // (FR-2), which dispatches it to this track's evtCh, where deliver() applies it on the
 // track's own goroutine. Returns once enqueued, not once applied.
@@ -2524,7 +2524,7 @@ func (t *track) deliver(
 	// never by the shared node (ADR-006 v.5 §2.9.1, SRD-085 FR-1). The
 	// node's ProcessEvent stays a notification seam.
 	//
-	// A CONCURRENT instance takes it on ITSELF. The track's slot is one
+	// A CONCURRENT iteration takes it on ITSELF. The track's slot is one
 	// field shared by N instances of the same activity, each delivered to on
 	// its own goroutine: two of them writing it is a data race, and one
 	// taking the other's payload binds an approval to the wrong instance.
@@ -2647,7 +2647,7 @@ func (t *track) loopCounterSnap() int {
 // there: it finishes that activity and walks on through the graph. Left in
 // place, the seed would still be sitting on the track when the token reached
 // the NEXT iterated activity, whose decorator would read another activity's
-// ordinals as its own and skip every instance recorded completed. Those
+// ordinals as its own and skip every iteration recorded completed. Those
 // instances would never run, and nothing would say so — the run would simply
 // produce a shorter result.
 //

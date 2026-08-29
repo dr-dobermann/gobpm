@@ -54,7 +54,7 @@ func TestSchemaSixIterationRoundTrip(t *testing.T) {
 				Kind:      "mi_parallel",
 				N:         3,
 				Completed: 1,
-				Instances: []IterationInstance{
+				Instances: []IterationEntry{
 					{Ordinal: 0, State: "running"},
 					{Ordinal: 1, State: "completed"},
 					{Ordinal: 2, State: "running"},

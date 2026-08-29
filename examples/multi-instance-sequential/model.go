@@ -104,7 +104,7 @@ func buildProcess() (*process.Process, error) {
 }
 
 // reportTaxed prints the assembled `taxed` output collection the Multi-Instance
-// published once every instance completed (the visibility barrier).
+// published once every iteration completed (the visibility barrier).
 func reportTaxed(ctx context.Context, r service.DataReader) error {
 	taxed, err := r.GetData("taxed")
 	if err != nil {

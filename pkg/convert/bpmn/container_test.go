@@ -286,7 +286,7 @@ func TestContainerWithoutAnIDIsRefused(t *testing.T) {
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
   <bpmn:process id="P" name="P">
     <bpmn:subProcess name="Inner">
-` + innerGraph + `
+`+innerGraph+`
     </bpmn:subProcess>
   </bpmn:process>
 </bpmn:definitions>`)
@@ -309,7 +309,7 @@ func TestContainerReusingADeclaredIDIsRefused(t *testing.T) {
   <bpmn:process id="P" name="P">
     <bpmn:startEvent id="s1"/>
     <bpmn:subProcess id="s1" name="Inner">
-` + innerGraph + `
+`+innerGraph+`
     </bpmn:subProcess>
   </bpmn:process>
 </bpmn:definitions>`)

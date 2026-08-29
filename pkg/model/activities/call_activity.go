@@ -15,7 +15,7 @@ import (
 
 // CallActivity invokes a separately registered process as a CHILD instance
 // (ADR-023 §2.7): the reuse boundary. The caller's token parks while the
-// child runs its own isolated instance; the declared Input/Output
+// child runs its own isolated iteration; the declared Input/Output
 // parameters are the call contract (§10.4 direct mapping — no data
 // associations), matched by name. The callable resolves through the
 // engine's registry AT CALL TIME: latest-at-launch by default, or the

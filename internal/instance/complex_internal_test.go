@@ -21,7 +21,7 @@ import (
 
 // complexGuardProcess builds start → AND-split → 2 approvers → Complex join(guard) →
 // end, so a guarded triple's evaluation runs at the join (guard errors fail the
-// instance via the loop's recheck — the single writer of lastErr).
+// iteration via the loop's recheck — the single writer of lastErr).
 func complexGuardProcess(
 	t *testing.T, id string, guard data.FormalExpression,
 ) *process.Process {
@@ -76,7 +76,7 @@ func TestComplexGuardEvalErrorInstance(t *testing.T) {
 }
 
 // TestComplexGuardNotBoolInstance: a guard whose result is not boolean fails the
-// instance — exercises guardEval's type-assertion error path.
+// iteration — exercises guardEval's type-assertion error path.
 func TestComplexGuardNotBoolInstance(t *testing.T) {
 	_ = data.CreateDefaultStates()
 
@@ -120,7 +120,7 @@ func runToFailure(t *testing.T, p *process.Process, wantErr string) {
 
 // TestComplexDiscriminatorInstance: a threshold-1 Complex join fires on the first of
 // three parallel arrivals; the other two are consumed as trailing tokens and the
-// instance completes (exercises Record, the loop fire via fireOrJoin, the parked
+// iteration completes (exercises Record, the loop fire via fireOrJoin, the parked
 // survivor's resume, and the trailing-token consume — all in-package).
 func TestComplexDiscriminatorInstance(t *testing.T) {
 	_ = data.CreateDefaultStates()

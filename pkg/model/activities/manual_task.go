@@ -43,7 +43,7 @@ func (mt *ManualTask) Node() flow.Node {
 	return mt
 }
 
-// Clone returns a per-instance copy of the ManualTask (a fresh activity shell
+// Clone returns a per-iteration copy of the ManualTask (a fresh activity shell
 // over the shared config).
 func (mt *ManualTask) Clone() (flow.Node, error) {
 	t, err := mt.clone()

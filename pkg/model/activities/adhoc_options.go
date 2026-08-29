@@ -12,7 +12,7 @@ type AdHocOrdering string
 
 const (
 	// AdHocParallel lets another activity be selected at any time, including a
-	// second instance of one already running. It is gobpm's default: the
+	// second iteration of one already running. It is gobpm's default: the
 	// metamodel declares none, and parallel is the less restrictive mode
 	// (ADR-035 v.1 §2.5, a registered engine choice).
 	AdHocParallel AdHocOrdering = "PARALLEL"

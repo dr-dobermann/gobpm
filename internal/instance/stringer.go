@@ -38,7 +38,7 @@ func (inst *Instance) String() string {
 	return fmt.Sprintf("instance %s", inst.ID())
 }
 
-// String renders the track as its id, on the same terms as Instance's.
+// String renders the track as its id, on the same terms as Iteration's.
 func (t *track) String() string {
 	if t == nil {
 		return "<nil>"

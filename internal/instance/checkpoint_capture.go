@@ -535,7 +535,7 @@ func recordIteration(
 	return nil
 }
 
-// withTaskIDs stamps each instance with the parked-work identity it was
+// withTaskIDs stamps each iteration with the parked-work identity it was
 // announced under, so a restore returns it rather than minting a new one
 // (ADR-020 §2.12).
 //
@@ -544,8 +544,8 @@ func recordIteration(
 // all. Reading here also keeps the loop's mirror describing positions, which
 // is what it is for.
 func withTaskIDs(
-	ls *loopState, t *track, insts []checkpoint.IterationInstance,
-) []checkpoint.IterationInstance {
+	ls *loopState, t *track, insts []checkpoint.IterationEntry,
+) []checkpoint.IterationEntry {
 	if len(insts) == 0 {
 		return insts
 	}
@@ -558,7 +558,7 @@ func withTaskIDs(
 		return insts
 	}
 
-	out := make([]checkpoint.IterationInstance, len(insts))
+	out := make([]checkpoint.IterationEntry, len(insts))
 	copy(out, insts)
 
 	for i := range out {
@@ -604,7 +604,7 @@ func persistedStatus(s State) repository.Status {
 }
 
 // persistedStatusOf is the incident-aware persisted status (SRD-079 FR-5,
-// ADR-036 §2.5): an in-flight instance with open incidents persists as
+// ADR-036 §2.5): an in-flight iteration with open incidents persists as
 // StatusActiveIncidents, so "what needs an operator" is answerable from the
 // store without loading payloads. The runtime State vocabulary is untouched —
 // the condition is a predicate, not a state (SRD-079 §4.2). Loop goroutine
@@ -619,7 +619,7 @@ func persistedStatusOf(inst *Instance) repository.Status {
 }
 
 // reportCheckpointDeferred emits the FR-8 degradation fact: the
-// instance keeps running, the operator sees durability is off.
+// iteration keeps running, the operator sees durability is off.
 func (inst *Instance) reportCheckpointDeferred(reason string) {
 	inst.report(observability.Fact{
 		Kind:  observability.KindInstanceState,

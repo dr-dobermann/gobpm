@@ -129,7 +129,7 @@ func TestM4ForkCompletes(t *testing.T) {
 }
 
 // TestM4ForkRace hammers the projections from another goroutine while a
-// forking instance runs — under -race it proves fork + lock-free reads compose.
+// forking iteration runs — under -race it proves fork + lock-free reads compose.
 func TestM4ForkRace(t *testing.T) {
 	_ = data.CreateDefaultStates()
 

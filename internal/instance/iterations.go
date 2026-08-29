@@ -18,7 +18,7 @@ type iterationFact struct {
 	Terminated int    `json:"terminated"`
 }
 
-// iterations records what each iterated activity of this instance did —
+// iterations records what each iterated activity of this iteration did —
 // BPMN's counts outliving the activation they describe (ADR-025 §2.9.2).
 //
 // It is engine-published, so it is served through the reserved read-only

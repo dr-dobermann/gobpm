@@ -147,7 +147,7 @@ func TestACompletionForAFanOutThatIsNotRunningIsHeld(t *testing.T) {
 	// the decorator's run has ended — the state a released activity is in.
 	tr.exec.Store(nil)
 
-	require.False(t, tr.instancesBusy(),
+	require.False(t, tr.iterationsBusy(),
 		"with no executor there is no instance working, so the loop is free "+
 			"to release the track")
 
@@ -168,7 +168,7 @@ func TestACompletionForAFanOutThatIsNotRunningIsHeld(t *testing.T) {
 // the loop hands a completion over until the decorator has finished applying
 // it — and NOT for one moment longer.
 //
-// An unmatched increment is not a small leak. `instancesBusy` gates the
+// An unmatched increment is not a small leak. `iterationsBusy` gates the
 // release, so an activity that never returns to idle can never be released
 // again: a fan-out over human work would hold its process instance in memory
 // for the remaining approvals, which is the whole thing dehydration exists to

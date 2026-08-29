@@ -1,7 +1,7 @@
 # multi-instance-parallel
 
 Demonstrates a BPMN **parallel Multi-Instance** activity (§13.3.7, SRD-056.A): an
-activity runs once per element of a collection, all instances **concurrently, in
+activity runs once per element of a collection, all iterations **concurrently, in
 distinct scopes**, completing when the last drains.
 
 ```
@@ -19,9 +19,9 @@ flowchart LR
 ```
 
 `panel` is a Sub-Process marked with a **parallel** Multi-Instance (no
-`WithSequential`). One instance per reviewer runs at the same time; each sees its
+`WithSequential`). One iteration per reviewer runs at the same time; each sees its
 `reviewer` name in its own scope and assembles its `score` — positionally, by
-instance ordinal — into the `scores` collection, published once every instance
+iteration ordinal — into the `scores` collection, published once every iteration
 completes (the visibility barrier):
 
 ```

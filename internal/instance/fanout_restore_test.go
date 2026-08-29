@@ -25,7 +25,7 @@ func fanOutFixture(
 	return inst, newLoopState(inst), node, host
 }
 
-// instancePath is the scope one fanned-out instance of node opens under its
+// instancePath is the scope one fanned-out iteration of node opens under its
 // host — the path shape the whole restore derivation turns on.
 func instancePath(
 	t *testing.T, host *track, seg string,
@@ -38,12 +38,12 @@ func instancePath(
 	return p
 }
 
-// TestRestoredScopeHostReadsAnInstanceOrdinal pins what makes a fanned-out
+// TestRestoredScopeHostReadsAnIterationOrdinal pins what makes a fanned-out
 // composite restorable WITHOUT an open-set record (SRD-090.A M3b): the
-// instance's ordinal is in its own scope segment, so the host derivation
+// iteration's ordinal is in its own scope segment, so the host derivation
 // that already finds a serial pass's scope finds an instance's too, and
 // says which one it is.
-func TestRestoredScopeHostReadsAnInstanceOrdinal(t *testing.T) {
+func TestRestoredScopeHostReadsAnIterationOrdinal(t *testing.T) {
 	_, _, node, host := fanOutFixture(t)
 
 	path := instancePath(t, host, scopeSegment(node)+"-2")
@@ -80,7 +80,7 @@ func TestRestoredHostSegmentSkipsANonHost(t *testing.T) {
 	require.Equal(t, scopeSegment(node), seg)
 }
 
-// TestRestoredScopeHostPrefersAnOwnScope: `sp-body-1` is BOTH instance 1 of
+// TestRestoredScopeHostPrefersAnOwnScope: `sp-body-1` is BOTH iteration 1 of
 // `body` and the own scope of a sibling whose segment reads that way, and
 // only one of the two can be open — they are the same path. The own reading
 // wins, and it wins whichever order the track table lists them in: a
@@ -113,11 +113,11 @@ func TestRestoredScopeHostPrefersAnOwnScope(t *testing.T) {
 	}
 }
 
-// TestInstanceOrdinalOfRejects: everything that merely LOOKS like an
-// instance segment is refused. The suffix has to read back as exactly the
+// TestIterationOrdinalOfRejects: everything that merely LOOKS like an
+// iteration segment is refused. The suffix has to read back as exactly the
 // number it claims, or a scope belonging to something else would be adopted
 // as an instance of this host — and then torn down with its fan-out.
-func TestInstanceOrdinalOfRejects(t *testing.T) {
+func TestIterationOrdinalOfRejects(t *testing.T) {
 	_, _, node, host := fanOutFixture(t)
 
 	seg := scopeSegment(node)
@@ -134,20 +134,20 @@ func TestInstanceOrdinalOfRejects(t *testing.T) {
 		"an instance's own second": seg + "-1/" + seg + "-2",
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, ok := instanceOrdinalOf(host, seg, instancePath(t, host, tail))
+			_, ok := iterationOrdinalOf(host, seg, instancePath(t, host, tail))
 			require.False(t, ok)
 		})
 	}
 
 	// a host whose own path will not take a segment answers no rather
 	// than deriving an ordinal from a path it cannot have produced.
-	_, ok := instanceOrdinalOf(
+	_, ok := iterationOrdinalOf(
 		&track{scopePath: scope.EmptyDataPath}, seg, instancePath(t, host, seg+"-1"))
 	require.False(t, ok)
 }
 
 // TestFanOutPostsItsPositionBeforeItStarts pins the order that keeps a
-// fan-out restorable: the executor set is posted BEFORE the first instance
+// fan-out restorable: the executor set is posted BEFORE the first iteration
 // runs, so the window where a checkpoint would find no set at all — and
 // restore it as "all N still to run" — does not exist (SRD-090.A FR-6).
 //
@@ -178,7 +178,7 @@ func TestFanOutPostsItsPositionBeforeItStarts(t *testing.T) {
 }
 
 // TestAdoptRestoredScopesRebuildsAFanOut: the loop rebuilds an entry per
-// still-open instance scope from the scope table alone — host, ordinal, and
+// still-open iteration scope from the scope table alone — host, ordinal, and
 // the hold that keeps its drain waiting for the executor that has not been
 // launched yet (SRD-090.A M3b, retiring MIGroupRecord.Open).
 func TestAdoptRestoredScopesRebuildsAFanOut(t *testing.T) {
@@ -208,12 +208,12 @@ func TestAdoptRestoredScopesRebuildsAFanOut(t *testing.T) {
 	require.Contains(t, ls.waiting, host.ID())
 }
 
-// TestAdoptRestoredScopesRefusesACompletedInstanceStillOpen: a document
+// TestAdoptRestoredScopesRefusesACompletedIterationStillOpen: a document
 // whose scope table and executor set describe different moments is refused
 // rather than half-restored. Nothing would ever re-attach to that scope —
 // the decorator does not relaunch a completed ordinal — so it would stay
 // open for the life of the instance.
-func TestAdoptRestoredScopesRefusesACompletedInstanceStillOpen(t *testing.T) {
+func TestAdoptRestoredScopesRefusesACompletedIterationStillOpen(t *testing.T) {
 	inst, ls, node, host := fanOutFixture(t)
 
 	p := instancePath(t, host, scopeSegment(node)+"-1")
@@ -221,9 +221,9 @@ func TestAdoptRestoredScopesRefusesACompletedInstanceStillOpen(t *testing.T) {
 
 	host.iterSeed = &checkpoint.IterationRecord{
 		Kind: iterKindMIParallel, N: 2,
-		Instances: []checkpoint.IterationInstance{
-			{Ordinal: 0, State: instanceRunning},
-			{Ordinal: 1, State: instanceCompleted},
+		Instances: []checkpoint.IterationEntry{
+			{Ordinal: 0, State: iterationRunning},
+			{Ordinal: 1, State: iterationCompleted},
 		},
 	}
 
@@ -231,34 +231,34 @@ func TestAdoptRestoredScopesRefusesACompletedInstanceStillOpen(t *testing.T) {
 	require.ErrorContains(t, err, "scope table and executor set disagree")
 }
 
-// TestInstanceRecordedDone reads the restored set the refusal above rests
+// TestIterationRecordedDone reads the restored set the refusal above rests
 // on: only an ordinal the set NAMES as completed counts, and a document
 // carrying no set at all (a pre-Schema-6 capture, whose fan-out rides the
 // group record) answers no rather than guessing.
-func TestInstanceRecordedDone(t *testing.T) {
+func TestIterationRecordedDone(t *testing.T) {
 	_, _, _, host := fanOutFixture(t)
 
-	require.False(t, instanceRecordedDone(host, 0), "no recorded set")
+	require.False(t, iterationRecordedDone(host, 0), "no recorded set")
 
 	host.iterSeed = &checkpoint.IterationRecord{
-		Instances: []checkpoint.IterationInstance{
-			{Ordinal: 1, State: instanceCompleted},
-			{Ordinal: 2, State: instanceRunning},
+		Instances: []checkpoint.IterationEntry{
+			{Ordinal: 1, State: iterationCompleted},
+			{Ordinal: 2, State: iterationRunning},
 		},
 	}
 
-	require.True(t, instanceRecordedDone(host, 1))
-	require.False(t, instanceRecordedDone(host, 2))
-	require.False(t, instanceRecordedDone(host, 7), "not in the set")
+	require.True(t, iterationRecordedDone(host, 1))
+	require.False(t, iterationRecordedDone(host, 2))
+	require.False(t, iterationRecordedDone(host, 7), "not in the set")
 }
 
-// TestReAttachAdoptsTheInstancesCell: a restored instance scope was rebuilt
+// TestReAttachAdoptsTheIterationsCell: a restored iteration scope was rebuilt
 // by the loop and carries neither a drain channel nor an output cell — both
 // belong to the executor that resumes it, and both are adopted on the
-// re-attach. Without the cell the resumed instance's output would be read
+// re-attach. Without the cell the resumed iteration's output would be read
 // from nowhere and its slot would stay nil, which reads downstream as an
-// instance that produced nothing.
-func TestReAttachAdoptsTheInstancesCell(t *testing.T) {
+// iteration that produced nothing.
+func TestReAttachAdoptsTheIterationsCell(t *testing.T) {
 	_, ls, node, host := fanOutFixture(t)
 
 	seg := scopeSegment(node) + "-2"
@@ -289,7 +289,7 @@ func TestReAttachAdoptsTheInstancesCell(t *testing.T) {
 	require.False(t, entry.awaitAttach, "the hold is lifted")
 }
 
-// TestMarkIterDrainSkipsAFannedOutInstance: an instance's drain must not
+// TestMarkIterDrainSkipsAFannedOutIteration: an instance's drain must not
 // advance the iteration mirror. The host's loopCounter stands still for the
 // whole fan-out, so deriving the position from it would overwrite the
 // decorator's posted set with a zero (SRD-090.A M3b).
@@ -299,7 +299,7 @@ func TestReAttachAdoptsTheInstancesCell(t *testing.T) {
 // what the scope's OPENER declared instead of asking the node whether it
 // iterates (FR-11). A hand-built entry has to say so, and one that does not
 // is correctly ignored — which is what the third case pins.
-func TestMarkIterDrainSkipsAFannedOutInstance(t *testing.T) {
+func TestMarkIterDrainSkipsAFannedOutIteration(t *testing.T) {
 	_, ls, node, host := fanOutFixture(t)
 
 	m := ls.ensureIterMirror(host, iterKindMIParallel)
@@ -339,13 +339,13 @@ func TestScopeFactOrdinal(t *testing.T) {
 
 // TestRecordedScopeHostResolvesWhatTheDerivationCannot is the point of the
 // Schema-7 scope record (SRD-090.A M3c). `sp-body-1` reads two ways — the
-// own scope of a track whose segment is spelled that way, and instance 1 of
+// own scope of a track whose segment is spelled that way, and iteration 1 of
 // a fanning-out host — and the derivation cannot tell which one opened it,
 // so it applies a precedence rule and always answers "own scope".
 //
 // That rule is a coin-flip dressed as a decision: when the instance IS the
 // opener, the derivation attaches the scope to the wrong host, and the
-// instance's drain is delivered to a track that never fanned out. The
+// iteration's drain is delivered to a track that never fanned out. The
 // record says who opened it, so the lookup answers correctly on exactly the
 // input the derivation gets wrong.
 func TestRecordedScopeHostResolvesWhatTheDerivationCannot(t *testing.T) {
@@ -355,7 +355,7 @@ func TestRecordedScopeHostResolvesWhatTheDerivationCannot(t *testing.T) {
 	path := instancePath(t, host, seg)
 
 	// the sibling that makes the path ambiguous: its OWN scope is spelled
-	// exactly like the host's instance 1.
+	// exactly like the host's iteration 1.
 	twin := &track{
 		steps:     []*stepInfo{{node: node}},
 		scopePath: host.scopePath,
@@ -369,7 +369,7 @@ func TestRecordedScopeHostResolvesWhatTheDerivationCannot(t *testing.T) {
 	require.Same(t, twin, derived)
 	require.Equal(t, -1, derivedOrd)
 
-	// what the record answers: the host actually opened it, as instance 1.
+	// what the record answers: the host actually opened it, as iteration 1.
 	inst.restoredScopes = []checkpoint.ScopeRecord{
 		{Path: string(path), HostTrack: host.ID(), Ordinal: 1},
 	}

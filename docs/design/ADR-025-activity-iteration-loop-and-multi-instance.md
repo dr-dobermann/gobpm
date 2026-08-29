@@ -13,12 +13,12 @@ This ADR decides how an activity marked with *loop characteristics* runs **more
 than once**: BPMN's **Standard Loop** (a condition-driven sequential loop,
 §13.3.6) and **Multi-Instance** (a cardinality-driven fan-out, sequential or
 parallel, over a data collection, §13.3.7). It fixes what an iteration means —
-how instances are counted, isolated, fed and re-assembled, when the activity is
+how iterations are counted, isolated, fed and re-assembled, when the activity is
 done, and what an observer sees — and it fixes the runtime shape that carries
-them: a **node executor** runs one instance of an activity and owns whatever
-that instance awaits, and a **decorator** holds N of those and implements the
+them: a **node executor** runs one iteration of an activity and owns whatever
+that iteration awaits, and a **decorator** holds N of those and implements the
 same interface, so a track drives one executor and cannot tell how many
-instances are behind it. A track therefore means *a token walking a path*, and
+iterations are behind it. A track therefore means *a token walking a path*, and
 nothing outside the decorator learns that the node iterates.
 
 It is prescriptive and grounded in the BPMN 2.0 object model; names of code
@@ -44,7 +44,7 @@ exist
 - **Multi-Instance** (§13.3.7) — run the activity a *fixed* number of times
   (decided once at activation), either **sequentially** (one after another) or
   **in parallel** (all at once), typically **once per element of a collection**.
-  Workflow patterns WCP-13/14 (Multiple Instances), WCP-34/36. This is the
+  Workflow patterns WCP-13/14 (Multiple Iterations), WCP-34/36. This is the
   engine's answer to "do X for each line item in the order".
 
 Both are core to the BPMN *Process Execution Conformance* target
@@ -52,8 +52,8 @@ Both are core to the BPMN *Process Execution Conformance* target
 per-element processing is impossible to express without them.
 
 The problem this ADR solves is **conceptual**, not mechanical: *what does it
-mean for one activity to be many executions* — how instances are counted, how
-each instance is isolated from its siblings, how per-instance data is split from
+mean for one activity to be many executions* — how iterations are counted, how
+each iteration is isolated from its siblings, how per-iteration data is split from
 and re-assembled into a collection, when the whole thing is considered done, and
 how progress can be observed from the boundary. The mechanics (which existing
 runtime seam carries each part) are the SRDs' job.
@@ -130,7 +130,7 @@ in-flight state. A composite additionally opens its child scope per iteration �
 not for isolation, but because a Sub-Process body *is* a scope and needs one to
 exist at all.
 
-A frame bounds an **execution**, not its **results**: what an instance commits
+A frame bounds an **execution**, not its **results**: what an iteration commits
 goes to the enclosing scope. What that means across iterations — a reduce when
 sequential, order-dependent when parallel, deterministic when a strategy is
 declared — is §2.6.1, and it is a separate decision from this one. Reading the
@@ -138,8 +138,8 @@ frame as though it also isolated results is the mistake §2.6.1 exists to
 prevent.
 
 **Parallel Multi-Instance is not an exception to that rule.** It is tempting to
-give every parallel instance its own scope even for a leaf Task, reasoning that
-concurrent instances must not share state. The premise is true; the conclusion
+give every parallel iteration its own scope even for a leaf Task, reasoning that
+concurrent iterations must not share state. The premise is true; the conclusion
 only follows if an iteration is executed by a *track*, because one track has one
 frame — so concurrency would force a heavier construct. An iteration is executed
 by a **node executor** (§2.13) that owns its own frame, so concurrent iterations
@@ -151,9 +151,9 @@ A looped leaf Task gets no child scope for a second reason too: a Task is not a
 scope container, so a scope would mean seeding an empty inner graph and routing
 a synthetic completion, all for isolation the fresh frame already provides.
 
-Per-instance **addressability** does not depend on a scope either: it is the
+Per-iteration **addressability** does not depend on a scope either: it is the
 executor's ordinal (§2.9) — stable, derived from the activity and the 0-based
-instance number, and available whether or not a scope exists.
+iteration number, and available whether or not a scope exists.
 
 This subsection fixes the *mechanism*; **who drives it** for a composite activity
 — the activity's own off-loop execution, not the per-instance loop goroutine — is
@@ -181,16 +181,16 @@ and are what a restored scope is matched by. Four mechanisms would have moved
 to buy an isolation that a supplier already provides.
 
 **The rule this leaves.** One problem, one mechanism. Engine-published values
-that a model must not overwrite live in RUNTIME — which is where the instance
+that a model must not overwrite live in RUNTIME — which is where the iteration
 state, the start time and the performer register already live. A second
 mechanism for a problem that already has one is the mistake this rejection
 exists to prevent.
 
 **What the scope would not have bought either** is per-execution addressing.
-`loopCounter` differs per executing instance, and §2.9.2 resolves that by
+`loopCounter` differs per executing iteration, and §2.9.2 resolves that by
 publishing it **frame-local** — the frame already being the per-execution
 address space. An iteration scope sits at the activity, one level above the
-instances, so it would have been no better placed to tell them apart.
+iterations, so it would have been no better placed to tell them apart.
 
 **The output staging** is the one thing RUNTIME does not answer for: it is not
 a named variable a model reads, but the decorator's own working state. It
@@ -230,7 +230,7 @@ activation** (§13.3.7), from one of two sources — the engine supports both:
   the cardinality is that collection's element count.
 
 The count is fixed for the activity's lifetime: adding elements to the source
-collection mid-flight does not spawn more instances. If both a cardinality and a
+collection mid-flight does not spawn more iterations. If both a cardinality and a
 collection are supplied, that is a modelling error surfaced at validation (they
 are alternative cardinality sources, not composable).
 
@@ -238,16 +238,16 @@ are alternative cardinality sources, not composable).
 
 `isSequential` selects the execution shape:
 
-- `True` — **sequential**: instance *i+1* begins only after instance *i* has
-  completed (by the §2.2 mechanism for the activity kind). At most one instance
+- `True` — **sequential**: iteration *i+1* begins only after iteration *i* has
+  completed (by the §2.2 mechanism for the activity kind). At most one iteration
   runs at a time; ordering is the collection/cardinality order.
-- `False` (default) — **parallel**: all instances start at activation and run
+- `False` (default) — **parallel**: all iterations start at activation and run
   concurrently, each in its own execution context (§2.2); the activity completes
   when the last one does. The per-iteration **frame** is what keeps concurrent
-  instances from sharing per-instance data — not a scope, which a leaf activity
+  iterations from sharing per-iteration data — not a scope, which a leaf activity
   never gets.
 
-Both shapes expose per-instance **`loopCounter`** (0-based ordinal) and the
+Both shapes expose per-iteration **`loopCounter`** (0-based ordinal) and the
 aggregate runtime attributes of §2.9 to the activity's expressions.
 
 For a composite activity these two shapes are the decorator's two driving
@@ -261,15 +261,15 @@ Multi-Instance is fundamentally a **collection transform**
 The spec calls the split/assemble *mediator* "under-specified"; this ADR fixes a
 concrete engine convention:
 
-- **Split.** Before each instance runs, the engine binds that instance's
+- **Split.** Before each iteration runs, the engine binds that iteration's
   `inputDataItem` to element *`loopCounter`* of the `loopDataInputRef`
-  collection. The instance reads it by name in its input data associations,
+  collection. The iteration reads it by name in its input data associations,
   exactly like any other per-scope datum.
-- **Assemble.** When an instance completes, the engine writes that instance's
+- **Assemble.** When an iteration completes, the engine writes that iteration's
   `outputDataItem` into slot *`loopCounter`* of the `loopDataOutputRef`
   collection, preserving positional correspondence with the input.
 - **Visibility barrier.** The spec **recommends** the `loopDataOutputRef`
-  collection not be accessible until *all* instances have completed
+  collection not be accessible until *all* iterations have completed
   ([multi-instance.md §Data semantics](../bpmn-spec/semantics/multi-instance.md):
   "should not be accessible" — token-passing alone cannot guarantee the
   collection is fully written). The engine **strengthens this recommendation
@@ -279,18 +279,18 @@ concrete engine convention:
 
 Positional assembly (output slot = input ordinal) is the engine's realization of
 the spec's under-specified mediator, chosen for determinism: the output
-collection mirrors the input order regardless of instance completion order
+collection mirrors the input order regardless of iteration completion order
 (critical for parallel MI, where completion order is nondeterministic).
 
 #### 2.6.1 Iteration results — one default, three declared strategies
 
 §2.6 above governs the **declared** MI collection. It says nothing about what
-happens to everything *else* an instance writes, and that gap is load-bearing:
-an instance runs in its own frame, but a frame's commit target is the
+happens to everything *else* an iteration writes, and that gap is load-bearing:
+an iteration runs in its own frame, but a frame's commit target is the
 **enclosing scope** — isolation of an execution is not invisibility of its
 writes. This subsection decides what an iteration's results mean.
 
-**The default is last write wins.** Each instance executes in its own frame;
+**The default is last write wins.** Each iteration executes in its own frame;
 whatever it commits lands in the enclosing scope, and a later write replaces an
 earlier one. The consequence differs by sequencing, and both are intended:
 
@@ -302,21 +302,21 @@ earlier one. The consequence differs by sequencing, and both are intended:
   rediscover by experiment. It is the default *because* it is the useful one:
   "keep a running total", "narrow a candidate set", "append to a report".
 - **Parallel Multi-Instance is therefore order-dependent for undeclared
-  writes.** Which instance's value survives depends on completion order, which
+  writes.** Which iteration's value survives depends on completion order, which
   the engine does not fix. This is stated plainly rather than hidden, and it is
   exactly why the declared strategies below exist: a model that needs every
-  instance's result must **say so**, and then gets a deterministic one.
+  iteration's result must **say so**, and then gets a deterministic one.
 
 **Three declared strategies, each opt-in and deterministic:**
 
 | Strategy | Result | Standard footing |
 |---|---|---|
-| **array** | results indexed by **ordinal** — slot *i* holds instance *i*'s output, regardless of completion order | For MI this IS the spec's `loopDataOutputRef` assembly (§13.3.7, §2.6 above). For a Standard Loop it is an **engine extension**: the spec gives a loop no output aggregation at all |
-| **map** | results keyed by a per-instance **key**, evaluated in that instance's frame at its completion | **Engine extension** for both kinds — BPMN's MI output is an ordered collection, never a keyed one |
+| **array** | results indexed by **ordinal** — slot *i* holds iteration *i*'s output, regardless of completion order | For MI this IS the spec's `loopDataOutputRef` assembly (§13.3.7, §2.6 above). For a Standard Loop it is an **engine extension**: the spec gives a loop no output aggregation at all |
+| **map** | results keyed by a per-iteration **key**, evaluated in that iteration's frame at its completion | **Engine extension** for both kinds — BPMN's MI output is an ordered collection, never a keyed one |
 | **reduce** | the accumulating value in the enclosing scope — the default, nameable so a model can declare the intent it is relying on | **Engine convention**; the spec is silent |
 
-**The map's key is an expression, evaluated in the completing instance's
-frame.** That timing is the point: it lets the key use something the instance
+**The map's key is an expression, evaluated in the completing iteration's
+frame.** That timing is the point: it lets the key use something the iteration
 *produced* — the assignee of a User Task being the motivating case, since it is
 unknown until the task is claimed. No bespoke key mechanism is introduced; the
 expression reads the same data any other expression can, including the
@@ -325,13 +325,13 @@ iteration runtime values of §2.9.2.
 Two rules, and they differ deliberately:
 
 - **An empty or missing key refuses.** There is no sensible slot for a result
-  with no key, and silently dropping one instance's output is the failure this
+  with no key, and silently dropping one iteration's output is the failure this
   whole subsection exists to make impossible.
 - **A duplicate key overwrites by default, and `ErrorOnKeyRewrite` makes it a
   fault.** Overwriting is consistent with the last-wins default above rather
   than an exception to it, and the loss is *detectable* rather than silent:
-  §2.9.2 publishes the instance total, so a model or host comparing the map's
-  size against it sees that N instances produced fewer than N entries. A model
+  §2.9.2 publishes the iteration total, so a model or host comparing the map's
+  size against it sees that N iterations produced fewer than N entries. A model
   that treats a collision as a modelling error — a fan-out over participants
   who must each answer once — sets the option and gets a fault naming both
   ordinals and the key.
@@ -340,7 +340,7 @@ Two rules, and they differ deliberately:
 publishes to the enclosing scope once, at activity completion — never
 incrementally, so no concurrent activity can read a half-assembled result. The
 default (last-wins) has no barrier by construction: it is the enclosing scope,
-written as instances go.
+written as iterations go.
 
 **Engine notes.** BPMN §13.3.7 defines the ordered output collection and is
 otherwise **silent** on what an iteration's other writes mean; §13.3.6 gives a
@@ -352,35 +352,35 @@ a running total gets it without declaring anything.
 
 ### 2.7 Completion condition — early, orderly cancellation
 
-`completionCondition` is a boolean expression **evaluated each time an instance
+`completionCondition` is a boolean expression **evaluated each time an iteration
 completes** (§13.3.7):
 
 - `true` → the Multi-Instance activity is **done now**: the remaining
-  not-yet-completed instances are **cancelled** (their scopes torn down as a
-  unit, the ADR-018 §interruption mechanism applied per instance scope), and
+  not-yet-completed iterations are **cancelled** (their scopes torn down as a
+  unit, the ADR-018 §interruption mechanism applied per iteration scope), and
   control flows out of the activity.
-- `false` → that instance is counted; the remaining instances continue.
+- `false` → that iteration is counted; the remaining iterations continue.
 
-Without a `completionCondition`, the activity completes when **all** instances
-have completed. Cancellation is orderly: cancelled instances do not contribute
+Without a `completionCondition`, the activity completes when **all** iterations
+have completed. Cancellation is orderly: cancelled iterations do not contribute
 their `outputDataItem` (their slot stays at its pre-run value), and the output
 collection is still published atomically per §2.6.
 
-### 2.8 Behavior — events thrown as instances complete
+### 2.8 Behavior — events thrown as iterations complete
 
 `behavior` (`MultiInstanceBehavior`, default `All`) governs whether the activity
-**throws an event** as instances complete
+**throws an event** as iterations complete
 ([multi-instance.md §Event throwing](../bpmn-spec/semantics/multi-instance.md)).
 The thrown events are **catchable on the boundary** of the Multi-Instance
 activity (ADR-018 boundary mechanism), letting a model react to progress:
 
 - `All` (default) — **no** event is ever thrown. The common case; zero cost.
-- `None` — an event (`noneBehaviorEventRef`) is thrown for **every** instance
+- `None` — an event (`noneBehaviorEventRef`) is thrown for **every** iteration
   completion.
 - `One` — an event (`oneBehaviorEventRef`) is thrown once, on the **first**
-  instance completion.
+  iteration completion.
 - `Complex` — the `complexBehaviorDefinition` entries drive it: on every
-  instance completion, each definition's `condition` (a FormalExpression) is
+  iteration completion, each definition's `condition` (a FormalExpression) is
   evaluated, and each one that is `true` throws its associated
   `ImplicitThrowEvent`
   ([events.md §ImplicitThrowEvent](../bpmn-spec/elements/events.md)). A single
@@ -396,7 +396,7 @@ This subsection fixes *what* is thrown and *when*; the throw **executes** as an
 ordinary off-loop emit issued by the iteration decorator before it completes the
 activity (§2.12), which is what makes the boundary catch deterministic.
 
-### 2.9 Instance runtime attributes — the set is the standard's
+### 2.9 Iteration runtime attributes — the set is the standard's
 
 **This set is the standard's, not an engine convention.** BPMN 2.0 §10.3.8
 carries **two** instance-attribute tables
@@ -413,11 +413,11 @@ way — not an engine invention:
 
 | Variable | Provided for | Meaning |
 |---|---|---|
-| `loopCounter` | each **inner** instance | ordinal of the current instance (§2.9a — 0-based here, a stated deviation). |
-| `numberOfInstances` | the **outer** instance | total instance count fixed at activation (§2.4). |
-| `numberOfActiveInstances` | the **outer** instance | instances currently running — the standard caps this at 1 for a sequential MI. |
-| `numberOfCompletedInstances` | the **outer** instance | instances that have completed so far. |
-| `numberOfTerminatedInstances` | the **outer** instance | instances cancelled by a completion condition (§2.7). |
+| `loopCounter` | each **inner** instance | ordinal of the current iteration (§2.9a — 0-based here, a stated deviation). |
+| `numberOfInstances` | the **outer** instance | total iteration count fixed at activation (§2.4). |
+| `numberOfActiveInstances` | the **outer** instance | iterations currently running — the standard caps this at 1 for a sequential MI. |
+| `numberOfCompletedInstances` | the **outer** instance | iterations that have completed so far. |
+| `numberOfTerminatedInstances` | the **outer** instance | iterations cancelled by a completion condition (§2.7). |
 
 The standard also fixes an **invariant** over them: `numberOfTerminatedInstances
 + numberOfCompletedInstances + numberOfActiveInstances` always equals
@@ -433,7 +433,7 @@ and the standard is the reason.** Table 10.30 caps `numberOfActiveInstances`
 at **1** for a sequential activity *and* requires the three to sum to
 `numberOfInstances`. A sequential MI of five at its third pass has two
 completed and one running; satisfying the sum would need `active = 3`, which
-the cap forbids. The instances not yet started belong to no category the
+the cap forbids. The iterations not yet started belong to no category the
 table offers.
 
 **The engine honours the cap.** `numberOfActiveInstances` is what is
@@ -446,12 +446,12 @@ kinds is worth more than an invariant the standard cannot keep for one of
 them.
 
 **Where the invariant CAN hold for a sequential activity, it must.** At a
-terminal state every instance is either completed or terminated and nothing is
+terminal state every iteration is either completed or terminated and nothing is
 running, so the sum is exactly `numberOfInstances`. Cancellation by a
 `completionCondition` counts as termination —
 [multi-instance.md §Completion](../bpmn-spec/semantics/multi-instance.md) and
 §2.7 both treat it that way — so a sequential MI of five stopping after two
-completions reports `2 + 3 + 0`, never `2 + 0 + 0`. The instances that never
+completions reports `2 + 3 + 0`, never `2 + 0 + 0`. The iterations that never
 started are terminated by the condition just as surely as a running one would
 have been; reporting zero for them would say the activity produced five results
 when it produced two.
@@ -479,7 +479,7 @@ engine reads one lower than its author expects. It is not detectable by the
 engine — an off-by-one ordinal is a perfectly valid ordinal — so it is stated
 here, in §2.11, and in the KB page.
 
-These are read-only in expressions; the engine maintains them as instances
+These are read-only in expressions; the engine maintains them as iterations
 progress. **Where they live and why they cannot be overwritten is §2.9.2** — they are
 served from the engine-published runtime source, so "read-only" is enforced
 rather than merely intended.
@@ -491,7 +491,7 @@ property of that token, not a multiplicity of tokens.**
 
 BPMN describes Multi-Instance as a wrapper that executes an Activity several
 times (§13.3.7, "wraps an Activity to execute multiple times") and speaks of
-*instances of an activity* throughout; it says nothing about tokens
+*iterations of an activity* throughout; it says nothing about tokens
 multiplying, and this ADR does not read that silence as permission — the
 statement here is an explicit engine choice about what an observer sees.
 
@@ -508,7 +508,7 @@ The token view (ADR-013) therefore carries, for a token resting on an
 iterated activity, an optional **iteration view**: the kind (Standard Loop,
 sequential MI, parallel MI), the total from §2.4 (absent for a Standard Loop,
 whose count is not known ahead), the completed count from §2.9, and one entry
-per live executor giving its ordinal and what that instance is doing —
+per live executor giving its ordinal and what that iteration is doing —
 executing, or waiting for an event.
 
 Three properties make this the cheap answer rather than an extra bookkeeping
@@ -535,27 +535,27 @@ iteration values do not all have the same number.
 
 **Three classes, and each needs a different address.**
 
-- **A value of the EXECUTION** has one answer per *instance of the activity*,
+- **A value of the EXECUTION** has one answer per *iteration of the activity*,
   and N of those run at once. `loopCounter` is the case: three parallel
-  instances reading it at the same moment must get 0, 1 and 2.
+  iterations reading it at the same moment must get 0, 1 and 2.
 - **A value of the ACTIVITY** has one answer per activity *activation*, and it
   must be readable from anywhere inside that activity — including the body of a
-  composite instance, several scopes down. The counts are these.
-- **A value of the PROCESS INSTANCE** has exactly one answer per instance,
+  composite iteration, several scopes down. The counts are these.
+- **A value of the PROCESS INSTANCE** has exactly one answer per process instance,
   whoever asks. The activity-keyed maps are these, and they are the only class
   the reserved **RUNTIME** source can serve, because a supplier is handed a
   name and nothing else.
 
 **A flat name in RUNTIME can only ever serve the third class.** Two iterated
-activities running concurrently in one instance — a parallel gateway with a
+activities running concurrently in one iteration — a parallel gateway with a
 Multi-Instance on each arm — give `numberOfInstances` two answers, and
 `RuntimeVar(name)` has no way to say which was asked for. That is the same
 cardinality argument that keeps `loopCounter` out of RUNTIME, applied one level
 up.
 
 **A value of the execution is published frame-local, not in RUNTIME.** It is
-bound into the executing instance's own frame, which is what makes it
-per-execution by construction — the instances of one activity cannot overwrite
+bound into the executing iteration's own frame, which is what makes it
+per-execution by construction — the iterations of one activity cannot overwrite
 each other's, because none of them can see another's frame (§2.2). It also
 already carries the property RUNTIME would have been for: a plain name resolves
 **frame-first**, so a process property of the same name is *shadowed by* the
@@ -564,10 +564,10 @@ subtree is not needed to achieve it.
 
 | Name | Shape | Published |
 |---|---|---|
-| `loopCounter` | the executing instance's 0-based ordinal (§2.9a) | frame-local |
+| `loopCounter` | the executing iteration's 0-based ordinal (§2.9a) | frame-local |
 | `ITERATION_NUMBER` | the same ordinal, under the engine's own name | frame-local |
-| `ITERATION_ID` | the executing instance's **stable identity** (§2.9.3) | frame-local |
-| `ITERATION_MODE` | the executing instance's iteration shape — the `kind` of §2.9.3 | frame-local |
+| `ITERATION_ID` | the executing iteration's **stable identity** (§2.9.3) | frame-local |
+| `ITERATION_MODE` | the executing iteration's iteration shape — the `kind` of §2.9.3 | frame-local |
 | `numberOfInstances` | total fixed at activation (§2.4) | the activity's own scope |
 | `numberOfActiveInstances` | currently running | the activity's own scope |
 | `numberOfCompletedInstances` | completed so far | the activity's own scope |
@@ -591,7 +591,7 @@ address space, and it is already there.
 is closed, and an open per-activity namespace would make it grow without bound
 and force prefix matching to serve it. Keying by activity id is also what lets
 the values outlive the activity — a frame dies with its execution and a counter
-dies with the token, but a map in the instance's runtime source does not.
+dies with the token, but a map in the iteration's runtime source does not.
 
 **How each class is protected, since only one of them is in RUNTIME.**
 
@@ -603,7 +603,7 @@ dies with the token, but a map in the instance's runtime source does not.
   they occupy. A name has to be declared somewhere — a property, a data object,
   an output parameter, the target of a data association — and refusing it at
   build time puts the error on the line that wrote it.
-- The **instance** values are protected by *address*: RUNTIME is unwritable by
+- The **iteration** values are protected by *address*: RUNTIME is unwritable by
   construction.
 
 **Nothing dies that should have lived.** A per-execution value *should* end with
@@ -650,18 +650,18 @@ subsection — as is the split by cardinality itself. The BPMN-named attributes
 are not: the standard enumerates the set, and this subsection decides only
 where each one is served.
 
-#### 2.9.3 An instance has an identity, and it is derived
+#### 2.9.3 An iteration has an identity, and it is derived
 
-§2.10 already asserts that one identifier names one instance across all four
+§2.10 already asserts that one identifier names one iteration across all four
 surfaces — the record, the token projection, an incident, a compensation ledger
 entry — and that identifier is the **ordinal**. An ordinal alone is only unique
 *within one activation of one activity*, which is enough for those four because
 each is already scoped to the activity that owns it. It is not enough for a
 model, which sees ordinals from different activities side by side, nor for a
-delivery that must reach instance *k* of an activity named only by a
+delivery that must reach iteration *k* of an activity named only by a
 subscription.
 
-**An instance's identity is therefore the ordinal qualified by where it runs:
+**An iteration's identity is therefore the ordinal qualified by where it runs:
 the enclosing scope path, the activity id, and the ordinal.** Three properties
 follow, and each is the reason to derive rather than mint:
 
@@ -670,8 +670,8 @@ follow, and each is the reason to derive rather than mint:
   is in the graph, the ordinal is in the executor set. A minted id would have to
   be persisted to be stable, adding a field whose only job is to say what the
   other three already say.
-- **Derivable in both directions.** Given an instance you can name it; given the
-  name you can find the instance. That is what a delivery needs (§2.13), and
+- **Derivable in both directions.** Given an iteration you can name it; given the
+  name you can find the iteration. That is what a delivery needs (§2.13), and
   what a restored scope needs in order to know whose it is — instead of the
   reverse-engineering the current path grammar forces (**§2.9.3a**).
 - **One value, not a second vocabulary.** `ITERATION_ID` and `ITERATION_MODE`
@@ -680,14 +680,14 @@ follow, and each is the reason to derive rather than mint:
 
 #### 2.9.3a Where the identity has to live
 
-A composite instance's child scope is addressed by a segment built from the activity id and the ordinal, and that
+A composite iteration's child scope is addressed by a segment built from the activity id and the ordinal, and that
 grammar is lossy in two independent ways. They are worth separating, because
 one decision does not buy both:
 
-- **Restore cannot tell what a segment meant.** `sp-a-1` is both "instance 1 of
+- **Restore cannot tell what a segment meant.** `sp-a-1` is both "iteration 1 of
   activity `a`" and "the own scope of activity `a-1`", so reconstructing a
   scope's owner from its path needs a precedence rule — a rule that must guess,
-  and guesses wrong whenever the instance was the opener. **This ADR decides
+  and guesses wrong whenever the iteration was the opener. **This ADR decides
   that restore must not parse an identity out of a path built for humans.**
   Either recording the path→identity mapping or spelling the identity into the
   path satisfies it; which one is the SRD's choice.
@@ -726,16 +726,16 @@ its instances completed, sequential/loop instances compensating in **reverse**
 order and parallel ones in parallel
 ([multi-instance.md §Compensation](../bpmn-spec/semantics/multi-instance.md)).
 **Compensation is not this ADR's to decide.** It belongs to
-[ADR-026](ADR-026-compensation-events.md), which states the per-instance rule
-for an iterated activity — each completed instance snapshots separately
+[ADR-026](ADR-026-compensation-events.md), which states the per-iteration rule
+for an iterated activity — each completed iteration snapshots separately
 (§13.5.5). This ADR's obligation is to keep supplying what that one consumes.
 
-What it supplies is per-instance **addressability**, and a scope is not how.
-§2.2/§2.13 give a leaf activity no per-instance scope, so the addressability is
-the instance **ordinal** — stable, recorded, and available whether or not a
-scope exists. A compensation ledger entry per completed instance therefore
+What it supplies is per-iteration **addressability**, and a scope is not how.
+§2.2/§2.13 give a leaf activity no per-iteration scope, so the addressability is
+the iteration **ordinal** — stable, recorded, and available whether or not a
+scope exists. A compensation ledger entry per completed iteration therefore
 keys on the ordinal, which is also what the incident record (§2.14) and the
-token view (§2.9.1) key on. One identifier for one instance, across all four
+token view (§2.9.1) key on. One identifier for one iteration, across all four
 surfaces.
 
 ### 2.11 Engine notes (deviations & choices)
@@ -759,7 +759,7 @@ list instead of a hunt.
 | The node executor and the decorator | §2.13 | frames loop characteristics as a wrapper (§13.3.7), silent on how one is realized | engine mechanism, invisible to a modeler |
 | Decorator transparency | §2.13a | has no decorator to be transparent about | engine invariant over an engine mechanism |
 | The node execution unit | §2.13b | says what an activity does, never what object performs it | engine mechanism entirely |
-| The performer expression evaluated per instance | §2.15 | **silent** — never discusses multi-instance and resource assignment together | engine choice (§3) |
+| The performer expression evaluated per iteration | §2.15 | **silent** — never discusses multi-instance and resource assignment together | engine choice (§3) |
 
 ### 2.12 Composite iteration runs off the loop — the iteration decorator
 
@@ -771,7 +771,7 @@ not under control code run on the per-instance loop goroutine.**
 **Why this is decided here.** The engine's execution model
 ([ADR-017](ADR-017-channel-based-event-processing.md)) has a **single-writer
 loop goroutine** that owns all execution-lifecycle state (open scopes, token
-positions, the parallel instance barrier), while a node's *work* runs **off** it,
+positions, the parallel iteration barrier), while a node's *work* runs **off** it,
 on a per-token runner goroutine that reports state transitions back as events.
 Driving the iteration *control* — resolve the count, split data, evaluate the
 completion condition, decide re-entry, and (§2.8) **throw behavior events** — on
@@ -789,7 +789,7 @@ activity*, whose control belongs to the activity's execution).
 **The decision.**
 
 - **The activity's runner drives the iteration.** The composite host's own
-  (off-loop) execution resolves the count/condition, opens each instance, awaits
+  (off-loop) execution resolves the count/condition, opens each iteration, awaits
   each completion, evaluates the completion condition, assembles output (§2.6),
   throws behavior events (§2.8), and then completes the activity and follows its
   outgoing flow. The host **no longer parks** while the loop drives iteration on
@@ -800,7 +800,7 @@ activity*, whose control belongs to the activity's execution).
   directly (that would reintroduce the cross-goroutine races
   [ADR-017](ADR-017-channel-based-event-processing.md) removed). It uses a
   **request/response** protocol over the existing event channel: it requests an
-  operation (open an instance scope, close a drained one, bind a per-instance
+  operation (open an iteration scope, close a drained one, bind a per-iteration
   datum), the loop performs the mutation on its own goroutine and acknowledges on
   the decorator's inbound channel, and the decorator — blocked on that
   acknowledgement — resumes. Strictly ordered, no shared mutable state, no lock:
@@ -855,9 +855,9 @@ is grounded there.
 
 **The problem stated plainly.** A **track** means a token walking a path. A
 Multi-Instance activity is one token resting on one activity that executes N
-times — BPMN §13.3.7 wraps *an Activity* and speaks of *instances of that
+times — BPMN §13.3.7 wraps *an Activity* and speaks of *iterations of that
 activity*; the vendored extract mentions tokens only once, and about collection
-visibility rather than instance multiplicity
+visibility rather than iteration multiplicity
 ([multi-instance.md §Constraints](../bpmn-spec/semantics/multi-instance.md)).
 The engine's reading of that silence is §2.9.1's, and is stated there as a
 choice.
@@ -871,7 +871,7 @@ leaf re-runs in place), a marker on spawned tracks whose only job is to stop
 them re-decorating themselves, a token count reporting mechanism rather than
 model (§2.9.1), and one construct that cannot be built at all — **an iterated
 activity that waits**, because with no single owner of the node's registrations
-a second instance either never arms or serves the wrong one.
+a second iteration either never arms or serves the wrong one.
 
 **The decision.**
 
@@ -883,17 +883,17 @@ a second instance either never arms or serves the wrong one.
 - **A track executes nodes through executors; a decorator holds N of them.**
   On an ordinary node a track drives one executor and moves on. On an iterated
   activity the track drives the **decorator**, which holds one executor per
-  instance and sequences them per §2.5 — one at a time, or all at once. Nothing
+  iteration and sequences them per §2.5 — one at a time, or all at once. Nothing
   forks a track to iterate; tracks are tokens again.
 - **A composite executor opens the child scope; a leaf executor does not**
-  (§2.2). Inside a composite instance the body's own tokens are ordinary tracks,
+  (§2.2). Inside a composite iteration the body's own tokens are ordinary tracks,
   because they are ordinary tokens walking the body's path. The distinction is
   no longer leaf-vs-parallel-vs-sequential but *is this activity a scope host*.
 - **The decorator is the node's single registered event processor** — for
   those executors that await an *event*. Each executor owns its wait, but a
   wait is not always a subscription: only a node executor's is (§2.13's
   contract). The decorator registers those **as itself**, so the event hub sees
-  one processor with as many subscriptions as there are waiting instances, and
+  one processor with as many subscriptions as there are waiting iterations, and
   hands a delivery to that one processor. Differentiation
   is unchanged and remains the hub's: a message reaches the subscription whose
   correlation value matches, a signal reaches every subscription, per
@@ -903,27 +903,27 @@ a second instance either never arms or serves the wrong one.
   dispatch point, not one subscription; the hub's behaviour is untouched.
   This is the seam whose absence made an iterated *waiting* activity
   impossible: with no single owner of the node's registrations, a second
-  instance either never armed or served the wrong one.
+  iteration either never armed or served the wrong one.
 - **The activity's own node is not driven differently for being decorated.**
   It is executed, it may park, and its wait is registered on its behalf.
-  Whether that registration named a track, an instance or a decorator is not
+  Whether that registration named a track, an iteration or a decorator is not
   the node's concern, and nothing in its execution path branches on the
   answer — which is what makes an iterated ReceiveTask a ReceiveTask rather
-  than a special kind of one. (It may still *read* which instance it is;
+  than a special kind of one. (It may still *read* which iteration it is;
   §2.13a.1 fixes that boundary.)
 - **The N-of-N barrier is the decorator's, not the loop's.** §2.12 prescribes
   fan-out-then-await-all as "ordinary control flow on the decorator's
   goroutine", and with executors that is literally what it is: the decorator
   awaits its own executors. The loop maintains no per-activity barrier and no
-  longer counts per-instance scope drains for a leaf, because a leaf has no
-  per-instance scope to drain.
+  longer counts per-iteration scope drains for a leaf, because a leaf has no
+  per-iteration scope to drain.
 
 **The executor contract — one interface, four realizations.**
 
 The same abstraction serves every activity kind, which is what keeps a track's
 job describable in one sentence: **a track drives one executor.**
 
-| Activity | What executes one instance of it | What that executor awaits |
+| Activity | What executes one iteration of it | What that executor awaits |
 |---|---|---|
 | a leaf Task | a **node executor** | an event subscription, if the node parks |
 | an inline Sub-Process | a **sub-process executor** — it opens the child scope; the body's tokens are ordinary tracks | the scope's drain |
@@ -931,7 +931,7 @@ job describable in one sentence: **a track drives one executor.**
 | any of the three under loop characteristics | the **decorator**, holding N of the above | whatever its executors await, in conjunction |
 
 **The decorator implements the same interface as the executors it holds**, so
-the composition is closed and a track cannot tell whether it drives one instance
+the composition is closed and a track cannot tell whether it drives one iteration
 of an activity or twelve. §2.13b says what that interface has to be for the
 closure to hold. Nesting decorators is not a modelable case (§2.1: the two loop
 forms are mutually exclusive on an activity); the closure exists for
@@ -939,7 +939,7 @@ uniformity.
 
 Four things the interface must express, each demanded by a decision above:
 
-- **Run or resume one instance**, including at a recorded position — hydration
+- **Run or resume one iteration**, including at a recorded position — hydration
   (§2.13) and incident retry (§2.14) both re-create one.
 - **What it awaits, and of which kind.** This is one question with three
   answers, and asking it is mandatory — which is what prevents the residency
@@ -952,7 +952,7 @@ Four things the interface must express, each demanded by a decision above:
   boundary (ADR-023 §2.5) and the terminate cascade (ADR-023 §2.7).
   Cancelling is not uniform in *cost*: a node executor abandons an execution, a
   sub-process executor cancels a scope, and a call executor **terminates a
-  child instance**. A completion condition firing on instance 2 of 5 of an
+  child instance**. A completion condition firing on iteration 2 of 5 of an
   iterated Call Activity therefore terminates three durable child instances,
   each with its own record — worth stating, because it is invisible in the
   model and expensive in fact.
@@ -960,12 +960,12 @@ Four things the interface must express, each demanded by a decision above:
 Two responsibilities stay **out** of it. **Boundary arming** belongs to the
 activity — §2.2 has a boundary arm once and guard every iteration, so an
 executor that armed its own would give a boundary timer N arms and N firings.
-**Output assembly** belongs to the decorator: it is positional across instances
+**Output assembly** belongs to the decorator: it is positional across iterations
 (§2.6), so an executor produces its own result and knows its ordinal but never
 writes into the collection. §2.13b.1 lists what else stays outside a unit, and
 why.
 
-**A call executor owns an instance, and that ownership is the parent linkage.**
+**A call executor owns an iteration, and that ownership is the parent linkage.**
 The child of a Call Activity is a full Instance, but it does not belong to the
 engine the way a root instance does — it belongs to its caller. That is the
 root/child distinction the engine already draws: the parent records the call
@@ -1015,14 +1015,14 @@ accident — it is what keeps the change contained to how an activity executes.
   per-token", which is precisely the property a decorator needs. One unholdable wait keeps the instance resident, as
   one unholdable arm does.
 - **Hydration has an ordering obligation**: rebuild the executors at their
-  recorded ordinals and states (a completed instance never re-runs), register
+  recorded ordinals and states (a completed iteration never re-runs), register
   the decorator as the node's processor, and **re-arm every waiting executor
   before any delivery can be accepted**. Not because an early message would be
   lost — the broker buffers an envelope that matches no subscription and
   delivers it when one appears, which its conformance suite requires — but
-  because a PARTIALLY armed set can match it into the **wrong** instance. An
-  envelope carrying instance 1's correlation value, arriving while only
-  instance 0 has re-armed, must wait for instance 1 rather than be served by
+  because a PARTIALLY armed set can match it into the **wrong** iteration. An
+  envelope carrying iteration 1's correlation value, arriving while only
+  iteration 0 has re-armed, must wait for iteration 1 rather than be served by
   whatever subscription happens to exist; delivering it to the wrong iteration
   is worse than delivering it late, and unlike a delay it is silent.
 - **What is recorded is the executor set, not its frames.** Ordinal, state, the
@@ -1036,7 +1036,7 @@ accident — it is what keeps the change contained to how an activity executes.
 
 **Consequences this ADR accepts.** The refusal of an iterated waiting activity
 is retired — the construct becomes ordinary, because a waiting executor is just
-an executor whose node parks. The per-instance scopes of a parallel leaf
+an executor whose node parks. The per-iteration scopes of a parallel leaf
 disappear, so per-iteration data is addressed by ordinal rather than by scope
 path. And the durable record changes shape, since an open instance is no longer
 a track: the iteration record carries the executor set. The accompanying SRD
@@ -1063,7 +1063,7 @@ accumulating iteration special cases far from the iteration code:
   resolution, the same registration call, the same delivery, the same boundary
   arming. It has no way to ask whether something other than a track is driving
   it, and nothing it does may depend on the answer. It **can** still read which
-  instance it is — `loopCounter` and the `ITERATION_*` values are ordinary
+  iteration it is — `loopCounter` and the `ITERATION_*` values are ordinary
   published data, and the standard requires them to be readable (§2.9). Reading
   is not asking, and §2.13a.1 is where that boundary is drawn.
 - **Upward, to the drivers — track, instance, event hub.** A decorated activity
@@ -1072,7 +1072,7 @@ accumulating iteration special cases far from the iteration code:
   iterates.
 
 Everything the iteration needs — the ordinal, the split item, the staging, which
-scopes are open, which instance awaits what — is the **decorator's own state**.
+scopes are open, which iteration awaits what — is the **decorator's own state**.
 Not the track's, not the loop's, not a flag on a record.
 
 **Why this is a decision and not a style note.** The model of §2.13 is
@@ -1123,7 +1123,7 @@ The invariant is only affordable because the seams it needs already exist as
   registers with its instance, which delegates to the hub. The decorator becomes
   one more link: the node's registration call is unchanged, the decorator
   registers itself upward once per activity, and dispatches a delivery down to
-  the instance owning the matched subscription. This is the mechanism §2.13
+  the iteration owning the matched subscription. This is the mechanism §2.13
   named and [ADR-006](ADR-006-events-and-subscriptions.md) §2.9.5 decides in
   full.
 - **Scope.** The scope protocol already carries a *request* to a single-writer
@@ -1174,7 +1174,7 @@ flows.*
 
 A decorator then implements the same interface and **owns the composition
 itself**: it decides what happens once for the activity and what happens per
-instance, because both are inside things it holds. No flag, no suppression,
+iteration, because both are inside things it holds. No flag, no suppression,
 nothing asked of a driver.
 
 **What this does NOT change.** A node keeps implementing only its own step —
@@ -1232,7 +1232,7 @@ rather than left to the code that happens to satisfy it.
 **Three things stay outside the unit**, and a unit that absorbed them would
 be wrong rather than merely over-scoped:
 
-- **Conditional waits are loop-owned.** Their trigger is the instance's own
+- **Conditional waits are loop-owned.** Their trigger is the iteration's own
   data commits, so they are never hub-registered; the unit DECLARES them on
   the announce and the loop arms and sweeps them.
 - **Boundary events are not the node's waits.** They guard the ACTIVITY, and
@@ -1245,7 +1245,7 @@ be wrong rather than merely over-scoped:
 **One consequence to plan for rather than discover.** Once a single processor
 holds N subscriptions on one definition, the *(subscriber, definition)* pair
 stops identifying a subscription — §2.9.5's stated consequence — so the
-loop's own index needs the instance ordinal as a discriminator. That work
+loop's own index needs the iteration ordinal as a discriminator. That work
 belongs to the iterated-waiting activity either way; unit-owned registration
 does not create it, it only puts it where it can be expressed.
 
@@ -1260,9 +1260,9 @@ flowchart TD
     drv["driver (the token's runner)"] -->|"run(ctx, scope) → flows"| U["«node execution unit»"]
     U -.->|"one of"| P["plain unit<br/>(holds the node)"]
     U -.->|"one of"| D["decorator<br/>(holds N units + the iteration scope)"]
-    D -->|"instance 0"| P0["unit"]
-    D -->|"instance 1"| P1["unit"]
-    D -->|"instance N-1"| PN["unit"]
+    D -->|"iteration 0"| P0["unit"]
+    D -->|"iteration 1"| P1["unit"]
+    D -->|"iteration N-1"| PN["unit"]
     P --> N1["node.Exec"]
     P0 --> N2["node.Exec"]
     P1 --> N3["node.Exec"]
@@ -1282,7 +1282,7 @@ observed as a state at all.
 ```mermaid
 stateDiagram-v2
     [*] --> Pending: built for this node<br/>(ordinal known, nothing done)
-    Pending --> Preparing: frame opened, instance data bound,<br/>declared inputs loaded
+    Pending --> Preparing: frame opened, iteration data bound,<br/>declared inputs loaded
     Preparing --> Executing: the node's own step
     Executing --> Waiting: the node parks<br/>(event, child scope drain, child instance)
     Waiting --> Executing: the wait fires and is applied
@@ -1310,7 +1310,7 @@ stack, and residency has to guess (§2.13b.1e).
 
 The record's vocabulary (`running` | `waiting` | `completed`) is this machine
 collapsed for persistence: `Preparing`/`Executing`/`Finalizing` are `running`,
-and `Canceled`/`Failed` do not persist as instances at all — a canceled
+and `Canceled`/`Failed` do not persist as iterations at all — a canceled
 ordinal is terminated, a failed one raises an incident (§2.14).
 
 #### 2.13b.1c The decorator's lifecycle, and how it composes
@@ -1319,24 +1319,24 @@ ordinal is terminated, a failed one raises an incident (§2.14).
 stateDiagram-v2
     [*] --> Activating: the token arrives
     Activating --> Iterating: cardinality resolved (§2.4),<br/>ITERATION SCOPE opened, counters bound
-    Iterating --> Iterating: an instance completes →<br/>counters re-derived, output staged
+    Iterating --> Iterating: an iteration completes →<br/>counters re-derived, output staged
     Iterating --> Stopping: completionCondition fired (§2.7)
-    Stopping --> Assembling: remaining instances canceled,<br/>their scopes torn down
-    Iterating --> Assembling: every instance completed
+    Stopping --> Assembling: remaining iterations canceled,<br/>their scopes torn down
+    Iterating --> Assembling: every iteration completed
     Assembling --> Completed: output published outward,<br/>iteration scope disposed, exit flow followed once
-    Iterating --> Failed: an instance faulted (§2.14)
+    Iterating --> Failed: an iteration faulted (§2.14)
     Completed --> [*]
     Failed --> [*]
 ```
 
 **The two machines run at different granularities and that is the point.** A
-decorator in `Iterating` may hold instances in `Waiting`, `Executing` and
+decorator in `Iterating` may hold iterations in `Waiting`, `Executing` and
 `Completed` at once. The driver above sees only the decorator's — one step,
 one state, one record — which is §2.13a's upward transparency expressed as a
 state model rather than as a rule.
 
 **Sequential vs parallel is not a state difference.** A sequential decorator
-holds at most one non-terminal instance; a parallel one holds N. The machine
+holds at most one non-terminal iteration; a parallel one holds N. The machine
 is identical, which is why `isSequential` is a property of the iteration and
 never a second type.
 
@@ -1377,11 +1377,11 @@ constraint drawn.
 The three transitions a decorator currently has to SUPPRESS are the proof
 that the token's state machine is one notch too coarse. An activity is one
 token's step however many times it executes, so a decorator driving N
-instances must stop each one from reporting a step — a flag passed inward
+iterations must stop each one from reporting a step — a flag passed inward
 that says "do less than you would". Two consequences, both bad: the
 suppression travels the wrong way through the layers (§2.13b), and the
 history entry is a read-copy-store over an atomic pointer, so N concurrent
-instances silently lose entries rather than miscounting loudly.
+iterations silently lose entries rather than miscounting loudly.
 
 **The state machine gains the distinctions the executors already make.** The
 rule is one sentence:
@@ -1390,7 +1390,7 @@ rule is one sentence:
 
 The vocabulary exists — an executor already reports *nothing* / *an event* /
 *a child scope* / *a child instance*. Surfacing it retires the suppression by
-removing what it suppressed: per-instance executions fall BELOW the
+removing what it suppressed: per-iteration executions fall BELOW the
 granularity of the token's state machine, so there is nothing to switch off.
 
 | The token is… | Without the rule | Under the rule |
@@ -1426,8 +1426,8 @@ axes — while the same information is already carried better elsewhere:
 |---|---|
 | what is this token doing? | its **state** (closed, small) |
 | what kind of iteration? | an **attribute**: `loop` / `mi_sequential` / `mi_parallel` — already the record's `kind` (§2.9.3) |
-| which instance, and how many? | **attributes**: the ordinal, and §2.9's counts |
-| what is each instance doing? | the token's **iteration section** (§2.9.1) |
+| which iteration, and how many? | **attributes**: the ordinal, and §2.9's counts |
+| what is each iteration doing? | the token's **iteration section** (§2.9.1) |
 
 The same attributes ride the observability facts, where the ordinal and the
 loop counter already travel. So an operator asking "what is this activity
@@ -1473,7 +1473,7 @@ activity's execution unit still WAITS for its body; what it does not do is
 
 ### 2.14 A failed iteration is an ordinary incident, at iteration granularity
 
-**One instance of a Multi-Instance activity failing must not cost the other
+**One iteration of a Multi-Instance activity failing must not cost the other
 N−1 their work, and retrying it must re-run *it* — not the activity.**
 
 This is a requirement on §2.13, not a consequence of it. The incident contract
@@ -1500,13 +1500,13 @@ is what persists, and continuation is a fresh <thing> spawned from the record"
   A bare ordinal would name the retry unit but not enough to act on it. The
   section is what lets **retry target the failed executor directly**: the
   ordinal says which executor to rebuild, and the completed count says which
-  instances must not run again — the resume rule below depends on exactly that,
+  iterations must not run again — the resume rule below depends on exactly that,
   and would otherwise have to re-derive it from state the incident does not
-  own. It also makes the record legible on its own ("instance 3 of 5 failed"),
+  own. It also makes the record legible on its own ("iteration 3 of 5 failed"),
   which a number in a field does not.
 
   Using the **same shape** in both places is deliberate. Iteration state has
-  one vocabulary — kind, total, completed, per-instance ordinal and state —
+  one vocabulary — kind, total, completed, per-iteration ordinal and state —
   whether it is being observed on a token or recorded in an incident. Two
   representations of the same thing drift, and the operator who reads the token
   view and then the incident would have to translate between them.
@@ -1518,28 +1518,28 @@ is what persists, and continuation is a fresh <thing> spawned from the record"
   "siblings are unaffected" at iteration granularity — the same sentence, one
   level down.
 - **The activity cannot complete while one of its instances has an open
-  incident.** ADR-036 §2.2 says an instance cannot complete with an open
+  incident.** ADR-036 §2.2 says an iteration cannot complete with an open
   incident; the same holds for the activity, and for a sharper reason here:
   output assembly is **positional** (§2.6), so completing with an unresolved
   ordinal would publish a collection with a hole in it and call that success.
   The decorator waits; resolution un-sticks it.
-- **The completion condition still cancels remaining instances — including a
+- **The completion condition still cancels remaining iterations — including a
   failed one — and closes its incident as cancelled, with the cause retained.**
-  §2.7 lets the model decide the activity is done before every instance is;
-  when it does, the outcome of the remaining instances is not needed, and a
-  failed instance is a remaining instance. Leaving the activity stuck on an
+  §2.7 lets the model decide the activity is done before every iteration is;
+  when it does, the outcome of the remaining iterations is not needed, and a
+  failed iteration is a remaining iteration. Leaving the activity stuck on an
   incident whose result the model has just declared irrelevant would let a
   transient fault in one branch defeat an early-completion rule that exists
   precisely to tolerate stragglers. The record is **closed, not deleted** — the
-  operator can still see that the instance failed and why, which keeps the
+  operator can still see that the iteration failed and why, which keeps the
   standing rule that a failure is never silent.
 - **The failed ordinal is visible in both places an operator looks**: the
-  iteration view (§2.9.1) shows that instance as in-incident, and the incident
+  iteration view (§2.9.1) shows that iteration as in-incident, and the incident
   query (ADR-036 §2.6) returns a record naming the ordinal. "Which
   iteration failed, and retry that one" is answerable without reading the
   other.
 - **Dehydration is unchanged.** A failed executor holds no goroutine — the
-  incident record is the continuation — so an instance whose only remaining
+  incident record is the continuation — so an iteration whose only remaining
   continuations are operator-waiting iteration incidents is quiescent, exactly
   as ADR-036 §2.2 describes.
 
@@ -1551,18 +1551,18 @@ is what persists, and continuation is a fresh <thing> spawned from the record"
   iteration set from scratch.
 - **After iterations have begun**, a failure in the decorator's own work — the
   completion condition (§2.7), output assembly (§2.6) — is also activity-level,
-  because no single instance caused it. But retry here **resumes the decorator
+  because no single iteration caused it. But retry here **resumes the decorator
   against its recorded executor set** rather than restarting the activity:
-  completed instances never re-run, which is the same invariant §2.13's
+  completed iterations never re-run, which is the same invariant §2.13's
   hydration obeys. Without that distinction, a failing completion-condition
-  expression would silently re-execute every completed instance on retry — the
+  expression would silently re-execute every completed iteration on retry — the
   duplicate-side-effect failure the recorded executor set exists to prevent.
 
 **Engine note.** BPMN does not define incidents at all; the standard leaves the
 reaction to an unhandled failure open (ADR-036 §3). Everything here is an
 engine choice about *granularity* — that the unit of failure and retry matches
 the unit of execution — and is invisible to a modeler, who sees only that one
-instance of a Multi-Instance activity can fail, be retried and succeed while
+iteration of a Multi-Instance activity can fail, be retried and succeed while
 its siblings proceed.
 
 **Contract note.** The incident record's iteration section is ADR-036's field
@@ -1573,7 +1573,7 @@ those ADRs' to make.
 
 ---
 
-### 2.15 A fan-out over human work assigns its performer per instance
+### 2.15 A fan-out over human work assigns its performer per iteration
 
 An iterated User Task exists to put work in front of **several people at
 once** — a review board, a per-line-item confirmation, an independent
@@ -1584,7 +1584,7 @@ simpler one.
 
 **What the standard fixes, and what it leaves to us.** The fan-out is over a
 DATA COLLECTION: cardinality is `loopCardinality` evaluated once, or the size
-of the collection at `loopDataInputRef` (§13.3.7), and each instance receives
+of the collection at `loopDataInputRef` (§13.3.7), and each iteration receives
 its own value through `inputDataItem` → `DataInputAssociation` → inner
 `DataInput` — an extraction the spec itself calls **under-specified**.
 Assignment is a separate mechanism: `PotentialOwner → HumanPerformer →
@@ -1596,7 +1596,7 @@ So the rule below is an **engine choice**, made because the construct is
 meaningless without it, not because §13.3.7 requires it:
 
 > **The performer expression is evaluated in the INSTANCE's data context**,
-> where that instance's `inputDataItem` is bound.
+> where that iteration's `inputDataItem` is bound.
 
 That one placement covers both idioms people actually write. A collection of
 **users** — the common "review board" shape, and how this is modelled in
@@ -1606,21 +1606,21 @@ neither is privileged by the object model.
 
 **The placement is what makes the construct exist at all.** Resolve the triad
 ([ADR-020 v.4](ADR-020-human-interaction-execution-model.md) §2.7's single
-resolution point) over a frame opened at the instance ROOT with no track, and
-every instance of an iterated task resolves the same answer. A fan-out whose instances are all offered to the same candidate list is
+resolution point) over a frame opened at the iteration ROOT with no track, and
+every iteration of an iterated task resolves the same answer. A fan-out whose iterations are all offered to the same candidate list is
 not a fan-out: it is one task announced N times, all of the cost of parallelism
 and none of its value.
 
 **The completion account is kept by assignee.** The decorator holds which
 assignees have completed, because that is the question the model asks and the
 one an operator asks: *2 of 5 approved, waiting on carol and dave*. A
-`completionCondition` — which §13.3.7 evaluates on every instance completion
+`completionCondition` — which §13.3.7 evaluates on every iteration completion
 — reads that account directly rather than reconstructing counts from a
 barrier.
 
 **Routing stays on the engine-minted task id, not on the assignee.** The
 account is *reported* by assignee; a completion is *routed* by id. An
-instance may be offered to a GROUP, where the completer is unknown until
+iteration may be offered to a GROUP, where the completer is unknown until
 someone acts; work may be delegated, so the actor completing need not be the
 assignee; and nothing in the object model forbids naming one person twice.
 The id is minted by the engine and unique by construction, so correctness
@@ -1634,18 +1634,18 @@ inside the engine, and must not have them.
 
 The concurrency it exists for is **external**: N people acting at the same
 time, in the distributor's inbox. Inside, applying one completion is small
-and bounded — bind the payload into that instance's frame, run its node,
+and bounded — bind the payload into that iteration's frame, run its node,
 record its output. So the decorator holds N *waits* and applies their
 completions **serially, on its own goroutine**, presenting one execution
 context to everything outside the node (§2.13a's transparency, seen from the
 other side).
 
 This is what makes the construct safe rather than what makes it fast. The
-alternative — an execution context per instance — requires every piece of a
-token's execution state to become per-instance, including the one that
+alternative — an execution context per iteration — requires every piece of a
+token's execution state to become per-iteration, including the one that
 APPLIES a delivery: the step list, the node's unregistration, an Event-Based
 Gateway's arm advancement, the release of engine-held waits. Those are the
-token's, not an instance's, and N goroutines traversing them concurrently is
+token's, not an iteration's, and N goroutines traversing them concurrently is
 a data race with no natural owner. Serial application removes the race
 instead of synchronising it.
 
@@ -1653,15 +1653,15 @@ instead of synchronising it.
 NODE's own execution. A parallel Multi-Instance **Sub-Process** is different
 in kind: its instances are child scopes whose bodies are ordinary tracks, and
 those genuinely run concurrently — that is §2.13's composite case and it is
-unaffected. The rule here governs a decorated LEAF, whose instances have no
+unaffected. The rule here governs a decorated LEAF, whose iterations have no
 tracks of their own.
 
 **Withdrawal is how "canceled" is realized.** §13.3.7 states that when a
-`completionCondition` becomes true the **remaining instances are canceled**
-and the activity completes. For human work, cancelling an instance means
+`completionCondition` becomes true the **remaining iterations are canceled**
+and the activity completes. For human work, cancelling an iteration means
 **withdrawing its task from the distributor** — a task nobody will accept
 must stop being offered, or a person acts on work the engine has already
-discarded. A late completion against a withdrawn instance is refused, not
+discarded. A late completion against a withdrawn iteration is refused, not
 counted. The *what* is the standard's; the *how* is this engine's.
 
 #### 2.15b Ownership operations are unchanged; three consequences are not
@@ -1669,14 +1669,14 @@ counted. The *what* is the standard's; the *how* is this engine's.
 Claiming is already decided and is **not this ADR's to redecide**:
 [ADR-020 v.4](ADR-020-human-interaction-execution-model.md) §2.5.2 defines `Claim` (eligible, and not held by another — idempotent for
 the holder), `Unclaim` (the holder only) and `Reassign` (unguarded at task
-level, nominee still checked). A fan-out changes none of them. Each instance
+level, nominee still checked). A fan-out changes none of them. Each iteration
 is an ordinary parked task with its own id and its own resolved eligibility,
-so the operations apply per instance exactly as they do to a lone task.
+so the operations apply per iteration exactly as they do to a lone task.
 
 Three things follow that ARE this ADR's, because they only arise when N
-instances of one activity exist at once.
+iterations of one activity exist at once.
 
-**One actor may hold and complete several instances.** No guard forbids it,
+**One actor may hold and complete several iterations.** No guard forbids it,
 and none is added. "Each participant answers once" is a business rule, not an
 engine invariant — a supervisor covering two absences is a legitimate model —
 and §2.6.1 already gives the model the means to enforce it where it matters:
@@ -1685,15 +1685,15 @@ answer from the same person a fault. Putting the rule in the engine would be
 policy in the wrong layer, the same reason ADR-020 v.4 leaves `Reassign`'s
 authority with the embedder.
 
-**A withdrawn instance takes its ownership with it.** When a
-`completionCondition` fires (§13.3.7) the remaining instances are canceled,
+**A withdrawn iteration takes its ownership with it.** When a
+`completionCondition` fires (§13.3.7) the remaining iterations are canceled,
 and someone may be holding one of them. The withdrawal reaches the
-distributor, the instance's `actualOwner` ceases to exist with the task, and a
+distributor, the iteration's `actualOwner` ceases to exist with the task, and a
 later `Complete` or `Unclaim` naming it must be **refused** — not silently
 accepted, and not counted toward the result. A person acting on withdrawn
 work must be told it is gone.
 
-**`actualOwner` is per instance.** It cannot be otherwise once N exist, and
+**`actualOwner` is per iteration.** It cannot be otherwise once N exist, and
 §2.9.2's `ITERATION_OWNERS` (activity id → ordinal → actual owner) already
 records it that way. The consequence to hold onto is for the **performer
 register**, whose rule is "keep the last completer": for an iterated activity
@@ -1715,9 +1715,9 @@ that answer is arbitrary among N, so it stays only for compatibility and
 | Loop Activity runtime attribute (`loopCounter`) | [instance-attributes.md §Loop Activity](../bpmn-spec/semantics/instance-attributes.md) — Table 10.27, §10.3.8 |
 | MI runtime attributes, inner/outer split, and the sum invariant | [instance-attributes.md §Multi-instance Activity](../bpmn-spec/semantics/instance-attributes.md) — Table 10.30, §10.3.8 |
 | Instance attributes are expression-accessible | [data.md §XPath bindings](../bpmn-spec/semantics/data.md) (§10.4.3) |
-| Per-instance data arrives via `inputDataItem` → `DataInputAssociation` → inner `DataInput`; the extraction is **under-specified** | [multi-instance.md §Constraints](../bpmn-spec/semantics/multi-instance.md) (§13.3.7) |
+| Per-iteration data arrives via `inputDataItem` → `DataInputAssociation` → inner `DataInput`; the extraction is **under-specified** | [multi-instance.md §Constraints](../bpmn-spec/semantics/multi-instance.md) (§13.3.7) |
 | A human task's performer comes from `ResourceRole.resourceAssignmentExpression` (`PotentialOwner → HumanPerformer → Performer → ResourceRole`) | [human-interaction.md §ResourceAssignmentExpression](../bpmn-spec/elements/human-interaction.md) |
-| **The standard is SILENT on combining multi-instance with resource assignment** — it never discusses the two together, so §2.15's per-instance evaluation of the performer expression is an **engine choice**, not a mandate | [human-interaction.md](../bpmn-spec/elements/human-interaction.md), [multi-instance.md](../bpmn-spec/semantics/multi-instance.md) — absence of any cross-reference |
+| **The standard is SILENT on combining multi-instance with resource assignment** — it never discusses the two together, so §2.15's per-iteration evaluation of the performer expression is an **engine choice**, not a mandate | [human-interaction.md](../bpmn-spec/elements/human-interaction.md), [multi-instance.md](../bpmn-spec/semantics/multi-instance.md) — absence of any cross-reference |
 
 **On the runtime-attribute set specifically:** the vendored extract is silent,
 the standard is not. Tables 10.27 and 10.30 are extracted and pinned above, so
@@ -1730,14 +1730,14 @@ choice is listed in §2.11.
 
 - **A shared iteration node for the concurrent (parallel-MI) case.** Model
   parallel MI as a single node that internally fans out, without a distinct scope
-  per instance. Rejected: parallel isolation would then need a bespoke per-branch
+  per iteration. Rejected: parallel isolation would then need a bespoke per-branch
   data-partitioning mechanism, duplicating what the scope model already gives for
   free, and a looped Sub-Process would need *two* different composition models
   (scope for the body, something else for the iteration). Reusing the ADR-023
-  scope per concurrent instance (§2.2) is strictly simpler — while the *sequential*
+  scope per concurrent iteration (§2.2) is strictly simpler — while the *sequential*
   cases avoid the scope entirely for a leaf Task (§2.2), so no ceremony is paid
   where one-at-a-time execution already isolates.
-- **Incremental output publication.** Write each instance's output into the
+- **Incremental output publication.** Write each iteration's output into the
   shared collection as it completes, rather than at activity completion.
   Rejected: violates the §13.3.7 visibility barrier — a concurrent activity could
   read a half-assembled collection, and completion order (parallel) would leak
@@ -1802,10 +1802,10 @@ For the §2.12 execution model, the rejected alternatives were:
 ## 6. Enterprise-readiness recommendations
 
 - **Observability.** Emit facts for iteration lifecycle — activation (with the
-  resolved cardinality and source), each instance start/complete/cancel (with
+  resolved cardinality and source), each iteration start/complete/cancel (with
   `loopCounter`), and activity completion (with the completed/terminated counts)
   — so operators can watch a 10 000-element fan-out make progress and spot a
-  stuck instance. Reuse the ADR-013 observability vocabulary.
+  stuck iteration. Reuse the ADR-013 observability vocabulary.
 - **Bounded fan-out.** A cardinality driven by external data can be huge;
   recommend (and document) an operational guard on parallel MI width, so a
   pathological collection cannot exhaust goroutines/memory. `loopMaximum` guards
@@ -1815,7 +1815,7 @@ For the §2.12 execution model, the rejected alternatives were:
   be part of the public contract — consumers can rely on `output[i]`
   corresponding to `input[i]`.
 - **Expression cost.** `completionCondition` and `Complex` conditions run on
-  every instance completion; document that they should be cheap and side-effect
+  every iteration completion; document that they should be cheap and side-effect
   free.
 
 ---
@@ -1846,8 +1846,8 @@ strategies (§2.6.1), and last the `behavior` throwing surface (§2.8) — of wh
 `Complex` is the least-used and highest-complexity, so it lands after the
 sequential and parallel cores are proven.
 
-**Finally the human-interaction fan-out** (§2.15): per-instance performer
-resolution, per-instance parked identity and ownership, and the
+**Finally the human-interaction fan-out** (§2.15): per-iteration performer
+resolution, per-iteration parked identity and ownership, and the
 `ITERATION_OWNERS` register — the contract
 [ADR-020 v.4](ADR-020-human-interaction-execution-model.md) §2.12 states and this
 ADR's machinery has to satisfy.
@@ -1864,7 +1864,7 @@ Compensation (§2.10) is outside this order; it is owned by
 
 - [SAD-001 — Vision & Architecture](SAD-001-vision-and-architecture.md) §5, §15.3
 - [ADR-023 — Sub-Process & Call Activity Execution Model](ADR-023-sub-process-and-call-activity.md) — the execution-scope model reused here
-- [ADR-018 — Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md) — boundary catch for behavior events; per-instance cancellation
+- [ADR-018 — Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md) — boundary catch for behavior events; per-iteration cancellation
 - [ADR-006 — Events & Subscriptions](ADR-006-events-and-subscriptions.md) — event throwing/catching
 - BPMN 2.0 §13.3.6 (Standard Loop), §13.3.7 (Multi-Instance); vendored extract
   [multi-instance.md](../bpmn-spec/semantics/multi-instance.md),

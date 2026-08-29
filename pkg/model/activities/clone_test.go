@@ -30,8 +30,8 @@ func (cloneExctr) Execute(
 }
 
 // TestServiceTaskClone verifies that ServiceTask.Clone shares configuration by
-// reference, gives a per-instance operation, starts with empty flows and carries
-// no container. The per-instance message-state isolation itself is covered by
+// reference, gives a per-iteration operation, starts with empty flows and carries
+// no container. The per-iteration message-state isolation itself is covered by
 // the service.Operation clone test.
 func TestServiceTaskClone(t *testing.T) {
 	data.CreateDefaultStates()

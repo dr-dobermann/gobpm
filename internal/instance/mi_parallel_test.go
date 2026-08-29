@@ -86,7 +86,7 @@ func TestParallelMultiInstanceZeroCardinality(t *testing.T) {
 	require.Equal(t, int32(0), count.Load())
 }
 
-// TestParallelMultiInstanceDistinctScopes: each instance opens a distinct scope
+// TestParallelMultiInstanceDistinctScopes: each iteration opens a distinct scope
 // carrying its own 0-based ordinal (FR-2/FR-11).
 func TestParallelMultiInstanceDistinctScopes(t *testing.T) {
 	var count atomic.Int32
@@ -116,7 +116,7 @@ func TestParallelMultiInstanceDistinctScopes(t *testing.T) {
 		"each parallel instance opens a distinct scope with its ordinal")
 }
 
-// TestParallelMultiInstanceInputItemPerScope: each concurrent instance sees its
+// TestParallelMultiInstanceInputItemPerScope: each concurrent iteration sees its
 // own collection element bound as `item` in its own scope (FR-5). Parallel
 // completion order is nondeterministic, so the SET is asserted.
 func TestParallelMultiInstanceInputItemPerScope(t *testing.T) {
@@ -162,7 +162,7 @@ func TestParallelMultiInstanceInputItemPerScope(t *testing.T) {
 		"each instance sees its own element (order nondeterministic)")
 }
 
-// TestParallelMultiInstanceAssemblesOutput: per-instance outputs assemble
+// TestParallelMultiInstanceAssemblesOutput: per-iteration outputs assemble
 // positionally (slot = ordinal) into the output collection, published once at
 // completion — in input order despite concurrent, out-of-order completion
 // (FR-6/FR-7).
@@ -223,7 +223,7 @@ func TestParallelMultiInstanceOutputItemMissing(t *testing.T) {
 
 // TestParallelMultiInstanceCompletionCancelsRemainder (FR-8): once the
 // completionCondition holds, the still-running instances are canceled as a
-// unit. Bodies block per-instance so the truncation is deterministic (parallel
+// unit. Bodies block per-iteration so the truncation is deterministic (parallel
 // instant bodies would all complete first).
 func TestParallelMultiInstanceCompletionCancelsRemainder(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
@@ -238,7 +238,7 @@ func TestParallelMultiInstanceCompletionCancelsRemainder(t *testing.T) {
 	var canceled atomic.Int32
 
 	// Every body reports that it is RUNNING before it blocks. Without this, an
-	// instance canceled before its body was ever scheduled never reaches the
+	// iteration canceled before its body was ever scheduled never reaches the
 	// select and so never counts itself — the assertion below then waits for a
 	// third cancellation that can never arrive. Releasing the two winners only
 	// after all five are parked is what makes the truncation deterministic, which
@@ -274,7 +274,7 @@ func TestParallelMultiInstanceCompletionCancelsRemainder(t *testing.T) {
 
 	// release exactly two instances; the other three must be canceled — they
 	// never see their gate, so a completing run proves cancellation. The release
-	// waits until all five bodies are parked, so no instance can be canceled
+	// waits until all five bodies are parked, so no iteration can be canceled
 	// before it has started.
 	go func() {
 		for range total {
@@ -315,10 +315,10 @@ func TestParallelMultiInstanceRuntimeAttributes(t *testing.T) {
 }
 
 // TestParallelMultiInstanceBoundaryInterruptsAll (FR-10): an interrupting
-// boundary firing on a fanned-out host tears down ALL N instance scopes, not
+// boundary firing on a fanned-out host tears down ALL N iteration scopes, not
 // just the default `sp-<id>` segment a serial host would hold.
 //
-// It reads the entries themselves (instanceScopesOf), which is what makes
+// It reads the entries themselves (iterationScopesOf), which is what makes
 // this the same teardown a fired completionCondition asks for; the two were
 // separate mechanisms over one question while the group existed.
 func TestParallelMultiInstanceBoundaryInterruptsAll(t *testing.T) {
@@ -474,7 +474,7 @@ func TestParallelStepBindError(t *testing.T) {
 
 // TestRunMIParallelDrainError is the parallel twin of
 // TestRunMISequentialDrainError: a stand-in loop takes the fan-out's scope
-// opens and then stops, so every instance's drain wait unblocks with an error
+// opens and then stops, so every iteration's drain wait unblocks with an error
 // rather than hanging on scopes that will never close.
 //
 // The barrier must still take ALL launched reports and fault the run once,
@@ -508,7 +508,7 @@ func TestRunMIParallelDrainError(t *testing.T) {
 
 // TestParallelBarrierKeepsATeardownError (SRD-090.A M4c): when a mid-barrier
 // failure's teardown ALSO fails, the teardown's error is what the run
-// reports — it is the more serious of the two, since it means instance scopes
+// reports — it is the more serious of the two, since it means iteration scopes
 // were left open.
 //
 // Driven through the barrier rather than by calling stopRemaining directly.
@@ -536,12 +536,12 @@ func TestParallelBarrierKeepsATeardownError(t *testing.T) {
 }
 
 // TestRunMIParallelBindError is the parallel twin of
-// TestRunMISequentialBindError: the per-instance input split fails when the
+// TestRunMISequentialBindError: the per-iteration input split fails when the
 // input collection's GetAt errors, and the fan-out faults before any scope
 // opens.
 //
 // It asserts the fault arrives WITHIN a bound rather than merely arriving.
-// The unit-level guard test proves compositeInstanceFor returns an error; it
+// The unit-level guard test proves compositeIterationFor returns an error; it
 // cannot prove the fan-out that calls it does not then sit waiting on
 // instances it never launched, which is the half a barrier can get wrong.
 func TestRunMIParallelBindError(t *testing.T) {

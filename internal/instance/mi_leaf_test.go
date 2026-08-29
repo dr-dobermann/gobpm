@@ -842,7 +842,7 @@ func normalized(elems []any) []any {
 
 // TestLeafMIParallelKillAndResume is T-6 (SRD-086 FR-5), rewritten onto
 // the executor set (SRD-090.A FR-6/FR-7). A parallel leaf no longer
-// persists as a group record plus one track per open instance scope,
+// persists as a group record plus one track per open iteration scope,
 // because it no longer HAS instance scopes or per-instance tracks: it
 // records which ordinals are still running, and restore relaunches
 // exactly those. That a completed ordinal never re-runs is the property
@@ -959,12 +959,12 @@ func TestLeafMISequentialMissingOutput(t *testing.T) {
 
 // asSchemaFiveLeaf rewrites a captured parallel LEAF fan-out into the
 // SCHEMA-5 shape, which is how a document written before SRD-090.A carried
-// one: the position rides an MIGroupRecord, and every still-running instance
+// one: the position rides an MIGroupRecord, and every still-running iteration
 // is its OWN TRACK standing on the iterated node.
 //
 // That last part is what distinguishes it from asSchemaFive, the composite
-// twin. A composite instance was a child scope, so the group carried Open
-// paths; a LEAF instance got no scope, so it was a spawned track — and the
+// twin. A composite iteration was a child scope, so the group carried Open
+// paths; a LEAF iteration got no scope, so it was a spawned track — and the
 // engine kept those tracks out of the iteration routing with a `leafPlain`
 // marker that SRD-090.A M2b deleted along with the mechanism.
 func asSchemaFiveLeaf(
@@ -989,14 +989,14 @@ func asSchemaFiveLeaf(
 
 	require.NotEmpty(t, grp.HostTrack, "the fan-out's host track")
 
-	// one track per still-running instance — no Open scopes, because a leaf
-	// instance never had one.
+	// one track per still-running iteration — no Open scopes, because a leaf
+	// iteration never had one.
 	for _, ord := range runningOrdinals(rec) {
 		d.Tracks = append(d.Tracks, checkpoint.TrackRecord{
 			ID:    "legacy-inst-" + itoa(ord),
 			State: "TrackExecutingStep",
 			// the ordinal rode the instance track's own loop counter —
-			// the only place schema 5 recorded WHICH instance it was.
+			// the only place schema 5 recorded WHICH iteration it was.
 			NodeID:      nodeID,
 			ScopePath:   hostScope,
 			LoopCounter: ord,
@@ -1010,7 +1010,7 @@ func asSchemaFiveLeaf(
 
 // TestLeafMIRestoresFromASchemaFiveGroup (SRD-090.A FR-7): a Schema-5 document
 // whose parallel LEAF fan-out is carried as a group plus one track per
-// instance restores to the same live state — the host's decorator resumes the
+// iteration restores to the same live state — the host's decorator resumes the
 // unfinished ordinals, and the legacy instance tracks do NOT become live
 // tracks of their own.
 //

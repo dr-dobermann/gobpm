@@ -10,7 +10,7 @@ import (
 type ResultKind string
 
 const (
-	// ResultArray indexes results by ORDINAL: slot i holds instance i's
+	// ResultArray indexes results by ORDINAL: slot i holds iteration i's
 	// output, whatever order the instances completed in.
 	//
 	// For a Multi-Instance this is the standard's own `loopDataOutputRef`
@@ -18,13 +18,13 @@ const (
 	// the standard gives a loop no output aggregation at all.
 	ResultArray ResultKind = "array"
 
-	// ResultMap keys results by a per-instance expression, evaluated in that
-	// instance's frame at its completion. An engine extension for both
+	// ResultMap keys results by a per-iteration expression, evaluated in that
+	// iteration's frame at its completion. An engine extension for both
 	// shapes: BPMN's Multi-Instance output is an ordered collection, never a
 	// keyed one.
 	ResultMap ResultKind = "map"
 
-	// ResultReduce names the accumulating default: each instance's writes
+	// ResultReduce names the accumulating default: each iteration's writes
 	// land in the enclosing scope and a later one replaces an earlier.
 	//
 	// It adds no assembly, because it IS what happens without a declaration.
@@ -39,19 +39,19 @@ const (
 //
 // Nil means the default of ADR-025 §2.6.1: last write wins, which is a fold
 // for a sequential shape and order-dependent for a parallel one. The declared
-// strategies exist so a model that needs every instance's result can say so
+// strategies exist so a model that needs every iteration's result can say so
 // and get a deterministic one.
 type ResultStrategy struct {
-	// key is the map strategy's per-instance expression, nil for the others.
+	// key is the map strategy's per-iteration expression, nil for the others.
 	key data.FormalExpression
 
 	// name is where the assembled result is published.
 	name string
 
-	// item is the per-instance value that goes into it, by name.
+	// item is the per-iteration value that goes into it, by name.
 	//
 	// Both halves are needed and neither is derivable: ADR-025 §2.6 states the
-	// assembly as "the engine writes that instance's outputDataItem into slot
+	// assembly as "the engine writes that iteration's outputDataItem into slot
 	// loopCounter of the loopDataOutputRef collection", and an activity may
 	// declare more than one output. Empty for reduce, which assembles nothing
 	// — its name IS the accumulating value in the enclosing scope.
@@ -70,25 +70,25 @@ func (r *ResultStrategy) Kind() ResultKind { return r.kind }
 // Name is where the assembled result is published.
 func (r *ResultStrategy) Name() string { return r.name }
 
-// Item is the per-instance value the assembly collects, by name. Empty for
+// Item is the per-iteration value the assembly collects, by name. Empty for
 // reduce, which assembles nothing.
 func (r *ResultStrategy) Item() string { return r.item }
 
-// Key is the map strategy's per-instance key expression, nil for the others.
+// Key is the map strategy's per-iteration key expression, nil for the others.
 func (r *ResultStrategy) Key() data.FormalExpression { return r.key }
 
 // ErrorOnKeyRewrite reports whether a duplicate map key faults.
 //
 // False is not "the collision is fine": it is the last-wins default, and the
 // loss is detectable rather than silent — RUNTIME/ITERATIONS publishes the
-// instance total, so a map holding fewer entries than that says so.
+// iteration total, so a map holding fewer entries than that says so.
 func (r *ResultStrategy) ErrorOnKeyRewrite() bool { return r.errorOnKeyRewrite }
 
 // MapOption tunes the map strategy.
 type MapOption func(*ResultStrategy) error
 
 // ErrorOnKeyRewrite makes a duplicate map key a fault, naming both ordinals
-// and the key, rather than letting the later instance overwrite the earlier.
+// and the key, rather than letting the later iteration overwrite the earlier.
 //
 // For a model where a collision is a modeling error — a fan-out over
 // participants who must each answer once — the overwrite is the bug, not the
@@ -112,7 +112,7 @@ func newResultStrategy(
 			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
-	// reduce assembles nothing, so it names no per-instance value: the name
+	// reduce assembles nothing, so it names no per-iteration value: the name
 	// it declares IS the accumulating one in the enclosing scope.
 	if kind != ResultReduce && item == "" {
 		return nil, errs.New(

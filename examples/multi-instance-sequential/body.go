@@ -9,7 +9,7 @@ import (
 )
 
 // buildOrdersBody builds the Multi-Instance Sub-Process: one instance per
-// element of the `amounts` collection, run sequentially. Each instance sees its
+// element of the `amounts` collection, run sequentially. Each iteration sees its
 // element as `amount` and assembles its `withTax` output into the `taxed`
 // collection.
 func buildOrdersBody() (*activities.SubProcess, error) {

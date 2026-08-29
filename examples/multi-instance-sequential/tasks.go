@@ -12,7 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 )
 
-// taxTask reads the per-instance `amount`, applies a 20% tax, prints the step,
+// taxTask reads the per-iteration `amount`, applies a 20% tax, prints the step,
 // and returns `withTax` — the output item the Multi-Instance assembles.
 func taxTask() (*activities.ServiceTask, error) {
 	op, err := gooper.New("tax",

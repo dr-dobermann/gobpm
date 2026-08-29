@@ -97,7 +97,7 @@ func TestDocumentValidation(t *testing.T) {
 	// SRD-071 FR-9a/§4.9: the schema guard is an UPPER bound, not equality.
 	// Schema 2 added the armed-boundary set additively, so a Schema-1
 	// document written before the bump still restores — refusing it would
-	// strand every instance an older engine left in the store.
+	// strand every iteration an older engine left in the store.
 	t.Run("an older schema still reads",
 		func(t *testing.T) {
 			doc, err := checkpoint.Unmarshal([]byte(

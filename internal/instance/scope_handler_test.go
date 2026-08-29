@@ -289,7 +289,7 @@ func TestArmScopeHandlersRegisterError(t *testing.T) {
 }
 
 // TestArmScopeHandlersStopping (SRD-052 FR-5): arming is a no-op once the
-// instance is stopping.
+// iteration is stopping.
 func TestArmScopeHandlersStopping(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -324,7 +324,7 @@ func TestTriggeredStartOfEdgeCases(t *testing.T) {
 
 // TestApplyRoutesScopeHandlerFire (SRD-052 FR-7): the loop's apply routes an
 // evScopeHandlerFire to fireScopeHandler — checked through the stopping guard,
-// which returns before the cancel-and-run touches instance state.
+// which returns before the cancel-and-run touches iteration state.
 func TestApplyRoutesScopeHandlerFire(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 

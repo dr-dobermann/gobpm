@@ -16,7 +16,7 @@ import (
 )
 
 // TestReportDataMovements (SRD-063 / SRD-068): the track publishes one fact per
-// Data Object / Data Store movement recorded on the node's frame — a per-instance
+// Data Object / Data Store movement recorded on the node's frame — a per-iteration
 // Data Object as KindDataObject (no store ref), the engine-global Data Store as
 // KindDataStore carrying the store ref, each phased Read (inbound) or Written
 // (outbound).

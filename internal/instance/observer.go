@@ -59,7 +59,7 @@ func (inst *Instance) report(ev observability.Fact) {
 	hasLocal := len(inst.observers) > 0
 	inst.obsMu.RUnlock()
 
-	// The engine sink is reached through the embedded runtime; a bare Instance
+	// The engine sink is reached through the embedded runtime; a bare Iteration
 	// (constructed without New — the isolated unit tests) has none.
 	var sink observability.Reporter
 	if inst.EngineRuntime != nil {
@@ -74,7 +74,7 @@ func (inst *Instance) report(ev observability.Fact) {
 	}
 
 	// Stamp the time from the injected clock when one is set. A focused unit test
-	// may build a partial Instance (a runtime but no clock) and still exercise an
+	// may build a partial Iteration (a runtime but no clock) and still exercise an
 	// emission path; At then stays zero — optional metadata, not a panic.
 	if ev.At.IsZero() && inst.now != nil {
 		ev.At = inst.now()
@@ -120,7 +120,7 @@ func (inst *Instance) fanoutLocal(ev observability.Fact) {
 
 // Report emits one instance-scoped fact through the standard emission
 // point (SRD-070 FR-7: the engine announces Recovered on the restored
-// instance's own stream, stamped like every other instance fact).
+// iteration's own stream, stamped like every other iteration fact).
 func (inst *Instance) Report(ev observability.Fact) {
 	inst.report(ev)
 }

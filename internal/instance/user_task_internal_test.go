@@ -48,7 +48,7 @@ func (c *failDist) taskID() string {
 	return c.id
 }
 
-// userTaskInst builds a running instance of start → UserTask(candidateUsers=alice,
+// userTaskInst builds a running iteration of start → UserTask(candidateUsers=alice,
 // required output "result") → end, with a capturing (error-returning) distributor.
 func userTaskInst(t *testing.T) (*Instance, *failDist, context.CancelFunc) {
 	t.Helper()
@@ -99,8 +99,8 @@ func userTaskInst(t *testing.T) (*Instance, *failDist, context.CancelFunc) {
 }
 
 // TestInstanceTakeCompleteBranches drives Take/Complete directly against a running
-// instance to exercise the argument guards, unknown-task routing, authorization,
-// output validation, a valid completion, and the stopped-instance refusal.
+// iteration to exercise the argument guards, unknown-task routing, authorization,
+// output validation, a valid completion, and the stopped-iteration refusal.
 func TestInstanceTakeCompleteBranches(t *testing.T) {
 	inst, dist, cancel := userTaskInst(t)
 	defer cancel()
@@ -151,7 +151,7 @@ func TestInstanceTakeCompleteBranches(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestInstanceCancelWhileParked covers task withdrawal on instance teardown
+// TestInstanceCancelWhileParked covers task withdrawal on iteration teardown
 // (stopAll → withdrawAllTasks) while a UserTask is parked.
 func TestInstanceCancelWhileParked(t *testing.T) {
 	inst, dist, cancel := userTaskInst(t)
@@ -167,7 +167,7 @@ func TestInstanceCancelWhileParked(t *testing.T) {
 
 // TestInstanceTakeCanceledContext covers the request-send guard: a canceled
 // context is honored before the (un-drained) loop accepts the request. The
-// instance is built but NOT run, so nothing drains taskReq and the canceled
+// iteration is built but NOT run, so nothing drains taskReq and the canceled
 // context wins the send select deterministically.
 func TestInstanceTakeCanceledContext(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())

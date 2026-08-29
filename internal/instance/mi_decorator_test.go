@@ -14,7 +14,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
-// getAtErrColl is a broken collection whose per-instance read fails — a real array
+// getAtErrColl is a broken collection whose per-iteration read fails — a real array
 // for Count()/type, with GetAt overridden to error. It exercises the decorator's
 // input-split fail-fast guard (a Collection whose Count lies / GetAt errors).
 type getAtErrColl struct {
@@ -25,7 +25,7 @@ func (getAtErrColl) GetAt(context.Context, any) (any, error) {
 	return nil, errors.New("getat boom")
 }
 
-// miSeqFixture builds a sequential-MI composite instance (cardinality 3) and
+// miSeqFixture builds a sequential-MI composite iteration (cardinality 3) and
 // returns the host track positioned on the MI node — the white-box pieces the
 // runMISequential error-path tests drive directly (the loop is NOT running).
 func miSeqFixture(t *testing.T) (*Instance, flow.Node, *track) {
@@ -44,9 +44,9 @@ func miSeqFixture(t *testing.T) (*Instance, flow.Node, *track) {
 	return inst, node, host
 }
 
-// TestRunMISequentialRequestError: a scope-open request on a stopped instance
+// TestRunMISequentialRequestError: a scope-open request on a stopped iteration
 // faults out of the decorator (the roundtrip's loopDone path) — after the count is
-// resolved and instance 0's data is split, the open request fails.
+// resolved and iteration 0's data is split, the open request fails.
 func TestRunMISequentialRequestError(t *testing.T) {
 	inst, node, host := miSeqFixture(t)
 	close(inst.loopDone) // scopeRoundtrip returns the not-running error
@@ -56,7 +56,7 @@ func TestRunMISequentialRequestError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestRunMISequentialBindError: the per-instance input split fails when the input
+// TestRunMISequentialBindError: the per-iteration input split fails when the input
 // collection is broken (its GetAt errors) — the decorator's fail-fast guard fires
 // before any scope opens. The broken collection is injected straight into the
 // running scope (bypassing the snapshot's property clone).
@@ -81,12 +81,12 @@ func TestRunMISequentialBindError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestRunMISequentialDrainError: a stand-in loop opens instance 0's scope and
+// TestRunMISequentialDrainError: a stand-in loop opens iteration 0's scope and
 // then stops (a mid-instance shutdown) — the instance's drain wait unblocks
 // with an error rather than hanging on a scope that will never close.
 //
 // The stop is signaled by closing loopDone rather than the host's evtCh: an
-// instance now waits on its OWN drain channel (SRD-090.A M3b), so the host's
+// iteration now waits on its OWN drain channel (SRD-090.A M3b), so the host's
 // park is no longer what a shutdown has to interrupt.
 func TestRunMISequentialDrainError(t *testing.T) {
 	inst, node, host := miSeqFixture(t)
@@ -102,7 +102,7 @@ func TestRunMISequentialDrainError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// miParFixture builds a parallel-MI composite instance (cardinality 3) and
+// miParFixture builds a parallel-MI composite iteration (cardinality 3) and
 // returns the host track positioned on the MI node — the white-box pieces a
 // fan-out test drives directly (the loop is NOT running).
 func miParFixture(t *testing.T) (*Instance, flow.Node, *track) {

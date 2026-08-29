@@ -12,7 +12,7 @@ import (
 // (ADR-025 §2.9.2). They name what the standard has no word for, so they
 // follow the engine's runtime-name convention rather than BPMN's spelling.
 //
-// All three are values of the EXECUTION: they differ per instance of one
+// All three are values of the EXECUTION: they differ per iteration of one
 // activity, and N instances can read them at the same moment. That is why
 // they are published where the asking execution is identified — frame-local
 // where the path binds frame-local, at the activity's own scope where it
@@ -24,11 +24,11 @@ import (
 // strings, so the set that is PUBLISHED here and the set that is REFUSED
 // there cannot drift apart.
 const (
-	// IterationNumber is the executing instance's 0-based ordinal — the same
+	// IterationNumber is the executing iteration's 0-based ordinal — the same
 	// value as `loopCounter`, under the engine's own name.
 	IterationNumber = data.IterationNumberName
 
-	// IterationID is the executing instance's derived identity (ADR-025
+	// IterationID is the executing iteration's derived identity (ADR-025
 	// §2.9.3): the enclosing scope path, the activity id and the ordinal.
 	IterationID = data.IterationIDName
 
@@ -52,7 +52,7 @@ func iterationIDOf(scopePath string, node flow.Node, ord int) string {
 	return scopePath + "/" + id + "#" + strconv.Itoa(ord)
 }
 
-// iterationVars builds the three engine-named iteration values for instance
+// iterationVars builds the three engine-named iteration values for iteration
 // ord. One builder for every publication path — the parallel leaf's
 // frame-local bind, the sequential Multi-Instance's and the Standard Loop's
 // host-scope binds — so the three cannot drift apart in what they publish.

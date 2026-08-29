@@ -22,7 +22,7 @@ flowchart LR
     notify --> nEnd((notify-end))
 ```
 
-`board` is a parallel Multi-Instance Sub-Process — one instance per reviewer. It
+`board` is a parallel Multi-Instance Sub-Process — one iteration per reviewer. It
 carries a **Complex** behavior: on each completion, the condition
 `numberOfCompletedInstances ≥ 2` is evaluated, and when it holds a **quorum-reached**
 Signal is thrown. A **non-interrupting** boundary on `board` catches that Signal and

@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestStateString verifies every instance lifecycle state renders its own name
+// TestStateString verifies every iteration lifecycle state renders its own name
 // (guards the reconciled vocabulary and the former "FInished" typo).
 func TestStateString(t *testing.T) {
 	cases := map[State]string{
@@ -69,7 +69,7 @@ func TestTerminatedOnPreCanceledContext(t *testing.T) {
 // and the ready events arm is exercised many times over.
 //
 // Read what this test does and does not prove (FIX-033 §4.1.2). It pins the
-// post-fix guarantee exactly — a canceled instance settles Terminated, whatever
+// post-fix guarantee exactly — a canceled iteration settles Terminated, whatever
 // the select chooses — and it is deterministic in that direction, because the
 // loop's poll records the cancellation before any event can be applied. It is
 // NOT a reliable detector of the defect returning: with the poll removed, 2000

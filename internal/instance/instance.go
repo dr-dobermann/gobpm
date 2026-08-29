@@ -89,7 +89,7 @@ type Instance struct {
 	loopDone      chan struct{}
 	// settled is closed when the instance reaches a TERMINAL state — and only
 	// then. loopDone closes on EVERY loop exit, dehydration included, so it
-	// cannot answer "has this instance finished?" any more (SRD-071): a
+	// cannot answer "has this iteration finished?" any more (SRD-071): a
 	// released instance has no loop but is very much still in flight. The
 	// engine owns this channel per instance ID and hands the SAME one to each
 	// rebuild, so a caller waiting on it waits across dehydration cycles.
@@ -121,7 +121,7 @@ type Instance struct {
 	// ordinals its LEAF instances were still running (SRD-090.A FR-7).
 	// Those instances were recorded as tracks, which is where the ordinals
 	// come from; the group's Open list names scopes, which a leaf has none
-	// of. nil for a fresh instance and for a Schema-6+ document.
+	// of. nil for a fresh iteration and for a Schema-6+ document.
 	restoredLeafOrdinals map[string][]int
 	// restoredScopes are the checkpoint-recorded open scopes, carrying
 	// the track that opened each and the ordinal it stands for (Schema
@@ -150,7 +150,7 @@ type Instance struct {
 	// boundaryPlans are the armed-boundary firing plans read back from the
 	// checkpoint (SRD-071 FR-9a), consumed as the loop re-arms each boundary.
 	// Written once by restoreTracks before the loop starts and read only on
-	// the loop goroutine, so it needs no lock. Empty for a fresh instance and
+	// the loop goroutine, so it needs no lock. Empty for a fresh iteration and
 	// for one restored from a Schema-1 document.
 	boundaryPlans map[boundaryKey]checkpoint.TimerDescriptor
 	foundation.BaseElement
@@ -177,7 +177,7 @@ type Instance struct {
 }
 
 // validatedTemplate checks New's required collaborators and returns the
-// instance's PRIVATE clone of the node graph: concurrent instances of one
+// iteration's PRIVATE clone of the node graph: concurrent instances of one
 // process never share a node (ADR-009), the passed snapshot staying the shared
 // immutable template.
 func validatedTemplate(
@@ -284,7 +284,7 @@ func (inst *Instance) pinnedResident() bool {
 }
 
 // WithPendingIncidentOp hands a rebuild the operator's incident operation that
-// caused it (SRD-079 §3.6): a parked instance has no loop to deliver to, so
+// caused it (SRD-079 §3.6): a parked iteration has no loop to deliver to, so
 // the op rides the rebuild — the PendingTrigger shape — and the fresh loop
 // applies it BEFORE deciding whether to park again. The verdict lands on resp.
 func WithPendingIncidentOp(
@@ -298,9 +298,9 @@ func WithPendingIncidentOp(
 }
 
 // WithPendingCancel hands a rebuild an operator's CANCEL (FIX-038 §1.10), the
-// same shape WithPendingIncidentOp uses: a parked instance has no loop to
+// same shape WithPendingIncidentOp uses: a parked iteration has no loop to
 // cancel, so the request rides the rebuild and the fresh loop tears the
-// instance down BEFORE deciding whether to park again. Without it, canceling a
+// iteration down BEFORE deciding whether to park again. Without it, canceling a
 // dehydrated instance canceled a context whose loop had already exited — the
 // request was lost and the next wake resumed the instance as if nothing had
 // happened.
@@ -363,7 +363,7 @@ func (inst *Instance) wireWaitHeld() {
 }
 
 // newInstanceIdentity mints the instance's BaseElement — a restored
-// instance keeps its recorded identity (SRD-070 FR-6).
+// iteration keeps its recorded identity (SRD-070 FR-6).
 func newInstanceIdentity(restoredID string) (*foundation.BaseElement, error) {
 	if restoredID == "" {
 		return foundation.NewBaseElement()
@@ -373,8 +373,8 @@ func newInstanceIdentity(restoredID string) (*foundation.BaseElement, error) {
 }
 
 // newConfig holds the optional parameters of New. Its zero value builds a
-// normal instance (entry-node seeding); withBornEvent switches it to a
-// born-from-event instance (SRD-015).
+// normal iteration (entry-node seeding); withBornEvent switches it to a
+// born-from-event iteration (SRD-015).
 type newConfig struct {
 	bornEvent    flow.EventDefinition
 	bornStartID  string
@@ -387,7 +387,7 @@ type newConfig struct {
 	// cpOwner arms consistent-cut checkpointing (SRD-070 FR-4): the
 	// lease owner (engine id); cpGroup the engine's group stamped on
 	// every record (SRD-078 FR-2). Empty owner = volatile instance
-	// (today's default); restoredID keeps a restored instance's identity
+	// (today's default); restoredID keeps a restored iteration's identity
 	// (SRD-070 FR-6). The int-sized checkpoint cursors sit at the tail.
 	cpOwner    string
 	cpGroup    string
@@ -397,7 +397,7 @@ type newConfig struct {
 	pendingIncidentOp *incidentRequest
 	// pendingCancel is an operator cancel riding a rebuild (FIX-038 §1.10).
 	pendingCancel *cancelRequest
-	// invoker launches child instances for the Call Activities this instance
+	// invoker launches child instances for the Call Activities this iteration
 	// runs (SRD-050 FR-3); nil for a library embedder without a thresher — a
 	// call then fails fast with a classified no-invoker error.
 	invoker exec.ProcessInvoker
@@ -408,7 +408,7 @@ type newConfig struct {
 	// callReattach re-finds a recorded child instance through the engine
 	// at restore (SRD-082 FR-7); nil without an engine seam.
 	callReattach CallReattacher
-	// settled is the engine's per-instance-ID terminal signal (SRD-071).
+	// settled is the engine's per-iteration-ID terminal signal (SRD-071).
 	settled chan struct{}
 	// rootData is committed into the root scope at construction — the Call
 	// Activity's inputs (SRD-050), the same injection point as an event
@@ -434,7 +434,7 @@ type newOption func(*newConfig)
 // public constructors keep a single option shape.
 type Option = newOption
 
-// withBornEvent makes New build a born-from-event instance: the instantiating
+// withBornEvent makes New build a born-from-event iteration: the instantiating
 // start node (startNodeID) is treated as already fired (its payload is bound,
 // its outgoing flows seeded) instead of parked.
 func withBornEvent(startNodeID string, eDef flow.EventDefinition) newOption {
@@ -444,7 +444,7 @@ func withBornEvent(startNodeID string, eDef flow.EventDefinition) newOption {
 	}
 }
 
-// withRootData seeds data into the new instance's root scope at construction —
+// withRootData seeds data into the new iteration's root scope at construction —
 // the Call Activity's inputs (SRD-050 FR-4), committed at the same point as an
 // event payload (bindEventPayload). Exposed publicly via NewChild. An empty
 // slice is a no-op.
@@ -463,7 +463,7 @@ func WithRootData(dd []data.Data) Option {
 }
 
 // withCallLinkage stamps the call linkage (SRD-050 FR-4) onto every fact the
-// instance emits, stitching a child's trace back to its caller. Exposed via
+// iteration emits, stitching a child's trace back to its caller. Exposed via
 // NewChild. Empty ids leave the instance top-level (unstamped).
 func withCallLinkage(parentInstanceID, callNodeID string) newOption {
 	return func(c *newConfig) {
@@ -490,7 +490,7 @@ func WithInvoker(inv exec.ProcessInvoker) Option {
 // outcome and outputs resolved when the child settles.
 type CallReattacher func(childID string) (exec.ChildProcess, error)
 
-// WithCallReattacher wires the engine seam a RESTORED instance re-links
+// WithCallReattacher wires the engine seam a RESTORED iteration re-links
 // its in-flight Call Activities through (SRD-082 FR-7). The engine
 // (thresher) passes its own re-attach; left unset, a restored call is a
 // loud failure — never a silent drop.
@@ -511,8 +511,8 @@ func WithWaitHolders(wh exec.WaitHolders) Option {
 	}
 }
 
-// withConversationKey seeds the new instance's conversation key (SRD-017 §4.5)
-// before createTracks runs, so an in-instance receiver reached directly off the
+// withConversationKey seeds the new iteration's conversation key (SRD-017 §4.5)
+// before createTracks runs, so an in-iteration receiver reached directly off the
 // born start subscribes keyed to it (createTracks parks receivers during
 // construction — the seed must precede it). An empty name/value is ignored.
 func withConversationKey(name, value string) newOption {
@@ -522,7 +522,7 @@ func withConversationKey(name, value string) newOption {
 	}
 }
 
-// New creates a new Instance from the Snapshot s and sets state to Created.
+// New creates a new Iteration from the Snapshot s and sets state to Created.
 // parentRoot is the container-scope path the instance's root scope attaches
 // under (sub-process / call-activity nesting, future); scope.EmptyDataPath
 // roots the instance at the top. Initial tracks are seeded from the process's
@@ -620,12 +620,12 @@ func New(
 	inst.announceCreated()
 
 	// Seed the conversation key BEFORE createTracks (SRD-017 §4.5): createTracks
-	// parks an in-instance receiver reached directly off the born start, and the
+	// parks an in-iteration receiver reached directly off the born start, and the
 	// receiver must subscribe keyed to this conversation, so the key has to be
 	// present first.
 	inst.corr.associate(cfg.convKeyName, cfg.convKeyValue)
 
-	// A restored instance rebuilds its track table from the checkpoint
+	// A restored iteration rebuilds its track table from the checkpoint
 	// (SRD-070 FR-6) — start seeding would double-run the entry nodes.
 	if cfg.restoredID == "" {
 		if err := inst.createTracks(bornStart, cfg.bornEvent); err != nil {
@@ -692,7 +692,7 @@ func (inst *Instance) seedInitialData(cfg *newConfig) (flow.Node, error) {
 	}
 
 	// the launch is accepted: what the born start wrote outside the
-	// instance — the engine-global Data Stores — is written now
+	// iteration — the engine-global Data Stores — is written now
 	if err := flush(); err != nil {
 		return nil, inst.seedErr(bornStart, "couldn't write the Data Stores", err)
 	}
@@ -785,7 +785,7 @@ func NewChild(
 // emit delivers a track event to the loop. It never blocks forever: once the
 // loop has exited (loopDone closed) it drops the event. It must NOT drop on
 // ctx cancellation — the loop keeps draining events until every track has
-// ended, so a canceled instance still accounts each track's terminal event and
+// ended, so a canceled iteration still accounts each track's terminal event and
 // reaches Terminated instead of hanging.
 func (inst *Instance) emit(ev trackEvent) {
 	select {
@@ -850,7 +850,7 @@ func (inst *Instance) createTracks(
 
 	// A Parallel-start Event-Based gateway seeds differently: the arm whose event
 	// instantiated the process runs its continuation while the OTHER arms re-arm as
-	// in-instance waiters keyed to the seeded conversation (SRD-025 §4.3). Completion
+	// in-iteration waiters keyed to the seeded conversation (SRD-025 §4.3). Completion
 	// stays automatic — a waiting arm track keeps the instance active until it fires.
 	if ps, ok := bornStart.(interface{ ParallelStart() bool }); ok &&
 		ps.ParallelStart() {
@@ -874,7 +874,7 @@ func (inst *Instance) createTracks(
 	return nil
 }
 
-// seedParallelStart seeds a Parallel-start Event-Based gateway instance (SRD-025 §4.3):
+// seedParallelStart seeds a Parallel-start Event-Based gateway iteration (SRD-025 §4.3):
 // the arm whose event instantiated the process (resolved via the gate's ArmFor over the
 // born event) is pre-fired — tracks on its outgoing target(s), its payload already bound
 // at root — while every OTHER arm is seeded as a track AT the arm node, which
@@ -931,7 +931,7 @@ func (inst *Instance) seedParallelStart(
 	return nil
 }
 
-// ParentID returns the caller instance's id for a Call Activity child,
+// ParentID returns the caller iteration's id for a Call Activity child,
 // "" for a root instance (SRD-082 FR-7 — the discovery separation).
 func (inst *Instance) ParentID() string { return inst.parentInstanceID }
 
@@ -939,9 +939,9 @@ func (inst *Instance) ParentID() string { return inst.parentInstanceID }
 // "" for a root instance.
 func (inst *Instance) CallNodeID() string { return inst.callNodeID }
 
-// ProcessID returns the key of the process this instance runs
+// ProcessID returns the key of the process this iteration runs
 // (SRD-084 FR-3 — the discovery process axis).
 func (inst *Instance) ProcessID() string { return inst.s.ProcessID }
 
-// Version returns the pinned process version this instance runs.
+// Version returns the pinned process version this iteration runs.
 func (inst *Instance) Version() int { return inst.s.Version }

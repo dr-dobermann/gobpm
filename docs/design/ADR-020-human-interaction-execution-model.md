@@ -506,8 +506,8 @@ the `RUNTIME` source is the equivalent surface here.
 Keyed by **node name**, because that is the handle a modeller writing an expression
 has; an unnamed node falls back to its id. A looped or multi-instance UserTask
 completes more than once and each pass overwrites its entry, so the record names
-the **last** completer, which for N instances is arbitrary. It stays that way for
-compatibility with every non-iterated model; the honest per-instance source is
+the **last** completer, which for N iterations is arbitrary. It stays that way for
+compatibility with every non-iterated model; the honest per-iteration source is
 `ITERATION_OWNERS` (§2.12,
 [ADR-025 v.5.1](ADR-025-activity-iteration-loop-and-multi-instance.md) §2.9.2),
 one entry per ordinal.
@@ -600,7 +600,7 @@ It is **runtime state, not configuration.** The eligibility declaration (§2.5) 
 immutable process definition, shared by every instance of the process and every task
 derived from it. The actual owner belongs to **one task of one instance** and
 changes during that task's life. Conflating the two — letting a claim write back
-into the triad — would leak one instance's ownership into every other instance of
+into the triad — would leak one iteration's ownership into every other iteration of
 the same process, and would destroy the definition it overwrote: after one claim the
 process would no longer record who was *eligible*, leaving `Unclaim` nothing to
 return the task to and `Reassign` no set to validate against (§4, alternative 9).
@@ -852,7 +852,7 @@ Static and dynamic forms for the same member are **mutually exclusive** (the
 `ResourceRole` "resource XOR assignment-expression" invariant). An
 expression-backed member is resolved against the **instance's data scope** via the
 expression engine — so a candidate set may depend on process data and is **dynamic
-per instance**, which is exactly what `resourceAssignmentExpression` is for.
+per iteration**, which is exactly what `resourceAssignmentExpression` is for.
 Resolution failure of an expression is treated as an empty result set (BPMN: "Failed
 Resource queries are treated like Resource queries that return an empty result set"
 — spec text; see §3's pin note), i.e. it authorizes no one rather than everyone.
@@ -871,7 +871,7 @@ they legitimately hold, or withdraw an invitation a candidate was already told t
 act on. Only the *moment* of resolution is fixed; the declaration model above is
 untouched — still static-or-expression, still mutually exclusive, still resolved
 against the instance's data scope, still empty-set-on-failure. "Dynamic per
-instance" narrows accordingly: a candidate set still varies per instance according
+iteration" narrows accordingly: a candidate set still varies per iteration according
 to that instance's data, but never across a single task's lifetime.
 
 Freezing also makes ownership operations **independent of process data**, which
@@ -1004,12 +1004,12 @@ inbox.
 
 The whole of it follows from one rule:
 
-> **Each instance is an ordinary parked task.** Its own task id, its own resolved
+> **Each iteration is an ordinary parked task.** Its own task id, its own resolved
 > eligibility, its own `actualOwner`, its own `TaskView`, its own completion.
 
 Nothing in §2.1–§2.11 is special-cased for iteration. `Take` authorizes and returns
-one instance's view; `Complete` validates and resumes one instance; `Claim` /
-`Unclaim` / `Reassign` (§2.5.2) act on one instance and answer to the same three
+one iteration's view; `Complete` validates and resumes one iteration; `Claim` /
+`Unclaim` / `Reassign` (§2.5.2) act on one iteration and answer to the same three
 guards. An embedder that already integrates a UserTask integrates an iterated one
 without learning anything new.
 
@@ -1018,7 +1018,7 @@ without learning anything new.
 | | Sequential (`isSequential = true`) | Parallel |
 |---|---|---|
 | Tasks announced at once | one | N, at activation |
-| A pass's id | its own — never reused from the previous pass | one per instance |
+| A pass's id | its own — never reused from the previous pass | one per iteration |
 | Completing one | starts the next pass | leaves the others parked |
 | `completionCondition` fires | no further pass starts | outstanding tasks are **withdrawn** |
 
@@ -1028,18 +1028,18 @@ were sent" ambiguous — the same handle naming two units of work that are separ
 assigned, separately authorized and separately completed. `Withdraw` and `Complete`
 both name an id, so a reused one cannot say which pass it means.
 
-**Eligibility is resolved per instance**, over that instance's own data (ADR-025 v.5.1
-§2.15). This is what makes the construct worth having: a fan-out whose instances all
+**Eligibility is resolved per iteration**, over that iteration's own data (ADR-025 v.5.1
+§2.15). This is what makes the construct worth having: a fan-out whose iterations all
 offer the same candidate list is one task announced N times. The triad, its
 expression forms and §2.7's resolve-once-at-distribution rule are otherwise
-unchanged — "once" now means once **per instance**, at that instance's announcement.
+unchanged — "once" now means once **per iteration**, at that iteration's announcement.
 
 **Withdrawal is a first-class outcome, not a teardown detail.** BPMN §13.3.7 cancels
-the remaining instances when a `completionCondition` becomes true, and for human
+the remaining iterations when a `completionCondition` becomes true, and for human
 work cancelling means the task stops being offered. So:
 
-- the distributor's `Withdraw` is called for each outstanding instance;
-- the instance's `actualOwner`, if any, ceases to exist with the task;
+- the distributor's `Withdraw` is called for each outstanding iteration;
+- the iteration's `actualOwner`, if any, ceases to exist with the task;
 - a later `Complete`, `Take`, `Claim` or `Unclaim` naming a withdrawn id is
   **refused**, and the completion is not counted toward the result.
 
@@ -1047,7 +1047,7 @@ Someone may be holding that work when the quorum closes. Telling them it is gone
 the point; silently accepting their answer and discarding it is the failure this
 rule exists to prevent.
 
-**One actor may hold several instances of one activity.** No guard forbids it, by
+**One actor may hold several iterations of one activity.** No guard forbids it, by
 decision rather than omission (ADR-025 v.5.1 §2.15b): "each participant answers once" is a
 business rule, and a supervisor covering two absences is a legitimate model. Where a
 model does require it, ADR-025 v.5.1 §2.6.1's `map` result keyed by the assignee with
@@ -1058,37 +1058,37 @@ rule belongs.
 completion account keyed by *assignee*, because "2 of 5 approved, waiting on carol
 and dave" is the question a model and an operator both ask. That never becomes the
 addressing: a `Take`, a `Complete` and a `Withdraw` all name an engine-minted
-`TaskID`. An instance may be offered to a **group**, where the completer is unknown
+`TaskID`. An iteration may be offered to a **group**, where the completer is unknown
 until someone acts; a task may be reassigned, so the actor who finishes need not be
 the assignee; and nothing forbids a model naming one person twice. Correctness
 therefore never rests on a modelling choice, while everything a human reads is in
 terms of people.
 
-**The announcement carries the instance's ordinal.** N instances of one activity
+**The announcement carries the iteration's ordinal.** N iterations of one activity
 share a `NodeID` and differ only by an opaque `TaskID`, which is not something a
-person can be shown. The ordinal is the instance's position in the fan-out — the
+person can be shown. The ordinal is the iteration's position in the fan-out — the
 same handle `ITERATION_OWNERS` is keyed by (ADR-025 v.5.1 §2.9.2) — so an inbox can
 label and order the work ("line 3 of 7") before anyone is authorized to see the data
 behind it. It is an ordinal, not task data, so it does not breach §2.2's rule that
 the pre-authorization announcement carries none. A lone task's ordinal is zero.
 
 **An instance nobody may act on stalls the whole activity.** Eligibility fails
-closed (§2.5): an instance whose expression resolves to nobody is parked and
+closed (§2.5): an iteration whose expression resolves to nobody is parked and
 uncompletable, and a parallel fan-out completes only when its own rules are
-satisfied — so one unresolvable instance holds the activity open. This is the
+satisfied — so one unresolvable iteration holds the activity open. This is the
 correct outcome rather than a defect: the alternative is an approval silently
 skipped because nobody could be found to give it. A model that must tolerate it
 declares a `completionCondition`, which closes on the answers it did get and
 withdraws the rest.
 
-**Cancelling the activity withdraws every instance.** An interrupting boundary event
+**Cancelling the activity withdraws every iteration.** An interrupting boundary event
 ([ADR-018 v.1](ADR-018-boundary-events-and-activity-interruption.md)), a terminating
-enclosing scope, or an aborted instance tears down all N parked tasks and
+enclosing scope, or an aborted process instance tears down all N parked tasks and
 `Withdraw`s each, under the same refusal rule as a `completionCondition`. Ownership
 grants no immunity here either (§2.1.1) — it never resists the process.
 
 **A superseded id names nothing.** Because a pass mints its own id, an id from an
-earlier sequential pass — or from a withdrawn instance — is unknown to the engine
+earlier sequential pass — or from a withdrawn iteration — is unknown to the engine
 once its task is retired, and any action naming it is refused as such. A client
 holding a stale reference gets a clear "no such task", never someone else's work.
 
@@ -1096,14 +1096,14 @@ holding a stale reference gets a clear "no such task", never someone else's work
 same `NodeID`, distinct `TaskID`s and distinct ordinals. Group an inbox by
 `(InstanceID, NodeID)` to show "3 of 5 approvals outstanding"; act on the individual
 `TaskID`. No new API, no iteration-aware call — which is the point of deciding that
-an instance is an ordinary task.
+an iteration is an ordinary task.
 
-**Reading the outcome.** Per-instance outputs assemble by the model's chosen
+**Reading the outcome.** Per-iteration outputs assemble by the model's chosen
 strategy (ADR-025 v.5.1 §2.6.1) — positionally by ordinal, or keyed by assignee,
 which is the shape a review board wants. WHO acted is `RUNTIME/ITERATION_OWNERS`
 (activity id → ordinal → actual owner), readable during the activity and after it
 completes. The performer register of §2.4.2 keeps only the last completer, which for
-N instances is arbitrary; it stays for compatibility, and `ITERATION_OWNERS` is the
+N iterations is arbitrary; it stays for compatibility, and `ITERATION_OWNERS` is the
 honest source.
 
 ## 3. Standard grounding
@@ -1165,7 +1165,7 @@ decision, not attributed to the spec:**
   mode at registration** rather than ignoring it (§2.5.4); and treating
   `taskPriority` as a **reported value with no engine meaning**, with its setter an
   extension (§2.11);
-- **per-instance task identity, eligibility and ownership** for an iterated
+- **per-iteration task identity, eligibility and ownership** for an iterated
   UserTask, and **withdrawal as a refusable outcome** (§2.12) — the standard
   supplies the cancellation semantics (§13.3.7) and says nothing about how human
   work is addressed.
@@ -1453,7 +1453,7 @@ pool — the §2.5.2 asymmetry — and materializes identity links at task creat
   already makes works unchanged on one instance. What it does add is an inbox
   obligation: work must be grouped and counted, because "3 of 5 outstanding" is
   now a state a person can be in.
-- **A fan-out is only as completable as its least-resolvable instance** (§2.12).
+- **A fan-out is only as completable as its least-resolvable iteration** (§2.12).
   An instance whose eligibility resolves to nobody holds the activity open until a
   `completionCondition` closes it. That is the fail-closed stance of §2.5 reaching
   its logical end, and the alternative — skipping an approval nobody could be found
@@ -1472,7 +1472,7 @@ pool — the §2.5.2 asymmetry — and materializes identity links at task creat
   ([ADR-013 v.3](ADR-013-instance-observability.md)). Rejected completions are
   security-relevant and should be observable without logging task payloads.
   Ownership transitions are the audit trail of human work and the input to "who sat
-  on this task for three days". For an iterated activity, emit them per instance —
+  on this task for three days". For an iterated activity, emit them per iteration —
   the ordinal on every fact — so the stream and `ITERATION_OWNERS` (§2.12) tell the
   same story.
 - **Audit the authorization decision, not the data.** Log *who* was

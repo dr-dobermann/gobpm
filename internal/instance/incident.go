@@ -544,7 +544,7 @@ func (ls *loopState) resolveIncident(
 		nt, err := newTrack(s.node, ls.inst, nil)
 		if err != nil {
 			// mirror spawnForks: a continuation that can't be built is a
-			// genuine instance fault.
+			// genuine iteration fault.
 			ls.inst.fail(err)
 			ls.stopAll()
 
@@ -632,7 +632,7 @@ func (ls *loopState) closeIncident(
 }
 
 // deadLetters counts the dead-lettered incidents — the reason a settled
-// instance parks instead of completing (dropIncident). Loop goroutine only.
+// iteration parks instead of completing (dropIncident). Loop goroutine only.
 func (inst *Instance) deadLetters() int {
 	n := 0
 
@@ -882,7 +882,7 @@ func (ls *loopState) retryIncident(ctx context.Context, inc *incident) {
 
 	// the retry attempt takes over the incident's single scope pin: released
 	// only AFTER the spawn counted the new track in, so the scope never
-	// drains — and completes — in between (the MI per-instance scope would
+	// drains — and completes — in between (the MI per-iteration scope would
 	// otherwise close under the retry).
 	ls.decScopePinned(ctx, inc.scopePath)
 }

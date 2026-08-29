@@ -12,7 +12,7 @@ import (
 
 // SRD-029 M2 — per-track cancellable context (FR-4). The loop derives a child
 // context per track so it can interrupt one guarded track without touching its
-// siblings, while instance terminate (the parent cancel) still cascades to all.
+// siblings, while iteration terminate (the parent cancel) still cascades to all.
 
 // twoParkedTracks builds one instance holding two independent signal-catch tracks,
 // both parked in TrackWaitForEvent and neither spawned (the test drives run()).
@@ -83,7 +83,7 @@ func TestPerTrackCancelIsolation(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	// instance terminate cancels the parent, cascading to the sibling (NFR-4).
+	// iteration terminate cancels the parent, cascading to the sibling (NFR-4).
 	parentCancel()
 
 	select {

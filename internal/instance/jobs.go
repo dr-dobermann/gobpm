@@ -102,7 +102,7 @@ func (ls *loopState) onJobWaiting(ctx context.Context, ev trackEvent) {
 
 	if err := ls.inst.enqueueJob(ctx, ev, ew, jobID); err != nil {
 		// binding or enqueue failed — resume the parked track with a fault so the
-		// instance surfaces it instead of parking forever with no job. The track was
+		// iteration surfaces it instead of parking forever with no job. The track was
 		// never registered (below), so deliver straight to its buffered evtCh where
 		// the loop is the sole sender; the track wakes and Exec faults. SRD-036 §4.3.
 		ev.track.evtCh <- tasks.NewWorkerFault(jobID, tasks.Fault{Cause: err})
@@ -192,7 +192,7 @@ func (inst *Instance) resolveWorkerPolicy(ew tasks.ExternalWorker) *tasks.Policy
 }
 
 // cleanupJob drops any job owned by a track that ended without completing it
-// (canceled by an interrupting boundary or instance terminate). The enqueued job
+// (canceled by an interrupting boundary or iteration terminate). The enqueued job
 // is left for the dispatcher to expire — the engine has no withdraw yet — so a
 // late worker report finds no track and is dropped (SRD-036).
 func (ls *loopState) cleanupJob(tr *track) {

@@ -36,7 +36,7 @@ func (t *track) reportDataChanges(node flow.Node, changes []data.Change) {
 }
 
 // dataMovementKind selects the fact kind by the movement's target: a
-// per-instance Data Object (SRD-063) or the engine-global Data Store (SRD-068).
+// per-iteration Data Object (SRD-063) or the engine-global Data Store (SRD-068).
 var dataMovementKind = map[bool]observability.Kind{
 	false: observability.KindDataObject,
 	true:  observability.KindDataStore,

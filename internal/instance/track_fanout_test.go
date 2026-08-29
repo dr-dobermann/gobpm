@@ -49,13 +49,13 @@ func TestParkingAHumanTaskMarksTHATExecutionAsWaiting(t *testing.T) {
 // TestTheIdentityRegisterIsLiveNotASnapshot (ADR-020 §2.12): the capture
 // cannot read the identities off the executor, because a release clears it
 // before the cut that records the wait — so the TRACK keeps them, recorded as
-// each instance mints one.
+// each iteration mints one.
 //
 // Recorded as minted rather than snapshotted at the release, because a release
 // can land part-way through parking N instances. Such a snapshot holds only
 // the identities minted so far, and every later capture preferred that stale
 // set to the live one — so a restored fan-out minted a fresh id for the
-// instance the snapshot had missed, and the handle its holder was carrying
+// iteration the snapshot had missed, and the handle its holder was carrying
 // named nothing.
 func TestTheIdentityRegisterIsLiveNotASnapshot(t *testing.T) {
 	_, tr, _ := fanOutTrack(t)
@@ -93,25 +93,25 @@ func TestTheIdentityRegisterIsLiveNotASnapshot(t *testing.T) {
 func TestAFanOutReadsBusyWhileItHasWorkToApply(t *testing.T) {
 	_, tr, d := fanOutTrack(t)
 
-	require.False(t, tr.instancesBusy(), "everyone parked, nothing to apply")
+	require.False(t, tr.iterationsBusy(), "everyone parked, nothing to apply")
 
 	d.parking(0)
 	d.deliver(0, sigDefN(t, "done"))
-	require.True(t, tr.instancesBusy(),
+	require.True(t, tr.iterationsBusy(),
 		"a queued completion is work outstanding, and releasing here would "+
 			"take the track away before it was applied")
 
 	d.takeDeliveries()
 	d.delivering()
-	require.True(t, tr.instancesBusy(), "and now it is being applied")
+	require.True(t, tr.iterationsBusy(), "and now it is being applied")
 
 	d.delivered()
-	require.False(t, tr.instancesBusy(),
+	require.False(t, tr.iterationsBusy(),
 		"applied and accounted for — the loop is free to release")
 }
 
 // TestARestoredFanOutOffersOnlyTheWorkStillOutstanding (ADR-020 §2.12): the
-// identities come back per ordinal, and a COMPLETED instance is skipped — its
+// identities come back per ordinal, and a COMPLETED iteration is skipped — its
 // task was withdrawn when it was done, and re-registering it would offer work
 // nobody can do.
 func TestARestoredFanOutOffersOnlyTheWorkStillOutstanding(t *testing.T) {
@@ -121,10 +121,10 @@ func TestARestoredFanOutOffersOnlyTheWorkStillOutstanding(t *testing.T) {
 
 	tr.iterSeed = &checkpoint.IterationRecord{
 		N: 3,
-		Instances: []checkpoint.IterationInstance{
-			{Ordinal: 0, State: instanceCompleted, TaskID: "done-0"},
-			{Ordinal: 1, State: instanceRunning, TaskID: "live-1"},
-			{Ordinal: 2, State: instanceRunning},
+		Instances: []checkpoint.IterationEntry{
+			{Ordinal: 0, State: iterationCompleted, TaskID: "done-0"},
+			{Ordinal: 1, State: iterationRunning, TaskID: "live-1"},
+			{Ordinal: 2, State: iterationRunning},
 		},
 	}
 
@@ -133,10 +133,10 @@ func TestARestoredFanOutOffersOnlyTheWorkStillOutstanding(t *testing.T) {
 			"identity has none to give back")
 }
 
-// TestNothingIsRecordedForAnInstanceWithoutAnIdentity: only a HUMAN task has a
+// TestNothingIsRecordedForAnIterationWithoutAnIdentity: only a HUMAN task has a
 // parked-work identity, so an iterated activity over anything else records
 // none — and an empty id must not become a register entry naming nothing.
-func TestNothingIsRecordedForAnInstanceWithoutAnIdentity(t *testing.T) {
+func TestNothingIsRecordedForAnIterationWithoutAnIdentity(t *testing.T) {
 	_, tr, _ := fanOutTrack(t)
 
 	tr.rememberTaskID(0, "")

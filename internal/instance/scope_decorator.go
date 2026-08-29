@@ -12,10 +12,10 @@ import (
 
 // scopeOp is the operation a scopeRequest asks the single-writer loop to
 // perform for an off-loop iteration decorator (ADR-025 §2.13). scopeOpen
-// serves EVERY instance that is a child scope — a serial pass and one of N
+// serves EVERY iteration that is a child scope — a serial pass and one of N
 // fanned out alike, which is what let the group barrier's four ops (fan out,
 // re-arm, complete, re-attach) retire: a decorator that holds its instances
-// as executors counts its own completions, and each instance waits on its own
+// as executors counts its own completions, and each iteration waits on its own
 // drain instead of queueing onto the host's single park (SRD-090.A M3b).
 type scopeOp int
 
@@ -41,7 +41,7 @@ const (
 	// finished activity, and it is exactly where a restore would lose
 	// the set. One authority for both is the simpler contract.
 	scopeIterPost
-	// scopeCancelInstances tears down the still-open instance scopes of one
+	// scopeCancelInstances tears down the still-open iteration scopes of one
 	// host and reports how many (SRD-090.A M3b). It replaces the group-wide
 	// teardown for executor-driven instances, and it is asked by whoever
 	// CANCELED rather than by the instances themselves: an instance wakes
@@ -67,12 +67,12 @@ type scopeRequest struct {
 	// completion (SRD-090.A M3b). Recorded on the entry, closed when the
 	// scope drains.
 	drain chan struct{}
-	// capture is the cell this instance's output is read into, before its
+	// capture is the cell this iteration's output is read into, before its
 	// scope closes. nil when the activity assembles no output.
 	capture *instanceCapture
 	// segment overrides the child scope's path segment. Empty means the
 	// node's own `sp-<id>`, which is what a sequential pass and a plain
-	// composite use; a FANNED-OUT instance passes `sp-<id>-<ordinal>` so
+	// composite use; a FANNED-OUT iteration passes `sp-<id>-<ordinal>` so
 	// its N siblings get distinct scopes (SRD-090.A M3b). The executor
 	// decides, because deriving it here would move the sequential path's
 	// data paths and observability facts.
@@ -86,24 +86,24 @@ type scopeRequest struct {
 	// insts carries the decorator's executor set to the loop's iteration
 	// mirror on a scopeIterPost (SRD-090.A FR-6) — the per-ordinal states
 	// the record persists, from the one component that knows them all.
-	insts []checkpoint.IterationInstance
-	// binds are the per-instance data items published at the CHILD scope
+	insts []checkpoint.IterationEntry
+	// binds are the per-iteration data items published at the CHILD scope
 	// before its body is seeded — the 0-based loopCounter, and the split
 	// input item when the iteration is collection-driven. Concurrency-safe
 	// where the sequential slice's host-scope bind is not, because each
-	// instance writes only its own scope.
+	// iteration writes only its own scope.
 	binds []miBinding
 	op    scopeOp
-	// completed is the completed-instance count a scopeIterPost carries.
+	// completed is the completed-iteration count a scopeIterPost carries.
 	completed int
 	// factOrdinal is the ordinal this scope's lifecycle facts carry, or -1
-	// to omit the attribute. A fanned-out instance reports its own; a
+	// to omit the attribute. A fanned-out iteration reports its own; a
 	// serial pass reports the host's pass counter; a plain composite has
 	// none. Supplied rather than derived, for the same reason as iterating.
 	factOrdinal int
 	// ordinal is the instance's own 0-based index, reported as its Opened
 	// fact (FR-14) rather than the host's shared loopCounter. Read only
-	// when segment is set, since that is what marks a per-instance open.
+	// when segment is set, since that is what marks a per-iteration open.
 	ordinal int
 	// iterating says this open belongs to an activity that runs its node
 	// more than once, so the loop keeps a position mirror for the capture
@@ -133,7 +133,7 @@ type scopeRequest struct {
 	persist bool
 }
 
-// instanceCapture is one fanned-out composite instance's output slot.
+// instanceCapture is one fanned-out composite iteration's output slot.
 //
 // A composite's output lives in a child scope that is about to close, so
 // unlike a leaf's frame capture it cannot be read off the loop. It does not
@@ -159,7 +159,7 @@ type scopeReply struct {
 }
 
 // scopeRoundtrip hands req to the loop and blocks for the reply, honoring ctx and
-// instance shutdown — the runner-goroutine side of the scope protocol, cloned from
+// iteration shutdown — the runner-goroutine side of the scope protocol, cloned from
 // taskRoundtrip. The decorator never touches loop-owned state directly; it waits
 // only on channels the loop writes (scopeReq accept, then reply), so the wait graph
 // is a DAG (decorator → loop), never a cycle (SRD-054 NFR-3/NFR-4).
@@ -232,7 +232,7 @@ func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
 		// position, whether or not any of them has finished.
 		ls.checkpointNow(ctx)
 	case scopeCancelInstances:
-		ls.handleCancelInstances(req)
+		ls.handleCancelIterations(req)
 	default:
 		ls.handleScopeOpen(ctx, req)
 	}
@@ -277,12 +277,12 @@ func (ls *loopState) reattachScope(
 
 	entry.awaitAttach = false
 
-	// the re-attaching instance is a NEW executor over an old scope, so the
+	// the re-attaching iteration is a NEW executor over an old scope, so the
 	// entry adopts its channel AND its output cell: the restored scope was
 	// rebuilt by the loop and has neither of its own (SRD-090.A M3b).
-	// Without the cell a resumed instance's output would be read from
+	// Without the cell a resumed iteration's output would be read from
 	// nowhere and its slot would stay nil, which reads downstream as an
-	// instance that produced nothing.
+	// iteration that produced nothing.
 	entry.drain = req.drain
 	entry.capture = req.capture
 
@@ -308,7 +308,7 @@ func (ls *loopState) reattachScope(
 //     (an ADR-026 §2.5 engine note). It rides the HOST, which is why the
 //     executor-driven open reaches it without the request naming it.
 //   - the composite's SubProcess-level Data Objects (SRD-063 FR-4).
-//   - this instance's per-pass data, published at its OWN scope so a
+//   - this iteration's per-pass data, published at its OWN scope so a
 //     fanned-out sibling cannot overwrite it.
 func (ls *loopState) seedOpenedScope(
 	req scopeRequest, child scope.DataPath,
@@ -338,7 +338,7 @@ func (ls *loopState) seedOpenedScope(
 }
 
 func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
-	// a terminating instance opens nothing (the loop-driven path returned
+	// a terminating iteration opens nothing (the loop-driven path returned
 	// early here too). The requester is REFUSED rather than dropped: it is
 	// parked in its roundtrip, and while loopDone would eventually free it,
 	// an answer names the reason instead of leaving it to a race between
@@ -418,7 +418,7 @@ func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 	// the host is recorded parked-and-undelivered — a scope this host
 	// opened is outstanding, which is what
 	// keeps the loop from treating it as idle. The DRAIN itself goes to the
-	// instance that opened the scope, over the channel on the entry.
+	// iteration that opened the scope, over the channel on the entry.
 	ls.waiting[req.host.ID()] = struct{}{}
 	ls.scopes[child] = &scopeEntry{
 		host:      req.host,

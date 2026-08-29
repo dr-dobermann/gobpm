@@ -25,7 +25,7 @@ import (
 // loopState is the single-writer loop's registry state (ADR-001, ADR-017,
 // SRD-040). It is created by loop() and lives only on the loop goroutine: no
 // locks — goroutine confinement is the synchronization. It must never be
-// stored on Instance or escape the loop; every method below runs on the loop
+// stored on Iteration or escape the loop; every method below runs on the loop
 // goroutine only.
 type loopState struct {
 	inst *Instance
@@ -95,7 +95,7 @@ type loopState struct {
 	scopeInterrupted map[scope.DataPath]bool
 	// scopes is the loop-owned nested-scope registry (SRD-049 FR-9): open
 	// child path → its entry (parked host, composite node, drain counter,
-	// re-entry queue). Opened by an activity instance's executor,
+	// re-entry queue). Opened by an activity iteration's executor,
 	// drained by the terminal-event accounting, closed + host-resumed at
 	// zero.
 	scopes map[scope.DataPath]*scopeEntry
@@ -189,7 +189,7 @@ func (inst *Instance) adoptRestored(
 
 	if err != nil {
 		// fail() is phase-only; the loop is exiting without running, so
-		// the lifecycle must land terminal too — a stuck Active instance
+		// the lifecycle must land terminal too — a stuck Active iteration
 		// would look healthy forever (SRD-082 NFR-2).
 		inst.fail(err)
 		inst.setState(Terminated)
@@ -235,7 +235,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 	ls := newLoopState(inst)
 
-	// A restored instance adopts its checkpoint-rebuilt state; a fresh
+	// A restored iteration adopts its checkpoint-rebuilt state; a fresh
 	// one adopts nothing and proceeds.
 	if !inst.adoptRestored(ctx, ls, initial) {
 		return
@@ -333,7 +333,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 // exitLoop settles the loop's end: a dehydration or an incident park returns
 // without settling — the instance is not finishing, it is waiting — and only
-// a genuinely finished instance tears down, settles its final state and
+// a genuinely finished iteration tears down, settles its final state and
 // writes the terminal checkpoint.
 func (ls *loopState) exitLoop(ctx context.Context) {
 	inst := ls.inst
@@ -415,7 +415,7 @@ func (ls *loopState) spawn(ctx context.Context, t *track) {
 	// Per-track cancellable context, derived here on the loop goroutine so
 	// t.cancel is loop-owned — the loop is the sole caller that interrupts a
 	// single track for an interrupting boundary (SRD-029 FR-4). inst.ctx stays
-	// the parent, so instance terminate (inst.cancel) still cascades to every
+	// the parent, so iteration terminate (inst.cancel) still cascades to every
 	// track (NFR-4). Set BEFORE armBoundaries: an arm-time-true interrupting
 	// Conditional boundary fires during arming and cancels the host at once
 	// (SRD-048 FR-9/FR-15).
@@ -443,7 +443,7 @@ func (ls *loopState) spawn(ctx context.Context, t *track) {
 
 // applyPendingOps runs the operator requests that rode a rebuild, BEFORE the
 // park decision — so neither is lost to an immediate re-park (SRD-079 §3.6,
-// FIX-038 §1.10). A parked instance has no loop to receive them, which is why
+// FIX-038 §1.10). A parked iteration has no loop to receive them, which is why
 // they travel with the rebuild instead of being delivered to one.
 func (ls *loopState) applyPendingOps(ctx context.Context) {
 	inst := ls.inst
@@ -507,7 +507,7 @@ func (ls *loopState) stopAll() {
 // not an evDeliver), so waiting/msgIdx are dropped to prevent a send on a closed
 // channel (SRD-027 FR-7); the position/join view is no longer consulted (SRD-028
 // FR-1/FR-3); parked UserTasks are withdrawn (SRD-034); and the worker-job registry
-// is dropped — a terminating instance's jobs are no longer resumable, the enqueued
+// is dropped — a terminating iteration's jobs are no longer resumable, the enqueued
 // jobs left for the dispatcher to expire (SRD-036).
 func (ls *loopState) drop() {
 	clear(ls.waiting)
@@ -528,7 +528,7 @@ func (ls *loopState) drop() {
 	}
 	clear(ls.calls)
 	// unregister every armed Event Sub-Process handler's hub waiter — the
-	// instance is terminating (SRD-052 FR-5).
+	// iteration is terminating (SRD-052 FR-5).
 	ls.disarmAllScopeHandlers()
 }
 
@@ -575,7 +575,7 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		// releaseHolds is idempotent, so this is a no-op there.
 		ev.track.releaseHolds()
 		// a track that ended while owning a parked UserTask (canceled by an
-		// interrupting boundary or instance terminate) has its task withdrawn and
+		// interrupting boundary or iteration terminate) has its task withdrawn and
 		// dropped (SRD-034). A normal completion already removed it.
 		ls.cleanupTask(ctx, ev.track)
 		// a track that ended while owning a parked worker job drops its job entry
@@ -816,7 +816,7 @@ func (ls *loopState) resolveMsgSub(
 // ev.track for a Signal/Timer evDeliver, or — for a track-less Message evDeliver (FR-8) —
 // resolved from the fired definition's id via msgIdx (a miss is a benign drop). A message
 // whose correlation does not match this conversation is gated here, on the loop goroutine —
-// the sole owner of instance conversation state — and the track stays parked for the next
+// the sole owner of iteration conversation state — and the track stays parked for the next
 // message (SRD-027 §3.4 / NFR-2); Signal/Timer carry their track and are not correlated.
 // On a match the flip (flipNotParked on first delivery) makes deferred choice atomic: a later
 // event for the same track finds it absent and is dropped (a losing Event-Based-gateway arm
@@ -849,7 +849,7 @@ func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 	// track they share (SRD-090.B FR-3). The decorator says which are
 	// waiting; the rule for how many receive it is the trigger's own.
 	if ev.iterProc != nil {
-		ls.dispatchToInstances(tr, ev)
+		ls.dispatchToIterations(tr, ev)
 
 		return
 	}
@@ -858,19 +858,19 @@ func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 	tr.evtCh <- ev.eDef
 }
 
-// dispatchToInstances routes one occurrence to the instances of an iterated
+// dispatchToIterations routes one occurrence to the instances of an iterated
 // activity waiting for it (SRD-090.B FR-3, ADR-006 §2.9.2).
 //
 // The multiplicity is the KIND's, stated as contract rather than left to
-// mechanism: a Signal reaches every waiting instance (publication fan-out),
-// a Timer and a Conditional likewise since each instance's trigger is its
+// mechanism: a Signal reaches every waiting iteration (publication fan-out),
+// a Timer and a Conditional likewise since each iteration's trigger is its
 // own, and a Message reaches exactly ONE — it is point-to-point, so serving
 // N would let N instances consume one envelope and all complete.
 //
 // Ordinal order is normative where the instances are otherwise
 // indistinguishable: nothing else can decide which receives an envelope, and
 // two runs of one model must not disagree about it.
-func (ls *loopState) dispatchToInstances(tr *track, ev trackEvent) {
+func (ls *loopState) dispatchToIterations(tr *track, ev trackEvent) {
 	ords := ev.iterProc.waitingOn(ev.eDef.ID())
 	if len(ords) == 0 {
 		return // nobody waits on it any more — drop, as a losing arm does
@@ -886,7 +886,7 @@ func (ls *loopState) dispatchToInstances(tr *track, ev trackEvent) {
 	// cannot iterate at all — loop characteristics belong to activities.
 	//
 	// So the broadcast half of the rule — a Signal or Timer serving EVERY
-	// waiting instance — has no expressible case today. It stays decided in
+	// waiting iteration — has no expressible case today. It stays decided in
 	// ADR-006 §2.9.2 rather than written here as code nothing can exercise;
 	// the slice that makes such a wait expressible implements it against a
 	// test that can fail.
@@ -894,11 +894,11 @@ func (ls *loopState) dispatchToInstances(tr *track, ev trackEvent) {
 	// Ordinal order is what makes "the first" reproducible: with nothing to
 	// tell the instances apart, two runs of one model must not disagree
 	// about which received an envelope. Telling them APART is the
-	// correlated case, and it needs the key per instance rather than per
+	// correlated case, and it needs the key per iteration rather than per
 	// track (SRD-090.B M5c).
 	ev.iterProc.deliverTo(ords[0], ev.eDef)
 
-	// the TRACK leaves the parked set only once no instance of its activity
+	// the TRACK leaves the parked set only once no iteration of its activity
 	// waits: it is one entry standing for N waiters, so flipping it on the
 	// first delivery would drop every later occurrence at the gate above
 	// (the same reason the activity's hold outlives all but the last).
@@ -1019,10 +1019,10 @@ func (ls *loopState) drainCancel(done <-chan struct{}) <-chan struct{} {
 }
 
 // loopPreflight decides the loop's entry after the initial spawns. A restored
-// incident instance may start with no live track at all — its continuations
+// incident iteration may start with no live track at all — its continuations
 // are the incident records: scheduled retries drive it into the loop, an
 // operator-waiting one parks again without settling, and only a truly empty
-// instance completes. It also arms the incident-retry timer (a restored
+// iteration completes. It also arms the incident-retry timer (a restored
 // deadline may already be due). Reports whether the loop should run.
 func (ls *loopState) loopPreflight() bool {
 	ls.rearmIncidentRetryTimer()
@@ -1044,7 +1044,7 @@ func (ls *loopState) loopPreflight() bool {
 // when every remaining continuation is an open incident, the instance is not
 // finishing — it is waiting for a retry or an operator. Like the dehydration
 // exit: no settle, no handler teardown, no ledger discard; the incident
-// records carry the continuations. A stopping instance settles normally — a
+// records carry the continuations. A stopping iteration settles normally — a
 // terminate overrides waiting. Reports whether the loop parked.
 func (ls *loopState) parkOnIncidents(ctx context.Context) bool {
 	if ls.stopping ||
@@ -1084,7 +1084,7 @@ func (ls *loopState) spawnForks(ctx context.Context, ev trackEvent) {
 	for _, s := range ev.succs {
 		nt, err := newTrack(s.node, ls.inst, ev.track)
 		if err != nil {
-			// A fork target that can't be built is a genuine instance fault —
+			// A fork target that can't be built is a genuine iteration fault —
 			// route it through fail() (the single logging fault boundary,
 			// ADR-022 v.1 §2.3) instead of storing lastErr silently, mirroring
 			// failFromTrack / armBoundaries. fail() also cancels the ctx.
@@ -1138,7 +1138,7 @@ func (ls *loopState) applyParked(ev trackEvent) {
 // first tries to catch a typed BpmnError at an Error boundary on the failing
 // activity (matchErrorBoundary, run before clearPosition so position still holds
 // the failing node): a match routes to the boundary's exception flow and the
-// instance runs on. Only an uncaught failure faults the instance (FIX-008). Then
+// iteration runs on. Only an uncaught failure faults the instance (FIX-008). Then
 // the track is cleared from the loop-owned views and its boundaries disarmed.
 // Called only from apply.
 func (ls *loopState) applyFailed(ctx context.Context, ev trackEvent) {
@@ -1511,9 +1511,9 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 			// It cannot leave `waiting` to signal this the way a lone
 			// dispatch does: that entry is what later deliveries are gated
 			// on, and dropping it on the first would drop every one after
-			// (dispatchToInstances states the same rule from the other side).
+			// (dispatchToIterations states the same rule from the other side).
 
-			if t.instancesBusy() {
+			if t.iterationsBusy() {
 				return nil
 			}
 
@@ -1568,7 +1568,7 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 		}
 	}
 
-	// at least one REAL wait, or there is nothing to hydrate this instance
+	// at least one REAL wait, or there is nothing to hydrate this iteration
 	// back: a released instance wakes on a trigger, and only a held wait
 	// has one.
 	if len(parked) == 0 {

@@ -85,7 +85,7 @@ func TestBoundaryHintOnlyWhenRestored(t *testing.T) {
 }
 
 // TestSeedBoundaryPlansEmpty: a Schema-1 document carries no boundaries, and an
-// instance restored from one behaves exactly as it did before FR-9a.
+// iteration restored from one behaves exactly as it did before FR-9a.
 func TestSeedBoundaryPlansEmpty(t *testing.T) {
 	inst := &Instance{}
 	inst.seedBoundaryPlans(nil)

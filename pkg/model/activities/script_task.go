@@ -86,7 +86,7 @@ func (st *ScriptTask) Node() flow.Node {
 	return st
 }
 
-// Clone returns a per-instance copy of the ScriptTask (a fresh activity
+// Clone returns a per-iteration copy of the ScriptTask (a fresh activity
 // shell over the shared config).
 func (st *ScriptTask) Clone() (flow.Node, error) {
 	t, err := st.clone()

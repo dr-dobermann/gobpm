@@ -25,7 +25,7 @@ func TestRegisterEventNoParentProducer(t *testing.T) {
 	require.Error(t, inst.RegisterEvent(proc, eDef))
 }
 
-// TestPropagateEventDelegates: an Active instance forwards the propagation to
+// TestPropagateEventDelegates: an Active iteration forwards the propagation to
 // its parent producer and reports its success verbatim.
 func TestPropagateEventDelegates(t *testing.T) {
 	ep := mockeventproc.NewMockEventProducer(t)

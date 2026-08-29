@@ -15,7 +15,7 @@ type MultiInstanceBehavior string
 const (
 	// BehaviorAll (the default) throws no event — the common, zero-cost case.
 	BehaviorAll MultiInstanceBehavior = "all"
-	// BehaviorNone throws noneBehaviorEventRef for EVERY instance completion.
+	// BehaviorNone throws noneBehaviorEventRef for EVERY iteration completion.
 	BehaviorNone MultiInstanceBehavior = "none"
 	// BehaviorOne throws oneBehaviorEventRef once, on the FIRST completion.
 	BehaviorOne MultiInstanceBehavior = "one"
@@ -25,7 +25,7 @@ const (
 )
 
 // ComplexBehaviorDefinition drives BehaviorComplex (BPMN §ComplexBehaviorDefinition):
-// on each instance completion its condition is evaluated, and when true its event
+// on each iteration completion its condition is evaluated, and when true its event
 // is thrown (catchable on the Multi-Instance activity's boundary).
 type ComplexBehaviorDefinition struct {
 	condition data.FormalExpression
@@ -59,7 +59,7 @@ func NewComplexBehaviorDefinition(
 	}, nil
 }
 
-// Condition returns the boolean expression evaluated on each instance completion.
+// Condition returns the boolean expression evaluated on each iteration completion.
 func (c *ComplexBehaviorDefinition) Condition() data.FormalExpression {
 	return c.condition
 }
@@ -132,7 +132,7 @@ func WithCardinality(expr data.FormalExpression) MultiInstanceOption {
 }
 
 // WithInputCollection drives the instance count from a collection: ref names the
-// input collection datum in scope, item names the per-instance datum bound to
+// input collection datum in scope, item names the per-iteration datum bound to
 // element i. Mutually exclusive with WithCardinality.
 func WithInputCollection(ref, item string) MultiInstanceOption {
 	return func(mi *MultiInstanceLoopCharacteristics) error {
@@ -150,8 +150,8 @@ func WithInputCollection(ref, item string) MultiInstanceOption {
 	}
 }
 
-// WithOutputCollection assembles each instance's item into the ref collection:
-// ref names the output collection datum, item names the per-instance output
+// WithOutputCollection assembles each iteration's item into the ref collection:
+// ref names the output collection datum, item names the per-iteration output
 // datum read from the instance.
 func WithOutputCollection(ref, item string) MultiInstanceOption {
 	return func(mi *MultiInstanceLoopCharacteristics) error {
@@ -170,7 +170,7 @@ func WithOutputCollection(ref, item string) MultiInstanceOption {
 }
 
 // WithCompletionCondition ends the activity early: the boolean expression is
-// evaluated after each instance completes; true stops the remaining instances.
+// evaluated after each iteration completes; true stops the remaining instances.
 func WithCompletionCondition(expr data.FormalExpression) MultiInstanceOption {
 	return func(mi *MultiInstanceLoopCharacteristics) error {
 		if expr == nil {
@@ -203,7 +203,7 @@ func WithBehavior(b MultiInstanceBehavior) MultiInstanceOption {
 	}
 }
 
-// WithNoneBehaviorEvent sets the event thrown on every instance completion
+// WithNoneBehaviorEvent sets the event thrown on every iteration completion
 // (BehaviorNone).
 func WithNoneBehaviorEvent(def flow.EventDefinition) MultiInstanceOption {
 	return func(mi *MultiInstanceLoopCharacteristics) error {
@@ -220,7 +220,7 @@ func WithNoneBehaviorEvent(def flow.EventDefinition) MultiInstanceOption {
 	}
 }
 
-// WithOneBehaviorEvent sets the event thrown once, on the first instance
+// WithOneBehaviorEvent sets the event thrown once, on the first iteration
 // completion (BehaviorOne).
 func WithOneBehaviorEvent(def flow.EventDefinition) MultiInstanceOption {
 	return func(mi *MultiInstanceLoopCharacteristics) error {
@@ -238,7 +238,7 @@ func WithOneBehaviorEvent(def flow.EventDefinition) MultiInstanceOption {
 }
 
 // WithComplexBehavior sets the complex-behavior definitions consulted on each
-// instance completion (BehaviorComplex); each carries a condition and the event
+// iteration completion (BehaviorComplex); each carries a condition and the event
 // thrown when it holds.
 func WithComplexBehavior(defs ...*ComplexBehaviorDefinition) MultiInstanceOption {
 	return func(mi *MultiInstanceLoopCharacteristics) error {
@@ -383,12 +383,12 @@ func (mi *MultiInstanceLoopCharacteristics) LoopDataOutputRef() string {
 	return mi.loopDataOutputRef
 }
 
-// InputDataItem returns the per-instance input datum name.
+// InputDataItem returns the per-iteration input datum name.
 func (mi *MultiInstanceLoopCharacteristics) InputDataItem() string {
 	return mi.inputDataItem
 }
 
-// OutputDataItem returns the per-instance output datum name.
+// OutputDataItem returns the per-iteration output datum name.
 func (mi *MultiInstanceLoopCharacteristics) OutputDataItem() string {
 	return mi.outputDataItem
 }
@@ -442,7 +442,7 @@ func WithResultMap(
 	}
 }
 
-// WithResultReduce names the accumulating default under name: each instance's
+// WithResultReduce names the accumulating default under name: each iteration's
 // writes land in the enclosing scope, and a later one replaces an earlier
 // (ADR-025 §2.6.1).
 //

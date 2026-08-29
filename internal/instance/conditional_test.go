@@ -304,7 +304,7 @@ func TestConditionalMultiFireVoiding(t *testing.T) {
 }
 
 // TestConditionalEvalFailureFailsInstance — an erroring condition fails the
-// instance (fail + stopAll): a wait the engine cannot evaluate is meaningless
+// iteration (fail + stopAll): a wait the engine cannot evaluate is meaningless
 // (SRD-048 FR-13).
 func TestConditionalEvalFailureFailsInstance(t *testing.T) {
 	_ = data.CreateDefaultStates()
@@ -328,7 +328,7 @@ func TestConditionalEvalFailureFailsInstance(t *testing.T) {
 }
 
 // TestSignalDataCommitGates — the track-side emit gate (SRD-048 FR-10/NFR-1):
-// no changes, no HasConditionals, or a non-Active instance → no emit (the
+// no changes, no HasConditionals, or a non-Active iteration → no emit (the
 // call returns instead of blocking on the un-drained loop channel).
 func TestSignalDataCommitGates(t *testing.T) {
 	inst, tr, _ := condInstance(t,
@@ -336,7 +336,7 @@ func TestSignalDataCommitGates(t *testing.T) {
 
 	changes := []data.Change{{Path: "x", Type: data.ValueUpdated}}
 
-	// instance is Created (not Active): must return without emitting even
+	// iteration is Created (not Active): must return without emitting even
 	// though HasConditionals is true and changes are non-empty.
 	tr.signalDataCommit(tr.currentStep().node, changes)
 
@@ -440,7 +440,7 @@ func TestConditionalCoverageEdges(t *testing.T) {
 }
 
 // TestSignalDataCommitEmits — the positive emit path (SRD-048 FR-10): an
-// Active instance with conditionals emits evDataCommit carrying the diff.
+// Active iteration with conditionals emits evDataCommit carrying the diff.
 func TestSignalDataCommitEmits(t *testing.T) {
 	inst, tr, _ := condInstance(t,
 		mustCondDef(t, condExpr(t, new(bool), new(int))))
@@ -543,7 +543,7 @@ func TestClearCondsKeepsOtherTracks(t *testing.T) {
 	require.Same(t, other, ls.conds[0].track)
 }
 
-// condBoundaryHarness builds the guarded-host instance with an extra
+// condBoundaryHarness builds the guarded-host iteration with an extra
 // Conditional boundary (SRD-048 M4): the base interrupting signal boundary
 // stays hub-registered (the recordingProducer sees it), the conditional one
 // is loop-owned. Returns the seeded loopState and the bare host track (with
