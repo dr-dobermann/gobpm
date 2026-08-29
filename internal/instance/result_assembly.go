@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -20,9 +21,11 @@ import (
 // parallel one — stated plainly rather than hidden, and exactly why a model
 // that needs every instance's result declares one of these.
 //
-// Owned by the DECORATOR's goroutine: a fan-out's completions are applied
-// serially there (§2.15a), and a sequential shape has one pass at a time. So
-// the assembly needs no lock of its own.
+// Guarded by its own mutex. A fan-out whose iterations HOLD WAITS is applied
+// serially on the decorator's goroutine (§2.15a) and would need no lock — but
+// one that holds none runs its iterations at once, each taking its result from
+// its own goroutine, and a Go map written from two of them is a fatal race
+// rather than a lost update.
 type resultAssembly struct {
 	strategy *activities.ResultStrategy
 
@@ -35,6 +38,12 @@ type resultAssembly struct {
 	// than only the one that lost.
 	byKey   map[string]any
 	keyedBy map[string]int
+
+	// m guards the three collections above. Held only across the bookkeeping,
+	// never across the key expression: evaluating one runs arbitrary model
+	// code, and holding a lock through it would make an activity's own
+	// expression able to stall its siblings.
+	m sync.Mutex
 }
 
 // newResultAssembly builds the assembly a declared strategy needs, or nil when
@@ -87,6 +96,9 @@ func (a *resultAssembly) take(
 	v := d.Value().Get(ctx)
 
 	if a.byOrdinal != nil {
+		a.m.Lock()
+		defer a.m.Unlock()
+
 		return a.byOrdinal.SetAt(ctx, ord, v)
 	}
 
@@ -116,6 +128,9 @@ func (a *resultAssembly) keyed(
 			errs.C(errorClass, errs.InvalidState),
 			errs.D(observability.AttrDataName, a.strategy.Name()))
 	}
+
+	a.m.Lock()
+	defer a.m.Unlock()
 
 	if had, taken := a.keyedBy[key]; taken && a.strategy.ErrorOnKeyRewrite() {
 		// declared as a modeling error — a fan-out over participants who must
@@ -148,6 +163,9 @@ func (a *resultAssembly) publish(host *track) error {
 	if a == nil {
 		return nil
 	}
+
+	a.m.Lock()
+	defer a.m.Unlock()
 
 	if a.byOrdinal != nil {
 		return host.instance.sc.bindValueAt(

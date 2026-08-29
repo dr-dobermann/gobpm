@@ -68,6 +68,10 @@ func TestACompletionGoesToTheINSTANCEThatOwnsIt(t *testing.T) {
 
 	ls.deliverCompletion(taskEntry{track: tr, ord: 1}, def, "alice")
 
+	require.True(t, d.busy(),
+		"queued and not yet applied — the activity is not idle, so a "+
+			"release cannot take the track away with the completion in it")
+
 	held := d.takeDeliveries()
 	require.Len(t, held, 1,
 		"one completion, for one instance — NOT its sibling, who is still "+
@@ -78,9 +82,10 @@ func TestACompletionGoesToTheINSTANCEThatOwnsIt(t *testing.T) {
 	require.Contains(t, ls.waiting, tr.ID(),
 		"the track stays parked while any instance still holds work")
 
-	require.True(t, d.busy(),
-		"and reads busy until that instance takes its envelope, so a "+
-			"dehydration cannot take the track away mid-handover")
+	require.False(t, d.busy(),
+		"and idle once the decorator has TAKEN it: from here the applying "+
+			"half is counted by the decorator itself (applyOne), not by the "+
+			"queue it just drained")
 
 	ls.deliverCompletion(taskEntry{track: tr, ord: 0}, def, "bob")
 	require.NotContains(t, ls.waiting, tr.ID(),
@@ -157,4 +162,39 @@ func TestACompletionForAFanOutThatIsNotRunningIsHeld(t *testing.T) {
 	require.Nil(t, tr.takePendingCompletions(),
 		"and taken ONCE: they belong to the decorator that took them, and a "+
 			"second run must not re-deliver work already completed")
+}
+
+// TestTheHandoverAccountingBalances: the activity reads busy from the moment
+// the loop hands a completion over until the decorator has finished applying
+// it — and NOT for one moment longer.
+//
+// An unmatched increment is not a small leak. `instancesBusy` gates the
+// release, so an activity that never returns to idle can never be released
+// again: a fan-out over human work would hold its process instance in memory
+// for the remaining approvals, which is the whole thing dehydration exists to
+// avoid.
+func TestTheHandoverAccountingBalances(t *testing.T) {
+	ls, tr, d := fanOutTrack(t)
+	def := sigDefN(t, "done")
+
+	d.parking(0)
+	d.parking(1)
+
+	require.False(t, d.busy(), "parked, nothing in flight")
+
+	ls.deliverCompletion(
+		taskEntry{track: tr, node: tr.steps[0].node, ord: 1}, def, "alice")
+
+	require.True(t, d.busy(),
+		"handed over and not yet applied — releasing here would take the "+
+			"track away with the completion still queued")
+
+	// what the decorator does with it: take the delivery, apply it, account.
+	require.Len(t, d.takeDeliveries(), 1)
+	d.delivering()
+	d.delivered()
+
+	require.False(t, d.busy(),
+		"applied and accounted for: the activity is idle again, and its "+
+			"remaining approvals hold no goroutine")
 }

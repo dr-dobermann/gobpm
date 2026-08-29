@@ -122,6 +122,15 @@ func newResultStrategy(
 			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
+	// THE ENGINE OWNS ITS OWN NAMES (ADR-025 §2.9.2). A strategy publishes its
+	// assembled value into the enclosing scope by name, so a model declaring
+	// one of the engine's would be writing where the engine writes — the same
+	// collision a property or a data object is refused for, arriving by a
+	// different door.
+	if err := data.CheckReservedName(name, errorClass); err != nil {
+		return nil, err
+	}
+
 	if kind == ResultMap && key == nil {
 		return nil, errs.New(
 			errs.M("WithResultMap: a nil key expression isn't allowed — the "+

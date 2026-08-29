@@ -896,6 +896,23 @@ func (t *track) seededTaskIDs() map[int]string {
 	return ids
 }
 
+// seededEligibility returns the verdict the checkpoint recorded for instance
+// ord's announcement, or nil if it recorded none — a document written before
+// the field existed, which restores as it always did.
+func (t *track) seededEligibility(ord int) *checkpoint.TaskEligibility {
+	if t.iterSeed == nil {
+		return nil
+	}
+
+	for _, in := range t.iterSeed.Instances {
+		if in.Ordinal == ord {
+			return in.Eligible
+		}
+	}
+
+	return nil
+}
+
 // instancesBusy reports whether an iterated activity on this track has an
 // instance executing rather than parked — one being handed a completion, or
 // one already awake and running its node.
@@ -1575,6 +1592,13 @@ func (t *track) parkForDelivery(
 	// stop the iteration one pass in.
 	if e != nil {
 		e.parked.Store(false)
+	}
+
+	// and the handover this pass was counted for is over — see
+	// iterDecorator.completeInstance. Balanced rather than reset: the count
+	// belongs to the activity, not to this one wait.
+	if sub := t.ownerIfResolved(); sub != nil {
+		sub.delivered()
 	}
 
 	if cur := t.currentStep(); cur != nil && cur.node != step.node {

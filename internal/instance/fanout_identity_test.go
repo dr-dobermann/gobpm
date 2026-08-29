@@ -13,6 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -658,4 +659,133 @@ func TestIterationsSurvivesTheInstanceBeingRebuilt(t *testing.T) {
 	require.Equal(t, 3, got.Total, "three items, frozen at activation")
 	require.Equal(t, 1, got.Completed,
 		"one approval done — a rebuilt register would say none")
+}
+
+// perIterationAssigneeSnapshot is the fan-out the example runs: each iteration's
+// assignee IS the element it was seeded with, so the three tasks belong to three
+// different people and nobody else may complete them.
+func perIterationAssigneeSnapshot(
+	t *testing.T, key string,
+) *snapshot.Snapshot {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	mi, err := activities.NewMultiInstance(
+		activities.WithInputCollection("items", "item"))
+	require.NoError(t, err)
+
+	items := data.MustProperty("items",
+		data.MustItemDefinition(values.NewArray("alice", "bob", "carol"),
+			foundation.WithID(key+"-items")),
+		data.ReadyDataState)
+
+	p, err := process.New(key, foundation.WithID(key),
+		data.WithProperties(items))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start", foundation.WithID(key+"-start"))
+	require.NoError(t, err)
+
+	assignee := goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, src data.Source) (data.Value, error) {
+			d, fErr := src.Find(ctx, "item")
+			if fErr != nil {
+				return nil, fErr
+			}
+
+			return values.NewVariable(d.Value().Get(ctx)), nil
+		})
+
+	ut, err := activities.NewUserTask("approve",
+		activities.WithAssigneeExpr(assignee),
+		activities.WithOutput("result", "string", true),
+		activities.WithoutParams(), activities.WithLoop(mi),
+		foundation.WithID(key+"-approve"))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end", foundation.WithID(key+"-end"))
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, ut, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	_, err = flow.Link(start, ut)
+	require.NoError(t, err)
+	_, err = flow.Link(ut, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	return s
+}
+
+// TestARestoredFanOutKeepsTheEligibilityItAnnounced (ADR-020 §2.7, SRD-090.D
+// FR-10): the three people holding these tasks can still complete them after a
+// release, and still only their own.
+//
+// Eligibility is assessed ONCE, at the announcement, in the data of the
+// iteration being announced — and a restore has no such data: the element the
+// iteration was seeded with is frame-local to an execution that no longer
+// exists. Resolving again reads the host's scope, where "item" is not, so
+// every assignee resolves to nobody and each of the three is locked out of
+// work their inbox is still showing them. The verdict therefore rides the
+// checkpoint, and this test is what says so.
+func TestARestoredFanOutKeepsTheEligibilityItAnnounced(t *testing.T) {
+	s := perIterationAssigneeSnapshot(t, "cr-elig")
+
+	dist := &countingDist{}
+	doc := captureParkedFanOut(t, s, dist)
+
+	// who each iteration was announced to, as the capture recorded it.
+	byTask := map[string]string{}
+
+	for i := range doc.Tracks {
+		it := doc.Tracks[i].Iteration
+		if it == nil {
+			continue
+		}
+
+		for _, in := range it.Instances {
+			require.NotNil(t, in.Eligible,
+				"the verdict is recorded beside the identity — without it "+
+					"the restore has nothing to authorize against")
+			require.Len(t, in.Eligible.Assignee, 1)
+
+			byTask[in.TaskID] = in.Eligible.Assignee[0]
+		}
+	}
+
+	require.Len(t, byTask, 3)
+
+	restored, err := Restore(doc, s, scope.EmptyDataPath,
+		cpRuntime(t), laxEP(t), dist, nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, restored.Run(ctx))
+
+	out := []data.Data{
+		data.MustParameter("result",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable("approved")),
+				data.ReadyDataState)),
+	}
+
+	for id, who := range byTask {
+		// the WRONG person is still refused: the restore carried a verdict,
+		// not an open door.
+		require.Error(t, restored.Complete(ctx, id, stubActor{id: "mallory"}, out),
+			"a restored task authorizes the same people it always did")
+
+		require.NoError(t, restored.Complete(ctx, id, stubActor{id: who}, out),
+			"and its assignee can still do the work they are holding")
+	}
+
+	require.Eventually(t, func() bool { return restored.State() == Completed },
+		5*time.Second, 10*time.Millisecond)
 }

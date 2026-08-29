@@ -93,42 +93,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each iteration resolves its OWN performer, in the data context it runs in:
   an assignee expression reading the element that iteration was seeded with
   names a different person per iteration. Eligibility is assessed once, at the
-  announcement, and checked from that snapshot afterwards.
+  announcement, and checked from that verdict afterwards — including across a
+  dehydration, since the verdict rides the checkpoint beside the identity it
+  was announced under. Resolving it again on the way back would read the
+  host's scope rather than the iteration's, where a per-iteration performer
+  resolves to nobody and locks every holder out of their own task.
 
-  The decorator is the node to everything outside it. It holds the N waits and
-  applies their completions **serially, on its own goroutine**: the instances
+  The host is the node to everything outside it. It holds the N waits and
+  applies their completions **serially, on its own goroutine**: the iterations
   are state it owns rather than goroutines running a node they share. That is
-  what keeps one approver's outputs out of another instance's frame, and it is
-  the arrangement ADR-025 §2.15a prescribes — the race is removed rather than
-  synchronised.
+  what keeps one approver's outputs out of another iteration's frame, and it
+  is the arrangement ADR-025 §2.15a prescribes — the race is removed rather
+  than synchronised.
 
   A fan-out that holds no wait is unaffected: a Script or Service Task
-  instance does its work rather than waiting for somebody, and those passes
-  still overlap.
+  iteration does its work rather than waiting for somebody, and those still
+  overlap.
 
-- **A model declares what its instances produce** (SRD-090.D FR-7/FR-8,
+- **A model declares what its iterations produce** (SRD-090.D FR-7/FR-8,
   ADR-025 §2.6.1, part of #340). The default is unchanged and stated plainly:
   last write wins, which makes a sequential iteration a fold and a parallel one
-  order-dependent. A model that needs every instance's result now says so and
+  order-dependent. A model that needs every iteration's result now says so and
   gets a deterministic one.
 
-  A **map** keys results by a per-instance expression, evaluated in the
-  completing instance's own frame — so the key can use something that instance
-  produced, an approver's answer being the motivating case. An empty key
+  A **map** keys results by a per-iteration expression, evaluated in the
+  completing iteration's own frame — so the key can use something that
+  iteration produced, an approver's answer being the motivating case. An empty key
   refuses; a duplicate overwrites by default, or faults naming both ordinals
   and the key under `ErrorOnKeyRewrite`. A Standard Loop also gains an
-  **array** indexed by pass, which BPMN does not give it; a Multi-Instance
+  **array** indexed by ordinal, which BPMN does not give it; a Multi-Instance
   keeps the standard's own `loopDataOutputRef` assembly for that.
   **reduce** names the default so a model can state the fold it relies on.
 
   A declared result publishes ONCE, at activity completion — never
   incrementally, so nothing can read a half-assembled collection.
 
-- **An iterating activity publishes which instance is running** (SRD-090.D,
-  ADR-025 §2.9.2, part of #340). Beside BPMN's `loopCounter`, every instance
+- **An iterating activity publishes which iteration is running** (SRD-090.D,
+  ADR-025 §2.9.2, part of #340). Beside BPMN's `loopCounter`, every iteration
   of a Standard Loop or Multi-Instance now reads `ITERATION_NUMBER`, its
   stable `ITERATION_ID` and its `ITERATION_MODE` (`std_loop` /
-  `mi_sequential` / `mi_parallel`) as plain names — each instance seeing its
+  `mi_sequential` / `mi_parallel`) as plain names — each iteration seeing its
   own, on every publication path.
 
   `ITERATION_ID` is derived rather than minted: enclosing scope path +
@@ -144,9 +148,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   address, since they end with the activation they describe. Keyed by
   activity id so it stays unambiguous when two activities iterate at once.
 
-  New `RUNTIME/ITERATION_OWNERS` answers *who did which instance* — activity
+  New `RUNTIME/ITERATION_OWNERS` answers *who did which iteration* — activity
   id → (ordinal → the actor who completed it). `COMPLETED_BY` cannot: it keys
-  by node, so an iterated activity has one entry however many instances ran
+  by node, so an iterated activity has one entry however many iterations ran
   and whoever did them, and the last completion wins. Three approvals are
   three pieces of work by three people.
 

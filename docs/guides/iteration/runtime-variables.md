@@ -6,7 +6,7 @@ description: "What an iterating activity publishes, at which address, and for ho
 # Iteration runtime variables
 
 An iterating activity publishes values you can read from expressions and task
-code: which instance is running, how many there are, how many are done. This
+code: which iteration is running, how many there are, how many are done. This
 page is the complete list — the name, where you read it from, and how long it
 lasts.
 
@@ -14,32 +14,37 @@ Two things decide each variable's address, and they are worth understanding
 once because they explain the whole table:
 
 - **How many answers the value has.** `loopCounter` has one answer *per
-  instance* — three parallel instances reading it at the same moment must get
-  0, 1 and 2. `numberOfInstances` has one answer *per activity*.
+  iteration* — three parallel iterations reading it at the same moment must
+  get 0, 1 and 2. `numberOfInstances` has one answer *per activity*.
   `ITERATIONS` and `ITERATION_OWNERS` have one answer *per process instance*.
+
+  Those are three different things, so the guide keeps them apart:
+  **instance** always means the *process* instance, an **iteration** is one
+  pass of an iterating activity, and the **host** is the node that runs them
+  (SAD-001 §10.1).
 - **Who needs to read it.** A `completionCondition` is evaluated outside any
-  instance, and a node inside an iterated Sub-Process reads from several
-  scopes down.
+  iteration, by the host, and a node inside an iterated Sub-Process reads from
+  several scopes down.
 
 ## The variables
 
-### Per instance — read by plain name
+### Per iteration — read by plain name
 
-Bound into the running instance, so each instance sees **its own** value. Read
+Bound into the running iteration, so each one sees **its own** value. Read
 them as ordinary names, exactly like a task input.
 
 | Name | Value |
 |---|---|
-| `loopCounter` | this instance's 0-based ordinal (BPMN Table 10.27) |
+| `loopCounter` | this iteration's 0-based ordinal (BPMN Table 10.27) |
 | `ITERATION_NUMBER` | the same ordinal, under the engine's own name |
-| `ITERATION_ID` | this instance's stable identity — where it runs, which activity, which ordinal |
+| `ITERATION_ID` | this iteration's stable identity — where it runs, which activity, which ordinal |
 | `ITERATION_MODE` | `std_loop`, `mi_sequential` or `mi_parallel` |
 
 ```go
 op, _ := gooper.New("review", func(
     ctx context.Context, r service.DataReader, _ *data.ItemDefinition,
 ) (*data.ItemDefinition, error) {
-    ord, err := r.GetData("loopCounter")     // 0, 1, 2 … — this instance's
+    ord, err := r.GetData("loopCounter")     // 0, 1, 2 … — this iteration's
     if err != nil {
         return nil, err
     }
@@ -95,7 +100,7 @@ question that outlives the activity.
 
 For a **sequential** Multi-Instance, `numberOfActiveInstances` is 1 while a
 pass runs and 0 between passes, per Table 10.30's cap. That means the three
-counts do not sum to the total mid-run: the instances that have not started
+counts do not sum to the total mid-run: the iterations that have not started
 yet belong to no category the standard offers. At the end they do sum, because
 everything is then either completed or terminated.
 
@@ -107,7 +112,7 @@ path rather than a plain name.
 | Name | Value |
 |---|---|
 | `RUNTIME/ITERATIONS` | map: activity id → `{kind, total, completed, terminated}` |
-| `RUNTIME/ITERATION_OWNERS` | map: activity id → (ordinal → the actor who completed that instance) |
+| `RUNTIME/ITERATION_OWNERS` | map: activity id → (ordinal → the actor who completed that iteration) |
 
 ```go
 d, err := r.GetData("RUNTIME/ITERATIONS")
@@ -134,11 +139,11 @@ three items as having processed none.
 
 It is not the same question as `RUNTIME/COMPLETED_BY`, and one cannot answer
 the other. `COMPLETED_BY` keys by NODE, so an iterated activity has a single
-entry however many instances ran and whoever did them — the last completion
+entry however many iterations ran and whoever did them — the last completion
 wins and the rest are lost. Three approvals are three pieces of work by three
-people. Only instances that were actually completed by an actor appear: an
-instance nobody did, or one the engine ran without a human, is absent rather
-than present with a blank.
+people. Only iterations that were actually completed by an actor appear: one
+nobody did, or one the engine ran without a human, is absent rather than
+present with a blank.
 
 ## The names are the engine's
 
@@ -170,7 +175,7 @@ A **structural field** is unaffected: `order.loopCounter` is reached through
 
 Everything above is read through the normal data surfaces — `GetData` in task
 code, `Find` in an expression. Nothing about them is iteration-specific at the
-call site, which is the point: an instance reads which instance it is the same
+call site, which is the point: an iteration reads which one it is the same
 way it reads any other datum.
 
 ## See also

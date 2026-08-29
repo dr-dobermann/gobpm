@@ -140,3 +140,23 @@ func TestADeclaredStrategyIsReadableBack(t *testing.T) {
 		"the default is last-wins, and the loss is detectable rather than "+
 			"silent: RUNTIME/ITERATIONS publishes the instance total")
 }
+
+// TestAResultStrategyMayNotPublishUnderAnEngineName: a strategy binds its
+// assembled value into the enclosing scope by name, so it is one more door on
+// the collision a property or a data object is already refused for.
+func TestAResultStrategyMayNotPublishUnderAnEngineName(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	for _, name := range data.ReservedNames() {
+		t.Run(name, func(t *testing.T) {
+			_, err := activities.NewMultiInstance(
+				activities.WithResultMap(name, "result", keyExpr(t)))
+			require.ErrorContains(t, err, name,
+				"the error names the element, so the modeler can find it")
+
+			_, err = activities.NewStandardLoop(boolExpr(t),
+				activities.WithLoopResultArray(name, "result"))
+			require.ErrorContains(t, err, name)
+		})
+	}
+}

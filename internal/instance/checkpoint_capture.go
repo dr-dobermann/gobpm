@@ -216,7 +216,7 @@ func (ls *loopState) captureDocument(
 			continue
 		}
 
-		rec, live, err := trackRecord(ctx, t, ls.iter[t.ID()])
+		rec, live, err := trackRecord(ctx, ls, t, ls.iter[t.ID()])
 		if err != nil {
 			return nil, "encode: " + err.Error()
 		}
@@ -451,7 +451,7 @@ func (ls *loopState) sweepRecords(
 // side too). mirror is the loop-owned iteration position of an
 // own-iteration host (SRD-082 FR-2), nil for every other track.
 func trackRecord(
-	ctx context.Context, t *track, mirror *iterMirror,
+	ctx context.Context, ls *loopState, t *track, mirror *iterMirror,
 ) (checkpoint.TrackRecord, bool, error) {
 	t.m.RLock()
 	defer t.m.RUnlock()
@@ -490,7 +490,7 @@ func trackRecord(
 	// The mirror is loop-owned and staging is loop-written, so both
 	// reads are loop-serialized.
 	if mirror != nil {
-		if err := recordIteration(ctx, &rec, t, mirror); err != nil {
+		if err := recordIteration(ctx, ls, &rec, t, mirror); err != nil {
 			return checkpoint.TrackRecord{}, false, err
 		}
 	}
@@ -509,7 +509,7 @@ func trackRecord(
 // mirror at all is a parallel COMPOSITE Multi-Instance, whose position is
 // still the loop-owned group's until M3b retires it.
 func recordIteration(
-	ctx context.Context, rec *checkpoint.TrackRecord, t *track,
+	ctx context.Context, ls *loopState, rec *checkpoint.TrackRecord, t *track,
 	mirror *iterMirror,
 ) error {
 	var staging json.RawMessage
@@ -529,7 +529,7 @@ func recordIteration(
 		Completed:    mirror.completed,
 		ConditionMet: mirror.conditionMet,
 		Staging:      staging,
-		Instances:    withTaskIDs(t, mirror.instances),
+		Instances:    withTaskIDs(ls, t, mirror.instances),
 	}
 
 	return nil
@@ -544,7 +544,7 @@ func recordIteration(
 // all. Reading here also keeps the loop's mirror describing positions, which
 // is what it is for.
 func withTaskIDs(
-	t *track, insts []checkpoint.IterationInstance,
+	ls *loopState, t *track, insts []checkpoint.IterationInstance,
 ) []checkpoint.IterationInstance {
 	if len(insts) == 0 {
 		return insts
@@ -562,8 +562,19 @@ func withTaskIDs(
 	copy(out, insts)
 
 	for i := range out {
-		if id, ok := ids[out[i].Ordinal]; ok {
-			out[i].TaskID = id
+		id, ok := ids[out[i].Ordinal]
+		if !ok {
+			continue
+		}
+
+		out[i].TaskID = id
+
+		// and the verdict its announcement resolved, beside the identity it
+		// was announced under. Read off the loop-owned registry, on the loop
+		// goroutine, where it was written once and never rewritten — see
+		// eligibility_record.go for why a restore cannot recompute it.
+		if entry, known := ls.tasks[id]; known {
+			out[i].Eligible = freezeEligibility(entry.eligible)
 		}
 	}
 

@@ -297,6 +297,21 @@ type MIRecord struct {
 // (ADR-025 §2.4 fixes cardinality once, so the collection cannot
 // shift underneath).
 type IterationInstance struct {
+	// Eligible is the verdict this iteration's announcement RESOLVED — who
+	// may act on its task (ADR-020 §2.7).
+	//
+	// It rides the checkpoint because eligibility is assessed ONCE, at the
+	// announcement, in the data context of the iteration being announced. A
+	// restore cannot recompute it: the element the iteration was seeded with
+	// is frame-local to an execution that no longer exists, so a re-resolution
+	// reads the host's scope instead and a performer expression naming "the
+	// reviewer this one is for" resolves to nobody — locking every holder out
+	// of the task their inbox is still showing them.
+	//
+	// Optional: a document written before this field restores as it always
+	// did, resolving at the host's scope, which is all it ever recorded.
+	Eligible *TaskEligibility `json:"eligible,omitempty"`
+
 	State   string `json:"state"` // running | waiting | completed
 	ChildID string `json:"child_id,omitempty"`
 
@@ -327,6 +342,23 @@ type ActivityIteration struct {
 	Total      int    `json:"total"`
 	Completed  int    `json:"completed"`
 	Terminated int    `json:"terminated"`
+}
+
+// TaskEligibility is a resolved assignment triad, as the announcement froze it
+// (ADR-020 §2.7). Identifier sets only — the expressions that produced them are
+// the model's and are not persisted.
+type TaskEligibility struct {
+	Assignee        []string `json:"assignee,omitempty"`
+	CandidateUsers  []string `json:"candidate_users,omitempty"`
+	CandidateGroups []string `json:"candidate_groups,omitempty"`
+	Roles           []string `json:"roles,omitempty"`
+
+	// the Declared flags: a slot resolving to nobody and a slot the task does
+	// not carry authorize differently, so which it was has to survive.
+	AssigneeDeclared        bool `json:"assignee_declared,omitempty"`
+	CandidateUsersDeclared  bool `json:"candidate_users_declared,omitempty"`
+	CandidateGroupsDeclared bool `json:"candidate_groups_declared,omitempty"`
+	RolesDeclared           bool `json:"roles_declared,omitempty"`
 }
 
 // IterationRecord is an iterated activity's live instances (Schema 6,

@@ -582,12 +582,21 @@ func (d *iterDecorator) completeInstance(
 ) {
 	d.t.recordIterationOwner(d.step.node, ord, owner)
 
+	// FROM HERE UNTIL THE ITERATION HAS TAKEN IT the activity is not idle, or
+	// the loop's next release takes the track away with the completion still
+	// in flight. The two shapes signal it differently and both are covered:
+	//
+	//   - a fan-out's queue IS the signal — busy() reads its length, and the
+	//     decorator's own delivering/delivered pair covers the applying half;
+	//   - a single parked pass has no queue, so the handover is counted
+	//     explicitly and the pass drops it when it wakes (parkForDelivery).
 	if d.fansOutLeaves() {
 		d.deliver(ord, def)
 
 		return
 	}
 
+	d.delivering()
 	d.t.offerToPass(def)
 }
 
@@ -658,13 +667,6 @@ func (d *iterDecorator) runParallel(
 		for _, inst := range d.seed.Instances {
 			d.adoptTaskID(inst.Ordinal, inst.TaskID)
 		}
-	}
-
-	// a completion that arrived before this run existed belongs to one of the
-	// instances about to be built — taken here, where the track's goroutine
-	// owns both sides, and handed over when that instance parks.
-	for ord, def := range d.t.takePendingCompletions() {
-		d.deliver(ord, def)
 	}
 
 	insts := make(map[int]activityExec, n)
@@ -749,6 +751,19 @@ func (d *iterDecorator) runParallel(
 		return nil, err
 	}
 
+	run.parked = parked
+
+	// A COMPLETION THAT ARRIVED BEFORE THIS RUN EXISTED belongs to one of the
+	// iterations just parked, and is drained AFTER they park.
+	//
+	// Before them, `deliver` removed an ordinal from the parked set that
+	// `parking` then added back — so the ordinal stayed marked as waiting
+	// forever, `anyWaiting` never went false, and the track never left the
+	// loop's waiting set.
+	for ord, def := range d.t.takePendingCompletions() {
+		d.deliver(ord, def)
+	}
+
 	// A FAN-OUT THAT HOLDS NO WAIT genuinely runs at once — a Script or
 	// Service Task instance does its work rather than waiting for somebody,
 	// and §2.15a's rule is about the one that APPLIES a delivery.
@@ -783,6 +798,13 @@ type instanceDone struct {
 type parallelRun struct {
 	done chan instanceDone
 	outs *instanceOutputs
+	// parked names the iterations that HELD A WAIT when the decorator parked
+	// them, decided there and carried here. The barrier waits for exactly
+	// these: an iteration that holds no wait is never delivered to, so
+	// counting it would leave the barrier waiting for a delivery nobody will
+	// ever send.
+	parked map[int]bool
+
 	// execs is the instance set, by ordinal. The decorator applies a
 	// delivery by looking its instance up here — the instances are state it
 	// owns, not goroutines with mailboxes of their own (ADR-025 §2.15a).
@@ -1092,7 +1114,29 @@ func (d *iterDecorator) applyParallel(
 ) ([]*flow.SequenceFlow, error) {
 	t := d.t
 	b := &parallelBarrier{d: d, run: run, completed: run.n - run.launched}
-	outstanding := run.launched
+
+	// AN ITERATION THAT HOLDS NO WAIT is run in its turn, now: it has nothing
+	// to be delivered, so waiting for one would hang the activity. A single
+	// node parks all its iterations or none of them today, but the barrier
+	// must not depend on that — the shapes are decided per iteration, in its
+	// own data.
+	for _, ord := range sortedOrdinals(run.execs) {
+		e, leaf := run.execs[ord].(*nodeExec)
+		if !leaf || run.parked[ord] {
+			continue
+		}
+
+		err := d.applyOne(ctx, it, b, step, e, instanceDelivery{ord: ord})
+		if err != nil {
+			return nil, err
+		}
+
+		if b.err != nil {
+			return nil, b.err
+		}
+	}
+
+	outstanding := len(run.parked)
 
 	for outstanding > 0 {
 		select {
@@ -1109,6 +1153,15 @@ func (d *iterDecorator) applyParallel(
 				e, leaf := run.execs[dlv.ord].(*nodeExec)
 				if !leaf {
 					continue // an ordinal nothing is running — a late drop
+				}
+
+				// APPLIED ONCE PER ORDINAL. A second delivery for an
+				// iteration already applied is dropped rather than counted:
+				// decrementing twice would end the barrier one approval
+				// early, and the iteration whose delivery never came would
+				// be abandoned holding a task somebody is still looking at.
+				if e.finished.Load() {
+					continue
 				}
 
 				if err := d.applyOne(ctx, it, b, step, e, dlv); err != nil {
@@ -1145,10 +1198,14 @@ func (d *iterDecorator) applyOne(
 	d.delivering()
 	defer d.delivered()
 
-	if err := t.deliver(ctx, dlv.def, e); err != nil {
-		b.fail(ctx, err)
+	// AN ITERATION THAT HELD NO WAIT has nothing to be handed: it is simply
+	// run, in its turn. Only a delivery carries a definition.
+	if dlv.def != nil {
+		if err := t.deliver(ctx, dlv.def, e); err != nil {
+			b.fail(ctx, err)
 
-		return nil
+			return nil
+		}
 	}
 
 	_, err := t.executeNodeAs(ctx, step, activityInstance{

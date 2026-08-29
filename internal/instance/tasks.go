@@ -327,11 +327,6 @@ func (ls *loopState) deliverCompletion(
 		return
 	}
 
-	// BEFORE the handover: from here until the instance takes it, the
-	// activity must not read as fully parked, or the loop's next dehydration
-	// takes the track away with this completion still undelivered.
-	sub.delivering()
-
 	// The handover and the end of the wait are ONE step — see eventSubs.deliver.
 	//
 	// The identity is not dropped here: the instance has not finished, and its
@@ -407,6 +402,37 @@ func (ls *loopState) registerTask(
 	return &info
 }
 
+// adoptTask re-registers a RESTORED iteration's task under the eligibility its
+// announcement resolved, without re-resolving and without announcing.
+//
+// A restore that resolved the triad again would do it outside the iteration's
+// data — the element it was seeded with is frame-local to an execution that no
+// longer exists — so a per-iteration performer resolves to nobody and locks
+// every holder out of a task their inbox still shows. Only a document written
+// before the verdict was recorded falls back to resolving; there the host's
+// scope is all there ever was.
+func (ls *loopState) adoptTask(
+	ctx context.Context,
+	taskID string,
+	tr *track,
+	node flow.Node,
+	ord int,
+) {
+	frozen := tr.seededEligibility(ord)
+	if frozen == nil {
+		ls.registerTask(ctx, taskID, tr, node, ord, nil)
+
+		return
+	}
+
+	ls.tasks[taskID] = taskEntry{
+		track:    tr,
+		node:     node,
+		ord:      ord,
+		eligible: thawEligibility(frozen),
+	}
+}
+
 // addTask records a parked UserTask in the loop-owned registry and announces it
 // to the TaskDistributor. Called on the loop goroutine (evTaskWaiting / spawn).
 func (ls *loopState) addTask(
@@ -480,12 +506,14 @@ func (ls *loopState) adoptRestoredTasks(ctx context.Context, initial []*track) {
 			// distributor's inbox — announced when its instance first parked
 			// and never withdrawn, which is the point of a wait that outlives
 			// its instance's residency (ADR-020 §2.1.1). Re-announcing says
-			// nothing new, and the instances announce for themselves when
+			// nothing new, and the iterations announce for themselves when
 			// they re-park.
-			// no iteration data: a restored host re-announces nothing, and
-			// the eligibility on the entry is the one the announcement
-			// froze — its iterations resolve their own when they re-park.
-			ls.registerTask(ctx, id, t, step.node, ord, nil)
+			//
+			// The verdict is the one the ANNOUNCEMENT froze, taken from the
+			// checkpoint rather than resolved again: this runs outside the
+			// iteration's data, where a per-iteration performer expression
+			// has nothing to resolve against.
+			ls.adoptTask(ctx, id, t, step.node, ord)
 		}
 	}
 }

@@ -154,6 +154,45 @@ func completeAll(
 	return inst
 }
 
+// answerAll is completeAll for a run expected to FAULT part-way: it submits
+// every answer and lets a refusal pass, because after the fault the instance
+// is tearing down and a later completion is refused for a reason the test is
+// not asserting.
+func answerAll(
+	t *testing.T, s *snapshot.Snapshot, answers ...string,
+) *Instance {
+	t.Helper()
+
+	dist := &countingDist{}
+
+	inst, err := New(s, scope.EmptyDataPath, cpRuntime(t), laxEP(t), dist)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	require.Eventually(t, func() bool {
+		return len(dist.announced()) == len(answers)
+	}, 5*time.Second, 10*time.Millisecond)
+
+	ids := dist.announced()
+
+	for i, answer := range answers {
+		out := []data.Data{
+			data.MustParameter("result",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(answer)),
+					data.ReadyDataState)),
+		}
+
+		//nolint:errcheck // best-effort: see the doc comment
+		_ = inst.Complete(ctx, ids[i], stubActor{id: "alice"}, out)
+	}
+
+	return inst
+}
+
 // TestADeclaredMapKeysByTheCompletingInstancesExpression (SRD-090.D T-11,
 // ADR-025 §2.6.1): the key is evaluated in the instance's OWN frame, at its
 // completion, so it can use something that instance produced.
@@ -209,7 +248,9 @@ func TestADuplicateResultKeyOverwritesUnlessDeclaredAFault(t *testing.T) {
 			activities.WithResultMap("byAnswer", "result", ownerKey(t),
 				activities.ErrorOnKeyRewrite()))
 
-		inst := completeAll(t, s, "same", "same", "other")
+		// best-effort, for the reason answerAll documents: the collision
+		// faults the activity part-way through.
+		inst := answerAll(t, s, "same", "same", "other")
 
 		require.Eventually(t, func() bool { return inst.OpenIncidents() == 1 },
 			5*time.Second, 10*time.Millisecond,
@@ -371,7 +412,10 @@ func TestAnEmptyResultKeyRefuses(t *testing.T) {
 	s := resultProc(t, "rs-blank",
 		activities.WithResultMap("byAnswer", "result", blankKey(t, "no")))
 
-	inst := completeAll(t, s, "yes", "no", "maybe")
+	// answers are submitted best-effort: the one with no key faults the
+	// activity, and a completion racing that teardown is refused for a reason
+	// this test is not about.
+	inst := answerAll(t, s, "yes", "no", "maybe")
 
 	require.Eventually(t, func() bool { return inst.OpenIncidents() == 1 },
 		5*time.Second, 10*time.Millisecond,
@@ -532,4 +576,90 @@ func TestIterationIDIsStableAcrossARebuild(t *testing.T) {
 			"pass %d re-derived its own identity after the rebuild, with "+
 				"nothing stored for it", ord)
 	}
+}
+
+// TestAParallelArrayIndexesByOrdinalNotByArrivalOrder (SRD-090.D T-10): the
+// slots are the ITERATIONS' ordinals, whatever order they finished in.
+//
+// This is the property the array strategy exists for. A parallel fan-out's
+// completion order is whatever the people did; positional assembly is what
+// makes the result the same either way — so the test completes them out of
+// order deliberately, and a strategy that appended rather than placed would
+// fail it.
+func TestAParallelArrayIndexesByOrdinalNotByArrivalOrder(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	mi, err := activities.NewMultiInstance(
+		activities.WithInputCollection("items", "item"),
+		activities.WithOutputCollection("verdicts", "result"))
+	require.NoError(t, err)
+
+	s := miUserTaskSnapshotWith(t, "rs-order", mi)
+
+	dist := &countingDist{}
+
+	inst, err := New(s, scope.EmptyDataPath, cpRuntime(t), laxEP(t), dist)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	require.Eventually(t, func() bool { return len(dist.announced()) == 3 },
+		5*time.Second, 10*time.Millisecond)
+
+	ids := dist.announced()
+
+	answer := func(v string) []data.Data {
+		return []data.Data{
+			data.MustParameter("result",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(v)),
+					data.ReadyDataState)),
+		}
+	}
+
+	// LAST first, then first, then middle.
+	require.NoError(t, inst.Complete(ctx, ids[2], stubActor{id: "carol"},
+		answer("third")))
+	require.NoError(t, inst.Complete(ctx, ids[0], stubActor{id: "alice"},
+		answer("first")))
+	require.NoError(t, inst.Complete(ctx, ids[1], stubActor{id: "bob"},
+		answer("second")))
+
+	require.Eventually(t, func() bool { return inst.State() == Completed },
+		5*time.Second, 10*time.Millisecond)
+
+	d, err := inst.sc.plane.GetData(inst.sc.root, "verdicts")
+	require.NoError(t, err)
+
+	arr, ok := d.Value().(*values.Array[any])
+	require.True(t, ok)
+
+	require.Equal(t, []any{"first", "second", "third"}, arr.GetAll(ctx),
+		"slot i holds iteration i's result — the order they were OFFERED in, "+
+			"not the order they came back")
+}
+
+// TestIterationOwnersOnAParallelFanOut (SRD-090.D FR-4): the account is
+// complete when three people answer at once.
+//
+// The sequential case cannot show this: its passes complete one at a time, so
+// a register that lost an entry under concurrency would still look right.
+func TestIterationOwnersOnAParallelFanOut(t *testing.T) {
+	s := miUserTaskSnapshot(t, "rs-owners-par", false)
+
+	inst := completeAll(t, s, "yes", "no", "maybe")
+
+	require.Eventually(t, func() bool { return inst.State() == Completed },
+		5*time.Second, 10*time.Millisecond)
+
+	v, err := inst.RuntimeVar(IterationOwners)
+	require.NoError(t, err)
+
+	owners, ok := v.Value().Get(context.Background()).(map[string]map[string]string)
+	require.True(t, ok)
+
+	require.Len(t, owners["rs-owners-par-approve"], 3,
+		"three iterations answered concurrently, and all three are recorded")
 }

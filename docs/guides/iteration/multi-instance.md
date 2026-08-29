@@ -280,21 +280,25 @@ ut, _ := activities.NewUserTask("approve",
 
 ## A parallel fan-out over human work
 
-Three instances over a collection of three offer **three tasks at once** —
+Three iterations over a collection of three offer **three tasks at once** —
 each announced to the distributor with its own identity, each claimed and
 completed by itself. The activity leaves only when every one of them has
 actually been done: completing two of three does not finish it.
 
 Those identities are what somebody's inbox is holding, so they survive the
-instance being released and rebuilt. An approval can sit for days, the engine
-holding no goroutine for it, and the task still completes on the handle it was
-announced under.
+process instance being released and rebuilt — and so does **who may act on
+them**. Eligibility is resolved once, when the task is announced, in the data
+of the iteration being announced; that verdict is what the checkpoint carries
+and what every later check reads. Resolving it again on the way back would ask
+the question outside the iteration, where a performer expression naming "the
+reviewer this one is for" has nothing to read, and everyone holding the task
+would be locked out of it.
 
-Inside, the decorator holds the N waits and applies their completions **one at
+Inside, the **host** holds the N waits and applies their completions **one at
 a time, on its own goroutine**. The concurrency the construct exists for is
-external — N people acting at the same time — and the instances are state the
-decorator owns rather than parallel executions of the node they share. You do
-not see this from a model; it is why two approvers' outputs cannot cross.
+external — N people acting at the same time — and the iterations are state the
+host owns rather than parallel executions of the node they share. You do not
+see this from a model; it is why two approvers' outputs cannot cross.
 
 [ADR-025](../../design/ADR-025-activity-iteration-loop-and-multi-instance.md)
 §2.15/§2.15a and [ADR-020](../../design/ADR-020-human-interaction-execution-model.md)
