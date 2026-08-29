@@ -61,8 +61,8 @@ func TestOnlyAFanOutOverHumanWorkIsAdopted(t *testing.T) {
 		steps:    []*stepInfo{{node: recv}},
 		iterSeed: &checkpoint.IterationRecord{
 			N: 1,
-			Instances: []checkpoint.IterationInstance{
-				{Ordinal: 0, State: instanceRunning, TaskID: "not-a-task"},
+			Instances: []checkpoint.IterationEntry{
+				{Ordinal: 0, State: iterationRunning, TaskID: "not-a-task"},
 			},
 		},
 	}
@@ -103,8 +103,8 @@ func TestATrackWithNoCurrentStepIsSkipped(t *testing.T) {
 		steps:    []*stepInfo{nil},
 		iterSeed: &checkpoint.IterationRecord{
 			N: 1,
-			Instances: []checkpoint.IterationInstance{
-				{Ordinal: 0, State: instanceRunning, TaskID: "orphan"},
+			Instances: []checkpoint.IterationEntry{
+				{Ordinal: 0, State: iterationRunning, TaskID: "orphan"},
 			},
 		},
 	}

@@ -1,6 +1,6 @@
 // Command multi-instance-behavior demonstrates a BPMN Multi-Instance behavior
 // (§13.3.7, ADR-025 §2.8, SRD-056.B): an activity throws a boundary-catchable
-// event as its instances complete, so a model can react to progress.
+// event as its iterations complete, so a model can react to progress.
 package main
 
 import (

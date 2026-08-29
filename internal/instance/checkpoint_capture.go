@@ -544,8 +544,8 @@ func recordIteration(
 // all. Reading here also keeps the loop's mirror describing positions, which
 // is what it is for.
 func withTaskIDs(
-	ls *loopState, t *track, insts []checkpoint.IterationInstance,
-) []checkpoint.IterationInstance {
+	ls *loopState, t *track, insts []checkpoint.IterationEntry,
+) []checkpoint.IterationEntry {
 	if len(insts) == 0 {
 		return insts
 	}
@@ -558,7 +558,7 @@ func withTaskIDs(
 		return insts
 	}
 
-	out := make([]checkpoint.IterationInstance, len(insts))
+	out := make([]checkpoint.IterationEntry, len(insts))
 	copy(out, insts)
 
 	for i := range out {

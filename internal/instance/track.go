@@ -887,7 +887,7 @@ func (t *track) seededTaskIDs() map[int]string {
 	ids := map[int]string{}
 
 	for _, in := range t.iterSeed.Instances {
-		if in.TaskID == "" || in.State == instanceCompleted {
+		if in.TaskID == "" || in.State == iterationCompleted {
 			continue
 		}
 
@@ -914,7 +914,7 @@ func (t *track) seededEligibility(ord int) *checkpoint.TaskEligibility {
 	return nil
 }
 
-// instancesBusy reports whether an iterated activity on this track has an
+// iterationsBusy reports whether an iterated activity on this track has an
 // instance executing rather than parked — one being handed a completion, or
 // one already awake and running its node.
 //
@@ -922,7 +922,7 @@ func (t *track) seededEligibility(ord int) *checkpoint.TaskEligibility {
 // state cannot answer: it reads WaitForEvent because its OTHER instances are
 // parked, and its single `waiting` entry stands for all N, so neither can say
 // that one of them is working.
-func (t *track) instancesBusy() bool {
+func (t *track) iterationsBusy() bool {
 	h := t.exec.Load()
 	if h == nil {
 		return false
@@ -933,7 +933,7 @@ func (t *track) instancesBusy() bool {
 		return false
 	}
 
-	return d.busyInstances()
+	return d.busyIterations()
 }
 
 // holdCompletion keeps a completion for an iterated activity that is not
@@ -1596,7 +1596,7 @@ func (t *track) parkForDelivery(
 	}
 
 	// and the handover this pass was counted for is over — see
-	// iterDecorator.completeInstance. Balanced rather than reset: the count
+	// iterDecorator.completeIteration. Balanced rather than reset: the count
 	// belongs to the activity, not to this one wait.
 	if sub := t.ownerIfResolved(); sub != nil {
 		sub.delivered()
@@ -1984,7 +1984,7 @@ func (t *track) executeNode(
 func (t *track) executeNodeAs(
 	ctx context.Context,
 	step *stepInfo,
-	ai activityInstance,
+	ai activityIteration,
 ) ([]*flow.SequenceFlow, error) {
 	// THE UNIT PARKS ITS OWN PASS (SRD-090.B FR-2). Before this, parking was
 	// the run loop's pre-step gate — once per STEP, above executeStep — so
@@ -2088,9 +2088,9 @@ func (t *track) executeNodeAs(
 	return nexts, nil
 }
 
-// activityInstance is what distinguishes ONE instance of an activity from its
+// activityIteration is what distinguishes ONE instance of an activity from its
 // siblings when a decorator drives several of them (ADR-025 §2.13).
-type activityInstance struct {
+type activityIteration struct {
 	// exec is the EXECUTOR running this instance, when one owns it. It rides
 	// here so a park is recorded against the execution that is waiting rather
 	// than against the track its siblings share (ADR-025 §2.13: "a node
@@ -2223,7 +2223,7 @@ func (t *track) finalizeNodeExecution(
 	ctx context.Context,
 	step *stepInfo,
 	f *scope.Frame,
-	ai activityInstance,
+	ai activityIteration,
 ) error {
 	step.state = StepEnded
 

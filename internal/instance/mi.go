@@ -34,7 +34,7 @@ type multiInstance interface {
 	OneBehaviorEvent() flow.EventDefinition
 	ComplexBehavior() []*activities.ComplexBehaviorDefinition
 
-	// Result is the declared reading of the instances' results, nil for the
+	// Result is the declared reading of the iterations' results, nil for the
 	// last-wins default (ADR-025 §2.6.1).
 	Result() *activities.ResultStrategy
 }
@@ -58,11 +58,11 @@ func multiInstanceOf(node flow.Node) multiInstance {
 }
 
 // miState is a sequential Multi-Instance host's iteration state (SRD-055): the
-// instance count fixed at activation, the input collection (nil for a
+// iteration count fixed at activation, the input collection (nil for a
 // cardinality-driven Multi-Instance), the per-instance item name, the private
-// output staging collection assembled across instances (nil when the activity
+// output staging collection assembled across iterations (nil when the activity
 // assembles no output), the output ref/item names, and the running count of
-// completed instances. Owned by the host RUNNER goroutine (the decorator drives
+// completed iterations. Owned by the host RUNNER goroutine (the decorator drives
 // it off the loop, ADR-025 v.2 §2.12), with ONE deliberate cross-goroutine field:
 // `staging` receives a per-pass `SetAt` from the loop (captureSequentialOutput /
 // the beforeClose capture, which must read the child scope before it closes) —
@@ -87,7 +87,7 @@ type miBinding struct {
 
 // miIterator is the composite-iteration strategy for a Multi-Instance activity:
 // it re-opens the host's child scope a fixed number of times (§13.3.7). This
-// slice drives the sequential shape; the per-instance data mediator and the
+// slice drives the sequential shape; the per-iteration data mediator and the
 // completion condition land in later milestones.
 type miIterator struct {
 	mi multiInstance
@@ -105,9 +105,9 @@ func (it miIterator) kind() string {
 	return iterKindMIParallel
 }
 
-// captureSequentialOutput reads a draining sequential-MI instance's output item
+// captureSequentialOutput reads a draining sequential-MI iteration's output item
 // from its child scope into the private staging collection (SRD-055 FR-9), keyed
-// by the instance ordinal — the one loop-side step of the off-loop decorator, run
+// by the iteration ordinal — the one loop-side step of the off-loop decorator, run
 // from completeScope before the child scope closes (§4.2). A no-op for a non-MI
 // scope or a Multi-Instance that assembles no output. Runs on the loop goroutine.
 func (ls *loopState) captureSequentialOutput(
@@ -118,10 +118,10 @@ func (ls *loopState) captureSequentialOutput(
 		return nil
 	}
 
-	// a FANNED-OUT instance stages through its own cell (captureInstanceOutput
+	// a FANNED-OUT iteration stages through its own cell (captureIterationOutput
 	// → the decorator's positional slot), never through the host's pass
 	// counter: that counter stands still for the whole fan-out, so every
-	// instance would write slot 0 and the last one to drain would win
+	// iteration would write slot 0 and the last one to drain would win
 	// (SRD-090.A M3b).
 	if entry.instance {
 		return nil
@@ -177,7 +177,7 @@ func (t *track) evalBoolAtHost(
 
 // publishOutput commits the staged output collection at the host scope under the
 // loopDataOutputRef name — the single visibility barrier that makes the assembled
-// result readable only once every instance has contributed. A no-op when the
+// result readable only once every iteration has contributed. A no-op when the
 // activity assembles no output.
 func (it miIterator) publishOutput(host *track) error {
 	st := host.miState
@@ -189,8 +189,8 @@ func (it miIterator) publishOutput(host *track) error {
 		host.scopePath, st.outputRef, st.staging)
 }
 
-// resolveActivation computes the instance count once (§13.3.7): the integer
-// cardinalityCount reads an instance count from what an expression
+// resolveActivation computes the iteration count once (§13.3.7): the integer
+// cardinalityCount reads an iteration count from what an expression
 // engine actually returns. A bare `.(int)` assertion served while every
 // caller minted a goexpr — but the lite evaluator, the language every
 // IMPORTED expression carries, unifies all numerics to float64
@@ -265,14 +265,14 @@ func (it miIterator) resolveActivation(
 	return col.Count(), col, nil
 }
 
-// bindInstance publishes instance i's per-pass data at the host (enclosing)
+// bindIteration publishes iteration i's per-pass data at the host (enclosing)
 // scope, where the body resolves it by name via walk-up (SRD-055): the 0-based
 // loopCounter, the §13.3.7 runtime attributes, and — when the Multi-Instance is
-// collection-driven — the per-instance item split from element i. Binding at
+// collection-driven — the per-iteration item split from element i. Binding at
 // the enclosing scope is safe for a sequential Multi-Instance (one instance
 // runs at a time, each pass rebinds before opening) and mirrors the loopCounter
 // and the Event-Sub-Process payload precedent.
-func (it miIterator) bindInstance(
+func (it miIterator) bindIteration(
 	ctx context.Context, host *track, i int,
 ) error {
 	st := host.miState
@@ -287,7 +287,7 @@ func (it miIterator) bindInstance(
 	// the engine's own names for this execution, from the one builder every
 	// publication path shares (iterationvars.go). Bound here rather than
 	// frame-local because this path binds at the activity's own scope, where
-	// a composite instance's body reads them by walk-up.
+	// a composite iteration's body reads them by walk-up.
 	binds = append(binds, iterationBindings(
 		host.scopePath.String(), it.kind(), host.currentStep().node, i)...)
 
@@ -314,8 +314,8 @@ func (it miIterator) bindInstance(
 // (staging included) and applies a restored seed (SRD-082 FR-3): the
 // recorded N is the frozen activation count (§13.3.7) — the cardinality
 // expression must not re-resolve to a different bound after the restart
-// — and the recorded staging returns the completed instances' outputs. It
-// returns the frozen instance count and the first instance to launch.
+// — and the recorded staging returns the completed iterations' outputs. It
+// returns the frozen iteration count and the first iteration to launch.
 //
 // It serves both kinds a leaf decorator drives: a sequential iteration
 // resumes AT the returned ordinal, a parallel one reads it as the count
@@ -457,8 +457,8 @@ func seedStaging(
 	return nil
 }
 
-// fansOut reports whether a node runs its instances CONCURRENTLY — a
-// parallel Multi-Instance, the one shape whose instances get scopes of
+// fansOut reports whether a node runs its iterations CONCURRENTLY — a
+// parallel Multi-Instance, the one shape whose iterations get scopes of
 // their own (`sp-<id>-<ord>`) rather than one scope reused pass by pass.
 func fansOut(node flow.Node) bool {
 	mi := multiInstanceOf(node)
@@ -481,7 +481,7 @@ func drivesOwnIteration(node flow.Node) bool {
 }
 
 // bindMICounters publishes the §2.9 runtime attributes at the host scope off
-// the loop (SRD-056.A FR-12): the frozen instance count, and the running /
+// the loop (SRD-056.A FR-12): the frozen iteration count, and the running /
 // completed / terminated counts. A mutex-safe plane write, like the
 // sequential slice's off-loop binds.
 //
@@ -490,15 +490,15 @@ func drivesOwnIteration(node flow.Node) bool {
 // defines the attribute as what is CURRENTLY ACTIVE and caps it at 1 for a
 // sequential activity, while also requiring the three counts to sum to n —
 // clauses a sequential activity cannot satisfy at once, since its
-// not-yet-started instances belong to no category (ADR-025 §2.9).
+// not-yet-started iterations belong to no category (ADR-025 §2.9).
 //
-// A PARALLEL caller passes `n − completed − terminated`: every instance
+// A PARALLEL caller passes `n − completed − terminated`: every iteration
 // exists from activation, so what is outstanding is what is running and both
 // clauses hold. A SEQUENTIAL caller passes what is actually running — 1
-// during a pass (bindInstance), 0 between passes and at the end — which
+// during a pass (bindIteration), 0 between passes and at the end — which
 // honors the cap and makes the sum exact at every terminal state.
 //
-// Deriving it here published BOTH readings within one pass: bindInstance set
+// Deriving it here published BOTH readings within one pass: bindIteration set
 // 1, and this function then set n − completed, so a behavior event thrown
 // between the two carried whichever fired last.
 func (t *track) bindMICounters(n, active, completed, terminated int) error {

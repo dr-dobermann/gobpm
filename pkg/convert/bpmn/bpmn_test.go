@@ -1075,14 +1075,14 @@ func TestImportInvalidFixtures(t *testing.T) {
 // SRD-051 §FR-3 / SAD-001 §5.
 func TestSectionFor(t *testing.T) {
 	tests := map[string]string{
-		"sendTask":                         "§13.3.3",
-		"adHocSubProcess":                  "§13.3.4",
-		"intermediateCatchEvent":           "§13.5",
-		"boundaryEvent":                    "§13.5.5",
-		"messageEventDefinition":           "§13.5",
-		"itemDefinition":                   "§8.4.10",
-		"dataObject":                       "§10.4.1",
-		"dataInputAssociation":             "§10.4.1",
+		"sendTask":               "§13.3.3",
+		"adHocSubProcess":        "§13.3.4",
+		"intermediateCatchEvent": "§13.5",
+		"boundaryEvent":          "§13.5.5",
+		"messageEventDefinition": "§13.5",
+		"itemDefinition":         "§8.4.10",
+		"dataObject":             "§10.4.1",
+		"dataInputAssociation":   "§10.4.1",
 		// §13.3.6/§13.3.7 since SRD-089.H FR-6: the §13.3.5 both rows
 		// carried was supported by no extract line, while the extract's
 		// own heading pins these two (semantics/multi-instance.md:3).

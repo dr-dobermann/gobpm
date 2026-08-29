@@ -155,8 +155,8 @@ func seededSet() *checkpoint.IterationRecord {
 	return &checkpoint.IterationRecord{
 		Kind: iterKindMIParallel,
 		N:    3,
-		Instances: []checkpoint.IterationInstance{
-			{Ordinal: 0, State: instanceCompleted},
+		Instances: []checkpoint.IterationEntry{
+			{Ordinal: 0, State: iterationCompleted},
 		},
 	}
 }

@@ -264,11 +264,29 @@ so a fan-out over three reviewers names three different people. It is frozen on
 the registry entry and only *checked* afterwards; the host is what routes an
 action to the iteration it belongs to (ADR-020 §2.7, ADR-025 §2.15).
 
-**Where the tree still says otherwise.** Identifiers predating this section
-retain the older spelling in places (`activityInstance`, `instanceOutputs`).
-They are being renamed as the code around them is touched rather than in one
-sweep, because a rename that large is a poor thing to review alongside
-behaviour. New code uses the vocabulary above.
+**The tree says this too.** The identifiers that predated this section were
+renamed to match it — `activityIteration`, `iterationOutputs`,
+`iterationState`, `parkIterations` and their neighbours — along with the
+comments around them, the guides, the examples and `CLAUDE.md`. The rename was
+its own change-set, reviewed on its own, because a rename that large is a poor
+thing to read alongside behaviour.
+
+Three families keep the older spelling **on purpose**, and renaming them would
+be a mistake rather than a cleanup:
+
+- **BPMN's own taxonomy.** The construct is a *Multi-Instance*; the attributes
+  are `numberOfInstances`, `numberOfActiveInstances`,
+  `numberOfCompletedInstances` and `numberOfTerminatedInstances`; and Table
+  10.30 splits an *inner* instance from an *outer* one. Where the engine
+  departs from the standard it says so explicitly (ADR-025 §2.9a) rather than
+  departing quietly by renaming.
+- **The process instance's own machinery.** Its loop and goroutine, its
+  residency — release, dehydration, rehydration (SRD-071) — its checkpoint,
+  and a Call Activity's **child instance**, which is a process instance
+  however many iterations sit above it.
+- **Accepted one-shot documents.** An Accepted SRD or FIX is a snapshot of what
+  was decided at that moment and is never retro-edited, whatever vocabulary it
+  used at the time.
 
 ## 11. Extension Model (overview)
 
@@ -522,8 +540,11 @@ instance-termination story in the runtime ([ADR-001 v.6](ADR-001-execution-model
 | **Engine** | The top-level façade exposed by the core library. Holds extension implementations and the Process registry. |
 | **Process** | A BPMN 2.0 Process definition (model). |
 | **Snapshot** | An immutable, validated representation of a Process. The Engine accepts a Snapshot, not a mutable model. |
-| **Process Instance** | A running execution of a Process. Owned by one Orchestrator goroutine. |
+| **Process Instance** | A running execution of a Process. Owned by one Orchestrator goroutine. **The only thing the bare word *instance* names** — see §10.1. |
 | **Orchestrator** | The goroutine owning a single Process Instance's state. Receives token events, applies state transitions. |
+| **Node executor** | The runtime object that runs one node once and owns that node's wait. A *node unit* where it is decorated. Not "an instance of a node" (§10.1, ADR-025 §2.13). |
+| **Iteration** | One execution of an iterating activity — one pass of a Standard Loop, one member of a Multi-Instance. Owns its frame, its ordinal and its parked-work identity (§10.1). |
+| **Host** | The object that owns an activity's iterations: it holds their waits, applies their completions serially, and answers for them to everything outside the node. Also called the *decorator* (§10.1, ADR-025 §2.13b.1). |
 | **Token** | The BPMN-theoretical concept of "execution presence" at a flow node. In goBpm it is a *projection* of a track's current step (computed on demand), not a stored object; the **track** is the goroutine that executes the node's behavior and reports back to the instance (per ADR-001 v.3). |
 | **Rehydration** | Reconstruction of an in-memory Process Instance from its persisted state, when a long-wait trigger fires. |
 | **Extension interface** | A Go interface defining an extension point (Repository, Logger, Tracer, ...). Default impl ships in core; production impls in adapter modules. |

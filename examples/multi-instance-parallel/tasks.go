@@ -12,7 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 )
 
-// scoreTask reads the per-instance `reviewer` name and its 0-based loopCounter,
+// scoreTask reads the per-iteration `reviewer` name and its 0-based loopCounter,
 // prints the reviewer's score, and returns `score` — the output item the panel
 // assembles into the `scores` collection.
 func scoreTask() (*activities.ServiceTask, error) {

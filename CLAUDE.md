@@ -306,6 +306,35 @@ GoBPM is a BPMN v2 compliant Business Process Management engine with an event-dr
 2. Create unit tests with mocks
 3. Add integration tests in examples/
 
+## Vocabulary — "instance" means the process instance
+
+Fixed in **SAD-001 §10.1**, and binding on code and prose alike, because three
+different runtime objects were all called an *instance* and the overload cost
+real work — a requirement could be written about one and implemented for
+another with both readings looking correct.
+
+| Term | What it is |
+|---|---|
+| **Instance** | A **process instance**, and nothing else. |
+| **Node executor** (*node unit* where decorated) | Runs ONE node once and owns that node's wait. |
+| **Iteration** | One execution of an iterating activity — one pass of a Standard Loop, one member of a Multi-Instance. Owns its frame, ordinal and parked-work identity. |
+| **Host** (the *decorator*) | Owns an activity's iterations: holds their waits, applies their completions serially, answers for them outward. |
+
+Applies to identifiers as much as to comments: name a per-iteration thing
+`iterationX`, never `instanceX`. Three things keep the older spelling on
+purpose, and renaming them is a mistake rather than a cleanup:
+
+- **BPMN's own taxonomy** — the construct is a *Multi-Instance*, the attributes
+  are `numberOfInstances` and its three siblings, and Table 10.30 splits an
+  *inner* from an *outer* instance. Quote the standard in the standard's words;
+  where the engine departs from it, say so explicitly (ADR-025 §2.9a).
+- **The process instance's own machinery** — its loop, its goroutine, its
+  residency (release / dehydration / rehydration, SRD-071), its checkpoint, and
+  a Call Activity's **child instance**, which is a process instance however many
+  iterations sit above it.
+- **Accepted one-shot documents** — an Accepted SRD or FIX is a snapshot of what
+  was decided then and is never retro-edited, whatever vocabulary it used.
+
 ## Design docs — BPMN standard grounding (ADR/SAD)
 
 gobpm's governing external standard is **BPMN 2.0**. Per the `/sdd-fix` and

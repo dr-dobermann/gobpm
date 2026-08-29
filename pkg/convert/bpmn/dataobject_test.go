@@ -456,7 +456,7 @@ func TestForeignChildOfADataObject(t *testing.T) {
 // inside a child the body reader handed off.
 func TestTruncatedDataObject(t *testing.T) {
 	tests := map[string]string{
-		"inside the body":  `    <bpmn:dataObject id="do1" name="order">`,
+		"inside the body": `    <bpmn:dataObject id="do1" name="order">`,
 		"inside its child": `    <bpmn:dataObject id="do1" name="order">
       <bpmn:documentation>half a`,
 	}

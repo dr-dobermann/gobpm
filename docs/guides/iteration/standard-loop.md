@@ -142,7 +142,7 @@ cd examples/standard-loop && go run .
 ```
 
 The task runs three times (`loopCounter` 0, 1, 2); after pass 2 the counter is 3,
-`loopCounter < 3` goes false, and the instance completes:
+`loopCounter < 3` goes false, and the process completes:
 
 ```
     iteration: loopCounter=0

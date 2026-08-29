@@ -279,7 +279,7 @@ func ledgerEntryFromRecord(
 	return entry, nil
 }
 
-// legacyLeafInstances names the track records a SCHEMA-5 document carries for
+// legacyLeafIterations names the track records a SCHEMA-5 document carries for
 // the instances of a parallel LEAF Multi-Instance, which must not be rebuilt
 // as tracks (SRD-090.A FR-7).
 //
@@ -301,7 +301,7 @@ func ledgerEntryFromRecord(
 // carries its ordinal as its LoopCounter, so the second return maps a group's
 // host to the ordinals still running — which adoptRestoredGroups needs to
 // resume exactly those and no others.
-func legacyLeafInstances(
+func legacyLeafIterations(
 	inst *Instance, doc *checkpoint.Document,
 ) (map[string]bool, map[string][]int) {
 	if len(doc.MIGroups) == 0 {
@@ -370,7 +370,7 @@ func (inst *Instance) restoreTracks(
 	// simply re-arms fresh, which is what that document was written expecting.
 	inst.seedBoundaryPlans(doc.Boundaries)
 
-	legacy, ordinals := legacyLeafInstances(inst, doc)
+	legacy, ordinals := legacyLeafIterations(inst, doc)
 	inst.restoredLeafOrdinals = ordinals
 
 	for i := range doc.Tracks {

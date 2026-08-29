@@ -570,7 +570,7 @@ func (ls *loopState) cancelHostScope(host *track) {
 	// what makes this the same teardown a fired completionCondition asks for
 	// (SRD-090.A M3b); the two used to be separate mechanisms over one
 	// question.
-	if open := ls.instanceScopesOf(host); len(open) > 0 {
+	if open := ls.iterationScopesOf(host); len(open) > 0 {
 		for _, p := range open {
 			ls.cancelScope(p, observability.PhaseCanceled)
 		}

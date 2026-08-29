@@ -8,8 +8,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
-// buildPanel builds the parallel Multi-Instance Sub-Process: one instance per
-// reviewer, all run concurrently in distinct scopes. Each instance sees its
+// buildPanel builds the parallel Multi-Instance Sub-Process: one iteration per
+// reviewer, all run concurrently in distinct scopes. Each iteration sees its
 // reviewer name and assembles its `score` into the `scores` collection.
 //
 // A WithCompletionCondition(...) quorum could stop the panel early — canceling

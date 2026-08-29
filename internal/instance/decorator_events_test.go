@@ -59,10 +59,10 @@ func TestTheDecoratorsIdentityIsTheActivitys(t *testing.T) {
 		"two activities of one instance are distinct subscribers")
 }
 
-// TestTheSubscriptionLivesWhileAnyInstanceAwaits (SRD-090.B FR-2): the
+// TestTheSubscriptionLivesWhileAnyIterationAwaits (SRD-090.B FR-2): the
 // decorator registers when its FIRST instance waits and unregisters when the
 // LAST stops — not per pass, and not for the activity's whole execution.
-func TestTheSubscriptionLivesWhileAnyInstanceAwaits(t *testing.T) {
+func TestTheSubscriptionLivesWhileAnyIterationAwaits(t *testing.T) {
 	es := newEventSubs("inst", "node")
 	def := sigDefN(t, "sig")
 
@@ -196,7 +196,7 @@ func TestTheExecutorIsResolvedOncePerStep(t *testing.T) {
 		"a token that moved gets its NEW node's executor, never the old one")
 }
 
-// TestTheHoldOutlivesEveryInstanceButTheLast (SRD-090.B FR-2, M4): the engine
+// TestTheHoldOutlivesEveryIterationButTheLast (SRD-090.B FR-2, M4): the engine
 // hold belongs to the ACTIVITY, so one instance finishing must not withdraw
 // what its siblings are waiting on.
 //
@@ -210,7 +210,7 @@ func TestTheExecutorIsResolvedOncePerStep(t *testing.T) {
 //
 // anyWaiting is what the release consults, so this pins the predicate rather
 // than the plumbing that reads it.
-func TestTheHoldOutlivesEveryInstanceButTheLast(t *testing.T) {
+func TestTheHoldOutlivesEveryIterationButTheLast(t *testing.T) {
 	es := newEventSubs("inst", "node")
 	def := sigDefN(t, "sig")
 
@@ -389,7 +389,7 @@ func TestOneOccurrenceReachesOneInstance(t *testing.T) {
 
 	proc := &fakeIterProc{ords: []int{1, 2, 4}, waiting: true}
 
-	ls.dispatchToInstances(tr, trackEvent{
+	ls.dispatchToIterations(tr, trackEvent{
 		kind: evDeliver, track: tr, eDef: def, iterProc: proc,
 	})
 
@@ -409,7 +409,7 @@ func TestTheTrackLeavesTheParkedSetWithItsLastWaiter(t *testing.T) {
 
 	proc := &fakeIterProc{ords: []int{0}, waiting: false}
 
-	ls.dispatchToInstances(tr, trackEvent{
+	ls.dispatchToIterations(tr, trackEvent{
 		kind: evDeliver, track: tr, eDef: def, iterProc: proc,
 	})
 
@@ -425,7 +425,7 @@ func TestADeliveryNobodyAwaitsIsDropped(t *testing.T) {
 
 	proc := &fakeIterProc{waiting: false}
 
-	ls.dispatchToInstances(tr, trackEvent{
+	ls.dispatchToIterations(tr, trackEvent{
 		kind: evDeliver, track: tr, eDef: sigDefN(t, "sig"), iterProc: proc,
 	})
 

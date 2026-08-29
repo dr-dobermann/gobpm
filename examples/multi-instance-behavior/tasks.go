@@ -12,7 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 )
 
-// voteTask reads the per-instance `reviewer` name and prints the vote — the work
+// voteTask reads the per-iteration `reviewer` name and prints the vote — the work
 // each Multi-Instance body instance performs before it completes.
 func voteTask(log *runLog) (*activities.ServiceTask, error) {
 	op, err := gooper.New("vote",

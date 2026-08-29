@@ -225,14 +225,14 @@ func TestARestoredFanOutIsCompletedOnTheIdentitiesItAnnounced(t *testing.T) {
 		"with every instance completed by hand, the activity exits once")
 }
 
-// TestCancellingAnInstanceEndsAnOutstandingFanOut: the decorator is parked
+// TestCancellingAnIterationEndsAnOutstandingFanOut: the decorator is parked
 // waiting for approvals nobody has given, and the instance is torn down — it
 // must unwind rather than hold its goroutine, and the work it was offering
 // must stop being offered.
 //
 // A task nobody will accept has to be withdrawn, or a person acts on work the
 // engine has already discarded (ADR-025 §2.15a).
-func TestCancellingAnInstanceEndsAnOutstandingFanOut(t *testing.T) {
+func TestCancellingAnIterationEndsAnOutstandingFanOut(t *testing.T) {
 	s := fanOutSnapshot(t, "cr-fan-cancel")
 
 	dist := &countingDist{}

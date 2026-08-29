@@ -69,13 +69,13 @@ func buildProcess() (*process.Process, error) {
 	return p, nil
 }
 
-// buildApproval is the fan-out: one instance per reviewer, all offered at
+// buildApproval is the fan-out: one iteration per reviewer, all offered at
 // once, each completed on its own.
 //
 // The RESULT MAP is what makes the outcome readable. Without a declared
 // strategy the default is last-wins, so which reviewer's decision survived
 // would depend on who happened to answer last. Keyed by reviewer, every
-// answer is kept — and the key is evaluated in the completing instance's own
+// answer is kept — and the key is evaluated in the completing iteration's own
 // frame, so it can name the person whose approval it was.
 func buildApproval() (*activities.UserTask, error) {
 	byReviewer := goexpr.Must(nil,
@@ -96,8 +96,8 @@ func buildApproval() (*activities.UserTask, error) {
 		return nil, err
 	}
 
-	// EACH INSTANCE RESOLVES ITS OWN ASSIGNEE, in its own data context: the
-	// task belongs to the reviewer that instance was seeded with, and nobody
+	// EACH ITERATION RESOLVES ITS OWN ASSIGNEE, in its own data context: the
+	// task belongs to the reviewer that iteration was seeded with, and nobody
 	// else may complete it. The same expression, three answers — which is
 	// what a fan-out over human work is for.
 	return activities.NewUserTask("approve",
@@ -107,7 +107,7 @@ func buildApproval() (*activities.UserTask, error) {
 		foundation.WithID("approve"))
 }
 
-// assigneeIsTheReviewer reads the element this instance was given.
+// assigneeIsTheReviewer reads the element this iteration was given.
 func assigneeIsTheReviewer() data.FormalExpression {
 	return goexpr.Must(nil,
 		data.MustItemDefinition(values.NewVariable("")),

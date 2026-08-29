@@ -15,9 +15,9 @@ import (
 // ask about an activity that has already finished.
 //
 // `RUNTIME/ITERATIONS` says what the iteration DID — the shape, the total, and
-// how the instances ended. `RUNTIME/ITERATION_OWNERS` says WHO did which one,
+// how the iterations ended. `RUNTIME/ITERATION_OWNERS` says WHO did which one,
 // keyed by ordinal. `RUNTIME/COMPLETED_BY` cannot answer the second: it keys by
-// node, so an iterated activity has a single entry however many instances ran.
+// node, so an iterated activity has a single entry however many iterations ran.
 //
 // Both are keyed by activity id, which is what keeps the runtime name set
 // closed however many activities iterate.

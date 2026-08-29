@@ -57,9 +57,19 @@ func TestRebuildForOpReportsAFailedClaim(t *testing.T) {
 	require.Error(t, err, "an unclaimable latch is reported, not ignored")
 }
 
-// TestRebuildForOpReportsAFailedRebuild: the instance is live, so there is no
-// checkpoint to rebuild it from. The failure must name the operation and the
-// instance — an operator whose request never reached a loop has to be told.
+// TestRebuildForOpReportsAFailedRebuild: there is no checkpoint to rebuild the
+// instance from. The failure must name the operation and the instance — an
+// operator whose request never reached a loop has to be told.
+//
+// THE ABSENT RECORD IS PINNED, not assumed. `start → end` completes in
+// microseconds and writes its record, and once that record exists the rebuild
+// SUCCEEDS — so a test that merely starts the instance and asks immediately is
+// racing its own fixture, and passes only while the request wins. It lost on a
+// slower CI runner, where the record had already landed (2026-08-29,
+// `docs/iteration-vocabulary`; the same commit passed on a re-run).
+//
+// Deleting the record states the premise as a fact instead: whatever the
+// scheduler does, there is nothing to rebuild from.
 func TestRebuildForOpReportsAFailedRebuild(t *testing.T) {
 	th, stop := armedWakeEngine(t, "engine-op-rebuild-fail")
 	defer stop()
@@ -73,6 +83,18 @@ func TestRebuildForOpReportsAFailedRebuild(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+
+	// wait for the record to exist, then take it away — waiting first so the
+	// delete cannot land BEFORE the instance writes, which would leave the
+	// same race running in the other direction.
+	require.Eventually(t, func() bool {
+		_, ok, lErr := th.cfg.Repository().Load(ctx, h.ID())
+
+		return lErr == nil && ok
+	}, 5*time.Second, 5*time.Millisecond,
+		"the instance records itself; the test removes what it records")
+
+	require.NoError(t, th.cfg.Repository().Delete(ctx, h.ID()))
 
 	resp := make(chan error, 1)
 

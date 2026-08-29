@@ -117,20 +117,20 @@ func TestParallelLeafUndeclaredWriteReachesEnclosingScope(t *testing.T) {
 func TestRestoredStatesSkipsCompletedOrdinals(t *testing.T) {
 	seed := &checkpoint.IterationRecord{
 		Kind: "mi_parallel", N: 3, Completed: 1,
-		Instances: []checkpoint.IterationInstance{
-			{Ordinal: 0, State: instanceRunning},
-			{Ordinal: 1, State: instanceCompleted},
-			{Ordinal: 2, State: instanceRunning},
+		Instances: []checkpoint.IterationEntry{
+			{Ordinal: 0, State: iterationRunning},
+			{Ordinal: 1, State: iterationCompleted},
+			{Ordinal: 2, State: iterationRunning},
 		},
 	}
 
 	require.Equal(t,
-		[]string{instanceRunning, instanceCompleted, instanceRunning},
+		[]string{iterationRunning, iterationCompleted, iterationRunning},
 		restoredStates(seed, 3),
 		"ordinal 1 finished before the capture and must not run again")
 
 	require.Equal(t,
-		[]string{instanceRunning, instanceRunning},
+		[]string{iterationRunning, iterationRunning},
 		restoredStates(nil, 2),
 		"a fresh activation runs every instance")
 }
@@ -142,15 +142,15 @@ func TestRestoredStatesSkipsCompletedOrdinals(t *testing.T) {
 func TestRestoredStatesIgnoresOutOfRangeOrdinal(t *testing.T) {
 	seed := &checkpoint.IterationRecord{
 		Kind: "mi_parallel", N: 2,
-		Instances: []checkpoint.IterationInstance{
-			{Ordinal: -1, State: instanceCompleted},
-			{Ordinal: 5, State: instanceCompleted},
-			{Ordinal: 1, State: instanceCompleted},
+		Instances: []checkpoint.IterationEntry{
+			{Ordinal: -1, State: iterationCompleted},
+			{Ordinal: 5, State: iterationCompleted},
+			{Ordinal: 1, State: iterationCompleted},
 		},
 	}
 
 	require.Equal(t,
-		[]string{instanceRunning, instanceCompleted},
+		[]string{iterationRunning, iterationCompleted},
 		restoredStates(seed, 2))
 }
 
@@ -183,7 +183,7 @@ func TestPresizedStagingKeepsRecordedSlots(t *testing.T) {
 func TestInstanceOutputsStageByOrdinal(t *testing.T) {
 	ctx := context.Background()
 
-	outs := newInstanceOutputs(3)
+	outs := newIterationOutputs(3)
 	outs.values[2], outs.filled[2] = "R:c", true
 	outs.values[0], outs.filled[0] = "R:a", true
 

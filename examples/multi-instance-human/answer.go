@@ -11,7 +11,7 @@ import (
 // answer does what a person would: opens the task, claims it so nobody else
 // can, and submits a decision.
 //
-// It acts as the reviewer the announcement named — the assignee this instance
+// It acts as the reviewer the announcement named — the assignee this iteration
 // resolved for itself. The Claim is not ceremony: completion is strict, so
 // only the holder may complete, and a second reader racing for the same task
 // is refused up front rather than at submit time.

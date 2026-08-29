@@ -19,7 +19,7 @@ func checkRun(
 	return checkDecisions(ctx, r)
 }
 
-// checkDistinctTasks: three instances announce THREE tasks, not one between
+// checkDistinctTasks: three iterations announce THREE tasks, not one between
 // them. That is the property the construct was refused over — with a single
 // shared identity only one was addressable, and the rest completed without
 // anyone doing them.

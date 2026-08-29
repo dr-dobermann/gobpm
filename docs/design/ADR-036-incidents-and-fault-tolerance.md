@@ -170,35 +170,35 @@ ledger's.
 that inner instance alone**. v.1 said the per-instance *scope* identified it;
 since [ADR-025 v.3](ADR-025-activity-iteration-loop-and-multi-instance.md)
 §2.2 a leaf activity's iterations have no scope — a frame each, a scope only
-where the activity is itself a scope host — so the identity is the instance
+where the activity is itself a scope host — so the identity is the iteration
 **ordinal**, which every iterated activity has, scope or not. Sibling
-instances run to their own completion; the iterated activity cannot complete
+iterations run to their own completion; the iterated activity cannot complete
 while the incident is open, exactly as §2.2's instance-level rule one level
 down, and here for a sharper reason: assembly is positional
 (ADR-025 v.3 §2.6), so completing around an unresolved ordinal would publish
 a collection with a hole in it and call that success. **Retry re-runs only the
-failed instance**: it is re-created at its ordinal, seeing exactly the
+failed iteration**: it is re-created at its ordinal, seeing exactly the
 iteration identity and data slice the failed attempt saw — the split item is
 the collection element at that ordinal and the counter is the ordinal, both
 recomputed rather than persisted (ADR-025 v.3 §2.4 fixes cardinality once) —
-and the activity's completion accounting, already waiting on that instance,
+and the activity's completion accounting, already waiting on that iteration,
 is untouched. Completed inner instances are **never re-run**: they are completed
 work in the ledger, and their effects exist; a model that wants all-or-nothing
 semantics across the set says so through an error boundary plus compensation,
 which remains the modeled, business-level path. One asymmetry is worth
-stating: in a **sequential** MI, instance *k*'s incident blocks *k+1…N* by
+stating: in a **sequential** MI, iteration *k*'s incident blocks *k+1…N* by
 definition, so the remainder of the sequence waits behind the retry. There is
 no set-wide retry and no set-wide fault.
 
-### 2.4a The iteration section — what a retry needs to target one instance (v.2)
+### 2.4a The iteration section — what a retry needs to target one iteration (v.2)
 
-An incident raised on one instance of an iterated activity carries an
+An incident raised on one iteration of an iterated activity carries an
 **iteration section**, the same shape ADR-013 v.3 §2.11 puts on the token: the
-kind, the count fixed at activation, how many instances have completed, and
+kind, the count fixed at activation, how many iterations have completed, and
 which **ordinal** failed.
 
 A bare ordinal would name the retry unit without supplying enough to act on
-it. §2.4 promises that completed instances are never re-run, and the party
+it. §2.4 promises that completed iterations are never re-run, and the party
 performing a retry has to know *which* those are — the completed count is that
 knowledge, carried by the record rather than re-derived from state the incident
 does not own. This matters most where it is least visible: after a restart,
@@ -206,19 +206,19 @@ when the retry is performed by an engine that never saw the failure.
 
 Using the **same shape** as the token view is deliberate. Iteration state has
 one vocabulary whether it is being observed, recorded durably, or attached to a
-failure, and the **ordinal is the join key** across all three: "instance 3 of 5
-is waiting", "instance 3 failed", "retry instance 3" name the same 3. Two
+failure, and the **ordinal is the join key** across all three: "iteration 3 of 5
+is waiting", "iteration 3 failed", "retry iteration 3" name the same 3. Two
 descriptions of one concept drift, and an operator who reads the token view and
 then queries incidents would otherwise have to translate between them.
 
-**Two failures belong to the activity rather than to an instance**, and carry
-no ordinal: one raised before any instance starts — resolving the cardinality
+**Two failures belong to the activity rather than to an iteration**, and carry
+no ordinal: one raised before any iteration starts — resolving the cardinality
 or the input collection — and one raised in the activity's own work after
-instances have begun, such as evaluating the completion condition or assembling
+iterations have begun, such as evaluating the completion condition or assembling
 output. The second still carries the iteration section, because its retry must
-resume against the recorded instances rather than restart the activity;
+resume against the recorded iterations rather than restart the activity;
 without that, a failing completion-condition expression would re-execute every
-completed instance, which is precisely what §2.4 forbids.
+completed iteration, which is precisely what §2.4 forbids.
 
 ### 2.5 Persistence — the incident rides the checkpoint
 

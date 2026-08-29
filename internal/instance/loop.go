@@ -849,7 +849,7 @@ func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 	// track they share (SRD-090.B FR-3). The decorator says which are
 	// waiting; the rule for how many receive it is the trigger's own.
 	if ev.iterProc != nil {
-		ls.dispatchToInstances(tr, ev)
+		ls.dispatchToIterations(tr, ev)
 
 		return
 	}
@@ -858,7 +858,7 @@ func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 	tr.evtCh <- ev.eDef
 }
 
-// dispatchToInstances routes one occurrence to the instances of an iterated
+// dispatchToIterations routes one occurrence to the instances of an iterated
 // activity waiting for it (SRD-090.B FR-3, ADR-006 §2.9.2).
 //
 // The multiplicity is the KIND's, stated as contract rather than left to
@@ -870,7 +870,7 @@ func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 // Ordinal order is normative where the instances are otherwise
 // indistinguishable: nothing else can decide which receives an envelope, and
 // two runs of one model must not disagree about it.
-func (ls *loopState) dispatchToInstances(tr *track, ev trackEvent) {
+func (ls *loopState) dispatchToIterations(tr *track, ev trackEvent) {
 	ords := ev.iterProc.waitingOn(ev.eDef.ID())
 	if len(ords) == 0 {
 		return // nobody waits on it any more — drop, as a losing arm does
@@ -1511,9 +1511,9 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 			// It cannot leave `waiting` to signal this the way a lone
 			// dispatch does: that entry is what later deliveries are gated
 			// on, and dropping it on the first would drop every one after
-			// (dispatchToInstances states the same rule from the other side).
+			// (dispatchToIterations states the same rule from the other side).
 
-			if t.instancesBusy() {
+			if t.iterationsBusy() {
 				return nil
 			}
 

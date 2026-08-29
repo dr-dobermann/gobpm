@@ -38,12 +38,12 @@ func instancePath(
 	return p
 }
 
-// TestRestoredScopeHostReadsAnInstanceOrdinal pins what makes a fanned-out
+// TestRestoredScopeHostReadsAnIterationOrdinal pins what makes a fanned-out
 // composite restorable WITHOUT an open-set record (SRD-090.A M3b): the
 // instance's ordinal is in its own scope segment, so the host derivation
 // that already finds a serial pass's scope finds an instance's too, and
 // says which one it is.
-func TestRestoredScopeHostReadsAnInstanceOrdinal(t *testing.T) {
+func TestRestoredScopeHostReadsAnIterationOrdinal(t *testing.T) {
 	_, _, node, host := fanOutFixture(t)
 
 	path := instancePath(t, host, scopeSegment(node)+"-2")
@@ -113,11 +113,11 @@ func TestRestoredScopeHostPrefersAnOwnScope(t *testing.T) {
 	}
 }
 
-// TestInstanceOrdinalOfRejects: everything that merely LOOKS like an
+// TestIterationOrdinalOfRejects: everything that merely LOOKS like an
 // instance segment is refused. The suffix has to read back as exactly the
 // number it claims, or a scope belonging to something else would be adopted
 // as an instance of this host — and then torn down with its fan-out.
-func TestInstanceOrdinalOfRejects(t *testing.T) {
+func TestIterationOrdinalOfRejects(t *testing.T) {
 	_, _, node, host := fanOutFixture(t)
 
 	seg := scopeSegment(node)
@@ -134,14 +134,14 @@ func TestInstanceOrdinalOfRejects(t *testing.T) {
 		"an instance's own second": seg + "-1/" + seg + "-2",
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, ok := instanceOrdinalOf(host, seg, instancePath(t, host, tail))
+			_, ok := iterationOrdinalOf(host, seg, instancePath(t, host, tail))
 			require.False(t, ok)
 		})
 	}
 
 	// a host whose own path will not take a segment answers no rather
 	// than deriving an ordinal from a path it cannot have produced.
-	_, ok := instanceOrdinalOf(
+	_, ok := iterationOrdinalOf(
 		&track{scopePath: scope.EmptyDataPath}, seg, instancePath(t, host, seg+"-1"))
 	require.False(t, ok)
 }
@@ -208,12 +208,12 @@ func TestAdoptRestoredScopesRebuildsAFanOut(t *testing.T) {
 	require.Contains(t, ls.waiting, host.ID())
 }
 
-// TestAdoptRestoredScopesRefusesACompletedInstanceStillOpen: a document
+// TestAdoptRestoredScopesRefusesACompletedIterationStillOpen: a document
 // whose scope table and executor set describe different moments is refused
 // rather than half-restored. Nothing would ever re-attach to that scope —
 // the decorator does not relaunch a completed ordinal — so it would stay
 // open for the life of the instance.
-func TestAdoptRestoredScopesRefusesACompletedInstanceStillOpen(t *testing.T) {
+func TestAdoptRestoredScopesRefusesACompletedIterationStillOpen(t *testing.T) {
 	inst, ls, node, host := fanOutFixture(t)
 
 	p := instancePath(t, host, scopeSegment(node)+"-1")
@@ -221,9 +221,9 @@ func TestAdoptRestoredScopesRefusesACompletedInstanceStillOpen(t *testing.T) {
 
 	host.iterSeed = &checkpoint.IterationRecord{
 		Kind: iterKindMIParallel, N: 2,
-		Instances: []checkpoint.IterationInstance{
-			{Ordinal: 0, State: instanceRunning},
-			{Ordinal: 1, State: instanceCompleted},
+		Instances: []checkpoint.IterationEntry{
+			{Ordinal: 0, State: iterationRunning},
+			{Ordinal: 1, State: iterationCompleted},
 		},
 	}
 
@@ -231,34 +231,34 @@ func TestAdoptRestoredScopesRefusesACompletedInstanceStillOpen(t *testing.T) {
 	require.ErrorContains(t, err, "scope table and executor set disagree")
 }
 
-// TestInstanceRecordedDone reads the restored set the refusal above rests
+// TestIterationRecordedDone reads the restored set the refusal above rests
 // on: only an ordinal the set NAMES as completed counts, and a document
 // carrying no set at all (a pre-Schema-6 capture, whose fan-out rides the
 // group record) answers no rather than guessing.
-func TestInstanceRecordedDone(t *testing.T) {
+func TestIterationRecordedDone(t *testing.T) {
 	_, _, _, host := fanOutFixture(t)
 
-	require.False(t, instanceRecordedDone(host, 0), "no recorded set")
+	require.False(t, iterationRecordedDone(host, 0), "no recorded set")
 
 	host.iterSeed = &checkpoint.IterationRecord{
-		Instances: []checkpoint.IterationInstance{
-			{Ordinal: 1, State: instanceCompleted},
-			{Ordinal: 2, State: instanceRunning},
+		Instances: []checkpoint.IterationEntry{
+			{Ordinal: 1, State: iterationCompleted},
+			{Ordinal: 2, State: iterationRunning},
 		},
 	}
 
-	require.True(t, instanceRecordedDone(host, 1))
-	require.False(t, instanceRecordedDone(host, 2))
-	require.False(t, instanceRecordedDone(host, 7), "not in the set")
+	require.True(t, iterationRecordedDone(host, 1))
+	require.False(t, iterationRecordedDone(host, 2))
+	require.False(t, iterationRecordedDone(host, 7), "not in the set")
 }
 
-// TestReAttachAdoptsTheInstancesCell: a restored instance scope was rebuilt
+// TestReAttachAdoptsTheIterationsCell: a restored instance scope was rebuilt
 // by the loop and carries neither a drain channel nor an output cell — both
 // belong to the executor that resumes it, and both are adopted on the
 // re-attach. Without the cell the resumed instance's output would be read
 // from nowhere and its slot would stay nil, which reads downstream as an
 // instance that produced nothing.
-func TestReAttachAdoptsTheInstancesCell(t *testing.T) {
+func TestReAttachAdoptsTheIterationsCell(t *testing.T) {
 	_, ls, node, host := fanOutFixture(t)
 
 	seg := scopeSegment(node) + "-2"
@@ -270,7 +270,7 @@ func TestReAttachAdoptsTheInstancesCell(t *testing.T) {
 
 	var (
 		drain = make(chan struct{})
-		cell  = &instanceCapture{item: "result"}
+		cell  = &iterationCapture{item: "result"}
 		reply = make(chan scopeReply, 1)
 	)
 
@@ -289,7 +289,7 @@ func TestReAttachAdoptsTheInstancesCell(t *testing.T) {
 	require.False(t, entry.awaitAttach, "the hold is lifted")
 }
 
-// TestMarkIterDrainSkipsAFannedOutInstance: an instance's drain must not
+// TestMarkIterDrainSkipsAFannedOutIteration: an instance's drain must not
 // advance the iteration mirror. The host's loopCounter stands still for the
 // whole fan-out, so deriving the position from it would overwrite the
 // decorator's posted set with a zero (SRD-090.A M3b).
@@ -299,7 +299,7 @@ func TestReAttachAdoptsTheInstancesCell(t *testing.T) {
 // what the scope's OPENER declared instead of asking the node whether it
 // iterates (FR-11). A hand-built entry has to say so, and one that does not
 // is correctly ignored — which is what the third case pins.
-func TestMarkIterDrainSkipsAFannedOutInstance(t *testing.T) {
+func TestMarkIterDrainSkipsAFannedOutIteration(t *testing.T) {
 	_, ls, node, host := fanOutFixture(t)
 
 	m := ls.ensureIterMirror(host, iterKindMIParallel)

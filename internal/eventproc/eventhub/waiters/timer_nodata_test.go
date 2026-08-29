@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
-	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
 	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression/lite"

@@ -1034,7 +1034,7 @@ func runningOrdinals(rec *checkpoint.IterationRecord) []int {
 	var out []int
 
 	for _, inst := range rec.Instances {
-		if inst.State == instanceRunning {
+		if inst.State == iterationRunning {
 			out = append(out, inst.Ordinal)
 		}
 	}
@@ -1293,7 +1293,7 @@ func TestDrainBeforeReAttachParallel(t *testing.T) {
 	host := trackByID(initial, hostTrackOf(t, doc, "cr-parhold-body"))
 	require.NotNil(t, host)
 
-	open := ls.instanceScopesOf(host)
+	open := ls.iterationScopesOf(host)
 	require.Len(t, open, 2, "two instances were live at the capture")
 
 	path, other := open[0], open[1]

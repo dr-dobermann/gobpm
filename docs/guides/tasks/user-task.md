@@ -59,17 +59,18 @@ triad, renderers, outputs), the **activity options** any activity accepts, and
 the **foundation/data options**.
 
 **User-task options** decide *who* may act and *what* the form collects. Each
-assignment slot has a static form and an expression form (evaluated per
-instance from a `data.FormalExpression`); the two forms are mutually exclusive:
+assignment slot has a static form and an expression form (resolved from a
+`data.FormalExpression` when the task is announced — once per iteration for an
+iterated task); the two forms are mutually exclusive:
 
 | User-task option | Effect |
 |---|---|
 | `WithAssignee(userID string)` | single owning user; only a matching `UserID` is authorized (the restrictive gate). |
-| `WithAssigneeExpr(expr data.FormalExpression)` | the assignee, computed per instance. |
+| `WithAssigneeExpr(expr data.FormalExpression)` | the assignee, resolved at announcement. |
 | `WithCandidateUsers(userIDs ...string)` | pool of eligible users; a matching user is authorized. |
-| `WithCandidateUsersExpr(expr data.FormalExpression)` | the candidate users, computed per instance. |
+| `WithCandidateUsersExpr(expr data.FormalExpression)` | the candidate users, resolved at announcement. |
 | `WithCandidateGroups(groupIDs ...string)` | any member of an intersecting group is authorized. |
-| `WithCandidateGroupsExpr(expr data.FormalExpression)` | the candidate groups, computed per instance. |
+| `WithCandidateGroupsExpr(expr data.FormalExpression)` | the candidate groups, resolved at announcement. |
 | `WithRenderer(r hinteraction.Renderer)` | attach a form; call it more than once for multiple renderings (deduplicated by identity). |
 | `WithOutput(name, pType string, required bool)` | declare a value the form collects; `required: true` rejects completion without it. |
 | `WithTaskPriority(priority int)` | BPMN's `taskPriority` (Table 10.14), reported to your distributor on `TaskInfo`. The engine acts on it **nowhere** — sort your own inbox by it. Any `int`, zero by default. |

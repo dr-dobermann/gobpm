@@ -473,41 +473,41 @@ names and signatures are confirmed by the wiring SRD.
 
 A token resting on an activity that carries loop characteristics also carries
 an **iteration view**: the kind (Standard Loop, sequential Multi-Instance,
-parallel Multi-Instance), the instance count fixed at activation (absent for a
-Standard Loop, whose count is not known ahead), how many instances have
-completed, and one entry per live instance giving its **ordinal** and what that
-instance is doing — executing, waiting for an event, or held by an incident.
+parallel Multi-Instance), the iteration count fixed at activation (absent for a
+Standard Loop, whose count is not known ahead), how many iterations have
+completed, and one entry per live iteration giving its **ordinal** and what that
+iteration is doing — executing, waiting for an event, or held by an incident.
 
 The field is **optional and absent for every non-iterated node**, so a host
 that ignores it sees one token per activity and nothing changes for it.
 
-**Why this rather than a token per instance.** Before v.3 a parallel
+**Why this rather than a token per iteration.** Before v.3 a parallel
 Multi-Instance over three items appeared in this view as three tokens, because
-the projection was derived from the runtime objects executing the instances.
+the projection was derived from the runtime objects executing the iterations.
 That reported the engine's mechanism rather than the model — an iterated
 activity holds one token (ADR-025 v.3 §2.9.1) — and it observed badly in both
-directions: three tokens said how many instances were parked but never *which*,
+directions: three tokens said how many iterations were parked but never *which*,
 with no ordinal and no counts, while a sequential Multi-Instance or a Standard
 Loop showed a single token that looked identical on pass 1 and pass 7. The
 information a host actually wants was the information the shape could not
 carry.
 
 **One vocabulary, three surfaces.** The same iteration shape is what the
-durable record persists and what an incident carries when one instance fails
+durable record persists and what an incident carries when one iteration fails
 (ADR-036's iteration section). A host reading the token view and then querying
 an incident does not translate between two descriptions of the same thing, and
 the projection cannot disagree with the record — a divergence the previous
 shape allowed, since a restart rebuilt the token count as a side effect of
 rebuilding execution rather than from anything recorded.
 
-**Ordinals are stable and are the join key.** An instance's ordinal is fixed at
+**Ordinals are stable and are the join key.** An iteration's ordinal is fixed at
 activation and is what the incident record, the durable record and this view
-all name. "Instance 3 of 5 is waiting", "instance 3 failed", "retry instance 3"
+all name. "Iteration 3 of 5 is waiting", "iteration 3 failed", "retry iteration 3"
 are the same 3.
 
 **This does not add a lifecycle event kind.** §2.6's taxonomy is unchanged;
 iteration state rides the *snapshot*, not the stream. A host that wants to
-follow an instance's progress within an iterated activity still does so through
+follow an iteration's progress within an iterated activity still does so through
 node-progress events, which name the activity — the iteration view answers
 "what is it doing right now", which is a sampling question.
 

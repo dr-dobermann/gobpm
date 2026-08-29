@@ -26,7 +26,7 @@ func reviewerList() []any {
 	return l
 }
 
-// wantScores is what the output collection must hold once every instance has
+// wantScores is what the output collection must hold once every iteration has
 // contributed: one score per reviewer, in reviewer order.
 func wantScores() []int {
 	w := make([]int, len(reviewers))
@@ -56,7 +56,7 @@ func sameInts(got []any, want []int) error {
 }
 
 // reportScores prints the `scores` collection assembled once every reviewer's
-// instance completed (the visibility barrier), and their average.
+// iteration completed (the visibility barrier), and their average.
 func reportScores(ctx context.Context, r service.DataReader) error {
 	d, err := r.GetData("scores")
 	if err != nil {
@@ -77,10 +77,10 @@ func reportScores(ctx context.Context, r service.DataReader) error {
 		}
 	}
 
-	// The output collection is the demonstration: every reviewer's instance
+	// The output collection is the demonstration: every reviewer's iteration
 	// must have contributed its score, and the collection must be assembled
 	// at the visibility barrier rather than partially. A run that lost one
-	// reviewer's output — or ran fewer instances than there are reviewers —
+	// reviewer's output — or ran fewer iterations than there are reviewers —
 	// would print a shorter list and still exit 0.
 	if err := sameInts(scores, wantScores()); err != nil {
 		return fmt.Errorf("output collection: %w", err)

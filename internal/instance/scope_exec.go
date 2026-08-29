@@ -44,7 +44,7 @@ type scopeExec struct {
 	// published there, and the cell its output is read into. A sequential
 	// pass and a plain composite leave all three zero and open the node's
 	// own `sp-<id>` with nothing extra (SRD-090.A M3b).
-	capture *instanceCapture
+	capture *iterationCapture
 	segment string
 	// iterKind names the iteration shape this instance belongs to, for the
 	// loop's position mirror (SRD-090.A FR-6). Empty for a plain composite,
@@ -236,7 +236,7 @@ func (e *scopeExec) awaits() awaitKind {
 // the body's own tracks own their waits (SRD-090.B FR-1).
 func (e *scopeExec) subscriber() activitySubscriber { return nil }
 
-// instanceScopesOf returns the still-open INSTANCE scopes this host fanned
+// iterationScopesOf returns the still-open INSTANCE scopes this host fanned
 // out, in ordinal order — never its own serial pass's scope, which is one
 // scope reused and answers to the host's own counter.
 //
@@ -251,7 +251,7 @@ func (e *scopeExec) subscriber() activitySubscriber { return nil }
 // set: live completions of concurrent instances carry no defined order, but
 // a teardown feeds the ledger the reverse-order compensation sweep reads,
 // so it must be reproducible.
-func (ls *loopState) instanceScopesOf(host *track) []scope.DataPath {
+func (ls *loopState) iterationScopesOf(host *track) []scope.DataPath {
 	paths := make([]scope.DataPath, 0, len(ls.scopes))
 
 	for p, entry := range ls.scopes {
@@ -267,12 +267,12 @@ func (ls *loopState) instanceScopesOf(host *track) []scope.DataPath {
 	return paths
 }
 
-// handleCancelInstances tears down every still-open instance scope of the
+// handleCancelIterations tears down every still-open instance scope of the
 // requesting host and reports the count, which the decorator's barrier
 // carries as its terminated tally (SRD-056.A §2.9). Runs on the loop
 // goroutine.
-func (ls *loopState) handleCancelInstances(req scopeRequest) {
-	paths := ls.instanceScopesOf(req.host)
+func (ls *loopState) handleCancelIterations(req scopeRequest) {
+	paths := ls.iterationScopesOf(req.host)
 
 	for _, p := range paths {
 		ls.cancelScope(p, observability.PhaseCanceled)
@@ -281,7 +281,7 @@ func (ls *loopState) handleCancelInstances(req scopeRequest) {
 	req.reply <- scopeReply{terminated: len(paths)}
 }
 
-// captureInstanceOutput reads the opening instance's declared output item
+// captureIterationOutput reads the opening instance's declared output item
 // from its draining child scope into the cell that instance is waiting on.
 //
 // It runs on the loop goroutine from completeScope, before the scope closes
@@ -294,7 +294,7 @@ func (ls *loopState) handleCancelInstances(req scopeRequest) {
 // place a composite instance differs from a leaf's frame capture, which
 // tolerates the same absence — the leaf reads a frame that may legitimately
 // hold nothing, this reads a scope the body was required to write.
-func (ls *loopState) captureInstanceOutput(
+func (ls *loopState) captureIterationOutput(
 	ctx context.Context, entry *scopeEntry, path scope.DataPath,
 ) error {
 	c := entry.capture
@@ -314,10 +314,10 @@ func (ls *loopState) captureInstanceOutput(
 }
 
 // state reports this instance in the iteration vocabulary.
-func (e *scopeExec) state() instanceState {
+func (e *scopeExec) state() iterationState {
 	a := e.awaits()
 
-	return instanceState{
+	return iterationState{
 		ordinal: e.ord,
 		await:   a,
 		done:    a == awaitNothing && e.step.state == StepEnded,

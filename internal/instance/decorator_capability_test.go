@@ -101,9 +101,9 @@ func TestTheDoorbellRingsForAQueuedDelivery(t *testing.T) {
 	}
 }
 
-// TestTheActivityStaysWaitingWhileAnyInstanceHoldsWork: one entry stands for N
+// TestTheActivityStaysWaitingWhileAnyIterationHoldsWork: one entry stands for N
 // waiters, so it stops waiting only when the last of them is done.
-func TestTheActivityStaysWaitingWhileAnyInstanceHoldsWork(t *testing.T) {
+func TestTheActivityStaysWaitingWhileAnyIterationHoldsWork(t *testing.T) {
 	es := newEventSubs("inst", "node")
 	def := sigDefN(t, "done")
 

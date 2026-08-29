@@ -87,7 +87,7 @@ type scopeEntry struct {
 	// capture is the opening instance's output cell, filled from this scope
 	// just before it closes and read by that instance after its drain
 	// (SRD-090.A M3b). nil when the activity assembles no output.
-	capture *instanceCapture
+	capture *iterationCapture
 	// adHoc is the routing state of an Ad-Hoc scope (SRD-074 §3.4), nil for
 	// every other scope: the per-activity completed/running counts the Router
 	// decides on, and whether routing has already stopped.
@@ -180,9 +180,9 @@ func scopeSegment(node flow.Node) string {
 // loop-driven one knew about the host override and not the executor's, the
 // executor-driven one the reverse — and a merged path cannot have two
 // answers.
-func scopeSegmentFor(host *track, node flow.Node, instanceSeg string) string {
-	if instanceSeg != "" {
-		return instanceSeg
+func scopeSegmentFor(host *track, node flow.Node, iterationSeg string) string {
+	if iterationSeg != "" {
+		return iterationSeg
 	}
 
 	if host.scopeSeg != "" {
@@ -347,7 +347,7 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 		// its scope table and its executor set describe different moments —
 		// and nothing would ever re-attach to that scope, leaving it open for
 		// the life of the instance.
-		if ord >= 0 && instanceRecordedDone(host, ord) {
+		if ord >= 0 && iterationRecordedDone(host, ord) {
 			return errs.New(
 				errs.M("restored instance scope %q is recorded completed — "+
 					"the checkpoint's scope table and executor set disagree",
@@ -410,10 +410,10 @@ func (ls *loopState) adoptLegacyLeafGroup(
 ) {
 	running := ls.inst.restoredLeafOrdinals[rec.HostTrack]
 
-	live := make([]checkpoint.IterationInstance, 0, len(running))
+	live := make([]checkpoint.IterationEntry, 0, len(running))
 	for _, ord := range running {
-		live = append(live, checkpoint.IterationInstance{
-			Ordinal: ord, State: instanceRunning,
+		live = append(live, checkpoint.IterationEntry{
+			Ordinal: ord, State: iterationRunning,
 		})
 	}
 
@@ -474,7 +474,7 @@ func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 		}
 
 		open := ls.inst.sc.plane.OpenPaths()
-		live := make([]checkpoint.IterationInstance, 0, len(rec.Open))
+		live := make([]checkpoint.IterationEntry, 0, len(rec.Open))
 
 		for _, o := range rec.Open {
 			path := scope.DataPath(o.Path)
@@ -496,8 +496,8 @@ func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 				awaitAttach: true,
 			}
 
-			live = append(live, checkpoint.IterationInstance{
-				Ordinal: o.Ordinal, State: instanceRunning,
+			live = append(live, checkpoint.IterationEntry{
+				Ordinal: o.Ordinal, State: iterationRunning,
 			})
 		}
 
@@ -526,22 +526,22 @@ func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 // completed instances — the half of a restored fan-out's executor set that
 // a group record recorded only by omission.
 func completedOutside(
-	live []checkpoint.IterationInstance, n int,
-) []checkpoint.IterationInstance {
+	live []checkpoint.IterationEntry, n int,
+) []checkpoint.IterationEntry {
 	open := make(map[int]struct{}, len(live))
 	for _, inst := range live {
 		open[inst.Ordinal] = struct{}{}
 	}
 
-	set := make([]checkpoint.IterationInstance, 0, n)
+	set := make([]checkpoint.IterationEntry, 0, n)
 
 	for ord := range n {
-		state := instanceCompleted
+		state := iterationCompleted
 		if _, ok := open[ord]; ok {
-			state = instanceRunning
+			state = iterationRunning
 		}
 
-		set = append(set, checkpoint.IterationInstance{
+		set = append(set, checkpoint.IterationEntry{
 			Ordinal: ord, State: state,
 		})
 	}
@@ -648,7 +648,7 @@ func restoredScopeHost(
 			continue
 		}
 
-		if ord, ok := instanceOrdinalOf(t, seg, path); ok {
+		if ord, ok := iterationOrdinalOf(t, seg, path); ok {
 			return t, n, ord
 		}
 	}
@@ -678,32 +678,32 @@ func restoredHostSegment(
 	return n, scopeSegment(n), true
 }
 
-// instanceRecordedDone reports whether the host's restored executor set
+// iterationRecordedDone reports whether the host's restored executor set
 // calls instance ord finished. False when the host carries no set at all —
 // a document written before Schema 6, whose fanned-out position rides the
 // group record instead (SRD-090.A FR-7).
-func instanceRecordedDone(host *track, ord int) bool {
+func iterationRecordedDone(host *track, ord int) bool {
 	if host.iterSeed == nil {
 		return false
 	}
 
 	for _, inst := range host.iterSeed.Instances {
 		if inst.Ordinal == ord {
-			return inst.State == instanceCompleted
+			return inst.State == iterationCompleted
 		}
 	}
 
 	return false
 }
 
-// instanceOrdinalOf reports the ordinal path carries as an instance scope
+// iterationOrdinalOf reports the ordinal path carries as an instance scope
 // of the host track's segment — `<seg>-<ord>` under the host's own scope.
 //
 // The prefix is built with Append rather than compared as a string, so the
 // path grammar stays in one place; and what follows it must read back as
 // exactly the number it names — which is also what keeps a DESCENDANT of an
 // instance scope out, since any deeper path still carries a separator.
-func instanceOrdinalOf(
+func iterationOrdinalOf(
 	t *track, seg string, path scope.DataPath,
 ) (int, bool) {
 	prefix, err := t.scopePath.Append(seg + "-")
@@ -830,7 +830,7 @@ func (ls *loopState) completeScope(
 	// SRD-090.A M3b: the OPENING INSTANCE's own capture, the executor-driven
 	// successor to both of the above — read here for the same reason, and
 	// handed over by the drain close below rather than by a lock.
-	if err := ls.captureInstanceOutput(ctx, entry, path); err != nil {
+	if err := ls.captureIterationOutput(ctx, entry, path); err != nil {
 		ls.inst.fail(err)
 		ls.stopAll()
 

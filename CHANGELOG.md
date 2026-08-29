@@ -324,6 +324,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One word, one meaning: instance, iteration, host** (SAD-001 §10.1). An
+  **instance** is the process instance and nothing else; one pass of an
+  iterating activity is an **iteration**; a **node executor** runs one node
+  once; and the **host** (the decorator) owns an activity's iterations. The
+  vocabulary now holds across the ADRs, the guides, the examples, the README
+  and the code — 259 identifiers and 631 comments, `activityIteration`,
+  `iterationState`, `iterationOutputs`, `parkIterations` and their neighbours.
+
+  No public API moves: the renamed identifiers are unexported or live in
+  `internal/`, and `checkpoint.IterationEntry` (was `IterationInstance`) keeps
+  every JSON tag, so no checkpoint document changes shape.
+
+  BPMN's own taxonomy is untouched — the construct is still a **Multi-Instance**,
+  the attributes are still `numberOfInstances` and its three siblings, and
+  Table 10.30 still splits an *inner* from an *outer* instance. So is the
+  process instance's own machinery: its loop, its residency, its checkpoint,
+  and a Call Activity's child instance.
+
 - **The engine's data names are reserved** (SRD-090.D FR-6, ADR-025 §2.9.2).
   A process property, data object, data store reference or activity **output**
   named `loopCounter`, one of the four `numberOf*` counts, `ITERATION_NUMBER`,

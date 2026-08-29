@@ -285,7 +285,7 @@ type MIRecord struct {
 	ConditionMet bool            `json:"condition_met,omitempty"`
 }
 
-// IterationInstance is ONE live instance of an iterated activity (Schema
+// IterationEntry is ONE live instance of an iterated activity (Schema
 // 6, SRD-090.A FR-6): its 0-based ordinal — the join key across the
 // record, the token projection and an incident — and what it is doing.
 // ChildID names the callee a call executor owns, and is what lets a
@@ -296,7 +296,7 @@ type MIRecord struct {
 // element at the ordinal and the counter IS the ordinal, both recomputed
 // (ADR-025 §2.4 fixes cardinality once, so the collection cannot
 // shift underneath).
-type IterationInstance struct {
+type IterationEntry struct {
 	// Eligible is the verdict this iteration's announcement RESOLVED — who
 	// may act on its task (ADR-020 §2.7).
 	//
@@ -369,12 +369,12 @@ type TaskEligibility struct {
 // their assembled outputs, and ConditionMet whether the
 // completionCondition already fired.
 type IterationRecord struct {
-	Kind         string              `json:"kind"` // loop | mi_sequential | mi_parallel
-	Staging      json.RawMessage     `json:"staging,omitempty"`
-	Instances    []IterationInstance `json:"instances,omitempty"`
-	N            int                 `json:"n,omitempty"`
-	Completed    int                 `json:"completed"`
-	ConditionMet bool                `json:"condition_met,omitempty"`
+	Kind         string           `json:"kind"` // loop | mi_sequential | mi_parallel
+	Staging      json.RawMessage  `json:"staging,omitempty"`
+	Instances    []IterationEntry `json:"instances,omitempty"`
+	N            int              `json:"n,omitempty"`
+	Completed    int              `json:"completed"`
+	ConditionMet bool             `json:"condition_met,omitempty"`
 }
 
 // OpenScope is one still-open per-instance scope of a parallel MI

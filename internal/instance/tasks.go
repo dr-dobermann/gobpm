@@ -335,7 +335,7 @@ func (ls *loopState) deliverCompletion(
 	// checkpoint records that instance as RUNNING WITH NO IDENTITY, and a
 	// restore would mint a fresh one for work whose handle its holder is
 	// still carrying.
-	sub.completeInstance(entry.ord, completion, owner)
+	sub.completeIteration(entry.ord, completion, owner)
 
 	// the track leaves the parked set only when NO instance still holds work.
 	if !sub.anyWaiting() {

@@ -144,7 +144,7 @@ func TestLeafDecoratorSatisfiesActivityExec(t *testing.T) {
 // decorator that advanced past a parked one would run the next ordinal over
 // the same step and publish output as though every instance had finished.
 //
-// Reaching this from runInstance requires the construct the snapshot refuses
+// Reaching this from runIteration requires the construct the snapshot refuses
 // (an activity that both iterates and parks), so SRD-090.B covers the path;
 // what is testable now is what the guard decides, and that is tested here
 // rather than assumed.

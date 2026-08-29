@@ -318,7 +318,7 @@ func TestParallelMultiInstanceRuntimeAttributes(t *testing.T) {
 // boundary firing on a fanned-out host tears down ALL N instance scopes, not
 // just the default `sp-<id>` segment a serial host would hold.
 //
-// It reads the entries themselves (instanceScopesOf), which is what makes
+// It reads the entries themselves (iterationScopesOf), which is what makes
 // this the same teardown a fired completionCondition asks for; the two were
 // separate mechanisms over one question while the group existed.
 func TestParallelMultiInstanceBoundaryInterruptsAll(t *testing.T) {
@@ -541,7 +541,7 @@ func TestParallelBarrierKeepsATeardownError(t *testing.T) {
 // opens.
 //
 // It asserts the fault arrives WITHIN a bound rather than merely arriving.
-// The unit-level guard test proves compositeInstanceFor returns an error; it
+// The unit-level guard test proves compositeIterationFor returns an error; it
 // cannot prove the fan-out that calls it does not then sit waiting on
 // instances it never launched, which is the half a barrier can get wrong.
 func TestRunMIParallelBindError(t *testing.T) {
