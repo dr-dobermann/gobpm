@@ -26,6 +26,14 @@ func (t *Thresher) InvokeProcess(
 	ctx context.Context,
 	call exec.ProcessCall,
 ) (exec.ChildProcess, error) {
+	// ctx reaches HOST code here — the callable resolver — so a nil one is
+	// the caller's bug to hear about, not a panic inside a host callback.
+	if ctx == nil {
+		return nil, errs.New(
+			errs.M("InvokeProcess: ctx is nil"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
 	if call.Key == "" {
 		return nil, errs.New(
 			errs.M("InvokeProcess: empty called-process key isn't allowed"),

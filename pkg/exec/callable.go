@@ -47,10 +47,23 @@ type CallableResolver interface {
 // with a one-line mapping writes no type (the http.HandlerFunc idiom).
 type CallableResolverFunc func(context.Context, CallableRef) (string, error)
 
-// ResolveCallable calls f.
+// ResolveCallable calls f, refusing a nil function rather than panicking on
+// it. CallableResolverFunc(nil) is a NON-nil CallableResolver — the interface
+// check just below this file relies on exactly that — so it passes
+// thresher.WithCallableResolver's nil guard and would otherwise surface as a
+// panic inside the engine at the first call, arbitrarily far from the mistake.
 func (f CallableResolverFunc) ResolveCallable(
 	ctx context.Context, ref CallableRef,
 ) (string, error) {
+	if f == nil {
+		return "", errs.New(
+			errs.M("CallableResolverFunc: the function is nil and cannot "+
+				"resolve callable %q — pass a function, or omit "+
+				"thresher.WithCallableResolver to keep the default resolver",
+				ref.Key),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
 	return f(ctx, ref)
 }
 
@@ -71,6 +84,16 @@ type DefaultCallableResolver struct{}
 func (DefaultCallableResolver) ResolveCallable(
 	_ context.Context, ref CallableRef,
 ) (string, error) {
+	// An unqualified reference IS the key it answers, so an empty one would
+	// answer an empty key: the registry lookup would then fail naming nothing,
+	// and the caller would have to guess which end was wrong.
+	if ref.Key == "" {
+		return "", errs.New(
+			errs.M("DefaultCallableResolver: ref.Key is empty and names no "+
+				"callable"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
 	if ref.Namespace == "" {
 		return ref.Key, nil
 	}

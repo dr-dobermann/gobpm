@@ -163,6 +163,51 @@ func TestWithCallableResolverRejectsNil(t *testing.T) {
 	require.Contains(t, err.Error(), "WithCallableResolver")
 }
 
+// TestWithCallableResolverAcceptsATypedNil records the hole the guard above
+// cannot close, so nobody widens that guard believing it covers this.
+//
+// WithCallableResolver compares `r == nil`, and an interface holding a typed
+// nil func is NOT nil by that comparison — so CallableResolverFunc(nil) is
+// accepted as a perfectly good resolver. The option is right to accept it: an
+// interface value it cannot inspect is not its business. The refusal belongs
+// where the function is actually called, and that is what
+// exec.TestCallableResolverFuncRefusesNil pins. Both halves have to exist;
+// either one alone leaves a panic in the engine.
+func TestWithCallableResolverAcceptsATypedNil(t *testing.T) {
+	th, err := thresher.New("typed-nil-resolver",
+		thresher.WithCallableResolver(exec.CallableResolverFunc(nil)))
+
+	require.NoError(t, err,
+		"the option cannot see inside the interface; if this ever starts "+
+			"failing, the guard grew teeth and the note above is stale")
+	require.NotNil(t, th)
+}
+
+// TestInvokeProcessRejectsANilContext covers the parameter that reaches HOST
+// code. InvokeProcess hands ctx to the configured CallableResolver, which is
+// whatever the embedding application wrote — so a nil one is the caller's bug
+// to be told about here, not a panic inside somebody's callback.
+func TestInvokeProcessRejectsANilContext(t *testing.T) {
+	th, err := thresher.New("nil-ctx-invoke")
+	require.NoError(t, err)
+
+	// A nil Context variable rather than the literal, which vet rejects at
+	// the call site before the guard under test can answer.
+	var ctx context.Context
+
+	child, err := th.InvokeProcess(ctx, exec.ProcessCall{
+		Key:              "callee",
+		ParentInstanceID: "parent",
+		CallNodeID:       "call",
+	})
+
+	require.Error(t, err)
+	require.Nil(t, child)
+	require.Contains(t, err.Error(), "ctx",
+		"the message names the parameter at fault — InvokeProcess takes "+
+			"several, and 'invalid argument' would not say which")
+}
+
 // TestQualifiedCallWithoutAResolver is SRD-096 T-5: with no resolver
 // configured, a qualified reference fails the CALL.
 //

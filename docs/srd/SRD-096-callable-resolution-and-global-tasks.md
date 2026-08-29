@@ -640,10 +640,43 @@ on everything this SRD added is 100% except `parseGlobalTaskElem` (85.7%) and
 `addGlobalTaskGraph` (90%), whose uncovered lines are bare `return nil, err`
 that the diff-coverage gate excludes.
 
-`make ci` is unreliable in this environment for reasons this branch does not
-cause: `internal/instance` flakes at about one package run in three (#356) and
-`govulncheck` intermittently cannot reach its database. Judge a red run by
-which step and package failed.
+`make ci` PASSES on the branch tip. It was unreliable for most of this
+branch's life for a reason the branch did not cause — `internal/instance`
+flaked at about one package run in three (#356), which reddened two gate runs
+here — and that is fixed on master (`ad82e4d5`) and merged in. `govulncheck`
+can still fail by not reaching its database, which is a network fact, not a
+verdict. Judge a red run by which step and package failed.
+
+### §10.3 The independent review
+
+`/pr-review` put the branch diff to an external reviewer (Antigravity /
+`gemini-3.1-pro-high`, four lenses: correctness/concurrency, API design, tests,
+and the build tooling), doc-blind — it was given no SRD, because a reviewer
+holding the document grades the code against the document, which `/check-srd`
+already did.
+
+It returned 18 notes. **Ten were real and are fixed in M8**: a typed-nil
+`CallableResolverFunc` reaching the engine as a panic; `DefaultCallableResolver`
+answering an empty key rather than refusing it; `InvokeProcess` not validating
+the `ctx` it hands to host code; the call fact naming an unresolved callable on
+a re-attached child; and, in the tests, two that would have passed with the
+feature broken. Three latent faults in the gate scripts came with them.
+
+**Four were wrong, and the reasons are worth more than the notes:**
+
+| Note | Why it is wrong |
+|---|---|
+| *"Authorization is checked against the unresolved key in `InvokeProcess`"* (blocker) | There is no authorization check in `InvokeProcess` at all. The engine's `auth.AuthorizationProvider` serves **user-task** authorization and is never consulted on invocation. The note described a call site that does not exist. |
+| *"macOS SIP strips `export -f`, so every batch run fails immediately"* (blocker) | Demonstrably false on the machine in question, where `export -f` survives `xargs` and four full gate runs over 52 modules had already passed. |
+| *"Validate `ctx != nil` inside both `ResolveCallable` implementations"* | `DefaultCallableResolver` takes `_ context.Context` — it cannot dereference what it never reads — and `CallableResolverFunc` passes it to host code, which the entry point now validates. A guard on a deliberately-ignored parameter is noise. |
+| *"Word-splitting on unquoted `$wave` / `$ALL_MODULES`"* | `$(MODULES)` is a space-separated Make list by construction, so a module path containing a space breaks the caller before the script sees it. The realistic residue — a quote or backslash in a path — is fixed by the NUL-delimited `xargs`. |
+
+One accepted note was also wrong **in its remedy**: it proposed asserting the
+synthesized task's `IOSpec()` is `nil`, but every activity is built with an
+empty specification, so that assertion fails on correct code. The defect was
+real and the test asserts the property that actually breaks — that the task
+declares no PARAMETERS. An agent's output is evidence, not a verdict, and the
+difference showed up only by running it.
 
 ## Open questions
 

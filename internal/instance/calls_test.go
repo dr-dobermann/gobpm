@@ -21,6 +21,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,7 +29,11 @@ import (
 // the test (pre-closed for an instant completion, closed by Terminate for the
 // cascade). Failed/Outputs are scripted.
 type fakeChild struct {
-	id      string
+	id string
+	// key is the RESOLVED registry key. It defaults to the id — what a real
+	// child answers once resident — and is set empty by the test covering a
+	// re-attached child that cannot say yet.
+	key     string
 	version int
 	err     error
 	outputs map[string]data.Data
@@ -43,14 +48,17 @@ type fakeChild struct {
 }
 
 func newFakeChild(id string, version int) *fakeChild {
-	return &fakeChild{id: id, version: version, done: make(chan struct{})}
+	return &fakeChild{
+		id: id, key: id, version: version, done: make(chan struct{}),
+	}
 }
 
 func (c *fakeChild) ID() string { return c.id }
 
 // Key answers the resolved registry key. The double reports its id, which is
-// what a real child does when the reference resolved to itself.
-func (c *fakeChild) Key() string { return c.id }
+// what a real child does when the reference resolved to itself — and "" when
+// the test is standing in for a re-attached child that is not resident yet.
+func (c *fakeChild) Key() string { return c.key }
 
 func (c *fakeChild) Version() int          { return c.version }
 func (c *fakeChild) Done() <-chan struct{} { return c.done }
@@ -601,4 +609,59 @@ func TestCallMissingInputFaults(t *testing.T) {
 
 	inst := runCall(t, p, inv)
 	waitIncident(t, inst)
+}
+
+// TestCallFactOmitsAnUnresolvedKey pins what a call fact says when the
+// resolved key is not knowable yet.
+//
+// A re-attached child that is not resident answers "" to Key(). The obvious
+// fallback — the reference the document wrote — is WRONG for a qualified
+// call: that reference is the unresolved local part, so the same call would
+// report "audit" at one phase and "shared.audit" at the next, and an audit
+// trail reading both would conclude two different callables ran. The
+// attribute is therefore left out entirely, the way called_namespace is left
+// out for an unqualified reference: an absent attribute says "not known
+// here", a substituted one says something false. child_instance_id still
+// identifies what ran.
+func TestCallFactOmitsAnUnresolvedKey(t *testing.T) {
+	child := newFakeChild("child-unresolved", 1)
+	child.key = "" // a re-attached child, not resident yet
+	child.finish()
+
+	inv := &fakeInvoker{child: child}
+
+	p, _, _, _ := callProc(t, "callee", 0, callOpts{})
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	ep := &capturingProducer{procs: map[string]eventproc.EventProcessor{}}
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(), ep, nil,
+		WithInvoker(inv))
+	require.NoError(t, err)
+
+	rec := &obsRecorder{}
+	inst.AddObserver(rec.record)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	require.NoError(t, inst.Run(ctx))
+	waitState(t, inst, Completed)
+
+	facts := rec.factsOfKind(observability.KindCall)
+	require.NotEmpty(t, facts, "the call must report at all")
+
+	for _, f := range facts {
+		_, ok := f.Details[observability.AttrCalledKey]
+		require.Falsef(t, ok,
+			"phase %q carries called_key=%q — an unknown resolved key must "+
+				"be absent, never the unresolved reference standing in for it",
+			f.Phase, f.Details[observability.AttrCalledKey])
+
+		require.Equal(t, "child-unresolved",
+			f.Details[observability.AttrChildInstanceID],
+			"the fact still identifies what ran")
+	}
 }

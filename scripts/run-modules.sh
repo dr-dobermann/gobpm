@@ -67,7 +67,17 @@ fi
 trap 'rm -rf "$work"' EXIT
 
 # A module dir maps to one log and one status file; the slug keeps them flat.
-slug() { printf '%s' "$1" | tr '/.' '__'; }
+#
+# The mapping must be INJECTIVE, or two modules share a log and race on it.
+# `tr '/.' '__'` is not: it sends both "a/b" and "a.b" to "a_b". Escaping the
+# escape character first makes it reversible — and doing it with parameter
+# expansion rather than `printf | tr` also drops a subprocess from a function
+# called three times per module.
+slug() {
+	s=${1//_/__}
+	s=${s//\//_S_}
+	printf '%s' "${s//./_D_}"
+}
 
 # run_one is what xargs fans out: the module's combined output to its log, its
 # exit status to its status file. Never exits non-zero itself, so xargs keeps
@@ -83,8 +93,11 @@ export work cmd
 
 # run_batch runs one set of modules concurrently; non-zero if any failed.
 run_batch() {
-	printf '%s\n' "$@" |
-		xargs -P "$MODULE_JOBS" -I{} bash -c 'run_one "$1"' _ {}
+	# NUL-delimited: xargs interprets quotes and backslashes in its input
+	# even under -I{}, so a path carrying one aborts the whole batch with an
+	# unmatched-quote error instead of running it.
+	printf '%s\0' "$@" |
+		xargs -0 -P "$MODULE_JOBS" -I{} bash -c 'run_one "$1"' _ {}
 	for d in "$@"; do
 		[ "$(cat "$work/$(slug "$d").status" 2>/dev/null || echo 1)" = "0" ] ||
 			return 1
@@ -162,7 +175,9 @@ build_dep_graph() {
 					out = out " " mods[e[j]]
 			printf "%s\t%s \n", d, out
 		}
-	}' $_files >"$work/deps"
+	# /dev/null so that an empty $_files cannot leave awk reading STDIN —
+	# which does not fail, it HANGS, and a gate that hangs reports nothing.
+	}' $_files /dev/null >"$work/deps"
 
 	# Read it back into parallel arrays — indexed, because bash 3.2 (what
 	# macOS ships) has no associative ones — so the wave loop below spawns

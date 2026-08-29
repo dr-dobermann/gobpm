@@ -156,9 +156,9 @@ func TestGlobalScriptTaskCarriesItsScript(t *testing.T) {
 // TestGlobalTaskContractIsTheProcessContract is SRD-096 T-15 and FR-7a.
 //
 // The callable's <ioSpecification> is ONE element in the standard, and the
-// engine needs it in two places: as the process's declared contract, which a
-// caller binds against, and as the task's own parameters, which is what
-// actually produces a declared output.
+// question FR-7a settles is which of the two things the importer synthesizes
+// it becomes: the process's declared contract, which a caller binds against,
+// or the task's own parameters.
 //
 // It belongs to the PROCESS, and not also to the task inside it. Copying it
 // onto the task was the draft's reading and it does not run: a task's
@@ -192,6 +192,32 @@ func TestGlobalTaskContractIsTheProcessContract(t *testing.T) {
 	if ins[0].Name() != "amount" || outs[0].Name() != "approved" {
 		t.Errorf("contract = (%q, %q), want (amount, approved)",
 			ins[0].Name(), outs[0].Name())
+	}
+
+	// The other half, and the half that actually runs: the TASK must not also
+	// carry it. Asserting only the process above would pass just as happily
+	// if taskBody stopped stripping the io — which is the exact regression
+	// FR-7a exists to prevent, and the one that shipped once already: a task
+	// whose required input no data association can fill faults the callable
+	// on its own contract before it does any work.
+	ut, ok := nodeOf(t, p, "g1.task").(*activities.UserTask)
+	if !ok {
+		t.Fatalf("g1.task is a %T, want a *activities.UserTask",
+			nodeOf(t, p, "g1.task"))
+	}
+
+	// Not "IoSpec is nil": every activity is built with an empty one. The
+	// property that matters is that it declares no PARAMETERS — a declared
+	// input here is required, and nothing on a callable can fill it.
+	if ut.IoSpec != nil {
+		tin, tout := ut.IoSpec.InputSet(), ut.IoSpec.OutputSet()
+		if len(tin) != 0 || len(tout) != 0 {
+			t.Errorf("g1.task declares %d in / %d out, want 0 and 0 — the "+
+				"contract belongs to the process; on the task these are "+
+				"parameters no data association fills, and the callable "+
+				"faults on its own contract before doing any work",
+				len(tin), len(tout))
+		}
 	}
 }
 

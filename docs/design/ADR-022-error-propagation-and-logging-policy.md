@@ -173,6 +173,19 @@ registration is required:
 `stage`, `stop_reason`, `transaction_method`, plus one-off counts and
 durations (`deadline`, `duration`, a `processors`/`catchers` count).
 
+**A canonical key is absent when its value is not known, never approximated.**
+The pair that names a callable makes this concrete. `called_key` carries the
+key the host's resolver decided on — the registration that actually ran, not
+the reference the document wrote — and `called_namespace` is present only when
+that reference was qualified. So an absent `called_namespace` reads as
+"unqualified", a fact about the file; and an absent `called_key` reads as "not
+known at this phase", which is the honest answer while a re-attached child is
+not yet resident. Substituting the unresolved reference there would be worse
+than silence: it names a *different* registration than the one that ran, so a
+single call would report one callable at one phase and another at the next.
+The rule generalises — a canonical key names which object the event is about,
+and a nearly-right object is the wrong object.
+
 A `*_type` key that reports what a validation EXPECTED or FOUND is descriptive
 even though it is entity-shaped: `option_type`, `expected_type`, `expr_type`
 and `time_type` each name a Go or BPMN type in a failure message rather than an

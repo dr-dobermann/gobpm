@@ -634,6 +634,28 @@ func TestFlowNodesRunOnAThresher(t *testing.T) {
 		t.Error("the decision was never evaluated — the imported " +
 			"decisionRef did not reach the rule engine")
 	}
+
+	// The counter above only proves the decision was CALLED. A rule engine
+	// that runs and whose result is then dropped would satisfy it exactly as
+	// well, and nothing downstream in this flow reads "grade", so the run
+	// would still complete. The row the decision returned has to land in the
+	// instance's data for the node to have done its job.
+	grade, err := h.Data().GetData("grade")
+	if err != nil {
+		t.Fatalf("read grade: %v — the decision returned a row, so the "+
+			"business rule task's result must reach the instance's data",
+			err)
+	}
+
+	got, err := data.As[string](ctx, grade.Value())
+	if err != nil {
+		t.Fatalf("grade is not a string: %v", err)
+	}
+
+	if got != "gold" {
+		t.Errorf("grade = %q, want %q — the value bound is not the one the "+
+			"decision returned", got, "gold")
+	}
 }
 
 // TestEventBasedGatewayRunsOnAThresher completes SRD-089.C §6 T-11: the

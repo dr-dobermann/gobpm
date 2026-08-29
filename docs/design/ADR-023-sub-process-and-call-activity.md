@@ -474,10 +474,13 @@ honoured by making no ordering guarantee.
 
 - **Observability.** Scope lifecycle should be first-class in the fact stream —
   scope opened, completed, cancelled, with the scope path and the composite node
-  identity — because an operator reasons in sub-process units, not raw tracks. The
-  call boundary carries the parent linkage (§2.7) and should also surface the
-  **resolved (key, version)** on the call-started fact, so an audit shows what
-  actually ran.
+  identity — because an operator reasons in sub-process units, not raw tracks.
+  (The call boundary itself is done: it carries the parent linkage and the
+  **resolved (key, version)** the resolver decided on, §2.7, so an audit shows
+  which registration actually ran rather than which one the file named. Where
+  that key is not yet knowable — a re-attached child before it is resident —
+  the attribute is absent rather than approximated by the reference, which
+  would name a different registration; [ADR-022 v.3](ADR-022-error-propagation-and-logging-policy.md) §2.5.)
 - **Operational depth guard.** Expose an engine option for maximum scope-tree and
   call-chain depth (generous by default), failing the instance with a classified
   error naming the chain — turning runaway recursion from resource exhaustion into
