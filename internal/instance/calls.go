@@ -17,6 +17,7 @@ import (
 // only asserts this interface (the scopeHost / ExternalWorker precedent).
 type callActivity interface {
 	CalledKey() string
+	CalledNamespace() string
 	CalledVersion() int
 	CallInputs() []string
 	CallOutputs() []string
@@ -80,6 +81,7 @@ func (ls *loopState) onCallWaiting(ctx context.Context, ev trackEvent) {
 
 	child, err := ls.inst.invoker.InvokeProcess(ctx, exec.ProcessCall{
 		Key:              ca.CalledKey(),
+		Namespace:        ca.CalledNamespace(),
 		Version:          ca.CalledVersion(),
 		Inputs:           inputs,
 		Outputs:          ca.CallOutputs(),

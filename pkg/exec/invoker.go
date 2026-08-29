@@ -61,7 +61,13 @@ type ProcessInvoker interface {
 // the isolation contract), and the linkage that stitches the child's trace back
 // to the caller (ParentInstanceID + CallNodeID).
 type ProcessCall struct {
-	Key              string
+	Key string
+	// Namespace qualifies Key with the document that declared the callable,
+	// empty for a reference inside the calling document. The invoker hands
+	// the pair to the host's CallableResolver, which answers the registry key
+	// to serve (ADR-023 v.5 §2.7) — so what reaches the registry is the
+	// RESOLVED key, never this one.
+	Namespace        string
 	ParentInstanceID string
 	CallNodeID       string
 	Inputs           []data.Data
