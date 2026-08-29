@@ -92,6 +92,7 @@ func (do *DataObject) AssociateSource(
 	n flow.AssociationSource,
 	sourceIDs []string,
 	transformation data.FormalExpression,
+	shape ...options.Option,
 ) error {
 	if n == nil {
 		return fmt.Errorf("empty Node isn't allowed")
@@ -119,6 +120,8 @@ func (do *DataObject) AssociateSource(
 		opts = append(opts, data.WithTransformation(transformation))
 	}
 
+	opts = append(opts, shape...)
+
 	a, err := data.NewAssociation(&do.ItemAwareElement, opts...)
 	if err != nil {
 		return fmt.Errorf("association building failed: %w", err)
@@ -141,13 +144,14 @@ func (do *DataObject) AssociateSource(
 func (do *DataObject) AssociateTarget(
 	n flow.AssociationTarget,
 	transformation data.FormalExpression,
+	shape ...options.Option,
 ) error {
 	itemID := do.ItemDefinition().ID()
 
 	return do.associateTarget(n, transformation, "#"+itemID,
 		func(iae *data.ItemAwareElement) bool {
 			return iae.ItemDefinition().ID() == itemID
-		})
+		}, shape)
 }
 
 // AssociateTargetInput creates a new data association from the DataObject
@@ -159,11 +163,12 @@ func (do *DataObject) AssociateTargetInput(
 	n flow.AssociationTarget,
 	inputID string,
 	transformation data.FormalExpression,
+	shape ...options.Option,
 ) error {
 	return do.associateTarget(n, transformation, strconv.Quote(inputID),
 		func(iae *data.ItemAwareElement) bool {
 			return iae.ID() == inputID
-		})
+		}, shape)
 }
 
 // associateTarget is the body of the two AssociateTarget forms: the node's
@@ -173,6 +178,7 @@ func (do *DataObject) associateTarget(
 	transformation data.FormalExpression,
 	want string,
 	pick func(*data.ItemAwareElement) bool,
+	shape []options.Option,
 ) error {
 	if n == nil {
 		return fmt.Errorf("empty target")
@@ -193,6 +199,8 @@ func (do *DataObject) associateTarget(
 	if transformation != nil {
 		opts = append(opts, data.WithTransformation(transformation))
 	}
+
+	opts = append(opts, shape...)
 
 	a, err := data.NewAssociation(inputs[idx], opts...)
 	if err != nil {
@@ -277,6 +285,15 @@ func (do *DataObject) Docs() []*foundation.Documentation {
 }
 
 // -------------------- foundation.Identifyer ---------------------------------
+
+// ItemAware returns the DataObject's item-aware element — what an
+// association names when it takes this object as a SOURCE (SRD-097 FR-7).
+// A single-source association gets it from the object it is attached to;
+// several sources need it by hand, because only one of them owns the
+// attach.
+func (do *DataObject) ItemAware() *data.ItemAwareElement {
+	return &do.ItemAwareElement
+}
 
 // ID returns the identifier of the DataObject.
 func (do *DataObject) ID() string {

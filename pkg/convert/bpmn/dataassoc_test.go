@@ -3,6 +3,9 @@ package bpmn
 import (
 	"strings"
 	"testing"
+
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 )
 
 // assocDoc wraps a task with an ioSpecification and associations beside
@@ -450,57 +453,330 @@ func TestAnotherActivitysParameter(t *testing.T) {
 
 // TestTransformationRefused is T-15/T-16 (§4.6, #328): the expression
 // shapes, one wording — several sources are only legal under a
-// transformation, and the transformation is the refused capability.
-func TestTransformationRefused(t *testing.T) {
-	tests := map[string]string{
-		"transformation": `<bpmn:sourceRef>do1</bpmn:sourceRef>
-        <bpmn:targetRef>din1</bpmn:targetRef>
-        <bpmn:transformation>a + b</bpmn:transformation>`,
-		"two sources": `<bpmn:sourceRef>do1</bpmn:sourceRef>
-        <bpmn:sourceRef>do1</bpmn:sourceRef>
-        <bpmn:targetRef>din1</bpmn:targetRef>`,
+// shapedStart imports a start event whose output association carries the
+// given shape children, and returns the built association. An event owns
+// the same wireDataAssoc path a task does and, unlike a task, exposes its
+// associations — so the mapping is assertable without a new model API.
+func shapedStart(t *testing.T, extraDecl, shape string) *data.Association {
+	t.Helper()
+
+	s := startOf(t, propDoc(eventDataDecls+extraDecl,
+		`    <bpmn:dataObject id="do1" name="order" itemSubjectRef="idStr"/>
+    <bpmn:startEvent id="s2">
+      <bpmn:messageEventDefinition messageRef="m1"/>
+      <bpmn:dataOutput id="s2-out" itemSubjectRef="idStr"/>
+      <bpmn:dataOutputAssociation id="oa1">
+        <bpmn:sourceRef>s2-out</bpmn:sourceRef>
+        <bpmn:targetRef>do1</bpmn:targetRef>
+`+shape+`
+      </bpmn:dataOutputAssociation>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="s2" targetRef="e1"/>`), "s2")
+
+	aa := s.OutputAssociations()
+	if len(aa) != 1 {
+		t.Fatalf("OutputAssociations() = %v, want one", aa)
 	}
 
-	for name, assoc := range tests {
-		t.Run(name, func(t *testing.T) {
-			_, err := importEventDoc(t, assocDoc("",
-				`      <bpmn:ioSpecification id="io1">
-        <bpmn:dataInput id="din1" name="in" itemSubjectRef="idOrder"/>
+	return aa[0]
+}
+
+// shapedStartErr is shapedStart for the documents that must NOT import.
+func shapedStartErr(t *testing.T, shape string) error {
+	t.Helper()
+
+	_, err := importEventDoc(t, propDoc(eventDataDecls,
+		`    <bpmn:dataObject id="do1" name="order" itemSubjectRef="idStr"/>
+    <bpmn:startEvent id="s2">
+      <bpmn:messageEventDefinition messageRef="m1"/>
+      <bpmn:dataOutput id="s2-out" itemSubjectRef="idStr"/>
+      <bpmn:dataOutputAssociation id="oa1">
+        <bpmn:sourceRef>s2-out</bpmn:sourceRef>
+        <bpmn:targetRef>do1</bpmn:targetRef>
+`+shape+`
+      </bpmn:dataOutputAssociation>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="s2" targetRef="e1"/>`))
+
+	return err
+}
+
+// TestTransformationImports is SRD-097 T-9: a <transformation> maps onto
+// the model instead of refusing the file.
+func TestTransformationImports(t *testing.T) {
+	a := shapedStart(t, "",
+		`        <bpmn:transformation language="gobpm:lite">order</bpmn:transformation>`)
+
+	if a.Transformation() == nil {
+		t.Error("Transformation() = nil, want the mapped expression")
+	}
+
+	if len(a.Assignments()) != 0 {
+		t.Error("Assignments() = non-empty, want none")
+	}
+}
+
+// TestAssignmentImports is SRD-097 T-9's second half: each <assignment>
+// maps, from and to alike, and the ${…} wrapper a modeler's tool writes
+// around a path is unwrapped (FR-8).
+func TestAssignmentImports(t *testing.T) {
+	a := shapedStart(t, "",
+		`        <bpmn:assignment id="as1">
+          <bpmn:from language="gobpm:lite">s2-out</bpmn:from>
+          <bpmn:to>order</bpmn:to>
+        </bpmn:assignment>
+        <bpmn:assignment id="as2">
+          <bpmn:from>${s2-out}</bpmn:from>
+          <bpmn:to>${order}</bpmn:to>
+        </bpmn:assignment>`)
+
+	as := a.Assignments()
+	if len(as) != 2 {
+		t.Fatalf("Assignments() = %d, want both", len(as))
+	}
+
+	if as[0].To() != "order" || as[1].To() != "order" {
+		t.Errorf("to = %q/%q, want the path and the unwrapped ${…}",
+			as[0].To(), as[1].To())
+	}
+
+	if as[0].From() == nil || as[1].From() == nil {
+		t.Error("From() = nil, want the mapped expressions")
+	}
+
+	// the second from is JUEL, translated on the way in like any other
+
+	if a.Transformation() != nil {
+		t.Error("Transformation() = non-nil, want none")
+	}
+}
+
+// TestToMustBeAPath is SRD-097 T-11 / FR-8: a <to> that is not a path is
+// refused where it is read — never imported as a whole-value copy, which
+// would silently discard the mapping the file declared.
+func TestToMustBeAPath(t *testing.T) {
+	err := shapedStartErr(t,
+		`        <bpmn:assignment id="as1">
+          <bpmn:from language="gobpm:lite">s2-out</bpmn:from>
+          <bpmn:to>concat(order, "-done")</bpmn:to>
+        </bpmn:assignment>`)
+	if err == nil {
+		t.Fatal("a <to> that is not a path must be refused")
+	}
+
+	for _, want := range []string{"oa1", "doesn't name", "<from>"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to carry %q", err, want)
+		}
+	}
+}
+
+// TestShapeCarriesEverySource is SRD-097 T-10's other side: under a
+// transformation the file may name SEVERAL sources, and every one of them
+// reaches the model — they gate the association even when the expression
+// names none of them (§10.4.2 rule 1). A throw event's input association
+// is the shape that carries them: several data elements into one node
+// input.
+func TestShapeCarriesEverySource(t *testing.T) {
+	// The two sources carry DIFFERENT item definitions: an association
+	// keys its sources by ItemDefinition id, so two of one type collide —
+	// loudly, with the model's own "duplicate source" error.
+	res, err := importEventDoc(t, propDoc(eventDataDecls+`
+  <bpmn:itemDefinition id="idNum" structureRef="xsd:int"/>`,
+		`    <bpmn:dataObject id="do1" name="order" itemSubjectRef="idStr"/>
+    <bpmn:dataObject id="do2" name="extra" itemSubjectRef="idNum"/>
+    <bpmn:intermediateThrowEvent id="t1">
+      <bpmn:messageEventDefinition messageRef="m1"/>
+      <bpmn:dataInput id="t1-in" itemSubjectRef="idStr"/>
+      <bpmn:dataInputAssociation id="ia1">
+        <bpmn:sourceRef>do1</bpmn:sourceRef>
+        <bpmn:sourceRef>do2</bpmn:sourceRef>
+        <bpmn:targetRef>t1-in</bpmn:targetRef>
+        <bpmn:transformation language="gobpm:lite">order</bpmn:transformation>
+      </bpmn:dataInputAssociation>
+    </bpmn:intermediateThrowEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	th, _ := nodeByID(t, res, "t1").(*events.IntermediateThrowEvent)
+	if th == nil || len(th.InputAssociations()) != 1 {
+		t.Fatalf("the throw carries no input association")
+	}
+
+	a := th.InputAssociations()[0]
+
+	names := a.SourceNames()
+	if len(names) != 2 {
+		t.Fatalf("SourceNames() = %v, want both sources carried", names)
+	}
+
+	if a.Transformation() == nil {
+		t.Error("Transformation() = nil, want the mapped expression")
+	}
+}
+
+// TestSeveralTargetsRefused is §10.4.1's own rule: an association has ONE
+// target, so a second <targetRef> is refused rather than silently dropped.
+func TestSeveralTargetsRefused(t *testing.T) {
+	_, err := importEventDoc(t, propDoc(eventDataDecls,
+		`    <bpmn:dataObject id="do1" name="order" itemSubjectRef="idStr"/>
+    <bpmn:dataObject id="do2" name="extra" itemSubjectRef="idStr"/>
+    <bpmn:startEvent id="s2">
+      <bpmn:messageEventDefinition messageRef="m1"/>
+      <bpmn:dataOutput id="s2-out" itemSubjectRef="idStr"/>
+      <bpmn:dataOutputAssociation id="oa1">
+        <bpmn:sourceRef>s2-out</bpmn:sourceRef>
+        <bpmn:targetRef>do1</bpmn:targetRef>
+        <bpmn:targetRef>do2</bpmn:targetRef>
+      </bpmn:dataOutputAssociation>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="s2" targetRef="e1"/>`))
+	if err == nil {
+		t.Fatal("several targets must be refused")
+	}
+
+	if !strings.Contains(err.Error(), "ONE target") {
+		t.Errorf("error = %v, want §10.4.1's one-target rule", err)
+	}
+}
+
+// TestOutputAssociationCarriesSeveralSources is the OUTPUT direction's
+// multi-source half: there the PARAMETER side is the source, so several
+// <sourceRef>s name several node outputs, and every one of them reaches
+// the model's Associate* (§10.4.2 rule 1).
+func TestOutputAssociationCarriesSeveralSources(t *testing.T) {
+	_, err := importEventDoc(t, assocDoc("",
+		`      <bpmn:ioSpecification id="io1">
+        <bpmn:dataOutput id="dout1" name="a" itemSubjectRef="idOrder"/>
+        <bpmn:dataOutput id="dout2" name="b" itemSubjectRef="idCount"/>
       </bpmn:ioSpecification>
-      <bpmn:dataInputAssociation id="dia1">
-        `+assoc+`
-      </bpmn:dataInputAssociation>`))
+      <bpmn:dataOutputAssociation id="doa1">
+        <bpmn:sourceRef>dout1</bpmn:sourceRef>
+        <bpmn:sourceRef>dout2</bpmn:sourceRef>
+        <bpmn:targetRef>do1</bpmn:targetRef>
+        <bpmn:transformation language="gobpm:lite">a</bpmn:transformation>
+      </bpmn:dataOutputAssociation>`))
+	if err != nil {
+		t.Fatalf("several node outputs under a transformation must import: %v",
+			err)
+	}
+}
+
+// TestExtraSourceMustResolve: an extra <sourceRef> naming nothing the
+// document declared is refused like the first one is — the refusal names
+// the ref, not just the association.
+func TestExtraSourceMustResolve(t *testing.T) {
+	_, err := importEventDoc(t, propDoc(eventDataDecls,
+		`    <bpmn:dataObject id="do1" name="order" itemSubjectRef="idStr"/>
+    <bpmn:intermediateThrowEvent id="t1">
+      <bpmn:messageEventDefinition messageRef="m1"/>
+      <bpmn:dataInput id="t1-in" itemSubjectRef="idStr"/>
+      <bpmn:dataInputAssociation id="ia1">
+        <bpmn:sourceRef>do1</bpmn:sourceRef>
+        <bpmn:sourceRef>nosuch</bpmn:sourceRef>
+        <bpmn:targetRef>t1-in</bpmn:targetRef>
+        <bpmn:transformation language="gobpm:lite">order</bpmn:transformation>
+      </bpmn:dataInputAssociation>
+    </bpmn:intermediateThrowEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="t1" targetRef="e1"/>`))
+	if err == nil || !strings.Contains(err.Error(), "nosuch") {
+		t.Fatalf("error = %v, want the unresolved extra source named", err)
+	}
+}
+
+// TestAssignmentSkipsUnknownBPMNChildren: a BPMN child of <assignment>
+// this converter has no use for is skipped, and the assignment still maps.
+func TestAssignmentSkipsUnknownBPMNChildren(t *testing.T) {
+	a := shapedStart(t, "",
+		`        <bpmn:assignment id="as1">
+          <bpmn:documentation>why</bpmn:documentation>
+          <bpmn:from language="gobpm:lite">s2-out</bpmn:from>
+          <bpmn:to>order</bpmn:to>
+        </bpmn:assignment>`)
+
+	if len(a.Assignments()) != 1 {
+		t.Fatalf("Assignments() = %v, want the mapped one", a.Assignments())
+	}
+}
+
+// TestShapeExpressionsMustBeRunnable is FR-7's language half: a shape whose
+// expression this converter cannot make runnable is refused naming the
+// association, exactly as a condition in the same language would be.
+func TestShapeExpressionsMustBeRunnable(t *testing.T) {
+	tests := map[string]string{
+		"transformation": `        <bpmn:transformation language="xpath">/a/b</bpmn:transformation>`,
+		"assignment from": `        <bpmn:assignment id="as1">
+          <bpmn:from language="xpath">/a/b</bpmn:from>
+          <bpmn:to>order</bpmn:to>
+        </bpmn:assignment>`,
+	}
+
+	for name, shape := range tests {
+		t.Run(name, func(t *testing.T) {
+			err := shapedStartErr(t, shape)
 			if err == nil {
-				t.Fatal("the expression shapes must be refused")
+				t.Fatal("an unrunnable expression must be refused")
 			}
 
-			for _, want := range []string{"#328", "SRD-063 §10.3"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("error = %v, want it to carry %q", err, want)
-				}
-			}
-
-			if strings.Contains(err.Error(), " yet") {
-				t.Errorf("refusal says \"yet\": %v", err)
+			if !strings.Contains(err.Error(), "oa1") {
+				t.Errorf("error = %v, want it naming the association", err)
 			}
 		})
 	}
 }
 
-// TestAssignmentRefused is T-17 (#328's assignment wording).
-func TestAssignmentRefused(t *testing.T) {
-	_, err := importEventDoc(t, assocDoc("",
-		`      <bpmn:ioSpecification id="io1">
-        <bpmn:dataInput id="din1" name="in" itemSubjectRef="idOrder"/>
-      </bpmn:ioSpecification>
-      <bpmn:dataInputAssociation id="dia1">
-        <bpmn:sourceRef>do1</bpmn:sourceRef>
-        <bpmn:targetRef>din1</bpmn:targetRef>
-        <bpmn:assignment id="as1"/>
-      </bpmn:dataInputAssociation>`))
-	if err == nil || !strings.Contains(err.Error(), "#328") ||
-		!strings.Contains(err.Error(), "assignment") {
-		t.Fatalf("error = %v, want the assignment refusal naming #328", err)
+// TestAssignmentToMustBeDeclared is FR-7: an <assignment> whose <to> is
+// empty has nowhere to write, and the refusal says so.
+func TestAssignmentToMustBeDeclared(t *testing.T) {
+	err := shapedStartErr(t, `        <bpmn:assignment id="as1">
+          <bpmn:from language="gobpm:lite">s2-out</bpmn:from>
+          <bpmn:to></bpmn:to>
+        </bpmn:assignment>`)
+	if err == nil || !strings.Contains(err.Error(), "<to>") {
+		t.Fatalf("error = %v, want the missing-to refusal", err)
+	}
+}
+
+// TestEmptyTransformationIsNoShape: a <transformation> with no body
+// declares nothing, so the association stays a plain copy rather than
+// carrying an expression that evaluates to nothing.
+func TestEmptyTransformationIsNoShape(t *testing.T) {
+	a := shapedStart(t, "",
+		`        <bpmn:transformation language="gobpm:lite"></bpmn:transformation>`)
+
+	if a.Transformation() != nil {
+		t.Error("Transformation() = non-nil for an empty body")
+	}
+}
+
+// TestAssignmentSkipsForeignChildren: a vendor element inside an
+// <assignment> is skipped like any other foreign namespace, and the
+// assignment still maps.
+func TestAssignmentSkipsForeignChildren(t *testing.T) {
+	a := shapedStart(t, "",
+		`        <bpmn:assignment id="as1">
+          <ex:hint kind="ignored"/>
+          <bpmn:from language="gobpm:lite">s2-out</bpmn:from>
+          <bpmn:to>order</bpmn:to>
+        </bpmn:assignment>`)
+
+	if len(a.Assignments()) != 1 {
+		t.Fatalf("Assignments() = %v, want the mapped one", a.Assignments())
+	}
+}
+
+// TestAssignmentNeedsAFrom is FR-7's other half: an <assignment> with no
+// <from> has nothing to evaluate, and says so.
+func TestAssignmentNeedsAFrom(t *testing.T) {
+	err := shapedStartErr(t, `        <bpmn:assignment id="as1">
+          <bpmn:to>order</bpmn:to>
+        </bpmn:assignment>`)
+	if err == nil || !strings.Contains(err.Error(), "<from>") {
+		t.Fatalf("error = %v, want the missing-from refusal", err)
 	}
 }
 

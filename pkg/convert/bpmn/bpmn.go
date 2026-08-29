@@ -71,7 +71,12 @@ const (
 	// tagTransaction is the Transaction Sub-Process, and the three
 	// attributes the two sub-process variants are read from
 	// (elements/activities.md:417-426).
-	tagTransaction        = "transaction"
+	tagTransaction = "transaction"
+	// The data association's expression children (§10.4.2 rules 1 and 2).
+	tagTransformation     = "transformation"
+	tagAssignment         = "assignment"
+	tagFrom               = "from"
+	tagTo                 = "to"
 	attrTriggeredByEvent  = "triggeredByEvent"
 	attrTransactionMethod = "method"
 	attrTransactionProto  = "protocol"
