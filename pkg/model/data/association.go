@@ -1,4 +1,4 @@
-// Package data provides implementation of BPMN data elements including
+// Package data provides implementations of BPMN data elements, including
 // item definitions, data associations, properties, and formal expressions.
 package data
 

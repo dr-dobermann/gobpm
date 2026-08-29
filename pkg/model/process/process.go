@@ -1,4 +1,4 @@
-// Package process provides implementation of BPMN Process elements and their execution.
+// Package process provides an implementation of BPMN Process elements and their execution.
 package process
 
 import (

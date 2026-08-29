@@ -1,7 +1,7 @@
 // Package memtrace provides an opt-in observability.Tracer that retains the most
 // recent completed spans in a bounded in-memory ring, queryable via Spans. It is
 // a development and test aid; the engine's default tracer is the noop one, and
-// production tracing is the adapters/otel module (ADR-002 §4.2).
+// production tracing lives in the adapters/otel module (ADR-002 §4.2).
 package memtrace
 
 import (
