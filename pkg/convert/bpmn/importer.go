@@ -157,6 +157,10 @@ type nodeBody struct {
 	// dataAssocs are the node's data associations, wired in the pass
 	// after the data elements exist (SRD-089.G §4.1).
 	dataAssocs []dataAssocSpec
+	// params are the node's bare <dataInput>/<dataOutput> children — an
+	// event's data (§10.4.2, SRD-094 FR-7); refused at build on any other
+	// owner, where the kind is known.
+	params []paramSpec
 	// extra are options read from the element's own attributes by the one
 	// funnel every node passes through, rather than by each builder that
 	// remembers to. A builder that forgets is how a documented attribute
@@ -1213,6 +1217,13 @@ func buildNode(p *parser, asm *assembly, s *nodeSpec) (flow.Node, error) {
 		s.body.extra = append(s.body.extra, ioOpts...)
 	}
 
+	// A bare parameter is an event's form (§10.4.2); the event builders
+	// consume it. On any other owner it is refused here, by the same
+	// build-knows-the-kind rule as the ioSpecification above.
+	if len(s.body.params) != 0 && !eventNodeTags[s.se.Name.Local] {
+		return nil, bareParamMisplaced(s)
+	}
+
 	// A loop marker rides the same funnel: every activity kind takes
 	// WithLoop, and anything else refuses the option itself with this
 	// node's id wrapped around the refusal (SRD-089.H §4.1).
@@ -1981,15 +1992,13 @@ func unsupported(se xml.StartElement) error {
 	}
 }
 
-// dataParamNote explains a bare parameter or set outside an
-// <ioSpecification>. It covers both positions one refusal can fire from:
-// on a task the element belongs inside the spec (the standard's
-// structure), and on an event the bare form is legal BPMN awaiting the
-// model's attachment capability (#329) — the settle path cannot tell the
-// two owners apart, so the note carries both truths.
+// dataParamNote explains a parameter or set that reached the settle path —
+// outside any owner that takes it: on a task or a process the element
+// lives inside the <ioSpecification> (§10.4.1), and an event takes a bare
+// <dataInput>/<dataOutput> as its own form (§10.4.2, SRD-094).
 const dataParamNote = "on a task or a process this element lives inside " +
-	"its <ioSpecification> (§10.4.1) — write it there; an event's bare I/O " +
-	"awaits the event data attachment capability, #329"
+	"its <ioSpecification> (§10.4.1), and an event carries a bare " +
+	"<dataInput>/<dataOutput> (§10.4.2) — write it there"
 
 // dataAssocNote explains an association outside an activity's body — its
 // only importable position since SRD-089.G.

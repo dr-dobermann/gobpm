@@ -9,6 +9,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
@@ -20,16 +21,7 @@ func main() {
 }
 
 func run() error {
-	fmt.Print(`
-  transaction-sub-process (a booking Transaction that cancels):
-    start → (booking) → end
-              ⚡ cancel-bnd → notify-customer
-    booking = reserve-seat → charge-card → cancel-booking (Cancel End)
-                ╳ release-seat  ╳ refund-card
-    the Cancel End aborts: refund-card runs BEFORE release-seat, then
-    control exits the Cancel boundary to notify-customer
-
-`)
+	fmt.Print(banner)
 
 	if err := data.CreateDefaultStates(); err != nil {
 		return fmt.Errorf("init data states: %w", err)
@@ -43,9 +35,18 @@ func run() error {
 	// Records the execution order, so the reverse-order claim is checked.
 	runLog := newRunLog()
 
-	proc, err := buildProcess(runLog)
+	// The protocol is a datum the engine carries and never reads; the method
+	// is left to its default, compensate — the one coordinator the engine has.
+	proc, err := buildProcess(runLog,
+		activities.WithTransactionProtocol("saga-v1"))
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
+	}
+
+	// Before running the booking: what registration says to a Transaction
+	// whose method names a coordinator this engine does not have.
+	if rerr := showRefusal(engine); rerr != nil {
+		return rerr
 	}
 
 	if _, err = engine.RegisterProcess(proc); err != nil {
@@ -69,22 +70,5 @@ func run() error {
 		return fmt.Errorf("waiting for completion: %w", err)
 	}
 
-	// Two orderings are being demonstrated at once: compensation undoes the
-	// completed activities in REVERSE (refund before release, mirroring
-	// reserve then charge), and only afterwards does control leave through
-	// the Cancel boundary to notify-customer. A run that notified first, or
-	// undid forwards, would execute every task and complete just the same.
-	if err := runLog.check(
-		"reserve-seat", "charge-card",
-		"refund-card", "release-seat",
-		"notify-customer",
-	); err != nil {
-		return fmt.Errorf("cancel ordering: %w", err)
-	}
-
-	fmt.Printf("\n✓ transaction-sub-process completed (%s): the Cancel End "+
-		"compensated the booking in reverse order and control left through the "+
-		"Cancel boundary\n", state)
-
-	return nil
+	return report(state, runLog)
 }

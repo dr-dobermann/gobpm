@@ -180,6 +180,13 @@ func (inst *Instance) adoptRestored(
 		err = ls.adoptRestoredCalls(ctx)
 	}
 
+	// after the scopes: registering a task resolves its eligibility triad,
+	// which reads process data through the scope chain the adoption above
+	// rebuilt.
+	if err == nil {
+		ls.adoptRestoredTasks(ctx, initial)
+	}
+
 	if err != nil {
 		// fail() is phase-only; the loop is exiting without running, so
 		// the lifecycle must land terminal too — a stuck Active instance
@@ -608,8 +615,8 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		ls.compensationTrackEnded(ctx, ev.track, true)
 		ls.applyFailed(ctx, ev)
 
-	case evWaiting, evTaskWaiting, evJobWaiting, evCallWaiting, evDeliver,
-		evDataCommit, evDehydrated:
+	case evWaiting, evWaitArmed, evTaskWaiting, evJobWaiting, evCallWaiting,
+		evDeliver, evDataCommit, evDehydrated:
 		// the wait/deliver plane — parks, deliveries, and the signals that
 		// re-evaluate or resume them; sub-dispatched to keep apply under the
 		// complexity limit (the applyParked precedent).
@@ -675,6 +682,10 @@ func (ls *loopState) applyWaitPlane(ctx context.Context, ev trackEvent) {
 
 	case evWaiting:
 		ls.onWaiting(ctx, ev)
+
+	case evWaitArmed:
+		// the parked track's holders are registered — nothing to apply; the
+		// loop tail's maybeDehydrate is what this event is for (SRD-095 FR-8).
 
 	case evTaskWaiting:
 		// a UserTask parked as a human task — register + announce it (SRD-034).
@@ -1489,6 +1500,20 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 			// loop-owned Conditional watch is never holdable and correctly
 			// keeps its instance resident.
 			if !ls.boundariesHeld(t.ID()) {
+				return nil
+			}
+
+			// AN INSTANCE OF A FAN-OUT IS WORKING. The track reads
+			// WaitForEvent because its other instances are parked, and its
+			// single `waiting` entry stands for all N — so neither says that
+			// one of them has just been handed a completion and is running.
+			//
+			// It cannot leave `waiting` to signal this the way a lone
+			// dispatch does: that entry is what later deliveries are gated
+			// on, and dropping it on the first would drop every one after
+			// (dispatchToInstances states the same rule from the other side).
+
+			if t.instancesBusy() {
 				return nil
 			}
 

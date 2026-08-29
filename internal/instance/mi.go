@@ -33,6 +33,10 @@ type multiInstance interface {
 	NoneBehaviorEvent() flow.EventDefinition
 	OneBehaviorEvent() flow.EventDefinition
 	ComplexBehavior() []*activities.ComplexBehaviorDefinition
+
+	// Result is the declared reading of the instances' results, nil for the
+	// last-wins default (ADR-025 §2.6.1).
+	Result() *activities.ResultStrategy
 }
 
 // multiInstanceOf reports the node's Multi-Instance characteristics, or nil when
@@ -87,6 +91,18 @@ type miBinding struct {
 // completion condition land in later milestones.
 type miIterator struct {
 	mi multiInstance
+}
+
+// kind names the shape this iterator drives, in the record's own vocabulary
+// (iter_mirror.go) — the same answer iterDecorator.iterKind gives, so the
+// value a model reads as ITERATION_MODE does not depend on which publication
+// path bound it.
+func (it miIterator) kind() string {
+	if it.mi != nil && it.mi.IsSequential() {
+		return iterKindMISequential
+	}
+
+	return iterKindMIParallel
 }
 
 // captureSequentialOutput reads a draining sequential-MI instance's output item
@@ -262,11 +278,18 @@ func (it miIterator) bindInstance(
 	st := host.miState
 
 	binds := []miBinding{
-		{name: "loopCounter", value: i},
-		{name: "numberOfInstances", value: st.numberOfInstances},
-		{name: "numberOfActiveInstances", value: 1},
-		{name: "numberOfCompletedInstances", value: st.completed},
+		{name: data.LoopCounterName, value: i},
+		{name: data.NumberOfInstancesName, value: st.numberOfInstances},
+		{name: data.NumberOfActiveInstancesName, value: 1},
+		{name: data.NumberOfCompletedInstancesName, value: st.completed},
 	}
+
+	// the engine's own names for this execution, from the one builder every
+	// publication path shares (iterationvars.go). Bound here rather than
+	// frame-local because this path binds at the activity's own scope, where
+	// a composite instance's body reads them by walk-up.
+	binds = append(binds, iterationBindings(
+		host.scopePath.String(), it.kind(), host.currentStep().node, i)...)
 
 	if st.collection != nil {
 		elem, err := st.collection.GetAt(ctx, i)
@@ -480,10 +503,10 @@ func drivesOwnIteration(node flow.Node) bool {
 // between the two carried whichever fired last.
 func (t *track) bindMICounters(n, active, completed, terminated int) error {
 	binds := []miBinding{
-		{name: "numberOfInstances", value: n},
-		{name: "numberOfActiveInstances", value: active},
-		{name: "numberOfCompletedInstances", value: completed},
-		{name: "numberOfTerminatedInstances", value: terminated},
+		{name: data.NumberOfInstancesName, value: n},
+		{name: data.NumberOfActiveInstancesName, value: active},
+		{name: data.NumberOfCompletedInstancesName, value: completed},
+		{name: data.NumberOfTerminatedInstancesName, value: terminated},
 	}
 
 	for _, b := range binds {

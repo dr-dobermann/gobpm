@@ -22,6 +22,11 @@ type LoopCharacteristics interface {
 type StandardLoopCharacteristics struct {
 	loopCondition data.FormalExpression
 	loopMaximum   *int
+
+	// result is the declared reading of the passes' results, nil for the
+	// last-wins default (ADR-025 §2.6.1).
+	result *ResultStrategy
+
 	foundation.BaseElement
 	testBefore bool
 }
@@ -120,4 +125,58 @@ func (sl *StandardLoopCharacteristics) LoopMaximum() (int, bool) {
 	}
 
 	return *sl.loopMaximum, true
+}
+
+// WithLoopResultArray declares that the passes' results are indexed by pass
+// ORDINAL and published under name at completion (ADR-025 §2.6.1).
+//
+// An engine extension: BPMN gives a Standard Loop no output aggregation at
+// all, only a Multi-Instance.
+func WithLoopResultArray(name, item string) StandardLoopOption {
+	return func(sl *StandardLoopCharacteristics) error {
+		return sl.declareResult(ResultArray, name, item, nil)
+	}
+}
+
+// WithLoopResultMap declares that the passes' results are keyed by key,
+// evaluated in the completing pass's own frame — see WithResultMap.
+func WithLoopResultMap(
+	name, item string, key data.FormalExpression, opts ...MapOption,
+) StandardLoopOption {
+	return func(sl *StandardLoopCharacteristics) error {
+		return sl.declareResult(ResultMap, name, item, key, opts...)
+	}
+}
+
+// WithLoopResultReduce names the accumulating default under name — see
+// WithResultReduce. For a Standard Loop the fold is the shape's whole point,
+// which is why naming it matters more here than anywhere.
+func WithLoopResultReduce(name string) StandardLoopOption {
+	return func(sl *StandardLoopCharacteristics) error {
+		return sl.declareResult(ResultReduce, name, "", nil)
+	}
+}
+
+// declareResult records the one strategy this loop may declare.
+func (sl *StandardLoopCharacteristics) declareResult(
+	kind ResultKind, name, item string,
+	key data.FormalExpression, opts ...MapOption,
+) error {
+	r, err := newResultStrategy(kind, name, item, key, opts...)
+	if err != nil {
+		return err
+	}
+
+	if sl.result != nil {
+		return errSecondStrategy(sl.result.kind, kind)
+	}
+
+	sl.result = r
+
+	return nil
+}
+
+// Result is the declared result strategy, or nil for the last-wins default.
+func (sl *StandardLoopCharacteristics) Result() *ResultStrategy {
+	return sl.result
 }

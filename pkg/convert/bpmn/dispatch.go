@@ -429,7 +429,7 @@ func parseContainerElem(p *parser, asm *assembly, se xml.StartElement) error {
 // two the author "meant" would be the converter holding a second copy of
 // a model rule (SRD-089.E §4.4).
 func buildSubProcess(
-	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
 	opts := body.opts(id)
 
@@ -447,12 +447,7 @@ func buildSubProcess(
 	}
 
 	if se.Name.Local == tagTransaction {
-		txOpts, err := transactionOptions(p, se, id)
-		if err != nil {
-			return nil, err
-		}
-
-		opts = append(opts, txOpts...)
+		opts = append(opts, transactionOptions(se))
 	}
 
 	return activities.NewSubProcess(fallbackName(id, name), opts...)
@@ -489,64 +484,25 @@ func buildCallActivity(
 	return activities.NewCallActivity(fallbackName(id, name), key, body.opts(id)...)
 }
 
-// transactionMethods says, per BPMN Transaction `method` value, whether
-// this engine realizes that abort protocol (ADR-028 §2.7). The empty key
-// is the absent attribute: BPMN's default is compensate.
-//
-// A table rather than a switch because it is a fixed classification, and
-// because the one thing a reader needs from it — which values are in and
-// which are out — should be readable in one glance.
-var transactionMethods = map[string]bool{
-	"":           true,
-	"compensate": true,
-	"store":      false,
-	"image":      false,
-}
-
-// transactionOptions reads a <transaction>'s own attributes.
-//
-// `method` is not a lost datum, it is the abort semantics: importing
-// store or image as compensate would hand back a process that undoes by
-// running handlers where the document said the resource managers roll
-// back, and a report calling that a dropped attribute would understate it
-// (SRD-089.E §4.5). So the two the engine does not realize are refused,
-// and the one it does is silent — reporting the value the engine
-// implements would train a host to ignore the report.
-//
-// `protocol` names the coordinator those two would have needed, so with
-// the only supported method nothing executable depends on it: reported,
-// and the transaction imports without it.
-func transactionOptions(
-	p *parser, se xml.StartElement, id string,
-) ([]options.Option, error) {
-	method := strings.TrimSpace(attrValue(se, attrTransactionMethod))
-
-	realized, known := transactionMethods[method]
-	if !known {
-		return nil, errs.New(
-			errs.M("bpmn: transaction %q: method %q is not one of BPMN's "+
-				"compensate, store or image (§10.7)", id, method),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	if !realized {
-		return nil, errs.New(
-			errs.M("bpmn: transaction %q: method %q selects resource-manager "+
-				"coordination this engine does not implement and has decided "+
-				"not to (ADR-028 §2.7) — only compensate, undo by compensation "+
-				"handlers, is a process-level mechanism it can realize. Model "+
-				"the undo as compensation handlers", id, method),
-			errs.C(errorClass, errs.InvalidParameter))
+// transactionOptions reads a <transaction>'s own attributes onto the model
+// verbatim (ADR-028 §2.7, SRD-095 FR-6). `method` is read by the model's
+// own parser — the schema token ##Compensate, the metamodel spelling
+// compensate and the absent attribute all denote the built-in coordinator,
+// and any other identifier is carried for registration to judge — so the
+// converter keeps no value table of its own (ADR-024 §2.16). `protocol` is
+// carried as stated: nothing in the engine reads it, and a document that
+// states it round-trips whole.
+func transactionOptions(se xml.StartElement) options.Option {
+	opts := []activities.TransactionOption{
+		activities.WithTransactionMethod(activities.ParseTransactionMethod(
+			attrValue(se, attrTransactionMethod))),
 	}
 
 	if proto := strings.TrimSpace(attrValue(se, attrTransactionProto)); proto != "" {
-		p.report(id, attrTransactionProto,
-			"names a coordination protocol, which only means something for "+
-				"the store and image methods this engine does not implement "+
-				"(ADR-028 §2.7); the transaction imports without it")
+		opts = append(opts, activities.WithTransactionProtocol(proto))
 	}
 
-	return []options.Option{activities.WithTransaction()}, nil
+	return activities.WithTransaction(opts...)
 }
 
 // parseNodeElem builds one flow node and records it in the assembly.
@@ -583,6 +539,8 @@ var nodeChildParsers = func() map[string]nodeChildParser {
 		tagScript:          parseScriptElem,
 		tagProperty:        parsePropertyElem,
 		tagIOSpecification: parseIOSpecElem,
+		tagDataInput:       parseEventParamElem,
+		tagDataOutput:      parseEventParamElem,
 		tagDataInputAssoc:  parseDataAssocElem,
 		tagDataOutputAssoc: parseDataAssocElem,
 		tagStandardLoop:    parseLoopElem,
@@ -701,9 +659,9 @@ var nodeBuilders = map[string]nodeBuilder{
 // so the definitions arrive through the trigger each builder produced,
 // and one the model has no trigger for is refused there rather than here.
 func buildStartEvent(
-	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
-	opts, err := eventOptions(asm, se, id, body)
+	opts, err := eventOptions(p, asm, se, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -713,9 +671,9 @@ func buildStartEvent(
 
 // buildEndEvent builds an end event, typed by its definitions.
 func buildEndEvent(
-	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
-	opts, err := eventOptions(asm, se, id, body)
+	opts, err := eventOptions(p, asm, se, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -724,9 +682,10 @@ func buildEndEvent(
 }
 
 // eventOptions renders a node body as the options an event constructor
-// takes: its id, its documentation, and its definitions as triggers.
+// takes: its id, its documentation, its definitions as triggers, and its
+// bare parameters as its data (§10.4.2, SRD-094 FR-7).
 func eventOptions(
-	asm *assembly, se xml.StartElement, id string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id string, body nodeBody,
 ) ([]options.Option, error) {
 	owner := se.Name.Local + " " + strconv.Quote(id)
 
@@ -740,35 +699,68 @@ func eventOptions(
 		return nil, err
 	}
 
-	return append(body.opts(id), triggers...), nil
+	raw := make([]flow.EventDefinition, 0, len(defs))
+	for _, d := range defs {
+		raw = append(raw, d.def)
+	}
+
+	dataOpts, err := eventDataOptions(p, asm, se, id, raw, body.defs, body.params)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(append(body.opts(id), triggers...), dataOpts...), nil
+}
+
+// soleEventOptions renders the body of an event built around one
+// positional definition: its id, documentation and data (SRD-094 FR-7).
+func soleEventOptions(
+	p *parser, asm *assembly, se xml.StartElement, id string,
+	def flow.EventDefinition, body nodeBody,
+) ([]options.Option, error) {
+	dataOpts, err := eventDataOptions(p, asm, se, id,
+		[]flow.EventDefinition{def}, body.defs, body.params)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(body.opts(id), dataOpts...), nil
 }
 
 // buildIntermediateCatch builds an intermediate catch event around the
 // single definition it waits for.
 func buildIntermediateCatch(
-	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
 	def, err := soleDefinition(asm, se, id, body)
 	if err != nil {
 		return nil, err
 	}
 
-	return events.NewIntermediateCatchEvent(
-		fallbackName(id, name), def, body.opts(id)...)
+	opts, err := soleEventOptions(p, asm, se, id, def, body)
+	if err != nil {
+		return nil, err
+	}
+
+	return events.NewIntermediateCatchEvent(fallbackName(id, name), def, opts...)
 }
 
 // buildIntermediateThrow builds an intermediate throw event around the
 // single definition it throws.
 func buildIntermediateThrow(
-	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
 	def, err := soleDefinition(asm, se, id, body)
 	if err != nil {
 		return nil, err
 	}
 
-	return events.NewIntermediateThrowEvent(
-		fallbackName(id, name), def, body.opts(id)...)
+	opts, err := soleEventOptions(p, asm, se, id, def, body)
+	if err != nil {
+		return nil, err
+	}
+
+	return events.NewIntermediateThrowEvent(fallbackName(id, name), def, opts...)
 }
 
 // buildSendTask builds a send task around the message it sends.
@@ -859,7 +851,7 @@ func taskMessage(
 // converter passes the definition and reports the refusal with the file's
 // element id attached, which is the one thing the model cannot do (§4.3).
 func buildBoundaryEvent(
-	_ *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
+	p *parser, asm *assembly, se xml.StartElement, id, name string, body nodeBody,
 ) (flow.Node, error) {
 	owner := se.Name.Local + " " + strconv.Quote(id)
 
@@ -879,9 +871,9 @@ func buildBoundaryEvent(
 	// for the pair, including the isForCompensation check on the handler,
 	// whose message names the option a modeler's file is missing.
 	if def.Type() == flow.TriggerCompensation {
-		handler, err := compensationHandler(asm, owner, id)
-		if err != nil {
-			return nil, err
+		handler, herr := compensationHandler(asm, owner, id)
+		if herr != nil {
+			return nil, herr
 		}
 
 		ced, ok := def.(*events.CompensationEventDefinition)
@@ -896,12 +888,17 @@ func buildBoundaryEvent(
 			fallbackName(id, name), host, ced, handler, body.opts(id)...)
 	}
 
+	opts, err := soleEventOptions(p, asm, se, id, def, body)
+	if err != nil {
+		return nil, err
+	}
+
 	return events.NewBoundaryEvent(
 		fallbackName(id, name), host, def,
 		// The standard's default is interrupting
 		// (elements/events.md:252).
 		attrBool(se, "cancelActivity", true),
-		body.opts(id)...)
+		opts...)
 }
 
 // attachedActivity resolves a boundary event's attachedToRef.

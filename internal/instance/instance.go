@@ -61,11 +61,16 @@ type Instance struct {
 	// performers records who completed each human task, served read-only through
 	// the RUNTIME subtree and carried across a hydrate (ADR-020 v.2 §2.4.2).
 	performers *performers
-	now        func() time.Time
-	tracksSnap atomic.Pointer[[]*track]
-	lastErr    atomic.Pointer[error]
-	s          *snapshot.Snapshot
-	tracks     map[string]*track
+	// iterations records what each iterated activity did — the durable half of
+	// §2.9's attributes, keyed by activity id so two concurrent iterations
+	// stay distinguishable (ADR-025 §2.9.2).
+	iterations      *iterations
+	iterationOwners *iterationOwners
+	now             func() time.Time
+	tracksSnap      atomic.Pointer[[]*track]
+	lastErr         atomic.Pointer[error]
+	s               *snapshot.Snapshot
+	tracks          map[string]*track
 	// incidents is the durable record of unhandled failures (ADR-036 §2.1),
 	// keyed by incident id. Mutated only on the loop goroutine; carried into
 	// the checkpoint by the persistence slice (SRD-079 §3.3). openIncCount
@@ -587,10 +592,13 @@ func New(
 	// inst escapes via &inst below (the instanceScope loader takes it the same way).
 	inst.corr = correlator{inst: &inst, keys: map[string]string{}}
 	inst.performers = newPerformers()
+	inst.iterations = newIterations()
+	inst.iterationOwners = newIterationOwners()
 
 	if err := inst.sc.load(
 		parentRoot, inst.s.ProcessName, inst.s.Properties,
-		inst.s.DataObjects, inst.DataStores(), &inst); err != nil {
+		inst.s.DataObjects, inst.DataStores(), inst.ExpressionEngine(),
+		&inst); err != nil {
 		return nil, errs.New(
 			errs.M("couldn't load process'es properties into Instance scope"),
 			errs.E(err),
@@ -662,11 +670,31 @@ func (inst *Instance) seedInitialData(cfg *newConfig) (flow.Node, error) {
 		return nil, err
 	}
 
+	// A born start never runs as a node, so its output associations — the
+	// standard's route from a message payload into the process inputs or a
+	// data object (§10.4.2's Start/End case) — run here, before the contract
+	// is checked (ADR-040 v.2 §2.7, SRD-094 FR-5).
+	flush := noFlush
+
+	if bornStart != nil {
+		var err error
+
+		if flush, err = inst.runBornStartAssociations(bornStart, cfg); err != nil {
+			return nil, err
+		}
+	}
+
 	// The declared contract, if any, binds the delivered data through its
 	// input parameters — the one moment before any token exists (ADR-040
 	// §2.9); a contract-less process is untouched.
 	if err := inst.bindContract(cfg); err != nil {
 		return nil, err
+	}
+
+	// the launch is accepted: what the born start wrote outside the
+	// instance — the engine-global Data Stores — is written now
+	if err := flush(); err != nil {
+		return nil, inst.seedErr(bornStart, "couldn't write the Data Stores", err)
 	}
 
 	return bornStart, nil

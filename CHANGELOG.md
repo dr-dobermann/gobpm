@@ -7,7 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **The legacy `flow.DataNode` association path** (SRD-097 M9). It had no
+  runtime caller — an executing process moves data through the execution
+  frame in `pkg/model/dataflow` — and only its own package tests reached it,
+  so it was two evaluators' worth of surface pretending to be one engine.
+  Removed: the `flow.DataNode` interface, `DataObject.Update`,
+  `Association.UpdateSource`, `Association.Value`, and the
+  `data.Recalculate` / `data.NoRecalculate` constants. `Association.IsReady`
+  stays — it is a state query, not part of the evaluator. Nothing in the
+  guides or examples used any of it. If you called one of these, the
+  replacement is the association's declarative surface
+  (`Transformation()`, `Assignments()`, `SourceNames()`, `TargetName()`)
+  plus letting the engine move the data.
+
 ### Added
+
+- **A data association computes** (ADR-011 v.10 / SRD-097, closes #328). BPMN
+  §10.4.2 gives an association three execution shapes, and the engine ran only
+  the third: a **transformation** derives the whole target value from the
+  association's sources; an **assignment** (`data.WithAssignments`) evaluates
+  its `from` and writes the data path its `to` names, leaving every other field
+  of the target intact; neither means the plain single-source copy that was
+  previously the only shape. An association may now carry **several sources**
+  (`data.WithSources`) — only a computing shape can combine them, so a plain
+  copy still takes exactly one. A transformation together with assignments is
+  refused where the association is built, not at run time. Expressions evaluate
+  against the activity's data context: the node's own parameters (an output
+  wins over a same-named scope datum), the scope, and a Data Store the
+  association reads; an assignment whose target is a store reads the record
+  first and writes back the whole of it, so untouched fields survive. Every
+  `Associate*` method on `DataObject` and `DataStoreReference` gained a
+  variadic `shape ...options.Option` tail, so existing calls compile
+  unchanged. The BPMN importer maps `<transformation>` and `<assignment>` and
+  accepts a multi-source association, retiring the last three refusals the
+  import-coverage guide listed for data associations; an expression in a
+  language the converter cannot run is refused by name, quoting the element
+  that carries it. Worked end to end in
+  [`examples/association-expressions/`](examples/association-expressions/).
+- **A Transaction carries its `method` and `protocol`, and binds its abort
+  to a coordinator** (ADR-028 v.2 / SRD-095, part of #324). The
+  `isTransaction` flag becomes `activities.TransactionCharacteristics` —
+  `WithTransaction(opts...)` (source-compatible) with
+  `WithTransactionMethod`/`WithTransactionProtocol`, read back through
+  `SubProcess.Transaction()`. `method` is an open identifier
+  (`TransactionMethod`): `compensate` is built in and the default, the
+  model reads both the metamodel spelling and the schema token
+  `##Compensate`, and `RegisterProcess` refuses any method no coordinator
+  performs — the same moment a script format nothing claims is. The
+  instance runtime binds a Transaction scope to its coordinator when the
+  scope opens (fresh and restored alike) and dispatches the Cancel abort on
+  the binding; the abort's Thrown fact carries `transaction_method`. The
+  BPMN importer maps both attributes verbatim, retiring its private value
+  table — which read only the lowercase spellings and refused a schema-valid
+  `method="##Compensate"` — and the `protocol` `Dropped` report; a
+  `<transaction method="##Store">` now imports and is refused at
+  registration. Export of a Sub-Process, and so re-emission of the two, still
+  waits on ADR-024's export slice.
+- **The examples run sweep runs in parallel** (`scripts/run-examples.sh`,
+  `EXAMPLE_JOBS`): 49 modules in ~30s instead of 1m20s, each example's
+  output buffered and printed in its own group fold in module order, a
+  failure showing its log and status.
+- **Events carry data — and the process's own Start/End events fill its
+  contract** (ADR-040 v.2 §2.7 / SRD-094, closes #329). A catch event
+  (Start, Intermediate catch, Boundary) has data outputs and output
+  associations; a throw event (End, Intermediate throw) has data inputs
+  and input associations — the standard's §10.4.2 halves, which the
+  runtime already ran but nothing could wire to. An item-bearing trigger
+  (a message, a signal or escalation with a structure) declares its
+  payload parameter itself; `events.WithDataOutputs` / `WithDataInputs`
+  declare more, paired with the definitions in order (p217). Every event
+  is a `flow.AssociationSource` / `AssociationTarget`, so a Data Object or
+  Data Store wires to it the way it wires to a task
+  (`AssociateSource` by item; the new `AssociateTargetInput` by the input's
+  id). The process's own ends reach its contract: `Process.AssociateInput`
+  targets a declared input from a Start event's output,
+  `Process.AssociateOutput` sources a declared output into an End event's
+  input; a message-born launch fills the contract from the payload at the
+  seed — Data Store writes deferred until the contract accepted the
+  launch — and the End event throws the declared result. Tasks and events
+  share one copy path (`pkg/model/dataflow`), which now also marks a
+  produced Data Object Ready so a downstream input association can read
+  it. The importer wires `<dataInput>`/`<dataOutput>` and the associations
+  on events, including a `<dataStoreReference>` into an event's input, and
+  refuses a parameter whose `itemSubjectRef` differs from its definition's
+  (p217). `examples/event-data/` runs the message route end to end: the
+  order message fills the contract, the quote message carries the total.
 
 - **A process declares its own I/O contract** (ADR-040 v.1 / SRD-093,
   closes #330). `process.New` takes `data.WithInputs`/`data.WithOutputs`
@@ -20,9 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `StartProcess`/`StartLatest`/`StartVersion`, a Call Activity through its
   parameters, each value type-checked against its declaration. A required
   input left unbound, or a datum the contract does not name, refuses the
-  launch before the instance exists — the process never waits for data —
-  and an event-born launch cannot fill a required input until #329 lands,
-  so it is refused naming that row. Declared outputs are read from the root
+  launch before the instance exists — the process never waits for data.
+  Declared outputs are read from the root
   scope at normal completion and bound through their declaration: a
   required one missing, or a value the declared item cannot carry, faults
   the instance (`Terminated`, `LastErr()` naming the output); an optional
@@ -35,6 +120,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without a contract keeps its permissive meaning. `examples/process-io/`
   runs the whole contract end to end, including publishing the engine's
   `RUNTIME/STARTED_AT` under a declared output.
+
+- **A parallel Multi-Instance over a User Task** (SRD-090.D FR-10, ADR-025
+  §2.15/§2.15a, ADR-020 §2.12, part of #340). Three approvals offered at once
+  are three addressable tasks: each is announced, claimed and completed on its
+  own identity — the identity its holder keeps across a dehydration — and the
+  activity finishes only when every one of them has actually been done.
+
+  Each iteration resolves its OWN performer, in the data context it runs in:
+  an assignee expression reading the element that iteration was seeded with
+  names a different person per iteration. Eligibility is assessed once, at the
+  announcement, and checked from that verdict afterwards — including across a
+  dehydration, since the verdict rides the checkpoint beside the identity it
+  was announced under. Resolving it again on the way back would read the
+  host's scope rather than the iteration's, where a per-iteration performer
+  resolves to nobody and locks every holder out of their own task.
+
+  The host is the node to everything outside it. It holds the N waits and
+  applies their completions **serially, on its own goroutine**: the iterations
+  are state it owns rather than goroutines running a node they share. That is
+  what keeps one approver's outputs out of another iteration's frame, and it
+  is the arrangement ADR-025 §2.15a prescribes — the race is removed rather
+  than synchronised.
+
+  A fan-out that holds no wait is unaffected: a Script or Service Task
+  iteration does its work rather than waiting for somebody, and those still
+  overlap.
+
+- **A model declares what its iterations produce** (SRD-090.D FR-7/FR-8,
+  ADR-025 §2.6.1, part of #340). The default is unchanged and stated plainly:
+  last write wins, which makes a sequential iteration a fold and a parallel one
+  order-dependent. A model that needs every iteration's result now says so and
+  gets a deterministic one.
+
+  A **map** keys results by a per-iteration expression, evaluated in the
+  completing iteration's own frame — so the key can use something that
+  iteration produced, an approver's answer being the motivating case. An empty key
+  refuses; a duplicate overwrites by default, or faults naming both ordinals
+  and the key under `ErrorOnKeyRewrite`. A Standard Loop also gains an
+  **array** indexed by ordinal, which BPMN does not give it; a Multi-Instance
+  keeps the standard's own `loopDataOutputRef` assembly for that.
+  **reduce** names the default so a model can state the fold it relies on.
+
+  A declared result publishes ONCE, at activity completion — never
+  incrementally, so nothing can read a half-assembled collection.
+
+- **An iterating activity publishes which iteration is running** (SRD-090.D,
+  ADR-025 §2.9.2, part of #340). Beside BPMN's `loopCounter`, every iteration
+  of a Standard Loop or Multi-Instance now reads `ITERATION_NUMBER`, its
+  stable `ITERATION_ID` and its `ITERATION_MODE` (`std_loop` /
+  `mi_sequential` / `mi_parallel`) as plain names — each iteration seeing its
+  own, on every publication path.
+
+  `ITERATION_ID` is derived rather than minted: enclosing scope path +
+  activity id + ordinal, all of which already survive a checkpoint, so it is
+  stable across a restart with nothing stored for it.
+
+  Both registers ride the checkpoint: they are read AFTER the activity, so a
+  process that waited on anything is answering in a rebuilt instance.
+
+  New `RUNTIME/ITERATIONS` answers what an activity's iteration *did* —
+  `{kind, total, completed, terminated}` keyed by activity id — from any node
+  after it. That is the question the `numberOf*` counts cannot answer at any
+  address, since they end with the activation they describe. Keyed by
+  activity id so it stays unambiguous when two activities iterate at once.
+
+  New `RUNTIME/ITERATION_OWNERS` answers *who did which iteration* — activity
+  id → (ordinal → the actor who completed it). `COMPLETED_BY` cannot: it keys
+  by node, so an iterated activity has one entry however many iterations ran
+  and whoever did them, and the last completion wins. Three approvals are
+  three pieces of work by three people.
+
+  Documented in one place: [Iteration runtime variables](docs/guides/iteration/runtime-variables.md).
 
 - **The standard's artifacts are carried, and an annotated diagram
   imports** (ADR-039 v.1 / SRD-092, closes #323). BPMN §8.4.1's three
@@ -73,13 +230,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a mechanism. A **parallel** fan-out over a Message catch with no
   `WithIterationCorrelation` is ambiguous by construction — a message is
   point-to-point, so nothing says which envelope belongs to which of N
-  waiting instances. A **parallel** fan-out over work that parks outside
-  the event system — a User Task, an external-worker Service Task — would
-  have its instances share one parked-work identity, so only one would be
-  addressable and the rest would complete without anyone doing them; make
-  it sequential, or model N tasks. ADR-025 §2.15 and ADR-020 §2.12 decide
-  what that fan-out means, and the refusal lifts when each instance owns
-  its identity.
+  waiting instances. A **parallel** fan-out over an **external-worker**
+  Service Task would have its instances share one job identity — a job is
+  keyed to the track, with no ordinal — so a single report would complete
+  work nobody performed; make it sequential, or model N tasks. That one is a
+  deferral rather than a limit, tracked by
+  [#355](https://github.com/dr-dobermann/gobpm/issues/355).
+
+  The User Task half of that second refusal has since lifted, now that each
+  instance owns its identity — see below.
 - **BPMN import covers the loop characteristics** (SRD-089.H, part of
   #284). `<standardLoopCharacteristics>` maps onto `NewStandardLoop` —
   condition, `testBefore`, `loopMaximum` — and
@@ -140,7 +299,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   encodings, the cluster declaration, and per-dialect migration
   serialization.
 
+### Changed
+
+- **The engine's data names are reserved** (SRD-090.D FR-6, ADR-025 §2.9.2).
+  A process property, data object, data store reference or activity **output**
+  named `loopCounter`, one of the four `numberOf*` counts, `ITERATION_NUMBER`,
+  `ITERATION_ID`, `ITERATION_MODE` or `ITERATIONS` is now refused when the
+  process is built, naming the element. `data.ReservedNames()` lists them.
+
+  This is what protects the counts, which stay readable by plain name at the
+  activity's own scope — a `completionCondition` and the body of an iterated
+  Sub-Process both reach them by walk-up. Without the refusal, a declared
+  output named `numberOfCompletedInstances` commits to that same scope and a
+  completion condition then stops on a number the model chose, silently.
+
+  A **structural field** is unaffected: `order.loopCounter` is reached through
+  `order` and shadows nothing. No address changed — every one of these names
+  resolves exactly as it did before.
+
 ### Fixed
+
+- **A checkpoint taken at a wait no longer drops the previous activity's
+  compensation-ledger entry** (SRD-095 FR-8). The track declared a wait —
+  a checkpoint trigger — before emitting the move that ledgers the activity
+  it had just completed, so a document written at that wait was one entry
+  short, and a Transaction restored from it aborted without compensating
+  that activity. The move is now emitted first; a restore from a wait
+  checkpoint compensates exactly as a resident abort does.
 
 - **Claiming a human task no longer lapses when the instance wakes**
   (ADR-020 §2.1, §2.4.1). Hydrating a released instance re-parks its

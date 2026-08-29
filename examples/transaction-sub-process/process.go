@@ -16,11 +16,22 @@ import (
 //
 // reserve and charge complete and enter the completion ledger; the Cancel End
 // Event then aborts the Transaction.
-func buildTransaction(log *runLog) (*activities.SubProcess, error) {
-	tx, err := activities.NewSubProcess("booking", activities.WithTransaction())
+//
+// txOpts are the Transaction's own BPMN attributes (ADR-028 §2.7): the abort
+// method — compensate unless stated — and the coordination protocol, held
+// as stated and never read by the engine. The example prints what the model
+// holds so the read-back is visible.
+func buildTransaction(
+	log *runLog, txOpts ...activities.TransactionOption,
+) (*activities.SubProcess, error) {
+	tx, err := activities.NewSubProcess("booking",
+		activities.WithTransaction(txOpts...))
 	if err != nil {
 		return nil, fmt.Errorf("new transaction: %w", err)
 	}
+
+	tc := tx.Transaction()
+	fmt.Printf("  booking: method=%q protocol=%q\n", tc.Method(), tc.Protocol())
 
 	sStart, err := events.NewStartEvent("s-start")
 	if err != nil {
@@ -96,8 +107,10 @@ func buildTransaction(log *runLog) (*activities.SubProcess, error) {
 // The Cancel End inside the Transaction aborts it — refund-card compensates
 // before release-seat (reverse completion order) — then control leaves through
 // the interrupting Cancel boundary to notify-customer.
-func buildProcess(log *runLog) (*process.Process, error) {
-	tx, err := buildTransaction(log)
+func buildProcess(
+	log *runLog, txOpts ...activities.TransactionOption,
+) (*process.Process, error) {
+	tx, err := buildTransaction(log, txOpts...)
 	if err != nil {
 		return nil, err
 	}

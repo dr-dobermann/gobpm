@@ -181,5 +181,6 @@ Start with the class you are placing, then the trigger it carries:
 ## See also
 
 - Runtime: [How events are processed](../concepts/event-processing.md) — the EventHub, waiters, correlation, delivery.
+- Data: [Event data and the process contract](../data/event-data.md) — an event's data outputs/inputs, wiring them to Data Objects, Data Stores and the process's own contract.
 - Design: [ADR-006 — events and subscriptions](../../design/ADR-006-events-and-subscriptions.md) · [ADR-014 — message handling](../../design/ADR-014-message-handling.md) · [ADR-015 — event-triggered instantiation](../../design/ADR-015-event-triggered-instantiation.md) · [ADR-018 — boundary events](../../design/ADR-018-boundary-events-and-activity-interruption.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/events`

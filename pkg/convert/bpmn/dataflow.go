@@ -2,6 +2,7 @@ package bpmn
 
 import (
 	"encoding/xml"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -61,16 +62,32 @@ type dataAssocSpec struct {
 	paramRef string
 	// elemRef is the other end: the data element in scope.
 	elemRef string
-	// extraSources are sourceRefs beyond the first on an input
-	// association — refused with the transformation rule (§4.6).
+	// extraSources are the element-side refs beyond the first: several
+	// <sourceRef>s on an input association, which §10.4.2 rule 3 makes
+	// legal only under an expression shape.
 	extraSources []string
-	// hasTransformation records a <transformation> child — refused,
-	// never mapped (§4.6); the flag exists so the refusal can name the
-	// association that carries it.
-	hasTransformation bool
-	// hasAssignment records an <assignment> child, refused the same way
-	// with its own wording (§4.6).
-	hasAssignment bool
+	// extraParams are the parameter-side refs beyond the first: several
+	// <sourceRef>s on an OUTPUT association, where the parameter side is
+	// the source. The same rule, the other direction.
+	extraParams []string
+	// transformation is the <transformation> child's expression, nil when
+	// the association declares none (SRD-097 FR-7). Its result replaces
+	// the target (§10.4.2 rule 1), and its presence is what makes several
+	// sources legal.
+	transformation *exprSpec
+	// assignments are the <assignment> children in document order, each a
+	// from expression and a to path (§10.4.2 rule 2).
+	assignments []assignSpec
+}
+
+// assignSpec is one parsed <assignment>: the from expression and the raw
+// to body, which toPath resolves to a data path (SRD-097 FR-8).
+type assignSpec struct {
+	from *exprSpec
+	to   string
+	// toID names the <to> element for a refusal that has to say WHICH
+	// assignment of the association it means.
+	toID string
 }
 
 // paramTags maps the two parameter tags to their direction — the fixed
@@ -458,18 +475,34 @@ func (p *parser) parseIOSpecChild(io *ioSpec, se xml.StartElement) error {
 	return p.settle(ctxData, se)
 }
 
-// parseIOParam reads one <dataInput> or <dataOutput>.
+// parseIOParam reads one <dataInput> or <dataOutput> of an ioSpecification.
 func (p *parser) parseIOParam(
 	io *ioSpec, dir data.Direction, se xml.StartElement,
 ) error {
-	id, err := requiredID(se)
+	spec, err := p.parseParamSpec(dir, se)
 	if err != nil {
 		return err
 	}
 
+	io.params = append(io.params, spec)
+
+	return nil
+}
+
+// parseParamSpec reads one <dataInput> or <dataOutput> wherever it stands
+// — inside an ioSpecification, or bare on an event (§10.4.2) — claiming
+// its id and returning its spec.
+func (p *parser) parseParamSpec(
+	dir data.Direction, se xml.StartElement,
+) (paramSpec, error) {
+	id, err := requiredID(se)
+	if err != nil {
+		return paramSpec{}, err
+	}
+
 	err = p.claimID(id, se.Name.Local)
 	if err != nil {
-		return err
+		return paramSpec{}, err
 	}
 
 	// A parameter's content model is a data element's: documentation and
@@ -489,7 +522,7 @@ func (p *parser) parseIOParam(
 	p.owner = outer
 
 	if err != nil {
-		return err
+		return paramSpec{}, err
 	}
 
 	if carrier.state != "" {
@@ -498,15 +531,13 @@ func (p *parser) parseIOParam(
 
 	p.reportUnmappedAttrs(se, id, nil)
 
-	io.params = append(io.params, paramSpec{
+	return paramSpec{
 		id:      carrier.id,
 		name:    carrier.name,
 		itemRef: carrier.itemRef,
 		dir:     dir,
 		docs:    carrier.docs,
-	})
-
-	return nil
+	}, nil
 }
 
 // parseIOSet reads one <inputSet> or <outputSet>: the single set the
@@ -700,15 +731,13 @@ func (p *parser) parseDataAssocChild(
 
 		return nil
 
-	case "transformation":
-		spec.hasTransformation = true
+	case tagTransformation:
+		return p.assocExpr(
+			&spec.transformation, assocTag(spec.dir), spec.id,
+			"transformation", se)
 
-		return p.skipElement()
-
-	case "assignment":
-		spec.hasAssignment = true
-
-		return p.skipElement()
+	case tagAssignment:
+		return p.parseAssignment(spec, se)
 
 	case tagDocumentation:
 		// Skipped by declaration, the policy-table pattern for a context
@@ -719,6 +748,112 @@ func (p *parser) parseDataAssocChild(
 	}
 
 	return p.settle(ctxData, se)
+}
+
+// assocExpr reads one expression child of a data association — a
+// <transformation>, or an <assignment>'s <from> — into dst.
+func (p *parser) assocExpr(
+	dst **exprSpec, ownerKind, ownerID, role string, se xml.StartElement,
+) error {
+	body, err := p.readText(se)
+	if err != nil {
+		return err
+	}
+
+	if body = strings.TrimSpace(body); body == "" {
+		return nil
+	}
+
+	*dst = &exprSpec{
+		ownerKind: ownerKind,
+		ownerID:   ownerID,
+		role:      role,
+		id:        attrValue(se, "id"),
+		lang:      attrValue(se, "language"),
+		body:      body,
+	}
+
+	return nil
+}
+
+// parseAssignment reads one <assignment> and its <from>/<to> children
+// (§10.4.2 rule 2). A malformed one is kept as parsed and refused where
+// the association is built, so the refusal can name the association.
+func (p *parser) parseAssignment(
+	spec *dataAssocSpec, se xml.StartElement,
+) error {
+	as := assignSpec{toID: attrValue(se, "id")}
+
+	// The <from> of EACH assignment is its own expression, so each needs
+	// its own identity: the expression layer mints an id from its owner
+	// and role when the document declares none, and every assignment of
+	// one association shares both. The assignment's own id distinguishes
+	// them when it has one; its position does when it does not.
+	owner := as.toID
+	if owner == "" {
+		owner = fmt.Sprintf("%s:assignment[%d]", spec.id, len(spec.assignments))
+	}
+
+	for {
+		tok, err := p.token()
+		if err != nil {
+			return err
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Space != nsBPMN {
+				if err := p.skipElement(); err != nil {
+					return err
+				}
+
+				continue
+			}
+
+			if err := p.assignmentChild(&as, owner, t); err != nil {
+				return err
+			}
+
+		case xml.EndElement:
+			if t.Name == se.Name {
+				spec.assignments = append(spec.assignments, as)
+
+				return nil
+			}
+		}
+	}
+}
+
+// assocTag names the association tag a direction was written as, so a
+// refusal quotes the element the file actually contains.
+func assocTag(dir data.Direction) string {
+	if dir == data.Output {
+		return tagDataOutputAssoc
+	}
+
+	return tagDataInputAssoc
+}
+
+// assignmentChild reads one child of an <assignment>.
+func (p *parser) assignmentChild(
+	as *assignSpec, owner string, se xml.StartElement,
+) error {
+	switch se.Name.Local {
+	case tagFrom:
+		return p.assocExpr(&as.from, tagAssignment, owner, "from", se)
+
+	case tagTo:
+		body, err := p.readText(se)
+		if err != nil {
+			return err
+		}
+
+		as.to = strings.TrimSpace(body)
+
+		return nil
+	}
+
+	return p.skipElement()
 }
 
 // setEnd records one ref end. from says which SIDE the ref arrived on:
@@ -735,7 +870,13 @@ func (s *dataAssocSpec) setEnd(from data.Direction, ref string) {
 	}
 
 	if from == paramSide {
-		s.paramRef = ref
+		if s.paramRef == "" {
+			s.paramRef = ref
+
+			return
+		}
+
+		s.extraParams = append(s.extraParams, ref)
 
 		return
 	}

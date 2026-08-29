@@ -17,6 +17,7 @@ Every example runs end-to-end in CI and asserts its own outcome; the list below 
 | [`basic-process/`](basic-process/) | The fundamentals: engine → process (start → service task → end) → register → run. |
 | [`process-data/`](process-data/) | Process data through a task — a property and an engine runtime variable read via the `DataReader`, plus a per-branch **`DataObject`** (a scope-resident named container, read back by name). |
 | [`data-store/`](data-store/) | The engine-global **Data Store** (`DataStoreReference` + `thresher.WithDataStore`) — a value one instance writes outlives it and is read by a *separate* instance through the shared store. |
+| [`association-expressions/`](association-expressions/) | **A data association that computes** — the standard's two expression shapes (§10.4.2): a **transformation** derives the whole target value from its sources, and an **assignment** writes one named field and leaves the rest of the record alone. |
 
 ## Gateways
 
@@ -53,6 +54,7 @@ Every example runs end-to-end in CI and asserts its own outcome; the list below 
 | Example | Demonstrates |
 |---|---|
 | [`service-task-worker/`](service-task-worker/) | External worker (fetch-and-lock) with in-process retry, trust modes, a Business Status / Business Error verdict, and **structural output mapping** (nested fields extracted from a structured worker body). |
+| [`multi-instance-human/`](multi-instance-human/) | **A fan-out over human work** — three approvals offered AT ONCE over a parallel Multi-Instance User Task, each its own addressable task claimed and completed by its own reviewer. Each iteration resolves its own assignee from the element it was seeded with; `WithResultMap` keeps every decision under the name of the person who made it, where the last-wins default would have kept one; and a later node reads `RUNTIME/ITERATION_OWNERS` and `RUNTIME/ITERATIONS` to say who did which (ADR-025 §2.6.1/§2.15, ADR-020 §2.12). |
 | [`usertask/`](usertask/) | User task — a human-completed wait node gated by Camunda-style assignee / candidate authorization, then **claimed** for exclusive hold: completion is strict, so only the actual owner may finish it (ADR-020 v.2). |
 | [`usertask-sla/`](usertask-sla/) | **SLA warnings on a human task** — three *bounded, non-interrupting* timer boundaries at 50% / 90% / 100% of a User Task's budget. Each carries a `timeDuration` **alone** (a relative deadline measured from the moment the boundary arms); the operator deliberately overruns, so every warning fires and the approval still completes — which is what non-interrupting means. |
 | [`incident-retry/`](incident-retry/) | **A failure the process survives** — an unhandled technical failure opens a durable *incident* (cause chain, attempt history, a failure-time data snapshot) instead of killing the instance. The retry policy re-enters the node once on its own; when it exhausts, the operator inspects the incident and `RetryIncident`s it to completion. |
@@ -71,6 +73,7 @@ Every example runs end-to-end in CI and asserts its own outcome; the list below 
 | [`message-intermediate-events/`](message-intermediate-events/) | Throw / catch intermediate message events. |
 | [`inter-instance-correlation/`](inter-instance-correlation/) | A message **instantiates** a handler process and **correlates** by a key derived from the payload (one instance per distinct order). |
 | [`conversation-routing/`](conversation-routing/) | A follow-up message **routes back** to the specific handler instance whose conversation it belongs to; two conversations stay isolated. |
+| [`event-data/`](event-data/) | **Event data attachment** — a message Start Event's output association fills a **declared process input** from the payload (and a data object), a message End Event's input association sources a **declared process output** — the standard's Start/End special case (§10.4.2), so the message route reaches the same contract a Call Activity binds (ADR-040 v.2 §2.7 / SRD-094). |
 
 ## Signals
 

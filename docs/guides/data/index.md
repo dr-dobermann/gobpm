@@ -15,3 +15,4 @@ expressions, and the two container kinds — Data Objects and the Data Store.
 - [Expressions](expressions.md) — conditions and computed values. *(`expression-routing`)*
 - [Data Objects](data-objects.md) — scope-resident named containers. *(`process-data`)*
 - [Data Store](data-store.md) — engine-global, cross-instance storage. *(`data-store`)*
+- [Event data and the process contract](event-data.md) — what an event carries, wiring it, a message-born launch filling the process's declared inputs. *(`event-data`)*

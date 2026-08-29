@@ -213,9 +213,15 @@ Behavior worth knowing:
 - **The output collection is assembled positionally** (output slot = input
   ordinal), so the result is deterministic even when parallel instances complete
   out of order. It is published **once** at completion — never visible mid-run.
-- **Each instance publishes runtime attributes** readable by name at the host
-  scope: `loopCounter`, `numberOfInstances`, `numberOfActiveInstances`,
-  `numberOfCompletedInstances`, and (parallel) `numberOfTerminatedInstances`.
+- **Each instance publishes runtime attributes** readable by name:
+  `loopCounter` and the engine's `ITERATION_NUMBER` / `ITERATION_ID` /
+  `ITERATION_MODE` are the *instance's own*; `numberOfInstances`,
+  `numberOfActiveInstances`, `numberOfCompletedInstances` and
+  `numberOfTerminatedInstances` belong to the activity. All of them end with
+  the activity; `RUNTIME/ITERATIONS` is what a later node reads. The full
+  table, with addresses and lifetimes, is
+  [Iteration runtime variables](runtime-variables.md) — and note the names are
+  reserved: a model declaring one is refused at build time.
 
 > The marker works on any activity, but a composite (Sub-Process / Call
 > Activity) **opens a child scope per instance**, so the iterations are
@@ -246,13 +252,15 @@ Two shapes are still refused at `snapshot.New`, and for different reasons:
   says which envelope belongs to which. Declare
   `activities.WithIterationCorrelation` (see *Events in a parallel body*)
   and it builds; leave it out and any choice would be a coin toss.
-- **A parallel fan-out over work that parks outside the event system** — a
-  User Task or an external-worker Service Task. Those park on a capability
-  rather than a subscription, and the identity that addresses the parked
-  work is one slot on the host track, so N instances would announce a single
-  task between them: the rest would complete without anyone doing them.
-  Make it **sequential** — one instance parks at a time and each pass is
-  completed on its own — or model N tasks.
+- **A parallel fan-out over an external-worker Service Task.** Its instances
+  would share one job identity — a job is keyed to the track it belongs to,
+  with no ordinal — so a single worker report would complete work nobody
+  performed. Make it **sequential** — one instance dispatches at a time and
+  each pass is reported on its own — or model N tasks. Lifting this is
+  [#355](https://github.com/dr-dobermann/gobpm/issues/355).
+
+A parallel fan-out over a **User Task** used to be refused for the same
+reason, and no longer is: every instance now owns its parked identity.
 
 ```go
 // works: one message consumed per pass
@@ -264,16 +272,119 @@ recv, _ := activities.NewReceiveTask("collect", msg,
     activities.WithoutParams(), activities.WithLoop(parallelMI),
     activities.WithIterationCorrelation("iterKey", iterExpr))
 
-// refused: a parallel fan-out over a User Task
+// works: three approvals offered at once, each completed on its own
 ut, _ := activities.NewUserTask("approve",
     activities.WithCandidateUsers("alice"),
     activities.WithoutParams(), activities.WithLoop(parallelMI))
 ```
 
-The parallel human fan-out is designed — [ADR-025](../../design/ADR-025-activity-iteration-loop-and-multi-instance.md)
-§2.15 and [ADR-020](../../design/ADR-020-human-interaction-execution-model.md)
-§2.12 decide what it means — and the refusal lifts when each instance owns
-its parked identity.
+## A parallel fan-out over human work
+
+Three iterations over a collection of three offer **three tasks at once** —
+each announced to the distributor with its own identity, each claimed and
+completed by itself. The activity leaves only when every one of them has
+actually been done: completing two of three does not finish it.
+
+Those identities are what somebody's inbox is holding, so they survive the
+process instance being released and rebuilt — and so does **who may act on
+them**. Eligibility is resolved once, when the task is announced, in the data
+of the iteration being announced; that verdict is what the checkpoint carries
+and what every later check reads. Resolving it again on the way back would ask
+the question outside the iteration, where a performer expression naming "the
+reviewer this one is for" has nothing to read, and everyone holding the task
+would be locked out of it.
+
+Inside, the **host** holds the N waits and applies their completions **one at
+a time, on its own goroutine**. The concurrency the construct exists for is
+external — N people acting at the same time — and the iterations are state the
+host owns rather than parallel executions of the node they share. You do not
+see this from a model; it is why two approvers' outputs cannot cross.
+
+[ADR-025](../../design/ADR-025-activity-iteration-loop-and-multi-instance.md)
+§2.15/§2.15a and [ADR-020](../../design/ADR-020-human-interaction-execution-model.md)
+§2.12 decide what the construct means.
+
+## What the iterations produce
+
+By default **the last write wins**. Each iteration runs in its own frame, but a
+frame commits to the *enclosing scope* — isolation of an execution is not
+invisibility of its writes. The consequence differs by shape, and both are
+intended:
+
+- **A sequential iteration is therefore a fold.** Pass *k* reads what pass
+  *k-1* committed. That is the useful default: "keep a running total", "narrow
+  a candidate set", "append to a report".
+- **A parallel Multi-Instance is therefore order-dependent** for undeclared
+  writes: which iteration's value survives depends on completion order, which
+  the engine does not fix.
+
+That second point is why the declared strategies exist. A model that needs
+every iteration's result **says so**, and gets a deterministic one.
+
+| Declare | Result |
+|---|---|
+| `WithOutputCollection(ref, item)` | Indexed by **ordinal** — slot *i* holds iteration *i*'s output, whatever order they completed in. This is BPMN's own `loopDataOutputRef` assembly. |
+| `WithResultMap(name, item, key, …)` | Keyed by an expression evaluated in the **completing iteration's own frame**. |
+| `WithResultReduce(name)` | Names the default, so a model can state the fold it relies on. Changes nothing. |
+
+A Standard Loop gets `WithLoopResultArray(name, item)` and
+`WithLoopResultMap(…)` — BPMN gives a loop no output aggregation at all, so
+those are an engine extension.
+
+### The map's key is the iteration's own
+
+```go
+byReviewer := goexpr.Must(nil,
+    data.MustItemDefinition(values.NewVariable("")),
+    func(ctx context.Context, src data.Source) (data.Value, error) {
+        d, err := src.Find(ctx, "reviewer") // the element THIS iteration got
+        if err != nil {
+            return nil, err
+        }
+
+        return values.NewVariable(d.Value().Get(ctx)), nil
+    })
+
+mi, _ := activities.NewMultiInstance(
+    activities.WithInputCollection("reviewers", "reviewer"),
+    activities.WithResultMap("decisions", "decision", byReviewer))
+```
+
+It is evaluated **at that iteration's completion, in that iteration's frame**,
+which is the point: the key can use something the iteration *produced*. The
+assignee of a User Task is the motivating case — it is not known until the task
+is claimed.
+
+Two rules, and they differ deliberately:
+
+- **An empty or missing key refuses.** There is no sensible slot for a result
+  with no key, and silently dropping one iteration's output is the failure
+  these strategies exist to make impossible.
+- **A duplicate key overwrites by default**, consistent with the last-wins
+  default rather than an exception to it. The loss stays *detectable*:
+  `RUNTIME/ITERATIONS` publishes the total, so a map holding fewer entries than
+  that says so. Pass `activities.ErrorOnKeyRewrite()` and a collision faults
+  instead, naming both ordinals and the key — for a model where two iterations
+  answering under one name is a modeling error, such as a fan-out over
+  participants who must each answer once.
+
+### One strategy per activity
+
+The three are alternative *readings* of the same results, not stages of a
+pipeline: an array and a map disagree about what a result is indexed by, and
+reduce says there is nothing to assemble. Declaring a second is refused where
+it is written.
+
+### Nothing sees a half-assembled result
+
+A declared array or map publishes to the enclosing scope **once, at activity
+completion** — never incrementally. BPMN only *recommends* the output
+collection be inaccessible until every iteration has finished; this engine
+makes it a guarantee, and a declared result inherits it. The default has no
+barrier by construction: it *is* the enclosing scope, written as the iterations
+go.
+
+Worked end-to-end: [`examples/multi-instance-human/`](../../../examples/multi-instance-human/).
 
 ## Events in a parallel body
 

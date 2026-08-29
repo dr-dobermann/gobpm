@@ -1,7 +1,6 @@
 package data
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,17 +15,14 @@ func TestAssociationNilTargetGuards(t *testing.T) {
 
 	require.False(t, a.IsReady())
 	require.Equal(t, "", a.TargetItemDefID())
-
-	_, err := a.Value(context.Background())
-	require.Error(t, err)
 }
 
-// TestAssociationCalculateNoSources covers calculate's no-sources guard: no
-// transformation and an empty source set. Unreachable through NewAssociation
-// (which requires a source or a transformation), it guards a would-be
-// index-out-of-range on SourcesIDs()[0] and returns a classified error instead.
-func TestAssociationCalculateNoSources(t *testing.T) {
-	a := &Association{} // nil transformation, empty sources
+// TestAssocConfigValidateNilTarget covers Validate's target==nil guard.
+// NewAssociation rejects a nil target before it builds the config, so the
+// branch is unreachable through the public constructor — exercised here
+// white-box to prove it classifies rather than passing a nil through.
+func TestAssocConfigValidateNilTarget(t *testing.T) {
+	cfg := asscConfig{src: []*ItemAwareElement{{}}}
 
-	require.Error(t, a.calculate(context.Background()))
+	require.ErrorContains(t, cfg.Validate(), "target isn't defined")
 }

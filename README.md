@@ -164,7 +164,11 @@ task, plus a **DataObject** per branch — a scope-resident named container each
 task writes to and is read back by name),
 [`examples/data-store/`](examples/data-store/) (an engine-global **DataStore** —
 a value one instance writes is read by a *separate* instance through a shared
-`DataStoreReference`), and the timer examples
+`DataStoreReference`),
+[`examples/association-expressions/`](examples/association-expressions/) (a data
+association that **computes**: a **transformation** derives the target value
+from its sources, an **assignment** writes one named field and leaves the rest
+of the record untouched), and the timer examples
 [`examples/simple-timer/`](examples/simple-timer/) ·
 [`examples/timer-event/`](examples/timer-event/) ·
 [`examples/usertask-sla/`](examples/usertask-sla/) (three **non-interrupting**
@@ -192,7 +196,12 @@ a message **instantiates** a handler process and **correlates** by a key derived
 from the payload (one handler instance per distinct order) ·
 [`examples/conversation-routing/`](examples/conversation-routing/) — a follow-up
 message **routes back** to the specific handler instance whose conversation it
-belongs to (keyed in-instance receivers; two conversations stay isolated).
+belongs to (keyed in-instance receivers; two conversations stay isolated) ·
+[`examples/event-data/`](examples/event-data/) — **events carry data**: a
+message Start Event's output association fills a declared process input from
+the payload, a message End Event's input association sources a declared
+process output — the standard's Start/End special case, so the message route
+reaches the same contract a Call Activity binds.
 
 For signal events (broadcast, no correlation), see
 [`examples/signal-broadcast/`](examples/signal-broadcast/) — one throw reaches
@@ -393,7 +402,10 @@ Sub-Process** (`WithTransaction`) is a Sub-Process variant that aborts
 atomically on a **Cancel End Event** — it compensates the completed activities
 (reverse completion order, as an ACID-like barrier), terminates the rest, and
 hands control out through its interrupting **Cancel boundary** (a Transaction
-with no Cancel boundary ends there) —
+with no Cancel boundary ends there); `WithTransaction` takes the BPMN
+`method` (`WithTransactionMethod`, compensate built in and the default — any
+other coordinator is refused at registration until a host can register one)
+and carries `protocol` (`WithTransactionProtocol`) untouched —
 [`examples/transaction-sub-process/`](examples/transaction-sub-process/). An
 **Ad-Hoc Sub-Process** (`WithAdHoc`) is a Sub-Process variant whose inner
 activities carry **no sequence flows**: what runs next is answered at runtime by

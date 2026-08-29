@@ -129,7 +129,7 @@ Sub-Process needs neither:
 
 | Option | Effect |
 |---|---|
-| `WithTransaction()` | mark the scope a Transaction Sub-Process (BPMN §10.7): only Cancel End/boundary is permitted, and reaching a Cancel inside triggers the ACID-like abort. |
+| `WithTransaction(opts...)` | mark the scope a Transaction Sub-Process (BPMN §10.7): only Cancel End/boundary is permitted, and reaching a Cancel inside triggers the ACID-like abort. |
 | `WithTriggeredByEvent()` | mark the scope an Event Sub-Process (BPMN §13.5.4): a scope-armed handler entered by its single triggered Start Event, not by a flow. |
 | `WithAdHoc(r adhoc.Router)` | mark the scope Ad-Hoc (BPMN §13.3.5): its inner activities carry no sequence flows, and the Router answers what runs next. Refined by `WithAdHocOrdering` / `WithAdHocManualSelection` / `WithAdHocCancelRemaining` / `WithAdHocCompletion`. |
 

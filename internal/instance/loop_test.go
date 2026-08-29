@@ -20,6 +20,13 @@ func newBareLoopInstance() *Instance {
 		jobReq:   make(chan jobRequest),
 		tracks:   map[string]*track{},
 		loopDone: make(chan struct{}),
+
+		// the engine-published registers a real instance always has: code
+		// under test writes them without checking, because New and Restore
+		// both build them.
+		performers:      newPerformers(),
+		iterations:      newIterations(),
+		iterationOwners: newIterationOwners(),
 	}
 }
 

@@ -136,7 +136,7 @@ kind of container / reference you get:
 | Option | Family | Effect |
 |---|---|---|
 | `WithTriggeredByEvent()` | `SubProcessOption` | make it an Event Sub-Process — a handler entered by its triggered Start Event, not a sequence flow. |
-| `WithTransaction()` | `SubProcessOption` | make it a Transaction Sub-Process — a Cancel End inside triggers an ACID-like abort (mutually exclusive with `WithTriggeredByEvent`). |
+| `WithTransaction(opts...)` | `SubProcessOption` | make it a Transaction Sub-Process — a Cancel End inside triggers an ACID-like abort (mutually exclusive with `WithTriggeredByEvent`). |
 | `WithCalledVersion(v int)` | `CallActivityOption` | pin the call to an exact registered version; without it the call binds latest-at-launch. |
 
 See [Composition](../subprocesses/index.md) for the container/reuse family.

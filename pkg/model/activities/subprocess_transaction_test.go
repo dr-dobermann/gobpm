@@ -62,6 +62,13 @@ func TestTransactionMarkerAndShapeRules(t *testing.T) {
 		sp, err := activities.NewSubProcess("plain")
 		require.NoError(t, err)
 		require.False(t, sp.IsTransaction())
+		require.Nil(t, sp.Transaction())
+	})
+
+	t.Run("an event sub-process carries no characteristics", func(t *testing.T) {
+		sp, err := activities.NewSubProcess("h", activities.WithTriggeredByEvent())
+		require.NoError(t, err)
+		require.Nil(t, sp.Transaction())
 	})
 
 	t.Run("WithTransaction and WithTriggeredByEvent are exclusive",
@@ -72,9 +79,13 @@ func TestTransactionMarkerAndShapeRules(t *testing.T) {
 		})
 
 	t.Run("a Transaction clone stays a transaction", func(t *testing.T) {
-		clone, err := txSP(t, "cl").Clone()
+		orig := txSP(t, "cl")
+		clone, err := orig.Clone()
 		require.NoError(t, err)
 		require.True(t, clone.(*activities.SubProcess).IsTransaction())
+		// immutable configuration: the clone shares the one object
+		require.Same(t, orig.Transaction(),
+			clone.(*activities.SubProcess).Transaction())
 	})
 
 	t.Run("a Cancel End inside a Transaction validates", func(t *testing.T) {

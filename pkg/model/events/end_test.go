@@ -243,13 +243,15 @@ func TestEndEventCancelWins(t *testing.T) {
 	require.Empty(t, flows)
 }
 
-// TestEndEventMessageThrowError covers the EndEvent.Exec error path when a
-// message throw fails (the payload can't be bound from scope).
-func TestEndEventMessageThrowError(t *testing.T) {
+// TestEndEventMessageThrowWithoutPayload covers EndEvent.Exec when a message
+// throw finds nothing to bind in scope: the message is sent with its own
+// item value — "sent without payload data" (§10.4.1 p216, SRD-094 FR-2) —
+// rather than the end failing.
+func TestEndEventMessageThrowWithoutPayload(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
 	msg := bpmncommon.MustMessage("message",
-		data.MustItemDefinition(values.NewVariable(""),
+		data.MustItemDefinition(values.NewVariable("static"),
 			foundation.WithID("message_item")))
 	msgEd, err := events.NewMessageEventDefinition(msg, nil)
 	require.NoError(t, err)
@@ -257,13 +259,27 @@ func TestEndEventMessageThrowError(t *testing.T) {
 	ee, err := events.NewEndEvent("end", events.WithMessageTrigger(msgEd))
 	require.NoError(t, err)
 
+	ctx := context.Background()
+
+	broker := membroker.New()
+	sub, err := broker.Subscribe(ctx, "message")
+	require.NoError(t, err)
+
 	re := mockrenv.NewMockRuntimeEnvironment(t)
 	re.EXPECT().
 		GetDataByID("message_item").
 		Return(nil, fmt.Errorf("not in scope"))
+	re.EXPECT().MessageBroker().Return(broker)
 
-	_, err = ee.Exec(context.Background(), re)
-	require.Error(t, err)
+	_, err = ee.Exec(ctx, re)
+	require.NoError(t, err)
+
+	select {
+	case env := <-sub.C():
+		require.Equal(t, "static", env.Payload)
+	default:
+		t.Fatal("no envelope published to the broker")
+	}
 }
 
 // TestEndEventRejectsCatchTriggers asserts that Conditional and Timer triggers —

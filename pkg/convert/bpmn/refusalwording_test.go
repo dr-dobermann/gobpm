@@ -30,11 +30,10 @@ func TestRefusalsSayWhichKindTheyAre(t *testing.T) {
 			standing: true,
 			wants:    []string{"Router", "programmatically"},
 		},
-		"transaction method=store": {
-			doc:      variantDoc(`<bpmn:transaction id="sub" name="C" method="store">`),
-			standing: true,
-			wants:    []string{"ADR-028", "compensate"},
-		},
+		// A transaction's method=store is no longer an import refusal: the
+		// model carries any method and registration refuses one no
+		// coordinator performs (SRD-095 FR-4/FR-6; pinned by
+		// pkg/thresher TestValidateTransactionCoverage).
 		"foreign calledElement": {
 			doc: callDoc(
 				`<bpmn:callActivity id="ca" name="F" calledElement="other:Proc"/>`),
@@ -82,8 +81,9 @@ func TestRefusalsSayWhichKindTheyAre(t *testing.T) {
 
 // TestDataFamilyRefusalWordings replaces the T-24 staged sweep: after
 // SRD-089.G nothing in the family is staged — a task's family imports,
-// and every remaining refusal names either the capability row (#329)
-// or the position the standard reserves. Never "yet".
+// an event's data imports since SRD-094, and every remaining refusal
+// names the position the standard reserves. Never "yet", and nothing
+// names #329 any more.
 func TestDataFamilyRefusalWordings(t *testing.T) {
 	onTask := func(child string) string {
 		return propDoc("", `    <bpmn:task id="t1" name="T">
@@ -95,30 +95,29 @@ func TestDataFamilyRefusalWordings(t *testing.T) {
 		doc   string
 		wants []string
 	}{
-		// A bare parameter or set outside an ioSpecification: on a task
-		// the note points inside the spec; the same note carries the
-		// event capability, since one settle path serves both owners.
+		// A bare parameter or set outside an ioSpecification on a task:
+		// the note points inside the spec.
 		"dataInput": {
 			doc:   onTask(`<bpmn:dataInput id="di1"/>`),
-			wants: []string{"<ioSpecification>", "§10.4.1", "#329"},
+			wants: []string{"<ioSpecification>", "§10.4.1"},
 		},
 		"dataOutput": {
 			doc:   onTask(`<bpmn:dataOutput id="do1"/>`),
-			wants: []string{"<ioSpecification>", "#329"},
+			wants: []string{"<ioSpecification>"},
 		},
 		"inputSet": {
 			doc:   onTask(`<bpmn:inputSet id="is1"/>`),
-			wants: []string{"<ioSpecification>", "#329"},
+			wants: []string{"<ioSpecification>"},
 		},
 		"outputSet": {
 			doc:   onTask(`<bpmn:outputSet id="os1"/>`),
-			wants: []string{"<ioSpecification>", "#329"},
+			wants: []string{"<ioSpecification>"},
 		},
-		"dataInput on an event": {
-			doc: propDoc("", `    <bpmn:endEvent id="ev2">
-      <bpmn:dataInput id="di1"/>
-    </bpmn:endEvent>`),
-			wants: []string{"#329"},
+		"dataOutput on a gateway": {
+			doc: propDoc("", `    <bpmn:exclusiveGateway id="g2">
+      <bpmn:dataOutput id="do1"/>
+    </bpmn:exclusiveGateway>`),
+			wants: []string{"§10.4.1", "§10.4.2"},
 		},
 		"association under the process": {
 			doc:   propDoc("", `    <bpmn:dataInputAssociation id="dia1"/>`),
@@ -149,6 +148,10 @@ func TestDataFamilyRefusalWordings(t *testing.T) {
 			if strings.Contains(msg, "SRD-089.G") {
 				t.Errorf("refusal still names the landed stage as a plan:\n%s",
 					msg)
+			}
+
+			if strings.Contains(msg, "#329") {
+				t.Errorf("refusal names #329 — the capability landed:\n%s", msg)
 			}
 		})
 	}

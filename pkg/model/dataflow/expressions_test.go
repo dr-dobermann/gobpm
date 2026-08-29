@@ -1,0 +1,692 @@
+package dataflow_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/dr-dobermann/gobpm/generated/mockdata"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	"github.com/dr-dobermann/gobpm/pkg/model/dataflow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+)
+
+// fakeEngine evaluates through the test's own closure, so a test can assert
+// WHAT the expression was handed — the frame-backed data.Source is the
+// contract under test (ADR-011 §2.4), not any particular language.
+type fakeEngine struct {
+	eval func(context.Context, data.Source) (data.Value, error)
+}
+
+func (fakeEngine) Type() string        { return "##Fake" }
+func (fakeEngine) Languages() []string { return []string{"fake"} }
+func (e fakeEngine) Evaluate(
+	ctx context.Context, _ data.FormalExpression, src data.Source,
+) (data.Value, error) {
+	return e.eval(ctx, src)
+}
+
+// anExpr is a stand-in FormalExpression: the fake engine never reads it.
+func anExpr(t *testing.T) data.FormalExpression {
+	t.Helper()
+
+	return mockdata.NewMockFormalExpression(t)
+}
+
+// record builds a Ready scope datum named name carrying the given fields.
+func record(t *testing.T, name string, fields ...values.RecordField) data.Data {
+	t.Helper()
+
+	r, err := values.NewRecord(fields...)
+	require.NoError(t, err)
+
+	p, err := data.NewParameter(name,
+		data.MustItemAwareElement(
+			data.MustItemDefinition(r, foundation.WithID(name)),
+			data.ReadyDataState))
+	require.NoError(t, err)
+
+	return p
+}
+
+// assign builds one from→to mapping.
+func assign(t *testing.T, to string) *data.Assignment {
+	t.Helper()
+
+	a, err := data.NewAssignment(anExpr(t), to)
+	require.NoError(t, err)
+
+	return a
+}
+
+// TestFillInputTransformation is SRD-097 T-4: an input association's
+// transformation is evaluated against the frame and REPLACES the target,
+// and the expression reads its sources by structural path.
+func TestFillInputTransformation(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	f := frame(t, nil,
+		record(t, "order", values.F("total", values.NewVariable(10))),
+		datum(t, "rate", 3, data.ReadyDataState))
+
+	var sawTotal, sawRate int
+
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(ctx context.Context, src data.Source) (data.Value, error) {
+			// the path form the ADR promises, resolved through the frame
+			d, err := src.Find(ctx, "order.total")
+			require.NoError(t, err)
+			sawTotal = d.Value().Get(ctx).(int)
+
+			d, err = src.Find(ctx, "rate")
+			require.NoError(t, err)
+			sawRate = d.Value().Get(ctx).(int)
+
+			return values.NewVariable(sawTotal * sawRate), nil
+		}})
+
+	ia := inputAssoc(t, "order", "amount",
+		data.WithSource(iae("rate", "", nil)),
+		data.WithTransformation(anExpr(t)))
+
+	dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+	require.NoError(t, dataflow.FillInput(ctx, f, ia, dst, nil, owner))
+
+	require.Equal(t, 10, sawTotal)
+	require.Equal(t, 3, sawRate)
+	require.Equal(t, 30, dst.Value().Get(ctx),
+		"the transformation's result replaces the target")
+	require.Equal(t, data.ReadyDataState.Name(), dst.State().Name())
+	require.Len(t, f.DataMovements(), 2, "both sources are recorded")
+}
+
+// TestPushOutputAssignments is SRD-097 T-5: each assignment writes its own
+// result at its own path inside the target, in declaration order; a
+// step-less `to` replaces the whole value.
+func TestPushOutputAssignments(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	t.Run("nested writes, in order", func(t *testing.T) {
+		f := frame(t, nil, record(t, "order",
+			values.F("status", values.NewVariable("new")),
+			values.F("code", values.NewVariable(0))))
+
+		var calls int
+
+		f.SetExpressionEngine(fakeEngine{
+			eval: func(context.Context, data.Source) (data.Value, error) {
+				calls++
+				if calls == 1 {
+					return values.NewVariable("done"), nil
+				}
+
+				return values.NewVariable(7), nil
+			}})
+
+		oa := outputAssoc(t, "result", "order",
+			data.WithAssignments(
+				assign(t, "order.status"),
+				assign(t, "order.code")))
+
+		src := instantiated(t, f,
+			param(t, "result", "result", 1, data.ReadyDataState), false)
+
+		require.NoError(t, dataflow.PushOutput(ctx, f, oa, src, owner))
+
+		d, err := f.GetData("order.status")
+		require.NoError(t, err)
+		require.Equal(t, "done", d.Value().Get(ctx))
+
+		d, err = f.GetData("order.code")
+		require.NoError(t, err)
+		require.Equal(t, 7, d.Value().Get(ctx))
+		require.Equal(t, 2, calls, "one evaluation per assignment")
+	})
+
+	t.Run("a step-less to replaces the whole value", func(t *testing.T) {
+		f := frame(t, nil, datum(t, "note", "old", data.ReadyDataState))
+		f.SetExpressionEngine(fakeEngine{
+			eval: func(context.Context, data.Source) (data.Value, error) {
+				return values.NewVariable("new"), nil
+			}})
+
+		oa := outputAssoc(t, "result", "note",
+			data.WithAssignments(assign(t, "note")))
+
+		src := instantiated(t, f,
+			param(t, "result", "result", 1, data.ReadyDataState), false)
+
+		require.NoError(t, dataflow.PushOutput(ctx, f, oa, src, owner))
+
+		d, err := f.GetData("note")
+		require.NoError(t, err)
+		require.Equal(t, "new", d.Value().Get(ctx))
+	})
+}
+
+// TestExpressionShapeOverDataStore is SRD-097 T-6: a transformation whose
+// target is a Data Store key writes the store, exactly as a plain copy does.
+func TestExpressionShapeOverDataStore(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	store := newMemStore()
+	f := frame(t, oneStoreReg{store: store},
+		datum(t, "result", 5, data.ReadyDataState))
+
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(context.Context, data.Source) (data.Value, error) {
+			return values.NewVariable(42), nil
+		}})
+
+	oa := outputAssoc(t, "result", "archive",
+		data.WithDataStoreRef("store-1"),
+		data.WithTransformation(anExpr(t)))
+
+	src := instantiated(t, f,
+		param(t, "result", "result", 5, data.ReadyDataState), false)
+
+	require.NoError(t, dataflow.PushOutput(ctx, f, oa, src, owner))
+
+	d, ok := store.m["archive"]
+	require.True(t, ok, "the store holds the association's target key")
+	require.Equal(t, 42, d.Value().Get(ctx))
+}
+
+// TestShapedStoreWriteFailurePropagates: the Data Store's own Put failure
+// reaches the caller with the association's target key named.
+func TestShapedStoreWriteFailurePropagates(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	store := newMemStore()
+	store.putErr = errors.New("store is full")
+
+	f := frame(t, oneStoreReg{store: store},
+		datum(t, "result", 1, data.ReadyDataState))
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(context.Context, data.Source) (data.Value, error) {
+			return values.NewVariable(1), nil
+		}})
+
+	oa := outputAssoc(t, "result", "archive",
+		data.WithDataStoreRef("store-1"),
+		data.WithTransformation(anExpr(t)))
+	src := instantiated(t, f,
+		param(t, "result", "result", 1, data.ReadyDataState), false)
+
+	err := dataflow.PushOutput(ctx, f, oa, src, owner)
+	require.ErrorContains(t, err, "archive")
+	require.ErrorContains(t, err, "store is full")
+}
+
+// TestAssignmentIntoStoreKeepsTheRestOfTheRecord is the review's finding:
+// assignments write INSIDE the target, so a store-backed one must start
+// from the store's current value. Writing into a clone of the produced
+// output would address a different shape and drop every field the
+// assignments do not touch, because Put replaces the whole key.
+func TestAssignmentIntoStoreKeepsTheRestOfTheRecord(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	store := newMemStore()
+	store.m["archive"] = record(t, "archive",
+		values.F("status", values.NewVariable("old")),
+		values.F("clerk", values.NewVariable("ann")))
+
+	f := frame(t, oneStoreReg{store: store},
+		datum(t, "result", 1, data.ReadyDataState))
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(context.Context, data.Source) (data.Value, error) {
+			return values.NewVariable("new"), nil
+		}})
+
+	oa := outputAssoc(t, "result", "archive",
+		data.WithDataStoreRef("store-1"),
+		data.WithAssignments(assign(t, "archive.status")))
+
+	src := instantiated(t, f,
+		param(t, "result", "result", 1, data.ReadyDataState), false)
+
+	require.NoError(t, dataflow.PushOutput(ctx, f, oa, src, owner))
+
+	kept, ok := store.m["archive"]
+	require.True(t, ok)
+
+	rec, ok := kept.Value().Get(ctx).(map[string]any)
+	if !ok {
+		// the record's Get shape varies by implementation; assert through
+		// the value's own reader instead
+		st, err := kept.Value().(interface {
+			Field(context.Context, string) (data.Value, error)
+		}).Field(ctx, "status")
+		require.NoError(t, err)
+		require.Equal(t, "new", st.Get(ctx))
+
+		cl, err := kept.Value().(interface {
+			Field(context.Context, string) (data.Value, error)
+		}).Field(ctx, "clerk")
+		require.NoError(t, err)
+		require.Equal(t, "ann", cl.Get(ctx),
+			"the field the assignment did not touch survives")
+
+		return
+	}
+
+	require.Equal(t, "new", rec["status"])
+	require.Equal(t, "ann", rec["clerk"])
+}
+
+// TestStoreBackedSourceFeedsTheExpression is the review's second finding: a
+// store's data lives in the engine registry, not in scope, so an expression
+// over a store-backed association must resolve its sources there.
+func TestStoreBackedSourceFeedsTheExpression(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	store := newMemStore()
+	store.m["counter"] = datum(t, "counter", 41, data.ReadyDataState)
+
+	f := frame(t, oneStoreReg{store: store})
+
+	var saw any
+
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(ctx context.Context, src data.Source) (data.Value, error) {
+			d, err := src.Find(ctx, "counter")
+			require.NoError(t, err, "a store-backed source resolves")
+			saw = d.Value().Get(ctx)
+
+			return values.NewVariable(saw.(int) + 1), nil
+		}})
+
+	ia := inputAssoc(t, "counter", "amount",
+		data.WithDataStoreRef("store-1"),
+		data.WithTransformation(anExpr(t)))
+	dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+	require.NoError(t, dataflow.FillInput(ctx, f, ia, dst, nil, owner))
+	require.Equal(t, 41, saw)
+	require.Equal(t, 42, dst.Value().Get(ctx))
+}
+
+// TestOutputParameterWinsOverScope is the review's third finding: an output
+// association's expression exists to shape what the node JUST produced, so
+// the node's own output must win over a scope datum of the same name —
+// otherwise the expression reads the value it is about to overwrite.
+func TestOutputParameterWinsOverScope(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	f := frame(t, nil, datum(t, "note", "STALE", data.ReadyDataState))
+
+	var saw any
+
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(ctx context.Context, src data.Source) (data.Value, error) {
+			d, err := src.Find(ctx, "note")
+			require.NoError(t, err)
+			saw = d.Value().Get(ctx)
+
+			return values.NewVariable("done"), nil
+		}})
+
+	oa := outputAssoc(t, "note", "note",
+		data.WithTransformation(anExpr(t)))
+
+	// the node's output is called "note", exactly like the scope datum
+	src := instantiated(t, f,
+		param(t, "note", "note-item", "FRESH", data.ReadyDataState), false)
+
+	require.NoError(t, dataflow.PushOutput(ctx, f, oa, src, owner))
+	require.Equal(t, "FRESH", saw,
+		"the node's own output shadows the scope datum of the same name")
+}
+
+// TestShapedMovementsNameWhatTheyRead is the review's fourth finding: a
+// movement fact must say what it actually read — a store-backed
+// association's sources are store reads, a scope-backed one's are not.
+func TestShapedMovementsNameWhatTheyRead(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	f := frame(t, nil, datum(t, "order", 1, data.ReadyDataState))
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(context.Context, data.Source) (data.Value, error) {
+			return values.NewVariable(2), nil
+		}})
+
+	ia := inputAssoc(t, "order", "amount",
+		data.WithTransformation(anExpr(t)))
+	dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+	require.NoError(t, dataflow.FillInput(ctx, f, ia, dst, nil, owner))
+
+	mm := f.DataMovements()
+	require.Len(t, mm, 1)
+	require.False(t, mm[0].EngineStore,
+		"a scope-backed source is not a store read")
+	require.Empty(t, mm[0].StoreRef)
+}
+
+// TestExpressionAssociationFailsFast is SRD-097 T-7: the three ways an
+// expression-bearing association refuses, each naming what a reader needs.
+func TestExpressionAssociationFailsFast(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	t.Run("an unavailable source gates a required input", func(t *testing.T) {
+		f := frame(t, nil, datum(t, "order", 1, data.UndefinedSrcState))
+		f.SetExpressionEngine(fakeEngine{
+			eval: func(context.Context, data.Source) (data.Value, error) {
+				t.Fatal("the expression must not run on an unavailable source")
+
+				return nil, nil
+			}})
+
+		ia := inputAssoc(t, "order", "amount",
+			data.WithTransformation(anExpr(t)))
+		dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+		err := dataflow.FillInput(ctx, f, ia, dst,
+			map[string]bool{"amount": true}, owner)
+		require.ErrorContains(t, err, "is unavailable")
+		require.ErrorContains(t, err, "does not wait")
+	})
+
+	t.Run("an optional input with an unavailable source is skipped",
+		func(t *testing.T) {
+			f := frame(t, nil, datum(t, "order", 1, data.UndefinedSrcState))
+
+			ia := inputAssoc(t, "order", "amount",
+				data.WithTransformation(anExpr(t)))
+			dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+			require.NoError(t, dataflow.FillInput(ctx, f, ia, dst, nil, owner))
+		})
+
+	t.Run("no engine wired names the association", func(t *testing.T) {
+		f := frame(t, nil, datum(t, "order", 1, data.ReadyDataState))
+
+		ia := inputAssoc(t, "order", "amount",
+			data.WithTransformation(anExpr(t)),
+			foundation.WithID("a-77"))
+		dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+		err := dataflow.FillInput(ctx, f, ia, dst, nil, owner)
+		require.ErrorContains(t, err, "no expression engine")
+		require.ErrorContains(t, err, "a-77")
+	})
+
+	t.Run("an assignment writing outside the target is refused",
+		func(t *testing.T) {
+			f := frame(t, nil, datum(t, "order", 1, data.ReadyDataState))
+			f.SetExpressionEngine(fakeEngine{
+				eval: func(context.Context, data.Source) (data.Value, error) {
+					return values.NewVariable(1), nil
+				}})
+
+			oa := outputAssoc(t, "result", "order",
+				data.WithAssignments(assign(t, "elsewhere.field")))
+			src := instantiated(t, f,
+				param(t, "result", "result", 1, data.ReadyDataState), false)
+
+			err := dataflow.PushOutput(ctx, f, oa, src, owner)
+			require.ErrorContains(t, err, "elsewhere.field")
+			require.ErrorContains(t, err, "target is")
+		})
+
+	t.Run("an evaluation failure carries its cause", func(t *testing.T) {
+		f := frame(t, nil, datum(t, "order", 1, data.ReadyDataState))
+		f.SetExpressionEngine(fakeEngine{
+			eval: func(context.Context, data.Source) (data.Value, error) {
+				return nil, errors.New("boom")
+			}})
+
+		ia := inputAssoc(t, "order", "amount",
+			data.WithTransformation(anExpr(t)))
+		dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+		require.ErrorContains(t,
+			dataflow.FillInput(ctx, f, ia, dst, nil, owner), "boom")
+	})
+
+	t.Run("an assignment's own evaluation failure carries its cause",
+		func(t *testing.T) {
+			f := frame(t, nil, datum(t, "note", "old", data.ReadyDataState))
+			f.SetExpressionEngine(fakeEngine{
+				eval: func(context.Context, data.Source) (data.Value, error) {
+					return nil, errors.New("assign-boom")
+				}})
+
+			oa := outputAssoc(t, "result", "note",
+				data.WithAssignments(assign(t, "note")))
+			src := instantiated(t, f,
+				param(t, "result", "result", 1, data.ReadyDataState), false)
+
+			require.ErrorContains(t,
+				dataflow.PushOutput(ctx, f, oa, src, owner), "assign-boom")
+		})
+
+	t.Run("a structural write into a scalar is refused", func(t *testing.T) {
+		f := frame(t, nil, datum(t, "note", "flat", data.ReadyDataState))
+		f.SetExpressionEngine(fakeEngine{
+			eval: func(context.Context, data.Source) (data.Value, error) {
+				return values.NewVariable("x"), nil
+			}})
+
+		oa := outputAssoc(t, "result", "note",
+			data.WithAssignments(assign(t, "note.field")))
+		src := instantiated(t, f,
+			param(t, "result", "result", 1, data.ReadyDataState), false)
+
+		require.ErrorContains(t,
+			dataflow.PushOutput(ctx, f, oa, src, owner), "note.field")
+	})
+
+	t.Run("an unresolvable output target is refused", func(t *testing.T) {
+		f := frame(t, nil)
+		f.SetExpressionEngine(fakeEngine{
+			eval: func(context.Context, data.Source) (data.Value, error) {
+				return values.NewVariable(1), nil
+			}})
+
+		oa := outputAssoc(t, "result", "missing",
+			data.WithTransformation(anExpr(t)))
+		src := instantiated(t, f,
+			param(t, "result", "result", 1, data.ReadyDataState), false)
+
+		require.ErrorContains(t,
+			dataflow.PushOutput(ctx, f, oa, src, owner), "missing")
+	})
+
+	t.Run("a store target with no registry is refused", func(t *testing.T) {
+		f := frame(t, nil, datum(t, "result", 1, data.ReadyDataState))
+		f.SetExpressionEngine(fakeEngine{
+			eval: func(context.Context, data.Source) (data.Value, error) {
+				return values.NewVariable(1), nil
+			}})
+
+		oa := outputAssoc(t, "result", "archive",
+			data.WithDataStoreRef("store-1"),
+			data.WithTransformation(anExpr(t)))
+		src := instantiated(t, f,
+			param(t, "result", "result", 1, data.ReadyDataState), false)
+
+		require.ErrorContains(t,
+			dataflow.PushOutput(ctx, f, oa, src, owner), "Data Store registry")
+	})
+
+	t.Run("a store target with no engine is refused", func(t *testing.T) {
+		store := newMemStore()
+		f := frame(t, oneStoreReg{store: store},
+			datum(t, "result", 1, data.ReadyDataState))
+
+		oa := outputAssoc(t, "result", "archive",
+			data.WithDataStoreRef("store-1"),
+			data.WithTransformation(anExpr(t)),
+			foundation.WithID("a-88"))
+		src := instantiated(t, f,
+			param(t, "result", "result", 1, data.ReadyDataState), false)
+
+		err := dataflow.PushOutput(ctx, f, oa, src, owner)
+		require.ErrorContains(t, err, "no expression engine")
+		require.ErrorContains(t, err, "a-88")
+		require.Empty(t, store.m, "nothing is stored when nothing evaluated")
+	})
+
+	t.Run("an expression producing no value is refused", func(t *testing.T) {
+		f := frame(t, nil, datum(t, "order", 1, data.ReadyDataState))
+		f.SetExpressionEngine(fakeEngine{
+			eval: func(context.Context, data.Source) (data.Value, error) {
+				return nil, nil
+			}})
+
+		ia := inputAssoc(t, "order", "amount",
+			data.WithTransformation(anExpr(t)))
+		dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+		require.ErrorContains(t,
+			dataflow.FillInput(ctx, f, ia, dst, nil, owner), "no value")
+	})
+}
+
+// TestExpressionReadsTheNodesOwnParameters is FR-4's other half: the data
+// context an expression evaluates against includes the node's own
+// parameters, not only the scope. An OUTPUT association's expression
+// exists to shape what the node just produced, and an output parameter is
+// a frame instance at that point — nothing the scope resolves by name.
+func TestExpressionReadsTheNodesOwnParameters(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	f := frame(t, nil, datum(t, "note", "old", data.ReadyDataState))
+
+	var saw any
+
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(ctx context.Context, src data.Source) (data.Value, error) {
+			d, err := src.Find(ctx, "result")
+			require.NoError(t, err, "the node's own output resolves")
+			saw = d.Value().Get(ctx)
+
+			return values.NewVariable("seen"), nil
+		}})
+
+	oa := outputAssoc(t, "result", "note",
+		data.WithAssignments(assign(t, "note")))
+
+	src := instantiated(t, f,
+		param(t, "result", "result", 7, data.ReadyDataState), false)
+
+	require.NoError(t, dataflow.PushOutput(ctx, f, oa, src, owner))
+	require.Equal(t, 7, saw, "the expression read the output parameter")
+}
+
+// TestExpressionContextResolution covers the rest of the data context an
+// expression sees: an INPUT parameter by name, a path INTO a parameter,
+// and a name nothing holds — which is refused naming what was looked for.
+func TestExpressionContextResolution(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	f := frame(t, nil,
+		record(t, "order", values.F("total", values.NewVariable(9))),
+		datum(t, "note", "old", data.ReadyDataState))
+
+	in := instantiated(t, f,
+		param(t, "in", "in-item", 3, data.ReadyDataState), true)
+	require.NotNil(t, in)
+
+	var (
+		fromInput any
+		fromPath  any
+		missing   error
+	)
+
+	f.SetExpressionEngine(fakeEngine{
+		eval: func(ctx context.Context, src data.Source) (data.Value, error) {
+			d, err := src.Find(ctx, "in")
+			require.NoError(t, err, "an input parameter resolves by name")
+			fromInput = d.Value().Get(ctx)
+
+			d, err = src.Find(ctx, "order.total")
+			require.NoError(t, err, "a path into scope data resolves")
+			fromPath = d.Value().Get(ctx)
+
+			_, missing = src.Find(ctx, "nowhere")
+
+			return values.NewVariable("done"), nil
+		}})
+
+	oa := outputAssoc(t, "result", "note",
+		data.WithTransformation(anExpr(t)))
+
+	src := instantiated(t, f,
+		param(t, "result", "result", 1, data.ReadyDataState), false)
+
+	require.NoError(t, dataflow.PushOutput(ctx, f, oa, src, owner))
+
+	require.Equal(t, 3, fromInput)
+	require.Equal(t, 9, fromPath)
+	require.ErrorContains(t, missing, "not in this activity's data context")
+}
+
+// TestUnreadySourceNamesWhy is FR-4's refusal detail: the two ways a source
+// can be unavailable need different fixes, so the message distinguishes a
+// name the context does not hold from a datum that is not Ready yet.
+func TestUnreadySourceNamesWhy(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	gating := map[string]bool{"amount": true}
+
+	t.Run("a source the context does not hold", func(t *testing.T) {
+		f := frame(t, nil)
+		ia := inputAssoc(t, "missing", "amount",
+			data.WithTransformation(anExpr(t)))
+		dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+		err := dataflow.FillInput(ctx, f, ia, dst, gating, owner)
+		require.ErrorContains(t, err, "cannot be resolved here")
+		require.ErrorContains(t, err, "missing")
+	})
+
+	t.Run("a source that is not Ready yet", func(t *testing.T) {
+		f := frame(t, nil, datum(t, "order", 1, data.UndefinedSrcState))
+		ia := inputAssoc(t, "order", "amount",
+			data.WithTransformation(anExpr(t)))
+		dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+		err := dataflow.FillInput(ctx, f, ia, dst, gating, owner)
+		require.ErrorContains(t, err, "not Ready")
+		require.ErrorContains(t, err, "order")
+	})
+}
+
+// TestPlainAssociationUnchanged is SRD-097 T-8 / NFR-2: an association with
+// neither shape takes the copy path it always took — the value copied, one
+// movement recorded, no engine consulted.
+func TestPlainAssociationUnchanged(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	f := frame(t, nil, datum(t, "order", 11, data.ReadyDataState))
+	// No engine wired at all: a plain association must not reach for one.
+
+	ia := inputAssoc(t, "order", "amount")
+	dst := instantiated(t, f, param(t, "amount", "amount", 0, nil), true)
+
+	require.NoError(t, dataflow.FillInput(ctx, f, ia, dst, nil, owner))
+	require.Equal(t, 11, dst.Value().Get(ctx))
+	require.Len(t, f.DataMovements(), 1)
+}

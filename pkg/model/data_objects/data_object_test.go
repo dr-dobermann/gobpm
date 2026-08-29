@@ -32,6 +32,12 @@ func TestNew(t *testing.T) {
 			_, err = dataobjects.New("a/b", nil, nil)
 			require.Error(t, err)
 
+			// a RESERVED runtime name: the engine publishes these itself,
+			// so a model that declared one would collide with the value the
+			// engine puts there (SRD-090.D FR-2).
+			_, err = dataobjects.New(data.IterationNumberName, nil, nil)
+			require.ErrorContains(t, err, data.IterationNumberName)
+
 			// no IAE
 			_, err = dataobjects.New("no IAE", nil, nil)
 			require.Error(t, err)
@@ -140,6 +146,9 @@ func TestSourceAssociations(t *testing.T) {
 			require.NoError(t, err)
 
 			tran := mockdata.NewMockFormalExpression(t)
+			// Maybe: a model-only test carries the transformation, it does not
+			// evaluate it — a running process does that through the execution
+			// frame (pkg/model/dataflow, ADR-011 §2.4).
 			tran.EXPECT().
 				Evaluate(mock.Anything, mock.Anything).
 				RunAndReturn(
@@ -155,7 +164,8 @@ func TestSourceAssociations(t *testing.T) {
 
 						return values.NewVariable(x.ItemDefinition().Structure().Get(ctx).(int) * 2),
 							nil
-					})
+					}).
+				Maybe()
 
 			aSrc := mockflow.NewMockAssociationSource(t)
 			aSrc.EXPECT().
@@ -175,9 +185,7 @@ func TestSourceAssociations(t *testing.T) {
 						require.Contains(t, da.SourcesIDs(), "input")
 						require.Equal(t, "targetIDef", da.TargetItemDefID())
 
-						val, err := da.Value(context.Background())
-						require.NoError(t, err)
-						require.Equal(t, 84, val.Structure().Get(context.Background()))
+						require.NotNil(t, da.Transformation())
 
 						return nil
 					})
@@ -273,6 +281,9 @@ func TestTargetAssociations(t *testing.T) {
 			require.NoError(t, err)
 
 			tran := mockdata.NewMockFormalExpression(t)
+			// Maybe: a model-only test carries the transformation, it does not
+			// evaluate it — a running process does that through the execution
+			// frame (pkg/model/dataflow, ADR-011 §2.4).
 			tran.EXPECT().
 				Evaluate(mock.Anything, mock.Anything).
 				RunAndReturn(
@@ -288,7 +299,8 @@ func TestTargetAssociations(t *testing.T) {
 
 						return values.NewVariable(x.ItemDefinition().Structure().Get(ctx).(int) * 2),
 							nil
-					})
+					}).
+				Maybe()
 
 			aTrg := mockflow.NewMockAssociationTarget(t)
 			aTrg.EXPECT().
@@ -318,10 +330,8 @@ func TestTargetAssociations(t *testing.T) {
 						require.Equal(t, 1, len(da.SourcesIDs()))
 						require.Contains(t, da.SourcesIDs(), "x")
 
-						val, err := da.Value(context.Background())
-						require.NoError(t, err)
+						require.NotNil(t, da.Transformation())
 
-						require.Equal(t, 200, val.Structure().Get(context.Background()))
 						return nil
 					}).
 				Maybe()
@@ -336,111 +346,5 @@ func TestTargetAssociations(t *testing.T) {
 			// empty target node
 			err = do.AssociateTarget(nil, nil)
 			require.Error(t, err)
-		})
-}
-
-func TestUpdate(t *testing.T) {
-	t.Run("normal",
-		func(t *testing.T) {
-			do, err := dataobjects.New(
-				name,
-				data.MustItemDefinition(
-					values.NewVariable(100),
-					foundation.WithID("x")),
-				data.ReadyDataState)
-			require.NoError(t, err)
-
-			tran := mockdata.NewMockFormalExpression(t)
-			tran.EXPECT().
-				Evaluate(mock.Anything, mock.Anything).
-				RunAndReturn(
-					func(
-						ctx context.Context,
-						ds data.Source,
-					) (data.Value, error) {
-						inp, err := ds.Find(ctx, "input")
-						if err != nil {
-							return nil,
-								fmt.Errorf("couldn't get input value: %w", err)
-						}
-
-						x, ok := inp.ItemDefinition().Structure().Get(ctx).(int)
-						if !ok {
-							return nil,
-								fmt.Errorf("couldn't convert input to int")
-						}
-
-						return values.NewVariable(x * 2),
-							nil
-					})
-
-			aSrc := mockflow.NewMockAssociationSource(t)
-			aSrc.EXPECT().
-				Outputs().
-				Return([]*data.ItemAwareElement{
-					data.MustItemAwareElement(
-						data.MustItemDefinition(
-							values.NewVariable(42),
-							foundation.WithID("input")),
-						data.ReadyDataState),
-				})
-			aSrc.EXPECT().
-				BindOutgoing(mock.Anything).
-				RunAndReturn(
-					func(da *data.Association) error {
-						require.Equal(t, 1, len(da.SourcesIDs()))
-						require.Contains(t, da.SourcesIDs(), "input")
-						require.Equal(t, "x", da.TargetItemDefID())
-
-						val, err := da.Value(context.Background())
-						require.NoError(t, err)
-						require.Equal(t, 84, val.Structure().Get(context.Background()))
-
-						return nil
-					})
-
-			aTrg := mockflow.NewMockAssociationTarget(t)
-			aTrg.EXPECT().
-				ID().
-				Return("Task 1").
-				Maybe()
-			aTrg.EXPECT().
-				Name().
-				Return("Task 1").
-				Maybe()
-			aTrg.EXPECT().
-				Inputs().
-				Return([]*data.ItemAwareElement{
-					data.MustItemAwareElement(
-						data.MustItemDefinition(
-							values.NewVariable(42),
-							foundation.WithID("x")),
-						data.ReadyDataState),
-				}).
-				Maybe()
-			aTrg.EXPECT().
-				BindIncoming(mock.Anything).
-				RunAndReturn(
-					func(da *data.Association) error {
-						require.NotNil(t, da)
-						require.Equal(t, "x", da.TargetItemDefID())
-						require.Equal(t, 1, len(da.SourcesIDs()))
-						require.Contains(t, da.SourcesIDs(), "x")
-
-						val, err := da.Value(context.Background())
-						require.NoError(t, err)
-
-						require.Equal(t, 84, val.Structure().Get(context.Background()))
-						return nil
-					}).
-				Maybe()
-
-			err = do.AssociateSource(aSrc, []string{"input"}, tran)
-			require.NoError(t, err)
-
-			err = do.AssociateTarget(aTrg, nil)
-			require.NoError(t, err)
-
-			require.NoError(t, do.Update(context.Background()))
 		})
 }

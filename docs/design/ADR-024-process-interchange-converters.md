@@ -566,8 +566,7 @@ correlation. The graph the engine runs is unchanged by its presence.
 Every construct the importer does not map is exactly one of three, and the
 unit classified is the **construct, not the tag** — `<association>` holds a
 mapped compensation link and, until [ADR-039 v.1](ADR-039-standard-artifacts.md),
-a blocked plain one; a `<transaction>` imports and only its `method="store"`
-does not.
+a blocked plain one.
 
 - **Staged** — mapped work not yet reached. Not a boundary; the plan that
   schedules it is its only record.
@@ -582,9 +581,7 @@ does not.
   gateway's per-flow token counts against an `activationCondition`
   expression; an ad-hoc container's host-supplied `Router`
   ([ADR-035](ADR-035-adhoc-sub-process.md) §2.1) — or it is a **decided
-  non-goal**: a transaction's `method="store"`/`"image"`
-  ([ADR-028](ADR-028-transaction-sub-process.md) §2.7), a second
-  input/output set per direction. A standing refusal says what to do
+  non-goal**: a second input/output set per direction. A standing refusal says what to do
   instead — build it programmatically, or use the mechanism that was
   chosen — and never says "yet". It is not a defect and is never re-filed
   as one.
@@ -600,8 +597,11 @@ Two rules bound the classes:
    the other way first: before declaring a capability missing, look for the
    model's **own way in** and for the **decision that already governs it** —
    a timer reaches the engine whole through the model's ISO 8601
-   constructors, and a transaction's coordination was declined by ADR-028
-   before anyone filed it as missing. A capability you cannot name precisely
+   constructors, and a transaction's `method` is read and carried by the
+   model itself, with registration — not the converter — deciding whether
+   the engine has a coordinator for it ([ADR-028](ADR-028-transaction-sub-process.md)
+   §2.7); the converter's own value table for it was the second copy this
+   rule forbids, and it drifted. A capability you cannot name precisely
    is usually one you have not looked for.
 2. **A capability lands before the row that consumes it.** An extension
    point is a model change with a model change's obligations — its own
