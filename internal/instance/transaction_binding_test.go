@@ -171,9 +171,27 @@ func gatedTxProcess(
 }
 
 // atHold is the capture predicate: the Transaction scope is open (root plus
-// one child) and the inner track is parked at hold.
+// one child) and the inner track is PARKED at hold.
+//
+// The parked state is what makes this the wait checkpoint, and asserting it
+// is what makes the predicate honest: scope and track counts alone are also
+// true a moment earlier, while reserve is still executing and has therefore
+// not ledgered, and a capture taken there fails the ledger assertions with
+// nothing to show for it. That is a flake, not a bug — it appeared only
+// under the full package's load — so the predicate names the state the
+// tests actually need rather than a shape that precedes it.
 func atHold(d *checkpoint.Document) bool {
-	return len(d.Scopes) == 2 && len(d.Tracks) == 2
+	if len(d.Scopes) != 2 || len(d.Tracks) != 2 {
+		return false
+	}
+
+	for _, tr := range d.Tracks {
+		if tr.State == TrackWaitForEvent.String() {
+			return true
+		}
+	}
+
+	return false
 }
 
 // TestWaitCheckpointCarriesPredecessorLedger is SRD-095 FR-8's regression:

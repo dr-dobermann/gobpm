@@ -30,6 +30,41 @@ steps=("$@")
 MAKE="${MAKE:-make}"
 CI_DIR="${CI_DIR:-.ci}"
 CI_HEARTBEAT="${CI_HEARTBEAT:-30}"
+
+# setsid is util-linux: Linux has it, macOS does not, and Homebrew's util-linux
+# is keg-only so it is absent from a default PATH there too. It is what puts
+# the heartbeat in its own process group; without it the heartbeat printed
+# nothing at all on macOS and each step emitted a `command not found` line
+# instead — the silence FIX-039 exists to break, on the platform this is
+# developed on. So the group trick is used when it is available and the
+# heartbeat is stopped by killing its `sleep` child directly when it is not.
+# SETSID is a command PREFIX, empty when the tool is absent: an unquoted empty
+# expansion disappears, which an array would not do under `set -u` on the bash
+# 3.2 macOS ships.
+if command -v setsid >/dev/null 2>&1; then
+	HEARTBEAT_GROUP=1
+	SETSID=setsid
+else
+	HEARTBEAT_GROUP=0
+	SETSID=
+fi
+
+# stop_heartbeat ends the current heartbeat AND the `sleep` it is blocked in.
+# Killing the subshell alone leaves that sleep orphaned until its timer
+# expires — one stray process per step.
+stop_heartbeat() {
+	[ -n "${beat:-}" ] || return 0
+
+	if [ "$HEARTBEAT_GROUP" = 1 ]; then
+		kill -TERM -"$beat" 2>/dev/null || kill "$beat" 2>/dev/null
+	else
+		pkill -P "$beat" 2>/dev/null
+		kill "$beat" 2>/dev/null
+	fi
+
+	return 0
+}
+
 status="$CI_DIR/last-run.json"
 timings="$CI_DIR/timings.tsv"
 
@@ -137,12 +172,14 @@ write_status() {
 on_signal() {
 	trap '' INT TERM                 # do not re-enter on our own group signal
 
-	# The heartbeat lives in its OWN process group (setsid, so that killing it
-	# takes its sleep along), which means the group kill below does NOT reach
-	# it. Without this line an interrupted run leaves a heartbeat printing into
-	# a log nobody is producing any more — measured, after the two fixes were
-	# applied separately and their interaction was not.
-	[ -n "${beat:-}" ] && kill -TERM -"$beat" 2>/dev/null
+	# Where the heartbeat lives in its OWN process group (setsid), the group
+	# kill below does NOT reach it. Without this an interrupted run leaves a
+	# heartbeat printing into a log nobody is producing any more — measured,
+	# after the two fixes were applied separately and their interaction was
+	# not. Without setsid the heartbeat shares this group and the kill below
+	# would reach it anyway; stopping it here too costs nothing and keeps one
+	# teardown path.
+	stop_heartbeat
 
 	kill -TERM 0 2>/dev/null         # make, its shell, go test — the whole group
 	write_status 130 "$current_step" "interrupted by a signal"
@@ -173,17 +210,20 @@ for step in "${steps[@]}"; do
 	# The heartbeat is what makes a silence readable. test-core emits one
 	# ::group:: line and then nothing until a whole race suite finishes, so a
 	# working step, a deadlocked step and a dead step look identical.
-	# setsid puts the heartbeat in its own process group, so killing it below
-	# takes its `sleep` with it. Killing the subshell alone leaves the sleep
-	# orphaned until its timer expires — up to one stray process per step.
-	setsid bash -c '
+	# setsid puts the heartbeat in its own process group, so stop_heartbeat can
+	# take its `sleep` with it; where setsid is absent that function kills the
+	# sleep by parent instead — and the heartbeat's own stderr is dropped,
+	# because a shell whose child is killed by a signal announces it, and the
+	# heartbeat has nothing else to say there. It speaks on stdout.
+	# shellcheck disable=SC2086 # SETSID is a prefix that must vanish when empty
+	$SETSID bash -c '
 		while sleep "$1"; do
 			e=$(( $(date +%s) - $5 ))
 			if [ "$e" -lt 60 ]; then el="${e}s"; else
 				el="$((e / 60))m$(printf %02d $((e % 60)))s"; fi
 			printf "[%2d/%d] %-22s … %s elapsed\n" "$2" "$3" "$4" "$el"
 		done
-	' _ "$CI_HEARTBEAT" "$i" "$total" "$step" "$step_start" &
+	' _ "$CI_HEARTBEAT" "$i" "$total" "$step" "$step_start" 2>/dev/null &
 	beat=$!
 
 	# The step runs in the BACKGROUND and is waited on, because bash defers a
@@ -197,7 +237,7 @@ for step in "${steps[@]}"; do
 	wait "$step_pid"
 	code=$?
 
-	kill -TERM -"$beat" 2>/dev/null || kill "$beat" 2>/dev/null
+	stop_heartbeat
 	wait "$beat" 2>/dev/null
 
 	elapsed=$(($(date +%s) - step_start))

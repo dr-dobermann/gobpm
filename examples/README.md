@@ -17,6 +17,7 @@ Every example runs end-to-end in CI and asserts its own outcome; the list below 
 | [`basic-process/`](basic-process/) | The fundamentals: engine → process (start → service task → end) → register → run. |
 | [`process-data/`](process-data/) | Process data through a task — a property and an engine runtime variable read via the `DataReader`, plus a per-branch **`DataObject`** (a scope-resident named container, read back by name). |
 | [`data-store/`](data-store/) | The engine-global **Data Store** (`DataStoreReference` + `thresher.WithDataStore`) — a value one instance writes outlives it and is read by a *separate* instance through the shared store. |
+| [`association-expressions/`](association-expressions/) | **A data association that computes** — the standard's two expression shapes (§10.4.2): a **transformation** derives the whole target value from its sources, and an **assignment** writes one named field and leaves the rest of the record alone. |
 
 ## Gateways
 

@@ -163,6 +163,66 @@ func newIntExpression(s exprSpec, docLang string) (data.FormalExpression, error)
 		data.WithResultType("int"), foundation.WithID(s.exprID()))
 }
 
+// newValueExpression mints an expression whose result is a VALUE of no
+// declared type — a data association's transformation, or an assignment's
+// from (§10.4.2 rules 1 and 2, ADR-011 §2.4). Unlike a condition or a loop
+// cardinality it constrains nothing: what the expression must produce is
+// decided by the target it is copied into, not by the association.
+func newValueExpression(
+	s exprSpec, docLang string,
+) (data.FormalExpression, error) {
+	body, err := runnableBody(s, docLang)
+	if err != nil {
+		return nil, err
+	}
+
+	return lite.Expr(body, foundation.WithID(s.exprID()))
+}
+
+// toPath resolves an <assignment>'s <to> body to the data path the model
+// writes at, and to the head naming what it writes INTO (ADR-011 §2.4,
+// SRD-097 FR-8).
+//
+// The standard defines to as an Expression yielding "any element in
+// context or sub-element of it"; this engine narrows that to a path. Two
+// spellings are accepted: a bare path, and the JUEL-style ${…} wrapper a
+// modeler's tool writes around one.
+//
+// What the narrowing REFUSES cannot be decided by syntax alone — a data
+// name is permissive, so `concat(order, "x")` is a well-formed path head
+// as far as SplitPath is concerned. The caller judges it against the one
+// thing that makes a to meaningful: the association's own target, which
+// the head must name. An expression that is not a path therefore fails
+// that comparison rather than a guess about what an expression looks
+// like.
+func toPath(body string) (path, head string, err error) {
+	p := strings.TrimSpace(body)
+
+	if after, ok := strings.CutPrefix(p, "${"); ok {
+		if before, closed := strings.CutSuffix(after, "}"); closed {
+			p = strings.TrimSpace(before)
+		}
+	}
+
+	if p == "" {
+		return "", "", errs.New(
+			errs.M("an <assignment> declares no <to> target"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	h, _, err := data.SplitPath(p)
+	if err != nil {
+		return "", "", errs.New(
+			errs.M("<to> %q isn't a data path; an assignment writes at a "+
+				"path (ADR-011 §2.4) — compute the value in <from> instead",
+				body),
+			errs.C(errorClass, errs.InvalidParameter),
+			errs.E(err))
+	}
+
+	return p, h, nil
+}
+
 // newCondition builds a sequence flow's condition, or reports why it
 // cannot be built.
 func newCondition(fs flowSpec, docLang string) (data.FormalExpression, error) {

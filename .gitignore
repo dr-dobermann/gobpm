@@ -82,6 +82,7 @@ examples/compensation-events/compensation-events
 examples/transaction-sub-process/transaction-sub-process
 examples/bpmn-convert/bpmn-convert
 examples/adhoc-subprocess/adhoc-subprocess
+examples/association-expressions/association-expressions
 
 # the link checker's built binary (built by `make link-check` via `go run`,
 # but `go build ./cmd/...` drops one here)

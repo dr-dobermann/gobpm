@@ -7,8 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **The legacy `flow.DataNode` association path** (SRD-097 M9). It had no
+  runtime caller — an executing process moves data through the execution
+  frame in `pkg/model/dataflow` — and only its own package tests reached it,
+  so it was two evaluators' worth of surface pretending to be one engine.
+  Removed: the `flow.DataNode` interface, `DataObject.Update`,
+  `Association.UpdateSource`, `Association.Value`, and the
+  `data.Recalculate` / `data.NoRecalculate` constants. `Association.IsReady`
+  stays — it is a state query, not part of the evaluator. Nothing in the
+  guides or examples used any of it. If you called one of these, the
+  replacement is the association's declarative surface
+  (`Transformation()`, `Assignments()`, `SourceNames()`, `TargetName()`)
+  plus letting the engine move the data.
+
 ### Added
 
+- **A data association computes** (ADR-011 v.10 / SRD-097, closes #328). BPMN
+  §10.4.2 gives an association three execution shapes, and the engine ran only
+  the third: a **transformation** derives the whole target value from the
+  association's sources; an **assignment** (`data.WithAssignments`) evaluates
+  its `from` and writes the data path its `to` names, leaving every other field
+  of the target intact; neither means the plain single-source copy that was
+  previously the only shape. An association may now carry **several sources**
+  (`data.WithSources`) — only a computing shape can combine them, so a plain
+  copy still takes exactly one. A transformation together with assignments is
+  refused where the association is built, not at run time. Expressions evaluate
+  against the activity's data context: the node's own parameters (an output
+  wins over a same-named scope datum), the scope, and a Data Store the
+  association reads; an assignment whose target is a store reads the record
+  first and writes back the whole of it, so untouched fields survive. Every
+  `Associate*` method on `DataObject` and `DataStoreReference` gained a
+  variadic `shape ...options.Option` tail, so existing calls compile
+  unchanged. The BPMN importer maps `<transformation>` and `<assignment>` and
+  accepts a multi-source association, retiring the last three refusals the
+  import-coverage guide listed for data associations; an expression in a
+  language the converter cannot run is refused by name, quoting the element
+  that carries it. Worked end to end in
+  [`examples/association-expressions/`](examples/association-expressions/).
 - **A Transaction carries its `method` and `protocol`, and binds its abort
   to a coordinator** (ADR-028 v.2 / SRD-095, part of #324). The
   `isTransaction` flag becomes `activities.TransactionCharacteristics` —

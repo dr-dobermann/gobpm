@@ -902,25 +902,24 @@ func TestCompositeHostReportsHostingScope(t *testing.T) {
 
 	<-entered // the body is inside the scope now
 
-	// the host is the track standing on the Sub-Process node.
-	var host *track
-
+	// The host is the track standing on the Sub-Process node AND hosting
+	// its scope. Both halves belong in the predicate: the track reaches the
+	// node a moment before it flips to TrackHostingScope, so asserting the
+	// state right after finding the track fails whenever the poll lands in
+	// that window — which is a flake, not a defect.
 	require.Eventually(t, func() bool {
 		for _, tr := range inst.tracks {
 			st := tr.currentStep()
-			if st != nil && st.node != nil && st.node.ID() == sp.ID() {
-				host = tr
-
+			if st != nil && st.node != nil && st.node.ID() == sp.ID() &&
+				tr.inState(TrackHostingScope) {
 				return true
 			}
 		}
 
 		return false
-	}, 2*time.Second, 5*time.Millisecond, "the Sub-Process host track")
-
-	require.True(t, host.inState(TrackHostingScope),
-		"the host has forked into a child scope and is waiting for it to "+
-			"drain — not executing, and not waiting for an event")
+	}, 2*time.Second, 5*time.Millisecond,
+		"the Sub-Process host track, forked into its child scope and waiting "+
+			"for it to drain — not executing, and not waiting for an event")
 
 	close(release)
 

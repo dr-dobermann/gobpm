@@ -186,12 +186,6 @@ func TestTaskData(t *testing.T) {
 
 			ctx := context.Background()
 
-			v, err := ia.Value(context.Background())
-			require.NoError(t, err)
-			require.Equal(t, 100, v.Structure().Get(ctx))
-
-			require.NoError(t, err)
-
 			// check inputs
 			ipp := task.Inputs()
 			require.Len(t, ipp, 1)
@@ -202,7 +196,10 @@ func TestTaskData(t *testing.T) {
 						return iae.ItemDefinition().ID() == "x"
 					}))
 
-			require.Equal(t, 100, ipp[0].ItemDefinition().Structure().Get(ctx))
+			// Binding an association does NOT move data: the input keeps the
+			// value it was declared with until a running process fills it
+			// through the execution frame (pkg/model/dataflow).
+			require.Equal(t, 42, ipp[0].ItemDefinition().Structure().Get(ctx))
 
 			// check output binding
 			outRes := data.MustItemAwareElement(
@@ -218,10 +215,6 @@ func TestTaskData(t *testing.T) {
 
 			err = task.BindOutgoing(oa)
 			require.NoError(t, err)
-
-			vo, err := oa.Value(ctx)
-			require.NoError(t, err)
-			require.Equal(t, 84, vo.Structure().Get(ctx))
 
 			// check outputs
 			opp := task.Outputs()

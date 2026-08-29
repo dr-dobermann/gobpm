@@ -137,8 +137,12 @@ func captureParkedFanOut(
 				continue
 			}
 
+			// Require the eligibility verdict too, not just the identity:
+			// the announcement records them in that order, so a checkpoint
+			// can carry three TaskIDs and not yet the verdict its readers
+			// assert. Polling caught that one under load (#356).
 			for _, in := range it.Instances {
-				if in.TaskID == "" {
+				if in.TaskID == "" || in.Eligible == nil {
 					return false
 				}
 			}
