@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-28 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-011 v.10](../design/ADR-011-process-data-flow.md) §2.4 (the three shapes and what their expressions address), §2.9.2/§2.9.3 (path read and write), §2.3 (availability gates, never waits) |
@@ -161,7 +161,7 @@ two evaluators drift (ADR-024 §2.16, one layer down). `calculate`,
 `Value`, `UpdateSource` and `DataObject.Update` say in their doc comments
 which path they are and which one an executing process runs. Retiring the
 dead path outright is a public-interface removal (`flow.DataNode.Update`)
-and its own decision, filed rather than smuggled in here.
+and its own decision — left to its own issue rather than smuggled in here.
 
 **FR-7 — the importer maps all three constructs.** `<transformation>` and
 each `<assignment>`'s `<from>`/`<to>` are parsed for real (body + language,
@@ -412,6 +412,10 @@ No downward references.
 | M6 | `44f645b8` | `examples/association-expressions`, both shapes end to end |
 | M6a | `99119659` | the diff-coverage gaps closed |
 | — | `a70c7cc5` | master merged (PR #358, SRD-090.D) |
+| — | `b5365b15` | this summary |
+| M7 | `97ca4310` | the independent review's six findings (see §10.2) |
+| — | `1b21f016` | the downstream docs synced with the shapes |
+| M8 | `b3675717` | the gate's heartbeat, which was dead on macOS (see §10.2) |
 
 ### §10.2 Where reality diverged from the draft
 
@@ -429,7 +433,8 @@ No downward references.
   `calculate` keeps the transformation branch it can honestly evaluate and
   **refuses** an assignment-bearing association; the four entry points say
   which path they are. Retiring the dead path is a public-interface removal
-  and was filed as its own issue rather than smuggled in here.
+  and belongs in its own issue rather than smuggled in here; the handover
+  carries the issue text, since this branch does not open one.
 
 - **FR-7's multi-source needed two things the draft did not name.** The
   parse collapsed several parameter-side refs into one (`setEnd` overwrote
@@ -476,6 +481,43 @@ No downward references.
   those paths are refused transitively; a `from` expression, meanwhile, can
   now read `loopCounter` and its siblings through the frame.
 
+- **M7: the review found one defect the tests could not.** Strengthening two
+  importer assertions showed that both `<assignment>`s of an association
+  minted the same expression id (`<assoc>:assignment.from`), so the second
+  shadowed the first wherever expressions are held by id. Each assignment now
+  owns its expression — by its own id, or by its index within the association
+  when the file gives it none. Fixing that exposed a second wording defect of
+  this branch's own making: `assocExpr` hard-coded `dataInputAssociation` as
+  the owner kind, so an unrunnable expression on an *output* association, or
+  in an assignment, was refused under the wrong element's name. The refusal
+  now names what carries the expression, which is what a modeller must edit.
+
+- **M7: two engine readings the review argued for, and one it was wrong
+  about.** An assignment whose target is a Data Store now reads the record
+  before writing it back (`storeTarget`) — the store's `Put` replaces a key
+  outright, so the data-object path's build-then-put would have dropped every
+  field the assignment did not name; a transformation still replaces the key,
+  which is what a transformation means. A source the association takes from a
+  store now resolves inside an expression. A node's own output parameter now
+  wins over a same-named scope datum. Movement facts name the sources they
+  read, one per source. Two notes the review filed as blockers were verified
+  **wrong** — both misread the same `AssociateSource` loop, from opposite
+  directions — and are rejected with their reasons in the review triage; no
+  code changed for them.
+
+- **M8: the gate's own heartbeat was dead on this platform.** Running the
+  final gate showed `setsid: command not found` once per step and not one
+  elapsed line. `setsid` is util-linux — Linux has it, macOS does not, and
+  Homebrew's is keg-only — and it is what puts the heartbeat in its own
+  process group. So the feature FIX-039 built to make a long silence readable
+  had never worked on the platform this engine is developed on, and its
+  absence was reported as noise rather than as a missing tool. The launcher
+  is now a prefix that empties when the tool is absent, and the heartbeat is
+  stopped by killing its `sleep` by parent instead of by group. Verified both
+  ways: the heartbeat prints, an interrupted run still records
+  `interrupted by a signal`, and neither path leaves a stray `sleep` or an
+  orphaned `golangci-lint`. Found here, so fixed here.
+
 - **A model constraint worth knowing.** An association keys its sources by
   `ItemDefinition` id, so two sources of the *same* item type collide with
   the model's own "duplicate source" error. Distinct item definitions per
@@ -483,11 +525,13 @@ No downward references.
 
 ### §10.3 Verification
 
-`make ci` at `a70c7cc5` (the merge of master): **PASS — 14/14 steps** in
-8m54s (`.ci/last-run.json`), race tests green, diff-coverage **98.4% of 437
-changed coverable lines** (min 95%), govulncheck clean, **53/53** examples
-executed end to end by the run sweep, `make lock-sweep` clean, `make
-link-check` clean.
+`make ci` at `1b21f016` (the branch tip): **PASS — 14/14 steps**
+(`.ci/last-run.json`), race tests green, diff-coverage **97.1% of 491 changed
+coverable lines** (min 95%), govulncheck clean, all examples executed end to
+end by the run sweep, `make lock-sweep` clean, `make link-check` clean. The
+prior full run at `a70c7cc5` (the merge of master) was PASS 14/14 in 8m54s at
+98.4% of 437 lines; M7 added 54 changed lines and the two rejected findings
+none.
 
 Every §6 test row exists and passes; the twelve are spread across
 `pkg/model/data`, `internal/scope`, `pkg/model/dataflow` and
