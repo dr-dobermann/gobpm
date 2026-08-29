@@ -31,7 +31,7 @@ type engine interface {
 // as the engine announces it, and answers it on that person's behalf.
 //
 // It records what it saw, so the run can assert that three DISTINCT tasks were
-// offered — the property that was missing when N instances shared one identity
+// offered — the property that was missing when N iterations shared one identity
 // and only one of them was addressable.
 type inbox struct {
 	eng  engine
@@ -55,7 +55,7 @@ func (i *inbox) Distribute(
 
 	// The announcement carries the eligibility the engine RESOLVED for this
 	// iteration — so the inbox knows whose work it is without opening it, and
-	// three instances of one activity name three different people.
+	// three iterations of one activity name three different people.
 	who := task.Eligible.Assignee.IDs
 	if len(who) != 1 {
 		fmt.Printf("  task %s names %d assignees, want 1\n",

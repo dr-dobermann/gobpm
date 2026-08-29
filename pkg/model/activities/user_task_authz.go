@@ -48,7 +48,7 @@ func (ut *UserTask) Assignments() []*hi.Assignment {
 
 // ResolveEligibility resolves the task's assignment triad against src via eng into
 // a frozen interactor.Eligibility (ADR-020 v.2 §2.7). It is called once, when the
-// task is distributed and its iteration is still resident; every later
+// task is distributed and its instance is still resident; every later
 // authorization check reads that snapshot instead of re-resolving, so a candidate
 // set cannot shift under a waiting task and an owner cannot lose the ability to
 // finish work it already holds.

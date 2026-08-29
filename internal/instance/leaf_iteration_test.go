@@ -38,7 +38,7 @@ func TestParallelLeafSpawnsNoTrack(t *testing.T) {
 // isolated by their frames and NOT by a scope apiece.
 //
 // It asserts the scope OPENINGS, not the scopes still open at the end:
-// an instance scope closes when its iteration drains, so a finished run
+// an instance scope closes when its instance drains, so a finished run
 // shows none either way and the surviving-path form of this test passes
 // on the very code it is meant to reject.
 func TestParallelLeafOpensNoScope(t *testing.T) {
@@ -82,8 +82,8 @@ func TestParallelLeafOpensNoScope(t *testing.T) {
 // T-11 — NFR-1's ONE named exception, asserted rather than discovered.
 //
 // An instance's own per-execution write (here the `res` item the task
-// produces) used to land in that iteration's scope and die with it. With
-// no per-iteration scope it reaches the ENCLOSING scope, and for a
+// produces) used to land in that instance's scope and die with it. With
+// no per-instance scope it reaches the ENCLOSING scope, and for a
 // parallel activity the last writer wins — which is order-dependent, so
 // the test pins membership rather than a particular winner. The
 // declared output collection is unaffected: still positional by
@@ -111,9 +111,9 @@ func TestParallelLeafUndeclaredWriteReachesEnclosingScope(t *testing.T) {
 
 // TestRestoredStatesSkipsCompletedOrdinals is SRD-090.A T-4/FR-7's
 // decision, isolated: WHICH ordinals a restore relaunches. A parallel
-// iteration completes out of order, so the completed COUNT cannot say
+// instance completes out of order, so the completed COUNT cannot say
 // which ones are done — only the recorded set can, and re-running a
-// completed iteration is what FR-7 forbids.
+// completed instance is what FR-7 forbids.
 func TestRestoredStatesSkipsCompletedOrdinals(t *testing.T) {
 	seed := &checkpoint.IterationRecord{
 		Kind: "mi_parallel", N: 3, Completed: 1,
@@ -138,7 +138,7 @@ func TestRestoredStatesSkipsCompletedOrdinals(t *testing.T) {
 // TestRestoredStatesIgnoresOutOfRangeOrdinal pins the guard on a record
 // that disagrees with the activation it is restored against: the frozen N
 // wins, because §2.4 fixes cardinality once and an ordinal outside it
-// describes no iteration this run has.
+// describes no instance this run has.
 func TestRestoredStatesIgnoresOutOfRangeOrdinal(t *testing.T) {
 	seed := &checkpoint.IterationRecord{
 		Kind: "mi_parallel", N: 2,
@@ -177,7 +177,7 @@ func TestPresizedStagingKeepsRecordedSlots(t *testing.T) {
 }
 
 // TestInstanceOutputsStageByOrdinal pins the positional handoff: an
-// iteration's output goes to the slot its ORDINAL owns, whatever order the
+// instance's output goes to the slot its ORDINAL owns, whatever order the
 // instances finished in, and an instance that produced none leaves its
 // slot nil — as a canceled one does (§2.7).
 func TestInstanceOutputsStageByOrdinal(t *testing.T) {

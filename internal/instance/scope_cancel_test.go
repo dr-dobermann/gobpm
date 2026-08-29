@@ -104,7 +104,7 @@ func TestScopedTerminate(t *testing.T) {
 		[2]flow.Element{fork, term})
 
 	var after atomic.Int32
-	inst := runIteration(t,
+	inst := runInstance(t,
 		wrapSP(t, "scoped-term", sp, hitTask(t, "after", &after, "", 0)))
 
 	require.Equal(t, Completed, inst.State(),
@@ -116,7 +116,7 @@ func TestScopedTerminate(t *testing.T) {
 
 // capturingProducer captures registered processors per definition id, so a
 // test can fire a boundary watch by hand. Guarded: registrations arrive
-// from iteration goroutines while tests poll.
+// from instance goroutines while tests poll.
 type capturingProducer struct {
 	m     sync.Mutex
 	procs map[string]eventproc.EventProcessor
@@ -256,7 +256,7 @@ func TestBoundaryOnCompositeInterrupts(t *testing.T) {
 		return proc != nil
 	}, 3*time.Second, 5*time.Millisecond)
 
-	// the fired definition: the boundary's own signal def (any iteration
+	// the fired definition: the boundary's own signal def (any instance
 	// carries the same id via the clone).
 	require.NoError(t, proc.ProcessEvent(ctx,
 		proc.(*boundaryWatch).def))
@@ -343,7 +343,7 @@ func TestErrorScopeChain(t *testing.T) {
 	t.Run("caught one level up", func(t *testing.T) {
 		var exc atomic.Int32
 
-		inst := runIteration(t,
+		inst := runInstance(t,
 			chainProcess(t, "one-level", "E1", "E1", false, &exc))
 
 		require.Equal(t, Completed, inst.State())
@@ -354,7 +354,7 @@ func TestErrorScopeChain(t *testing.T) {
 	t.Run("caught two levels up", func(t *testing.T) {
 		var exc atomic.Int32
 
-		inst := runIteration(t,
+		inst := runInstance(t,
 			chainProcess(t, "two-levels", "E1", "E1", true, &exc))
 
 		require.Equal(t, Completed, inst.State())
@@ -367,7 +367,7 @@ func TestErrorScopeChain(t *testing.T) {
 		// anywhere up the scope chain opens an incident at the thrower.
 		var exc atomic.Int32
 
-		inst := runIteration(t,
+		inst := runInstance(t,
 			chainProcess(t, "no-match", "E1", "OTHER", false, &exc))
 
 		require.Equal(t, Active, inst.State())
@@ -417,7 +417,7 @@ func TestErrorScopeChain(t *testing.T) {
 			[2]flow.Element{bnd, excTask},
 			[2]flow.Element{excTask, excEnd})
 
-		inst := runIteration(t, p)
+		inst := runInstance(t, p)
 
 		require.Equal(t, Completed, inst.State(),
 			"the Error End inside must be caught by the enclosing composite")

@@ -103,7 +103,7 @@ func failingSnapshot(pname string) (*snapshot.Snapshot, error) {
 // TestFailedTrackFailsInstance is the FIX-008 canary, re-pinned by SRD-079
 // FR-1: a track whose node Exec errors must never let the instance silently
 // reach Completed with lastErr=nil. Under the incident contract the failure now
-// surfaces as an open incident on a still-Active iteration rather than as a
+// surfaces as an open incident on a still-Active instance rather than as a
 // termination.
 func TestFailedTrackFailsInstance(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())

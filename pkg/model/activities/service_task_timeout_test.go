@@ -66,7 +66,7 @@ func TestServiceTaskWithTimeoutTimesOut(t *testing.T) {
 }
 
 // TestServiceTaskWithTimeoutCtxCancel: cancelling the context (a boundary
-// interrupt / iteration abort) unblocks the wait even while the operation runs;
+// interrupt / instance abort) unblocks the wait even while the operation runs;
 // Exec returns the context error (FR-2).
 func TestServiceTaskWithTimeoutCtxCancel(t *testing.T) {
 	st, err := activities.NewServiceTask("cancelled",

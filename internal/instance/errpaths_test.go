@@ -15,7 +15,7 @@ import (
 
 // TestInstanceRunRejectsNonCreated covers Instance.Run's state guard: Run is
 // only valid from the Created state, so a second Run (after the first moved the
-// iteration out of Created) is rejected with an invalid-state error.
+// instance out of Created) is rejected with an invalid-state error.
 func TestInstanceRunRejectsNonCreated(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -35,7 +35,7 @@ func TestInstanceRunRejectsNonCreated(t *testing.T) {
 
 // TestInstancePropagateEventNotActive covers Instance.PropagateEvent's active
 // guard: propagating a thrown event is only valid while the instance is Active,
-// so a freshly-created (not yet run) iteration rejects it.
+// so a freshly-created (not yet run) instance rejects it.
 func TestInstancePropagateEventNotActive(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 

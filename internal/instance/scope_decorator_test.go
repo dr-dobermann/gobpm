@@ -12,7 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
-// decoratorFixture builds a looped-composite iteration and returns it with a fresh
+// decoratorFixture builds a looped-composite instance and returns it with a fresh
 // loop state, the composite body node, and a host track positioned on it — the
 // white-box pieces the scope-protocol tests drive directly (the loop is NOT
 // running, so state is inspected on the test goroutine).
@@ -132,7 +132,7 @@ func TestRunCompositeLoopBindError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestRunCompositeLoopRequestError: a scope-open request on a stopped iteration
+// TestRunCompositeLoopRequestError: a scope-open request on a stopped instance
 // faults out (the roundtrip's loopDone path). The default post-tested loop skips
 // the pass-0 condition test, so the first thing that fails is the open request.
 func TestRunCompositeLoopRequestError(t *testing.T) {

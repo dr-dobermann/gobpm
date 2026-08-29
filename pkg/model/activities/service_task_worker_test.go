@@ -118,7 +118,7 @@ func TestServiceTaskWorkerExecPutError(t *testing.T) {
 }
 
 // TestServiceTaskWorkerCloneCopiesTopic: Clone carries the worker topic, so a
-// per-iteration clone is still worker-dispatched.
+// per-instance clone is still worker-dispatched.
 func TestServiceTaskWorkerCloneCopiesTopic(t *testing.T) {
 	st := workerTask(t)
 

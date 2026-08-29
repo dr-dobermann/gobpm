@@ -113,7 +113,7 @@ func TestTaskDataErrorPaths(t *testing.T) {
 
 			require.NoError(t, tsk.LoadData(ctx, f))
 
-			// make the output iteration fillable so updateOutputs passes...
+			// make the output instance fillable so updateOutputs passes...
 			require.NoError(t, f.Put(data.MustParameter("res",
 				data.MustItemAwareElement(
 					data.MustItemDefinition(values.NewVariable(7),
@@ -140,7 +140,7 @@ func TestTaskDataErrorPaths(t *testing.T) {
 	t.Run("under-specified definitions fail instantiation",
 		func(t *testing.T) {
 			// an ItemDefinition without a value can't produce a frame
-			// iteration — each definition group reports its own wrap.
+			// instance — each definition group reports its own wrap.
 			bare := func(name, id string) *data.Parameter {
 				return data.MustParameter(name,
 					data.MustItemAwareElement(

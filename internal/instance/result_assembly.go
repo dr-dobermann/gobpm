@@ -12,7 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
-// resultAssembly collects an iteration's instances' results the way the model
+// resultAssembly collects an iteration's iterations' results the way the model
 // declared they should be read (ADR-025 §2.6.1).
 //
 // Nil for an undeclared activity, which keeps the last-wins default: each
@@ -75,7 +75,7 @@ func newResultAssembly(r *activities.ResultStrategy, n int) *resultAssembly {
 // commit makes the name a shared one.
 //
 // The map's key is evaluated here, in that same frame, which is the point of
-// the timing: it lets the key use something the instance PRODUCED — the
+// the timing: it lets the key use something the iteration PRODUCED — the
 // assignee of a User Task being the motivating case, since it is not known
 // until the task is claimed.
 func (a *resultAssembly) take(
@@ -87,7 +87,7 @@ func (a *resultAssembly) take(
 
 	d, err := f.GetData(a.strategy.Item())
 	if err != nil {
-		// an instance that produced no result leaves its slot empty, as a
+		// an iteration that produced no result leaves its slot empty, as a
 		// canceled one does: an activity whose output is optional is not an
 		// error here.
 		return nil
@@ -119,7 +119,7 @@ func (a *resultAssembly) keyed(
 	key, ok := res.Get(ctx).(string)
 	if !ok || key == "" {
 		// AN EMPTY OR MISSING KEY REFUSES (§2.6.1). There is no sensible slot
-		// for a result with no key, and silently dropping one instance's
+		// for a result with no key, and silently dropping one iteration's
 		// output is the failure the declared strategies exist to make
 		// impossible.
 		return errs.New(
@@ -144,7 +144,7 @@ func (a *resultAssembly) keyed(
 
 	// otherwise the later iteration overwrites, consistent with the last-wins
 	// default rather than an exception to it. The loss stays detectable:
-	// RUNTIME/ITERATIONS publishes the instance total, so a map holding fewer
+	// RUNTIME/ITERATIONS publishes the iteration total, so a map holding fewer
 	// entries than that says so.
 	a.byKey[key] = v
 	a.keyedBy[key] = ord
@@ -158,7 +158,7 @@ func (a *resultAssembly) keyed(
 //
 // Never incrementally: a concurrent activity must not be able to read a
 // half-assembled collection. The default has no barrier by construction — it
-// is the enclosing scope, written as the instances go.
+// is the enclosing scope, written as the iterations go.
 func (a *resultAssembly) publish(host *track) error {
 	if a == nil {
 		return nil

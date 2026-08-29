@@ -3,7 +3,7 @@
 // completed by its own reviewer.
 //
 // It shows the three things that make the construct usable rather than merely
-// possible — an identity per instance, a declared result keyed per instance,
+// possible — an identity per iteration, a declared result keyed per iteration,
 // and an account of who did which one — and it runs unattended: the inbox here
 // answers each task as the reviewer it was offered to.
 package main

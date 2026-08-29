@@ -45,7 +45,7 @@ type callEntry struct {
 // resolves the declared inputs at the caller's scope and clones them across the
 // boundary (the isolation contract), then starts one watcher on the child's
 // Done. A launch/resolution failure resumes the parked track with a fault so the
-// iteration surfaces it instead of parking forever (the onJobWaiting idiom).
+// instance surfaces it instead of parking forever (the onJobWaiting idiom).
 func (ls *loopState) onCallWaiting(ctx context.Context, ev trackEvent) {
 	if ls.stopping {
 		return
@@ -112,7 +112,7 @@ func (ls *loopState) onCallWaiting(ctx context.Context, ev trackEvent) {
 // watchCall blocks until the child instance ends, then reports it to the loop so
 // the parked caller track resumes on the single-writer goroutine. Started once
 // per call by onCallWaiting; it only waits and reports (NFR-2). A stopped
-// iteration (loopDone) drops the report.
+// instance (loopDone) drops the report.
 func (inst *Instance) watchCall(ctx context.Context, child exec.ChildProcess) {
 	select {
 	case <-child.Done():

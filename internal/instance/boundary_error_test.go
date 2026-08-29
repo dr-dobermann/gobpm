@@ -23,7 +23,7 @@ import (
 
 // SRD-029 M4 — the Error path. An activity raising a typed BpmnError is matched
 // against its Error boundary by errorCode (FR-9); an Error End Event faults the
-// iteration in 0.1.0's single scope (FR-10).
+// instance in 0.1.0's single scope (FR-10).
 
 // errorGuardedInstance builds start -> host(ServiceTask, op) -> normalEnd with an
 // interrupting Error boundary (errorRef boundaryCode) on host -> excEnd.

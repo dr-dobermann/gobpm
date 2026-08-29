@@ -657,7 +657,7 @@ func TestAdHocViewGuards(t *testing.T) {
 	require.ErrorAs(t, err, &ae)
 	require.True(t, ae.HasClass(errs.EmptyNotAllowed))
 
-	// A finished iteration answers rather than blocking: its loop is gone, so
+	// A finished instance answers rather than blocking: its loop is gone, so
 	// the request can never be serviced.
 	runToDone(t, inst)
 

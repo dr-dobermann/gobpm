@@ -151,7 +151,7 @@ func bindDeclared(in *data.Parameter, d data.Data) (*data.Parameter, error) {
 // collectOutputs reads the declared outputs from the root scope at normal
 // completion and copies them into the instance's result (ADR-040 §2.3,
 // SRD-093 FR-8) — the contract's committed values, available after the
-// iteration is reaped. A required output that is absent or not Ready is the
+// instance is reaped. A required output that is absent or not Ready is the
 // fault the caller reports: the process claimed a result it did not produce.
 // An optional output not produced is skipped. A contract-less process has
 // no result surface and is untouched.
@@ -207,7 +207,7 @@ func (ls *loopState) collectOutputs() error {
 // abnormal end, and for a contract-less process. Every call hands out its
 // own copy of each value: the result is a committed value, never a live
 // view (ADR-040 §2.3a), and a reader mutating what it got must not reach the
-// iteration's record or another reader.
+// instance's record or another reader.
 func (inst *Instance) Outputs() []data.Data {
 	stored := inst.result.Load()
 	if stored == nil {

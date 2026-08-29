@@ -11,9 +11,9 @@ import (
 )
 
 // iterSubscription is one definition an iterated activity waits on, and the
-// instances currently parked on it (ADR-006 §2.9.5).
+// iterations currently parked on it (ADR-006 §2.9.5).
 //
-// ONE entry per definition, never one per instance. The hub sees a single
+// ONE entry per definition, never one per iteration. The hub sees a single
 // processor holding a single subscription — exactly what it sees for a plain
 // node — which is what keeps the iteration invisible to it: an entry per
 // iteration would need an ordinal to tell the entries apart, and an ordinal in
@@ -28,7 +28,7 @@ type iterSubscription struct {
 	waiting []int
 }
 
-// iterationDelivery is one delivery waiting to be applied, and the instance it
+// iterationDelivery is one delivery waiting to be applied, and the iteration it
 // belongs to.
 type iterationDelivery struct {
 	def flow.EventDefinition
@@ -36,7 +36,7 @@ type iterationDelivery struct {
 }
 
 // eventSubs is the decorator's half of the EventProcessor contract, embedded
-// by every decorator that can hold waiting instances.
+// by every host that can hold waiting iterations.
 //
 // The identity is the load-bearing part. `sameProcessor` compares processors
 // by ID (`waiters/waiters.go:147`), so this value decides whether a second
@@ -55,7 +55,7 @@ type eventSubs struct {
 	//
 	// It exists because a delivery box must belong to PARKING, not to
 	// subscription bookkeeping. Opening one as a side effect of registering an
-	// event definition works only for instances that have a definition; a User
+	// event definition works only for iterations that have a definition; a User
 	// Task has none, so its box was never opened and its completion was routed
 	// into a nil channel and dropped. That is the defect that reverted the
 	// first attempt at the human fan-out (SRD-090.B §7), and keeping the two
@@ -66,26 +66,26 @@ type eventSubs struct {
 	// keyed by ordinal (ADR-020 §2.12).
 	//
 	// The identity is what a person or a UI is holding, and what Withdraw and
-	// Complete both name. One slot per ACTIVITY would make N instances
+	// Complete both name. One slot per ACTIVITY would make N iterations
 	// announce a single task between them: only one would be addressable and
 	// the rest would complete without anyone doing them — three approvals
-	// modeled, none performed. So an instance mints its own, keeps it while it
+	// modeled, none performed. So an iteration mints its own, keeps it while it
 	// is parked (re-minting would invalidate a reference someone is about to
 	// act on), and drops it when its work is done.
 	taskIDs map[int]string
 
-	// inFlight counts deliveries the loop has handed to an instance that has
+	// inFlight counts deliveries the loop has handed to an iteration that has
 	// not woken to take them yet.
 	//
 	// It exists because the loop's `waiting` entry is ONE entry standing for
 	// N waiters, so it cannot say "this activity is parked, except for the
 	// iteration now being handed its completion". Between the send and the
 	// iteration waking, the activity looks fully parked from the loop — and a
-	// dehydration there takes the track away mid-delivery: the instance wakes
+	// dehydration there takes the track away mid-delivery: the iteration wakes
 	// on dehydrateCh instead of its box, its completion is lost, and the
 	// person who did the work is asked to do it again.
 	//
-	// Raised by the loop before the send, dropped by the instance once it has
+	// Raised by the loop before the send, dropped by the iteration once it has
 	// the envelope, after which its own `parked` flag carries the fact.
 	//
 	// Declared after the maps so the struct's pointer fields stay contiguous
@@ -95,11 +95,11 @@ type eventSubs struct {
 	//
 	// A restored fan-out is rebuilt by the very action being applied to it: a
 	// person completes a task, that hydrates the instance, and the decorator
-	// then re-launches its instances on their own goroutines. The completion
-	// can therefore reach the loop while the instance it belongs to has not
+	// then re-launches its iterations on their own goroutines. The completion
+	// can therefore reach the loop while the iteration it belongs to has not
 	// parked yet — and a delivery to a box that does not exist yet was
 	// silently dropped, so the work was marked done, the task withdrawn, and
-	// the activity waited forever for an instance nobody could complete
+	// the activity waited forever for an iteration nobody could complete
 	// again.
 	//
 	// ready is the doorbell. Buffered by one and rung without blocking: the
@@ -110,12 +110,12 @@ type eventSubs struct {
 	// across a restore, distinct per process instance.
 	id string
 
-	// pending is the deliveries the decorator has yet to apply, each naming
-	// the instance it belongs to.
+	// pending is the deliveries the host has yet to apply, each naming
+	// the iteration it belongs to.
 	//
-	// ONE queue for the activity, not a channel per instance, because the
-	// DECORATOR applies them — serially, on its own goroutine (ADR-025
-	// §2.15a). The instances are state it owns, not goroutines with mailboxes
+	// ONE queue for the activity, not a channel per iteration, because the
+	// HOST applies them — serially, on its own goroutine (ADR-025
+	// §2.15a). The iterations are state it owns, not goroutines with mailboxes
 	// of their own, so what an arriving delivery needs is an ordinal and a
 	// place to wait its turn.
 	//
@@ -150,7 +150,7 @@ func newEventSubs(instanceID, nodeID string) eventSubs {
 
 // subsIDFor derives a decorator's subscriber identity from what builds it.
 //
-// Tolerant of a track that carries no instance, and of no track at all: the
+// Tolerant of a track that carries no iteration, and of no track at all: the
 // package's tests build bare decorators to ask them a question that has
 // nothing to do with subscriptions — what kind they iterate, what their live
 // iteration awaits — and a constructor that panics on those would make the
@@ -207,7 +207,7 @@ func (es *eventSubs) awaiting(def flow.EventDefinition, ord int) bool {
 //
 // There is nothing to register with the hub: such a wait is addressed by a
 // task identity rather than an event definition, so the decorator only needs
-// to know the instance is waiting, and to have somewhere to deliver its
+// to know the iteration is waiting, and to have somewhere to deliver its
 // outcome (ADR-025 §2.15a).
 func (es *eventSubs) parking(ord int) {
 	es.mu.Lock()
@@ -256,7 +256,7 @@ func (es *eventSubs) takeDeliveries() []iterationDelivery {
 func (es *eventSubs) deliveries() <-chan struct{} { return es.ready }
 
 // taskIDFor returns iteration ord's parked-work identity, minting one on first
-// ask and returning the same value while the instance stays parked.
+// ask and returning the same value while the iteration stays parked.
 //
 // Stability is the requirement: the id is a reference a human or a UI holds,
 // so re-minting it mid-wait would invalidate the very thing they are about to
@@ -354,7 +354,7 @@ func (es *eventSubs) dropTaskID(ord int) {
 
 // stopped records that iteration ord is no longer parked on def, and reports
 // whether NONE now is — which is when the decorator unregisters. An unknown
-// definition or ordinal is not an error: an instance that faulted before it
+// definition or ordinal is not an error: an iteration that faulted before it
 // parked has nothing to withdraw.
 func (es *eventSubs) stopped(def flow.EventDefinition, ord int) bool {
 	es.mu.Lock()
@@ -380,7 +380,7 @@ func (es *eventSubs) stopped(def flow.EventDefinition, ord int) bool {
 }
 
 // waitingFor reports whether iteration ord holds a wait — on a definition or a
-// capability. An instance that holds none has nothing to be delivered and is
+// capability. An iteration that holds none has nothing to be delivered and is
 // simply run.
 func (es *eventSubs) waitingFor(ord int) bool {
 	es.mu.Lock()
@@ -407,7 +407,7 @@ func (es *eventSubs) waitsAnywhereLocked(ord int) bool {
 }
 
 // deliverTo hands eDef to iteration ord, reporting whether it landed. False
-// means the instance is no longer waiting — a losing arm, or a sibling that
+// means the iteration is no longer waiting — a losing arm, or a sibling that
 // completed while the delivery was in flight — which is a drop, not an error
 // (SRD-027 FR-4's rule at iteration granularity).
 func (es *eventSubs) deliverTo(ord int, eDef flow.EventDefinition) bool {
@@ -440,7 +440,7 @@ func (es *eventSubs) deliverTo(ord int, eDef flow.EventDefinition) bool {
 // (SRD-090.B FR-2).
 //
 // A hold is keyed (instanceID, trackID) and `ReleaseWaits` withdraws every
-// hold taken for a track, so an activity whose instances share a host track
+// hold taken for a track, so an activity whose iterations share a host track
 // must not release while a sibling still waits: the sibling would be left
 // with nothing able to wake a released instance.
 func (es *eventSubs) anyWaiting() bool {
@@ -455,7 +455,7 @@ func (es *eventSubs) anyWaiting() bool {
 // goroutine while the decorator may still be arming.
 //
 // Ascending ORDINAL order rather than arrival order is the point: when
-// nothing distinguishes the instances, nothing but their ordinals can decide
+// nothing distinguishes the iterations, nothing but their ordinals can decide
 // which receives an indistinguishable envelope, and two runs of one model
 // must not disagree.
 func (es *eventSubs) waitingOn(defID string) []int {
@@ -485,7 +485,7 @@ type activitySubscriber interface {
 	stopped(def flow.EventDefinition, ord int) bool
 
 	// anyWaiting gates the engine HOLD, whose lifetime is the whole
-	// activity's rather than one instance's.
+	// activity's rather than one iteration's.
 	anyWaiting() bool
 
 	// parking records a CAPABILITY wait — one addressed by a task identity
@@ -493,7 +493,7 @@ type activitySubscriber interface {
 	// awaiting/stopped because such a wait has no definition to register.
 	parking(ord int)
 
-	// completeIteration hands one instance its completion. The DECORATOR
+	// completeIteration hands one iteration its completion. The DECORATOR
 	// decides where it goes: a fan-out queues it for serial application, and
 	// every other shape runs one pass at a time, which is parked on the
 	// track's own channel.
@@ -506,7 +506,7 @@ type activitySubscriber interface {
 	busy() bool
 
 	// taskIDFor, adoptTaskID and dropTaskID own the parked-work identity of
-	// one instance (ADR-020 §2.12); taskIDSnapshot hands the set to the
+	// one iteration (ADR-020 §2.12); taskIDSnapshot hands the set to the
 	// checkpoint so a restore returns each iteration the id it was announced
 	// under.
 	taskIDFor(ord int) string
@@ -522,7 +522,7 @@ type activitySubscriber interface {
 // decorator substitutes for the track in a chain that already exists, rather
 // than introducing one.
 //
-// The fan-out to the instances waiting on the definition is the LOOP's, from
+// The fan-out to the iterations waiting on the definition is the LOOP's, from
 // waitingOn — dispatch belongs where the single writer is (SRD-090.B FR-3,
 // landing with M4).
 func (d *iterDecorator) ProcessEvent(

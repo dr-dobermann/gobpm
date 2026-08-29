@@ -49,7 +49,7 @@ func openedScopeExec(
 }
 
 // TestScopeExecAwaitsItsScope pins the member residency reads (SRD-090.A
-// FR-8, M3c): a composite iteration reports awaitScope for exactly as long as
+// FR-8, M3c): a composite instance reports awaitScope for exactly as long as
 // its child scope is open, and awaitNothing on either side of that.
 //
 // Nothing else can answer the question. From outside the runner's own stack a
@@ -170,7 +170,7 @@ func seededSet() *checkpoint.IterationRecord {
 // recorded activity — it finishes it and walks on, so the seed would still be
 // sitting there when the token reached the NEXT iterated activity, whose
 // decorator would read another activity's ordinals as its own and skip every
-// iteration recorded complete. Those instances would never run and nothing
+// instance recorded complete. Those instances would never run and nothing
 // would say so: the run would just produce a shorter result.
 //
 // Both decorators are checked, because both can be handed one — and each is

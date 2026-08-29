@@ -25,7 +25,7 @@ func fanOutFixture(
 	return inst, newLoopState(inst), node, host
 }
 
-// instancePath is the scope one fanned-out iteration of node opens under its
+// instancePath is the scope one fanned-out instance of node opens under its
 // host — the path shape the whole restore derivation turns on.
 func instancePath(
 	t *testing.T, host *track, seg string,
@@ -40,7 +40,7 @@ func instancePath(
 
 // TestRestoredScopeHostReadsAnIterationOrdinal pins what makes a fanned-out
 // composite restorable WITHOUT an open-set record (SRD-090.A M3b): the
-// iteration's ordinal is in its own scope segment, so the host derivation
+// instance's ordinal is in its own scope segment, so the host derivation
 // that already finds a serial pass's scope finds an instance's too, and
 // says which one it is.
 func TestRestoredScopeHostReadsAnIterationOrdinal(t *testing.T) {
@@ -80,7 +80,7 @@ func TestRestoredHostSegmentSkipsANonHost(t *testing.T) {
 	require.Equal(t, scopeSegment(node), seg)
 }
 
-// TestRestoredScopeHostPrefersAnOwnScope: `sp-body-1` is BOTH iteration 1 of
+// TestRestoredScopeHostPrefersAnOwnScope: `sp-body-1` is BOTH instance 1 of
 // `body` and the own scope of a sibling whose segment reads that way, and
 // only one of the two can be open — they are the same path. The own reading
 // wins, and it wins whichever order the track table lists them in: a
@@ -114,7 +114,7 @@ func TestRestoredScopeHostPrefersAnOwnScope(t *testing.T) {
 }
 
 // TestIterationOrdinalOfRejects: everything that merely LOOKS like an
-// iteration segment is refused. The suffix has to read back as exactly the
+// instance segment is refused. The suffix has to read back as exactly the
 // number it claims, or a scope belonging to something else would be adopted
 // as an instance of this host — and then torn down with its fan-out.
 func TestIterationOrdinalOfRejects(t *testing.T) {
@@ -147,7 +147,7 @@ func TestIterationOrdinalOfRejects(t *testing.T) {
 }
 
 // TestFanOutPostsItsPositionBeforeItStarts pins the order that keeps a
-// fan-out restorable: the executor set is posted BEFORE the first iteration
+// fan-out restorable: the executor set is posted BEFORE the first instance
 // runs, so the window where a checkpoint would find no set at all — and
 // restore it as "all N still to run" — does not exist (SRD-090.A FR-6).
 //
@@ -178,7 +178,7 @@ func TestFanOutPostsItsPositionBeforeItStarts(t *testing.T) {
 }
 
 // TestAdoptRestoredScopesRebuildsAFanOut: the loop rebuilds an entry per
-// still-open iteration scope from the scope table alone — host, ordinal, and
+// still-open instance scope from the scope table alone — host, ordinal, and
 // the hold that keeps its drain waiting for the executor that has not been
 // launched yet (SRD-090.A M3b, retiring MIGroupRecord.Open).
 func TestAdoptRestoredScopesRebuildsAFanOut(t *testing.T) {
@@ -252,12 +252,12 @@ func TestIterationRecordedDone(t *testing.T) {
 	require.False(t, iterationRecordedDone(host, 7), "not in the set")
 }
 
-// TestReAttachAdoptsTheIterationsCell: a restored iteration scope was rebuilt
+// TestReAttachAdoptsTheIterationsCell: a restored instance scope was rebuilt
 // by the loop and carries neither a drain channel nor an output cell — both
 // belong to the executor that resumes it, and both are adopted on the
-// re-attach. Without the cell the resumed iteration's output would be read
+// re-attach. Without the cell the resumed instance's output would be read
 // from nowhere and its slot would stay nil, which reads downstream as an
-// iteration that produced nothing.
+// instance that produced nothing.
 func TestReAttachAdoptsTheIterationsCell(t *testing.T) {
 	_, ls, node, host := fanOutFixture(t)
 
@@ -270,7 +270,7 @@ func TestReAttachAdoptsTheIterationsCell(t *testing.T) {
 
 	var (
 		drain = make(chan struct{})
-		cell  = &instanceCapture{item: "result"}
+		cell  = &iterationCapture{item: "result"}
 		reply = make(chan scopeReply, 1)
 	)
 
@@ -339,13 +339,13 @@ func TestScopeFactOrdinal(t *testing.T) {
 
 // TestRecordedScopeHostResolvesWhatTheDerivationCannot is the point of the
 // Schema-7 scope record (SRD-090.A M3c). `sp-body-1` reads two ways — the
-// own scope of a track whose segment is spelled that way, and iteration 1 of
+// own scope of a track whose segment is spelled that way, and instance 1 of
 // a fanning-out host — and the derivation cannot tell which one opened it,
 // so it applies a precedence rule and always answers "own scope".
 //
 // That rule is a coin-flip dressed as a decision: when the instance IS the
 // opener, the derivation attaches the scope to the wrong host, and the
-// iteration's drain is delivered to a track that never fanned out. The
+// instance's drain is delivered to a track that never fanned out. The
 // record says who opened it, so the lookup answers correctly on exactly the
 // input the derivation gets wrong.
 func TestRecordedScopeHostResolvesWhatTheDerivationCannot(t *testing.T) {
@@ -355,7 +355,7 @@ func TestRecordedScopeHostResolvesWhatTheDerivationCannot(t *testing.T) {
 	path := instancePath(t, host, seg)
 
 	// the sibling that makes the path ambiguous: its OWN scope is spelled
-	// exactly like the host's iteration 1.
+	// exactly like the host's instance 1.
 	twin := &track{
 		steps:     []*stepInfo{{node: node}},
 		scopePath: host.scopePath,
@@ -369,7 +369,7 @@ func TestRecordedScopeHostResolvesWhatTheDerivationCannot(t *testing.T) {
 	require.Same(t, twin, derived)
 	require.Equal(t, -1, derivedOrd)
 
-	// what the record answers: the host actually opened it, as iteration 1.
+	// what the record answers: the host actually opened it, as instance 1.
 	inst.restoredScopes = []checkpoint.ScopeRecord{
 		{Path: string(path), HostTrack: host.ID(), Ordinal: 1},
 	}

@@ -90,7 +90,7 @@ func newActivity(
 	return cfg.newActivity()
 }
 
-// clone returns a per-iteration copy of the activity: the properties are
+// clone returns a per-instance copy of the activity: the properties are
 // deep-copied so the clone owns private Property objects — a later edit to the
 // source process (removing or re-valuing a property) can't leak into a
 // registered snapshot or a running instance, and a value-less property is
@@ -102,7 +102,7 @@ func newActivity(
 //
 // boundaryEvents is deliberately left empty: a boundary's cross-references (host
 // ↔ boundary) must point at the instance's own cloned nodes, not the shared
-// model, so the per-iteration graph build (snapshot.Clone) rebinds the cloned
+// model, so the per-instance graph build (snapshot.Clone) rebinds the cloned
 // boundaries onto this cloned host (SRD-029 M3a). Copying the model boundaries
 // here would leak shared nodes into the instance.
 func (a *activity) clone() (activity, error) {

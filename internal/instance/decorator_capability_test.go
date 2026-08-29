@@ -56,9 +56,9 @@ func TestARestoredInstanceKeepsTheIdentityItWasAnnouncedUnder(t *testing.T) {
 // queued for the DECORATOR, naming the instance it belongs to, and waits there
 // until the decorator applies it.
 //
-// It holds whether or not that iteration has parked yet. A restored fan-out is
+// It holds whether or not that instance has parked yet. A restored fan-out is
 // rebuilt by the very action being applied to it, so a completion routinely
-// reaches the loop first — and while each iteration owned a channel, such a
+// reaches the loop first — and while each instance owned a channel, such a
 // completion was dropped: the work was marked performed, the task withdrawn,
 // and the activity waited forever for an approval nobody could give again.
 func TestACompletionWaitsInTheDecoratorsQueue(t *testing.T) {
@@ -145,7 +145,7 @@ func TestAnActivityReadsBusyWhileItHasWorkToApply(t *testing.T) {
 }
 
 // TestTheIdentitySetIsSnapshottedPerOrdinal (ADR-020 §2.12): the checkpoint
-// records what each iteration was announced under, keyed by ordinal, because
+// records what each instance was announced under, keyed by ordinal, because
 // the track's single recorded id can only ever carry one of N.
 func TestTheIdentitySetIsSnapshottedPerOrdinal(t *testing.T) {
 	es := newEventSubs("inst", "node")

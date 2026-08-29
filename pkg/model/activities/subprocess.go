@@ -602,7 +602,7 @@ func (sp *SubProcess) shapeErr(format string, args ...any) error {
 }
 
 // Clone implements flow.Node: the activity base clones per the shared
-// contract (config by reference, per-iteration state fresh, the host's own
+// contract (config by reference, per-instance state fresh, the host's own
 // boundary events left for the enclosing graph's rebind), and the inner
 // graph deep-clones through the container core — every inner node via its
 // own Clone (a nested Sub-Process recurses), inner flows relinked, inner
@@ -626,8 +626,8 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 			errs.E(err))
 	}
 
-	// deep-clone the SubProcess-level Data Objects so each iteration owns its
-	// own copy (SRD-063 FR-4, the per-iteration isolation Properties/Process
+	// deep-clone the SubProcess-level Data Objects so each instance owns its
+	// own copy (SRD-063 FR-4, the per-instance isolation Properties/Process
 	// Data Objects already have). Like the Process-level snapshot clone, the
 	// container back-pointer is left as the clone carries it (immaterial to
 	// by-name scope resolution — the runtime resolves a DataObject by its scope
@@ -647,9 +647,9 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 		triggered:         sp.triggered,
 		tx:                sp.tx,
 		// The Ad-Hoc spec is immutable configuration (the Router and its
-		// rules), so every iteration shares the one the modeler built — like
+		// rules), so every instance shares the one the modeler built — like
 		// the Data Store References below, and unlike the Data Objects, which
-		// hold per-iteration state and are deep-cloned.
+		// hold per-instance state and are deep-cloned.
 		adHoc:       sp.adHoc,
 		dataObjects: make(map[string]*dataobjects.DataObject, len(dobjs)),
 		dataStoreRefs: make(

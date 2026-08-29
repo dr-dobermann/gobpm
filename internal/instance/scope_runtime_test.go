@@ -54,9 +54,9 @@ func hitTask(
 	return st
 }
 
-// runIteration builds the snapshot, runs the instance, and waits for the
+// runInstance builds the snapshot, runs the instance, and waits for the
 // terminal state.
-func runIteration(t *testing.T, p *process.Process) *Instance {
+func runInstance(t *testing.T, p *process.Process) *Instance {
 	t.Helper()
 
 	s, err := snapshot.New(p)
@@ -148,7 +148,7 @@ func TestScopeOpenSeedsNoneStart(t *testing.T) {
 
 	after := hitTask(t, "after", &outer, "", 0)
 
-	inst := runIteration(t, wrapSP(t, "seed-none", sp, after))
+	inst := runInstance(t, wrapSP(t, "seed-none", sp, after))
 
 	require.Equal(t, Completed, inst.State())
 	require.NoError(t, inst.LastErr())
@@ -181,7 +181,7 @@ func TestScopeOpenSeedsFlowlessNodes(t *testing.T) {
 
 	after := hitTask(t, "after", &outer, "", 0)
 
-	inst := runIteration(t, wrapSP(t, "seed-flowless", sp, after))
+	inst := runInstance(t, wrapSP(t, "seed-flowless", sp, after))
 
 	require.Equal(t, Completed, inst.State())
 	require.EqualValues(t, 1, a.Load())
@@ -255,7 +255,7 @@ func TestScopeDataVisibility(t *testing.T) {
 	linkAll(t, [2]flow.Element{start, sp}, [2]flow.Element{sp, after},
 		[2]flow.Element{after, end})
 
-	inst := runIteration(t, p2)
+	inst := runInstance(t, p2)
 
 	require.Equal(t, Completed, inst.State())
 	require.NoError(t, inst.LastErr())
@@ -303,7 +303,7 @@ func TestNestedScopes(t *testing.T) {
 
 	after := hitTask(t, "after", &outer, "", 0)
 
-	inst := runIteration(t, wrapSP(t, "nested", outerSP, after))
+	inst := runInstance(t, wrapSP(t, "nested", outerSP, after))
 
 	require.Equal(t, Completed, inst.State())
 	require.NoError(t, inst.LastErr())
@@ -357,7 +357,7 @@ func TestScopeReEntryQueues(t *testing.T) {
 		[2]flow.Element{lead, sp},
 		[2]flow.Element{sp, endA})
 
-	inst := runIteration(t, p)
+	inst := runInstance(t, p)
 
 	require.Equal(t, Completed, inst.State())
 	require.NoError(t, inst.LastErr())
@@ -435,7 +435,7 @@ func TestConditionalInsideScope(t *testing.T) {
 		[2]flow.Element{raise, endR},
 		[2]flow.Element{sp, endS})
 
-	inst := runIteration(t, p)
+	inst := runInstance(t, p)
 
 	require.Equal(t, Completed, inst.State())
 	require.NoError(t, inst.LastErr())
@@ -509,13 +509,13 @@ func scopeQueueFixture(
 func TestScopeRuntimeDirect(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	// a parked-host fixture: iteration with one composite, un-run loop.
+	// a parked-host fixture: instance with one composite, un-run loop.
 	build := scopeQueueFixture
 
 	// T-1 findings, SRD-090.A M3c: the two below asserted that a bad open
 	// FAULTS the instance. The loop-driven path had nobody to answer, so
 	// stopAll was the only way to be loud. An open is a request now, and a
-	// refusal goes back to the activity iteration that asked — which is how
+	// refusal goes back to the activity instance that asked — which is how
 	// every other error in this path already behaved.
 	t.Run("stopping refuses the open", func(t *testing.T) {
 		_, ls, host, node := build(t)
@@ -725,7 +725,7 @@ type badHost struct {
 func (b badHost) Nodes() []flow.Node { return []flow.Node{b.bad} }
 
 // openScopeFor drives the surviving scope-open path the way an activity
-// iteration's executor does, synchronously on the caller's goroutine
+// instance's executor does, synchronously on the caller's goroutine
 // (SRD-090.A M3c).
 //
 // It replaces the direct ls.onScopeOpen(...) these tests used before the
@@ -824,7 +824,7 @@ func TestTwoHostsOneComposite(t *testing.T) {
 		[2]flow.Element{split, sub},
 		[2]flow.Element{sub, end})
 
-	inst := runIteration(t, p)
+	inst := runInstance(t, p)
 
 	require.Equal(t, Completed, inst.State())
 	require.EqualValues(t, 2, body.Load(),

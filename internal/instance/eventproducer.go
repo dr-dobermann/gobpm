@@ -37,7 +37,7 @@ func (inst *Instance) RegisterEvent(
 
 	// Event registration is legitimate while the instance is being built
 	// (Created — start-event nodes register here) or running (Active — boundary
-	// / intermediate catch events); it is refused only on a terminal iteration
+	// / intermediate catch events); it is refused only on a terminal instance
 	// that can no longer act on a fired event (FIX-002 RC1).
 	is := inst.State()
 	if is != Created && is != Active {

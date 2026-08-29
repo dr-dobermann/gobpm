@@ -70,7 +70,7 @@ func TestEventSubNotSeeded(t *testing.T) {
 	p := wrapSP(t, "eventsub-seed", sp, after)
 	require.NoError(t, p.Add(sigEventSub(t, "top", &topHandler)))
 
-	inst := runIteration(t, p)
+	inst := runInstance(t, p)
 	require.Equal(t, Completed, inst.State())
 
 	require.EqualValues(t, 1, body.Load(), "the body's own flow ran")

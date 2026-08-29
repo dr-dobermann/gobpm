@@ -101,7 +101,7 @@ func miSubProcessInstance(
 }
 
 // miSubProcessInstanceOp is miSubProcessInstance with an explicit body operation
-// (to read the per-iteration item / runtime attributes the host publishes).
+// (to read the per-instance item / runtime attributes the host publishes).
 func miSubProcessInstanceOp(
 	t *testing.T, op service.Operation,
 	mi *activities.MultiInstanceLoopCharacteristics,
@@ -222,7 +222,7 @@ func TestMultiInstanceCardinalityFromCollection(t *testing.T) {
 		"the body runs once per collection element")
 }
 
-// TestMultiInstanceInputItemVisible: each iteration sees its collection element
+// TestMultiInstanceInputItemVisible: each instance sees its collection element
 // bound as the inputDataItem name, in order (§13.3.7 data-input mediator).
 func TestMultiInstanceInputItemVisible(t *testing.T) {
 	var (
@@ -261,7 +261,7 @@ func TestMultiInstanceInputItemVisible(t *testing.T) {
 		"each instance sees its collection element as `item`")
 }
 
-// TestMultiInstanceRuntimeCounters: each iteration sees the §13.3.7 runtime
+// TestMultiInstanceRuntimeCounters: each instance sees the §13.3.7 runtime
 // attributes — loopCounter, numberOfInstances, numberOfActiveInstances (always
 // 1 while an instance runs), numberOfCompletedInstances — progressing per pass.
 func TestMultiInstanceRuntimeCounters(t *testing.T) {
@@ -391,7 +391,7 @@ func TestMultiInstanceMissingCollectionRef(t *testing.T) {
 }
 
 // TestMultiInstanceAssemblesOutput: an output-collecting Multi-Instance stages
-// each iteration's output item and publishes the assembled collection once, at
+// each instance's output item and publishes the assembled collection once, at
 // completion (§13.3.7 output mediator + visibility barrier).
 func TestMultiInstanceAssemblesOutput(t *testing.T) {
 	op, err := gooper.New("emit-out",
@@ -472,7 +472,7 @@ func TestMultiInstanceOutputUnpublishedMidRun(t *testing.T) {
 	require.NoError(t, err, "the output collection is published at completion")
 }
 
-// TestMultiInstanceEmitsIterationFacts (FR-13): each iteration's scope-Opened
+// TestMultiInstanceEmitsIterationFacts (FR-13): each instance's scope-Opened
 // fact carries its 0-based loopCounter, so MI passes are individually
 // observable.
 func TestMultiInstanceEmitsIterationFacts(t *testing.T) {
@@ -717,7 +717,7 @@ func TestMICounterSumInvariant(t *testing.T) {
 // table contradicts itself for a sequential activity — the `≤ 1` cap on
 // `numberOfActiveInstances` and the sum cannot both hold while instances are
 // still unstarted — and ADR-025 §2.9 records that the engine honours the cap.
-// Once nothing is running, every iteration is completed or terminated and the
+// Once nothing is running, every instance is completed or terminated and the
 // sum is exact.
 //
 // End-to-end rather than over the binder: the first version of this test
@@ -783,9 +783,9 @@ func TestSequentialMICountsTerminatedInstances(t *testing.T) {
 // token's path however many instances ran.
 //
 // Until M3f the two iteration kinds disagreed. A PARALLEL Multi-Instance
-// suppressed the per-iteration transitions through an `inSet` flag threaded
+// suppressed the per-instance transitions through an `inSet` flag threaded
 // from the decorator into the driver; a SEQUENTIAL one had no such flag, so
-// every pass transitioned and recorded, and a three-iteration activity
+// every pass transitioned and recorded, and a three-instance activity
 // reported three step executions of one node. Nothing in the suite asserted
 // either, which is why the disagreement survived.
 //

@@ -118,7 +118,7 @@ func (rc *registrationCounter) PropagateEvent(
 // startEventGate snapshots p, starts a live EventHub, runs the instance, and waits
 // until the gate is parked on its arms AND both arm waiters are registered at the
 // hub, so a fire cannot be lost in the park-to-register window. It returns the
-// iteration + the hub so the test can PropagateEvent. (The hub's goroutines stop on
+// instance + the hub so the test can PropagateEvent. (The hub's goroutines stop on
 // ctx cancellation — graceful Shutdown is the deferred SRD-019 slice, so these
 // tests don't goroutine-leak-check a still-live hub.)
 func startEventGate(

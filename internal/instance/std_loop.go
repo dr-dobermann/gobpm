@@ -50,7 +50,7 @@ func standardLoopOf(node flow.Node) standardLoop {
 }
 
 // executeStep runs the current node through the executor that holds its
-// instances (ADR-025 §2.13): a decorator when the node iterates, a single
+// iterations (ADR-025 §2.13): a decorator when the node iterates, a single
 // executor otherwise. It returns the outgoing flows to follow exactly once,
 // on exit.
 //
@@ -82,7 +82,7 @@ func (t *track) executeStep(
 // of the executor that is running it (SRD-090.A FR-8, ADR-025 §2.13).
 //
 // It is not a question about the NODE — the loop never learns whether the
-// activity iterates, how many instances it holds, or what kind they are
+// activity iterates, how many iterations it holds, or what kind they are
 // (FR-11). It learns one thing: whether this token's goroutine is doing work
 // or holding something open on someone else's behalf.
 func (t *track) awaits() awaitKind {
@@ -395,7 +395,7 @@ func (d *loopDecorator) awaits() awaitKind {
 }
 
 // state reports the ACTIVITY's iteration state: the live pass's ordinal and
-// what it is doing. Its own ordinal is 0 — the activity is one instance of
+// what it is doing. Its own ordinal is 0 — the activity is one iteration of
 // itself from the track's point of view.
 func (d *loopDecorator) state() iterationState {
 	h := d.live.Load()

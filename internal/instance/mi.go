@@ -34,7 +34,7 @@ type multiInstance interface {
 	OneBehaviorEvent() flow.EventDefinition
 	ComplexBehavior() []*activities.ComplexBehaviorDefinition
 
-	// Result is the declared reading of the instances' results, nil for the
+	// Result is the declared reading of the iterations' results, nil for the
 	// last-wins default (ADR-025 §2.6.1).
 	Result() *activities.ResultStrategy
 }
@@ -60,9 +60,9 @@ func multiInstanceOf(node flow.Node) multiInstance {
 // miState is a sequential Multi-Instance host's iteration state (SRD-055): the
 // iteration count fixed at activation, the input collection (nil for a
 // cardinality-driven Multi-Instance), the per-instance item name, the private
-// output staging collection assembled across instances (nil when the activity
+// output staging collection assembled across iterations (nil when the activity
 // assembles no output), the output ref/item names, and the running count of
-// completed instances. Owned by the host RUNNER goroutine (the decorator drives
+// completed iterations. Owned by the host RUNNER goroutine (the decorator drives
 // it off the loop, ADR-025 v.2 §2.12), with ONE deliberate cross-goroutine field:
 // `staging` receives a per-pass `SetAt` from the loop (captureSequentialOutput /
 // the beforeClose capture, which must read the child scope before it closes) —
@@ -107,7 +107,7 @@ func (it miIterator) kind() string {
 
 // captureSequentialOutput reads a draining sequential-MI iteration's output item
 // from its child scope into the private staging collection (SRD-055 FR-9), keyed
-// by the instance ordinal — the one loop-side step of the off-loop decorator, run
+// by the iteration ordinal — the one loop-side step of the off-loop decorator, run
 // from completeScope before the child scope closes (§4.2). A no-op for a non-MI
 // scope or a Multi-Instance that assembles no output. Runs on the loop goroutine.
 func (ls *loopState) captureSequentialOutput(
@@ -189,8 +189,8 @@ func (it miIterator) publishOutput(host *track) error {
 		host.scopePath, st.outputRef, st.staging)
 }
 
-// resolveActivation computes the instance count once (§13.3.7): the integer
-// cardinalityCount reads an instance count from what an expression
+// resolveActivation computes the iteration count once (§13.3.7): the integer
+// cardinalityCount reads an iteration count from what an expression
 // engine actually returns. A bare `.(int)` assertion served while every
 // caller minted a goexpr — but the lite evaluator, the language every
 // IMPORTED expression carries, unifies all numerics to float64
@@ -314,7 +314,7 @@ func (it miIterator) bindIteration(
 // (staging included) and applies a restored seed (SRD-082 FR-3): the
 // recorded N is the frozen activation count (§13.3.7) — the cardinality
 // expression must not re-resolve to a different bound after the restart
-// — and the recorded staging returns the completed instances' outputs. It
+// — and the recorded staging returns the completed iterations' outputs. It
 // returns the frozen iteration count and the first iteration to launch.
 //
 // It serves both kinds a leaf decorator drives: a sequential iteration
@@ -457,8 +457,8 @@ func seedStaging(
 	return nil
 }
 
-// fansOut reports whether a node runs its instances CONCURRENTLY — a
-// parallel Multi-Instance, the one shape whose instances get scopes of
+// fansOut reports whether a node runs its iterations CONCURRENTLY — a
+// parallel Multi-Instance, the one shape whose iterations get scopes of
 // their own (`sp-<id>-<ord>`) rather than one scope reused pass by pass.
 func fansOut(node flow.Node) bool {
 	mi := multiInstanceOf(node)
@@ -490,7 +490,7 @@ func drivesOwnIteration(node flow.Node) bool {
 // defines the attribute as what is CURRENTLY ACTIVE and caps it at 1 for a
 // sequential activity, while also requiring the three counts to sum to n —
 // clauses a sequential activity cannot satisfy at once, since its
-// not-yet-started instances belong to no category (ADR-025 §2.9).
+// not-yet-started iterations belong to no category (ADR-025 §2.9).
 //
 // A PARALLEL caller passes `n − completed − terminated`: every iteration
 // exists from activation, so what is outstanding is what is running and both

@@ -80,7 +80,7 @@ func reportScores(ctx context.Context, r service.DataReader) error {
 	// The output collection is the demonstration: every reviewer's iteration
 	// must have contributed its score, and the collection must be assembled
 	// at the visibility barrier rather than partially. A run that lost one
-	// reviewer's output — or ran fewer instances than there are reviewers —
+	// reviewer's output — or ran fewer iterations than there are reviewers —
 	// would print a shorter list and still exit 0.
 	if err := sameInts(scores, wantScores()); err != nil {
 		return fmt.Errorf("output collection: %w", err)

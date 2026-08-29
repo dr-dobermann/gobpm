@@ -76,7 +76,7 @@ func seedDataObjects(
 // accompanying SRD) reopens the scope after the close.
 type scopeEntry struct {
 	host *track
-	// drain is the activity iteration waiting for this scope, signaled when
+	// drain is the activity instance waiting for this scope, signaled when
 	// it closes. An entry opened by an executor is signaled DIRECTLY rather
 	// than by resuming the host: N instances of one activity share one host
 	// track, and a track has one park — which is the entire reason a
@@ -84,10 +84,10 @@ type scopeEntry struct {
 	// (SRD-090.A M3b). nil for a scope no executor opened, which still
 	// resumes its parked host the original way.
 	drain chan struct{}
-	// capture is the opening iteration's output cell, filled from this scope
-	// just before it closes and read by that iteration after its drain
+	// capture is the opening instance's output cell, filled from this scope
+	// just before it closes and read by that instance after its drain
 	// (SRD-090.A M3b). nil when the activity assembles no output.
-	capture *instanceCapture
+	capture *iterationCapture
 	// adHoc is the routing state of an Ad-Hoc scope (SRD-074 §3.4), nil for
 	// every other scope: the per-activity completed/running counts the Router
 	// decides on, and whether routing has already stopped.
@@ -131,7 +131,7 @@ type scopeEntry struct {
 	// drain accounting reads it instead of asking the node whether it
 	// iterates — same answer, from the party that owns the question.
 	iterating bool
-	// iteration marks this scope as ONE of N fanned out from its host's
+	// instance marks this scope as ONE of N fanned out from its host's
 	// activity rather than the host's own pass (SRD-090.A M3b). It is what
 	// ordinal means something on, and it is why the drain must not advance
 	// the iteration mirror: a fanned-out position is the decorator's to
@@ -304,7 +304,7 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 		return nil // a bare test instance carries no scope plane
 	}
 
-	// the parallel groups first (SRD-082 FR-4): their iteration scopes
+	// the parallel groups first (SRD-082 FR-4): their instance scopes
 	// carry per-ordinal segments the generic host derivation below
 	// cannot resolve — the group record is what identifies them.
 	if err := ls.adoptRestoredGroups(initial); err != nil {
@@ -363,7 +363,7 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 			}
 		}
 
-		// a FANNED-OUT iteration's scope carries its ordinal in its own
+		// a FANNED-OUT instance's scope carries its ordinal in its own
 		// segment, so the entry is rebuilt from the path alone — no open-set
 		// record, and no group to belong to (SRD-090.A M3b). Its drain waits
 		// for the re-attach exactly as a serial pass's does: the instance
@@ -398,7 +398,7 @@ func (ls *loopState) adoptRestoredScopes(initial []*track) error {
 
 // adoptLegacyLeafGroup resumes a SCHEMA-5 parallel LEAF fan-out (SRD-090.A
 // FR-7). Its still-running instances were recorded as tracks, which
-// restoreTracks discarded — a leaf iteration is an execution now, not a track,
+// restoreTracks discarded — a leaf instance is an execution now, not a track,
 // and rebuilding one would re-decorate the activity and fan it out again —
 // keeping only their ordinals, which is the executor set this rebuilds.
 //
@@ -463,7 +463,7 @@ func (ls *loopState) adoptRestoredGroups(initial []*track) error {
 				errs.C(errorClass, errs.InvalidState))
 		}
 
-		// a LEAF group carries no Open scopes — a leaf iteration never had
+		// a LEAF group carries no Open scopes — a leaf instance never had
 		// one, so its running set was recorded as TRACKS and rides here as
 		// their ordinals (SRD-090.A FR-7). Deriving Completed from
 		// len(rec.Open) would call every ordinal finished and resume none.
@@ -617,14 +617,14 @@ func (ls *loopState) recordedScopeHost(
 // Schema 6.
 //
 // It reports the instance ordinal the segment carries, or -1 for a host's
-// own scope. A FANNED-OUT iteration's segment is `sp-<id>-<ord>`, so the
-// ordinal — the one thing about an open iteration that the track table
+// own scope. A FANNED-OUT instance's segment is `sp-<id>-<ord>`, so the
+// ordinal — the one thing about an open instance that the track table
 // cannot show — is derivable from the path itself, and the open set needs
 // no record of its own (SRD-090.A M3b, retiring MIGroupRecord.Open).
 // A host's OWN scope is looked for across ALL candidates before any
-// iteration reading is tried, and only a node that actually fans out can own
+// instance reading is tried, and only a node that actually fans out can own
 // an instance. Both rules exist for the same collision: `sp-a-1` is node
-// `a-1`'s own scope AND iteration 1 of node `a`, and a single pass would
+// `a-1`'s own scope AND instance 1 of node `a`, and a single pass would
 // answer whichever the track table happened to list first. Only one of the
 // two can be open at a time — they are the same DataPath — so the
 // precedence decides an interpretation, not a conflict.
@@ -679,7 +679,7 @@ func restoredHostSegment(
 }
 
 // iterationRecordedDone reports whether the host's restored executor set
-// calls iteration ord finished. False when the host carries no set at all —
+// calls instance ord finished. False when the host carries no set at all —
 // a document written before Schema 6, whose fanned-out position rides the
 // group record instead (SRD-090.A FR-7).
 func iterationRecordedDone(host *track, ord int) bool {
@@ -702,7 +702,7 @@ func iterationRecordedDone(host *track, ord int) bool {
 // The prefix is built with Append rather than compared as a string, so the
 // path grammar stays in one place; and what follows it must read back as
 // exactly the number it names — which is also what keeps a DESCENDANT of an
-// iteration scope out, since any deeper path still carries a separator.
+// instance scope out, since any deeper path still carries a separator.
 func iterationOrdinalOf(
 	t *track, seg string, path scope.DataPath,
 ) (int, bool) {
@@ -816,7 +816,7 @@ func (ls *loopState) completeScope(
 	path scope.DataPath,
 	entry *scopeEntry,
 ) {
-	// SRD-055: a sequential Multi-Instance captures the draining iteration's
+	// SRD-055: a sequential Multi-Instance captures the draining instance's
 	// output item before the child scope closes — the last point its data is
 	// readable, and the one loop-side step the off-loop decorator cannot do
 	// (§4.2). A no-op for a non-MI scope (host.miState nil).
@@ -879,7 +879,7 @@ func (ls *loopState) completeScope(
 // the table — drained, canceled or terminated — and hands the path to the
 // next host queued for it (§4.4).
 //
-// Every scope is opened by an activity iteration's executor now (SRD-090.A
+// Every scope is opened by an activity instance's executor now (SRD-090.A
 // M3c), so the wake is its drain channel: closing it needs no reader to be
 // present yet, which is what lets an instance still between its open and
 // its wait not miss the signal. A restored entry carries no channel until
@@ -1076,7 +1076,7 @@ func scopeLoopCounter(node flow.Node, host *track) int {
 
 // scopeFactOrdinal is the ordinal a scope's lifecycle fact carries.
 //
-// A FANNED-OUT iteration reports its OWN (SRD-056.A FR-14), which is the one
+// A FANNED-OUT instance reports its OWN (SRD-056.A FR-14), which is the one
 // on its entry: the host's loopCounter is shared by all N and stands still
 // for the whole fan-out, so it cannot name any of them. Every serial scope
 // reads the host's pass counter as before.

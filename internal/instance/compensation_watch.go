@@ -313,13 +313,13 @@ func (ls *loopState) compensationTrackEnded(
 // finishSweep resumes a wait-for-completion thrower once the sweep has
 // drained (or resolved to nothing / aborted): the loop delivers the
 // completion sentinel through the standard parked-dispatch contract. On a
-// stopping iteration the resume is dropped — the teardown already closed the
+// stopping instance the resume is dropped — the teardown already closed the
 // parked tracks' channels (the fireScopeHandler stopping discipline).
 func (ls *loopState) finishSweep(ctx context.Context, sweep *compSweep) {
 	// a Transaction-abort sweep: the ACID-like compensation barrier drained, so
 	// finalize the abort — terminate the residual tracks and exit via the Cancel
 	// boundary (SRD-061 FR-5 steps 2–3). Skipped while stopping: a tearing-down
-	// iteration abandons the exit.
+	// instance abandons the exit.
 	if sweep.txHost != nil {
 		if !ls.stopping {
 			ls.finalizeTransaction(ctx, sweep)

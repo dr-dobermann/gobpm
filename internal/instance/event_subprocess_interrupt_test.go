@@ -170,7 +170,7 @@ func TestConditionalStartHandlerCancelsScope(t *testing.T) {
 	sp := scopedSP(t, "cbody", es)
 
 	var after atomic.Int32
-	inst := runIteration(t,
+	inst := runInstance(t,
 		wrapSP(t, "cond-cancel", sp, hitTask(t, "after", &after, "", 0)))
 
 	require.Equal(t, Completed, inst.State())
@@ -233,7 +233,7 @@ func TestErrorEventSubCatchesOnChain(t *testing.T) {
 	linkAll(t, [2]flow.Element{sStart, boom}, [2]flow.Element{boom, sEnd})
 
 	var after atomic.Int32
-	inst := runIteration(t,
+	inst := runInstance(t,
 		wrapSP(t, "err-catch", sp, hitTask(t, "after", &after, "", 0)))
 
 	require.Equal(t, Completed, inst.State(),
@@ -243,7 +243,7 @@ func TestErrorEventSubCatchesOnChain(t *testing.T) {
 	require.EqualValues(t, 1, after.Load(), "the host resumed on its normal flow")
 }
 
-// openInstance builds an unstarted iteration (its root scope open) and a fresh
+// openInstance builds an unstarted instance (its root scope open) and a fresh
 // loop state, for white-box exercise of the loop methods on the test goroutine.
 func openInstance(t *testing.T) (*Instance, *loopState) {
 	t.Helper()
@@ -279,7 +279,7 @@ func openInstance(t *testing.T) (*Instance, *loopState) {
 // **T-1 finding, SRD-090.A M3c.** This asserted `ls.stopping` — the open used
 // to fault the whole instance, because the loop-driven path had no one to
 // answer. The open is a REQUEST now, so the error goes back to the activity
-// iteration that asked for it and travels its own failure path. Every other
+// instance that asked for it and travels its own failure path. Every other
 // error in this function already answered that way; the seed and the append
 // were the two that did not.
 func TestScopeOpenAppendError(t *testing.T) {

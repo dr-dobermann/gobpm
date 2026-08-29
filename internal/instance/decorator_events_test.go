@@ -60,7 +60,7 @@ func TestTheDecoratorsIdentityIsTheActivitys(t *testing.T) {
 }
 
 // TestTheSubscriptionLivesWhileAnyIterationAwaits (SRD-090.B FR-2): the
-// decorator registers when its FIRST iteration waits and unregisters when the
+// decorator registers when its FIRST instance waits and unregisters when the
 // LAST stops — not per pass, and not for the activity's whole execution.
 func TestTheSubscriptionLivesWhileAnyIterationAwaits(t *testing.T) {
 	es := newEventSubs("inst", "node")
@@ -99,7 +99,7 @@ func TestOneSubscriptionPerDefinition(t *testing.T) {
 //
 // It is the only order available when nothing distinguishes the instances,
 // and therefore the specified one: two runs of one model must not disagree
-// about which iteration an indistinguishable envelope reached.
+// about which instance an indistinguishable envelope reached.
 func TestTheWaitingSetIsInOrdinalOrder(t *testing.T) {
 	es := newEventSubs("inst", "node")
 	def := sigDefN(t, "sig")
@@ -151,7 +151,7 @@ func TestAnUnknownWithdrawalIsNotAnError(t *testing.T) {
 // TestWhoOwnsAnActivitysWaits (SRD-090.B FR-1): the executor answers who
 // subscribes, and a driver never tests the node.
 //
-// A leaf and a composite iteration own their own wait and answer nil, leaving
+// A leaf and a composite instance own their own wait and answer nil, leaving
 // armWaiters' per-trigger rule exactly as it was — which is what NFR-1 turns
 // on. Both decorators answer themselves: one subscriber per iterated
 // activity, held across its passes.
@@ -310,7 +310,7 @@ func TestAnInstanceStaysDeliverableWhileItWaitsOnAnyDefinition(t *testing.T) {
 //
 // Nothing is dropped for want of room either. A dropped completion is work
 // somebody performed that the engine then waits forever for, which is the
-// failure the per-iteration channels kept producing at their edges.
+// failure the per-instance channels kept producing at their edges.
 func TestTheLoopNeverStallsOnADecorator(t *testing.T) {
 	es := newEventSubs("inst", "node")
 	def := sigDefN(t, "sig")
@@ -377,7 +377,7 @@ func (f *fakeIterProc) deliverTo(ord int, _ flow.EventDefinition) bool {
 }
 
 // TestOneOccurrenceReachesOneInstance (SRD-090.B FR-3): the loop serves the
-// FIRST iteration still waiting, in ordinal order.
+// FIRST instance still waiting, in ordinal order.
 //
 // A Message is point-to-point, and a Message is the only trigger an iterated
 // leaf can carry — so "exactly one" is the whole rule, and ordinal order is
@@ -437,8 +437,8 @@ func TestADeliveryNobodyAwaitsIsDropped(t *testing.T) {
 
 // TestTheOrdinalComesFromTheExecutor (SRD-090.B FR-2): the ordinal a waiter
 // is recorded under is asked of the executor, which is the only thing that
-// knows — a decorator's live iteration reports its own, and a plain activity
-// is iteration zero of one.
+// knows — a decorator's live instance reports its own, and a plain activity
+// is instance zero of one.
 func TestTheOrdinalComesFromTheExecutor(t *testing.T) {
 	_, _, node, host := decoratorFixture(t)
 	step := &stepInfo{node: node}
@@ -505,7 +505,7 @@ func decoratedWaiter(
 }
 
 // TestArmingRegistersTheDecoratorOncePerActivity (SRD-090.B FR-1/FR-2): the
-// first iteration to wait registers the DECORATOR with the hub; a sibling
+// first instance to wait registers the DECORATOR with the hub; a sibling
 // joins the subscription that already exists and registers nothing.
 func TestArmingRegistersTheDecoratorOncePerActivity(t *testing.T) {
 	_, tr, d, def := decoratedWaiter(t, 0)
@@ -519,7 +519,7 @@ func TestArmingRegistersTheDecoratorOncePerActivity(t *testing.T) {
 	require.True(t, d.anyWaiting(),
 		"and the activity's engine hold is due")
 
-	// a second iteration of the SAME activity arms while the first waits.
+	// a second instance of the SAME activity arms while the first waits.
 	d.live.Store(&execHandle{
 		e: newNodeExec(tr, &stepInfo{node: tr.currentStep().node}, 1),
 	})
@@ -567,7 +567,7 @@ func TestAPassTakesItsDeliveryFromTheDecorator(t *testing.T) {
 
 // TestTheWithdrawalNamesTheOrdinal (SRD-090.B FR-2): a pass finishing
 // withdraws ITS wait; the activity's subscription and hold go only when the
-// last iteration stops.
+// last instance stops.
 func TestTheWithdrawalNamesTheOrdinal(t *testing.T) {
 	_, tr, d, def := decoratedWaiter(t, 0)
 
@@ -581,7 +581,7 @@ func TestTheWithdrawalNamesTheOrdinal(t *testing.T) {
 	})
 	require.NoError(t, tr.armWaiters(en, en.Definitions()))
 
-	// iteration 1 delivers and withdraws.
+	// instance 1 delivers and withdraws.
 	require.NoError(t, tr.unregisterEvent(en))
 	require.Equal(t, []int{0}, d.waitingOn(def.ID()),
 		"instance 0 still waits — its wait is not 1's to withdraw")
@@ -591,7 +591,7 @@ func TestTheWithdrawalNamesTheOrdinal(t *testing.T) {
 	require.True(t, d.anyWaiting(),
 		"and the engine hold stands while it does")
 
-	// iteration 0 follows.
+	// instance 0 follows.
 	d.live.Store(&execHandle{
 		e: newNodeExec(tr, &stepInfo{node: tr.currentStep().node}, 0),
 	})

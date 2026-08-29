@@ -106,7 +106,7 @@ func TestNonInterruptingConcurrentRun(t *testing.T) {
 	linkAll(t, [2]flow.Element{sStart, mainTask}, [2]flow.Element{mainTask, sEnd})
 
 	var after atomic.Int32
-	inst := runIteration(t,
+	inst := runInstance(t,
 		wrapSP(t, "ni-concurrent", body, hitTask(t, "after", &after, "", 0)))
 
 	require.Equal(t, Completed, inst.State())
@@ -245,7 +245,7 @@ func TestNonInterruptingDoesNotCancelScope(t *testing.T) {
 	require.Eventually(t, func() bool { return handlerRan.Load() == 1 },
 		3*time.Second, 5*time.Millisecond, "the handler ran")
 	// the blocked sibling was NOT cancelled → the scope stays open → the
-	// iteration is still running (an interrupting fire would have completed it).
+	// instance is still running (an interrupting fire would have completed it).
 	require.Equal(t, Active, inst.State(),
 		"a non-interrupting fire leaves the scope's blocked work running")
 }

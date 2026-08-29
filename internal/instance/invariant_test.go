@@ -22,7 +22,7 @@ func TestFailInvariantFaultsAndStops(t *testing.T) {
 		log []string
 	)
 
-	// A completed iteration is fully wired — Run set up the reporter and the
+	// A completed instance is fully wired — Run set up the reporter and the
 	// cancel func that fail() and stopAll() use.
 	inst := adHocInstance(t, &scriptedRouter{}, &mu, &log)
 	runToDone(t, inst)

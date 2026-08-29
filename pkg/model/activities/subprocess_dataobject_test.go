@@ -42,7 +42,7 @@ func spDataObject(
 
 // TestSubProcessDataObjects covers the SubProcess-level Data Object plumbing
 // (SRD-063 FR-4): registration off the node graph, the one-name-space
-// duplicate guard, and the per-iteration deep-clone isolation.
+// duplicate guard, and the per-instance deep-clone isolation.
 func TestSubProcessDataObjects(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 

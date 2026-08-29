@@ -27,10 +27,10 @@ type iterMirror struct {
 	// characteristics — a decorator posting it would be telling the loop
 	// something the loop can already read.
 	kind string
-	// instances describe the activity's executor set (FR-6), posted by the
+	// iterations describe the activity's executor set (FR-6), posted by the
 	// decorator (scopeIterPost). It is the decorator's to report for every
 	// fanned-out shape: a leaf opens no scope and spawns no track, so
-	// nothing else can see its instances at all, and a composite fan-out is
+	// nothing else can see its iterations at all, and a composite fan-out is
 	// invisible the same way in the window before its first scope opens.
 	// Empty for a SERIAL composite, whose one live pass is its open scope
 	// and whose position rides the drain protocol.
@@ -41,9 +41,9 @@ type iterMirror struct {
 }
 
 // The iteration shapes a record names. They describe the SHAPE, not the
-// node: a sequential Multi-Instance reads the same whether its instances
+// node: a sequential Multi-Instance reads the same whether its iterations
 // are executions of a leaf or child scopes of a composite, which is the
-// point of recording instances rather than tracks.
+// point of recording iterations rather than tracks.
 const (
 	iterKindStdLoop      = "std_loop"
 	iterKindMISequential = "mi_sequential"
@@ -82,7 +82,7 @@ func (ls *loopState) ensureIterMirror(
 //
 // A FANNED-OUT iteration is not a serial pass and is skipped: the host's
 // loopCounter stands still for the whole fan-out, so it cannot say how many
-// instances are done, and the decorator posts that set itself
+// iterations are done, and the decorator posts that set itself
 // (postPosition). Deriving it here would overwrite the truth with a zero
 // (SRD-090.A M3b).
 func (ls *loopState) markIterDrain(entry *scopeEntry) {

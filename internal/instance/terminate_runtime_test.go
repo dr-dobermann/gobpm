@@ -178,7 +178,7 @@ func splitStart(t *testing.T, p *process.Process) *gateways.ParallelGateway {
 	return split
 }
 
-// instOf snapshots p and builds a fresh iteration over it.
+// instOf snapshots p and builds a fresh instance over it.
 func instOf(t *testing.T, p *process.Process) *Instance {
 	t.Helper()
 

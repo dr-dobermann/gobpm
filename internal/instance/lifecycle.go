@@ -15,13 +15,13 @@ import (
 // conversion (the instance's run state is read lock-free via State()).
 type State uint32
 
-// Iteration lifecycle states — the in-memory runtime lifecycle the instance
+// Instance lifecycle states — the in-memory runtime lifecycle the instance
 // actually exercises (mirrors ADR-001 §4.2). The error branch and suspend are
 // owned by their future ADRs, not this runtime, and are absent here.
 const (
 	// Created is a created instance, not yet running.
 	Created State = iota
-	// Active is a running iteration executing its tracks.
+	// Active is a running instance executing its tracks.
 	Active
 	// Completed is an instance that finished when all tracks ended normally.
 	Completed
@@ -53,7 +53,7 @@ func (inst *Instance) State() State {
 	return State(inst.state.Load())
 }
 
-// setState sets a new iteration state. Written only from loop() (the single
+// setState sets a new instance state. Written only from loop() (the single
 // owner of lifecycle state) and from Run(); State() readers see it via the
 // atomic, so no lock is needed.
 func (inst *Instance) setState(newState State) {
@@ -171,7 +171,7 @@ func (inst *Instance) startedAtRFC3339() string {
 }
 
 // restoreStartedAt adopts the start time a checkpoint recorded, so a hydrated
-// iteration reports when the PROCESS began rather than when it was last rebuilt.
+// instance reports when the PROCESS began rather than when it was last rebuilt.
 // An empty or unparsable value leaves the rebuild's own stamp in place — a
 // checkpoint written before the field existed must not zero the clock.
 func (inst *Instance) restoreStartedAt(stamp string) {

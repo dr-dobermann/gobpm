@@ -23,7 +23,7 @@ func (inst *Instance) addToSnap(t *track) {
 func (inst *Instance) GetTokens() []Token {
 	var out []Token
 
-	// A nil snapshot is not "no tokens": a restored iteration may hold no
+	// A nil snapshot is not "no tokens": a restored instance may hold no
 	// live track yet still project its incident tokens below.
 	if snap := inst.tracksSnap.Load(); snap != nil {
 		out = make([]Token, 0, len(*snap))

@@ -12,7 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 )
 
-// keyExpr builds a per-iteration key expression.
+// keyExpr builds a per-instance key expression.
 func keyExpr(t *testing.T) data.FormalExpression {
 	t.Helper()
 
@@ -67,7 +67,7 @@ func TestAResultStrategyNeedsSomewhereToPublish(t *testing.T) {
 
 // TestAnAssemblingStrategyNeedsTheItemItCollects: an activity may declare more
 // than one output, so which of them is assembled is not derivable — ADR-025
-// §2.6 states the assembly as "that iteration's outputDataItem into slot
+// §2.6 states the assembly as "that instance's outputDataItem into slot
 // loopCounter of the loopDataOutputRef collection", and both halves are named.
 //
 // Reduce is exempt: it assembles nothing, and the name it declares IS the
@@ -89,7 +89,7 @@ func TestAnAssemblingStrategyNeedsTheItemItCollects(t *testing.T) {
 	require.Empty(t, sl.Result().Item())
 }
 
-// TestAMapStrategyNeedsItsKey: the key is what says which iteration's result
+// TestAMapStrategyNeedsItsKey: the key is what says which instance's result
 // went where, so a map without one has no reading to offer.
 func TestAMapStrategyNeedsItsKey(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())

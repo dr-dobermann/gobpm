@@ -40,7 +40,7 @@ import (
 // the executor set (Iteration). Additive in the wire sense — a Schema-5
 // document carries no Iteration — but its READ path is the interesting
 // half: a leaf iteration used to persist as a TrackRecord.MI mirror
-// (sequential) or as an MIGroupRecord plus one TrackRecord per iteration
+// (sequential) or as an MIGroupRecord plus one TrackRecord per instance
 // (parallel), and neither describes an object that still exists. Both are
 // therefore translated on restore into the instances they meant, rather
 // than rebuilt as the tracks and scopes they named (FR-7).
@@ -108,7 +108,7 @@ type Document struct {
 
 	InstanceID string `json:"instance_id"`
 	// ParentID/CallNodeID record child linkage informationally (a child
-	// iteration is its own record; re-linking a live call is SRD-071+).
+	// instance is its own record; re-linking a live call is SRD-071+).
 	ParentID   string `json:"parent_id,omitempty"`
 	CallNodeID string `json:"call_node_id,omitempty"`
 	ProcessID  string `json:"process_id"`
@@ -131,7 +131,7 @@ type Document struct {
 	// this is the parent's half of the symmetric link (§2.10).
 	Calls []CallRecord `json:"calls,omitempty"`
 	// MIGroups are the parallel multi-instance open sets (Schema 4,
-	// SRD-082 FR-1): which per-iteration scopes are still open, at which
+	// SRD-082 FR-1): which per-instance scopes are still open, at which
 	// ordinals, with the outputs collected so far.
 	//
 	// READ ONLY from Schema 6 (SRD-090.A FR-6/FR-7). Nothing writes it:
@@ -185,8 +185,8 @@ type IncidentRecord struct {
 // HostTrack and Ordinal make the scope table self-describing (SRD-090.A
 // M3c). Before them, restore reconstructed both by searching the track
 // table for a track whose composite node derives this path, and read the
-// iteration ordinal out of the path's own segment. That search needs a
-// precedence rule, because `sp-a-1` is BOTH iteration 1 of node `a` and the
+// instance ordinal out of the path's own segment. That search needs a
+// precedence rule, because `sp-a-1` is BOTH instance 1 of node `a` and the
 // own scope of a node named `a-1`, and a path built to be read by a human
 // cannot distinguish them. Recording the host resolves it by lookup
 // instead — a track id survives a restore unchanged, so the answer is
@@ -194,7 +194,7 @@ type IncidentRecord struct {
 //
 // Ordinal is meaningful only when HostTrack is set: -1 for a host's own
 // scope (a plain composite, or a sequential pass reusing one scope), and
-// the 0-based iteration number for one of N fanned out. An empty HostTrack
+// the 0-based instance number for one of N fanned out. An empty HostTrack
 // marks a Schema ≤ 6 document, whose restore falls back to the search.
 type ScopeRecord struct {
 	Path      string          `json:"path"`
@@ -247,8 +247,8 @@ type TrackRecord struct {
 	// Iteration is an iterated LEAF activity's executor set (Schema 6,
 	// SRD-090.A FR-6): the instances that are live, keyed by ordinal.
 	// It replaces both halves of the old shape — the MI mirror a
-	// sequential leaf rode, and the MIGroupRecord plus per-iteration
-	// TrackRecords a parallel leaf rode — because a leaf iteration is no
+	// sequential leaf rode, and the MIGroupRecord plus per-instance
+	// TrackRecords a parallel leaf rode — because a leaf instance is no
 	// longer a track and opens no scope of its own.
 	Iteration *IterationRecord `json:"iteration,omitempty"`
 	// AdHocActivity names the inner activity this track was routed to
@@ -273,7 +273,7 @@ type CallRecord struct {
 }
 
 // MIRecord is a sequential MI / Standard Loop position: passes fully
-// completed, the frozen iteration count (0 for a Standard Loop, whose
+// completed, the frozen instance count (0 for a Standard Loop, whose
 // bound is the loop condition), the outputs collected so far (a
 // canonical-codec array) and whether the completionCondition already
 // fired. Names (inputItem, outputRef, …) derive from the node and are
@@ -285,7 +285,7 @@ type MIRecord struct {
 	ConditionMet bool            `json:"condition_met,omitempty"`
 }
 
-// IterationEntry is ONE live iteration of an iterated activity (Schema
+// IterationEntry is ONE live instance of an iterated activity (Schema
 // 6, SRD-090.A FR-6): its 0-based ordinal — the join key across the
 // record, the token projection and an incident — and what it is doing.
 // ChildID names the callee a call executor owns, and is what lets a
@@ -315,11 +315,11 @@ type IterationEntry struct {
 	State   string `json:"state"` // running | waiting | completed
 	ChildID string `json:"child_id,omitempty"`
 
-	// TaskID is this iteration's parked-work identity, when it is waiting on
+	// TaskID is this instance's parked-work identity, when it is waiting on
 	// a capability rather than an event — a human task, an external worker
 	// (ADR-020 §2.12).
 	//
-	// Recorded per INSTANCE because the identity is per iteration: a fan-out
+	// Recorded per INSTANCE because the identity is per instance: a fan-out
 	// holds N of them, and the track's single slot can carry only one. The id
 	// outlives the instance's residency in the distributor's inbox, so a
 	// restore that minted fresh ones would invalidate every reference a
@@ -377,9 +377,9 @@ type IterationRecord struct {
 	ConditionMet bool             `json:"condition_met,omitempty"`
 }
 
-// OpenScope is one still-open per-iteration scope of a parallel MI
+// OpenScope is one still-open per-instance scope of a parallel MI
 // group: its path (the scope's data rides the Scopes table) and its
-// 0-based iteration ordinal — the one position not derivable from the
+// 0-based instance ordinal — the one position not derivable from the
 // track table.
 type OpenScope struct {
 	Path    string `json:"path"`
@@ -506,7 +506,7 @@ func Unmarshal(payload []byte) (*Document, error) {
 
 	// An OLDER schema reads: every bump so far has been additive, so an old
 	// document is a new one with fields absent, and refusing it would strand
-	// every iteration written before the engine was upgraded. A NEWER one is
+	// every instance written before the engine was upgraded. A NEWER one is
 	// refused — it may carry state this engine does not know to restore, and
 	// silently dropping durable state is worse than failing loud. A zero
 	// schema is not "old", it is a document that never declared one.

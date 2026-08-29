@@ -57,7 +57,7 @@ func TestServiceTaskDefinition(t *testing.T) {
 	// Operation is the read-only accessor consumers such as BPMN export use
 	// to recover the service binding (SRD-051 §FR-6). It returns the very
 	// Operation the task was constructed with, and a Clone carries its own
-	// per-iteration copy of it rather than the definition's.
+	// per-instance copy of it rather than the definition's.
 	t.Run("operation accessor",
 		func(t *testing.T) {
 			st, err := activities.NewServiceTask("test", op,

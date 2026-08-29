@@ -33,8 +33,8 @@ func capturedRequest(
 }
 
 // TestCompositeInstanceCarriesItsOwnScope pins what separates a fanned-out
-// composite iteration from a sequential pass (SRD-090.A M3b): its own scope
-// segment, and the per-iteration data published there.
+// composite instance from a sequential pass (SRD-090.A M3b): its own scope
+// segment, and the per-instance data published there.
 //
 // The segment comes from the EXECUTOR rather than being derived loop-side,
 // because deriving it in handleScopeOpen would have moved the sequential
@@ -65,11 +65,11 @@ func TestCompositeInstanceCarriesItsOwnScope(t *testing.T) {
 }
 
 // TestCompositeInstanceSplitsItsInputItem: a collection-driven iteration
-// hands iteration ord the ord-th element, bound at that iteration's OWN scope.
+// hands instance ord the ord-th element, bound at that instance's OWN scope.
 //
 // The scope is the point. The sequential slice binds the same names at the
 // shared HOST scope, which N concurrent siblings would overwrite; a per-
-// iteration scope is what makes the same data concurrency-safe.
+// instance scope is what makes the same data concurrency-safe.
 func TestCompositeInstanceSplitsItsInputItem(t *testing.T) {
 	_, _, node, host := decoratorFixture(t)
 
@@ -90,7 +90,7 @@ func TestCompositeInstanceSplitsItsInputItem(t *testing.T) {
 		e.(*scopeExec).binds)
 }
 
-// TestCompositeInstanceRefusesABrokenCollection: the per-iteration split fails
+// TestCompositeInstanceRefusesABrokenCollection: the per-instance split fails
 // fast when the input collection's read errors, before any scope is opened.
 func TestCompositeInstanceRefusesABrokenCollection(t *testing.T) {
 	_, _, node, host := decoratorFixture(t)
@@ -106,7 +106,7 @@ func TestCompositeInstanceRefusesABrokenCollection(t *testing.T) {
 }
 
 // TestCompositeInstanceAllocatesItsCapture: an output-assembling activity
-// gives each iteration a cell naming the item to read from its child scope.
+// gives each instance a cell naming the item to read from its child scope.
 func TestCompositeInstanceAllocatesItsCapture(t *testing.T) {
 	_, _, node, host := decoratorFixture(t)
 
@@ -119,7 +119,7 @@ func TestCompositeInstanceAllocatesItsCapture(t *testing.T) {
 	e, _, err := d.compositeIterationFor(t.Context(), 0)
 	require.NoError(t, err)
 
-	require.Equal(t, &instanceCapture{item: "result"}, e.(*scopeExec).capture)
+	require.Equal(t, &iterationCapture{item: "result"}, e.(*scopeExec).capture)
 }
 
 // TestCaptureInstanceOutputReadsTheDrainingScope pins the loop-side half of
@@ -131,7 +131,7 @@ func TestCaptureInstanceOutputReadsTheDrainingScope(t *testing.T) {
 	require.NoError(t,
 		inst.sc.bindDataItemAt(host.scopePath, "result", 42))
 
-	c := &instanceCapture{item: "result"}
+	c := &iterationCapture{item: "result"}
 	entry := &scopeEntry{host: host, node: node, capture: c}
 
 	require.NoError(t,
@@ -153,7 +153,7 @@ func TestCaptureInstanceOutputWithNothingToCapture(t *testing.T) {
 	for name, entry := range map[string]*scopeEntry{
 		"no cell at all": {host: host, node: node},
 		"cell names no item": {
-			host: host, node: node, capture: &instanceCapture{}},
+			host: host, node: node, capture: &iterationCapture{}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.NoError(t,
@@ -168,13 +168,13 @@ func TestCaptureInstanceOutputWithNothingToCapture(t *testing.T) {
 	require.Error(t, ls.captureIterationOutput(t.Context(),
 		&scopeEntry{
 			host: host, node: node,
-			capture: &instanceCapture{item: "absent"},
+			capture: &iterationCapture{item: "absent"},
 		}, host.scopePath),
 		"a declared output item the body did not produce is a fault")
 }
 
 // TestInstanceScopesOfFindsOneHostsScopes pins the lookup that replaces the
-// miGroup's open set (SRD-090.A M3b): a host's still-open iteration scopes, in
+// miGroup's open set (SRD-090.A M3b): a host's still-open instance scopes, in
 // ordinal order, and nobody else's.
 //
 // Ordinal order is not cosmetic. Live completions of concurrent instances
@@ -222,7 +222,7 @@ func TestInstanceScopesOfIsEmptyForAHostWithNone(t *testing.T) {
 }
 
 // TestHandleCancelInstancesTearsDownAndCounts: the loop cancels every open
-// iteration scope of the requesting host and reports how many, which is the
+// instance scope of the requesting host and reports how many, which is the
 // terminated tally the barrier publishes as numberOfTerminatedInstances.
 func TestHandleCancelInstancesTearsDownAndCounts(t *testing.T) {
 	_, ls, node, host := decoratorFixture(t)
@@ -257,8 +257,8 @@ func TestCancelInstanceScopesSkipsALeaf(t *testing.T) {
 }
 
 // TestCollectOutputStagesAFilledCell pins the handoff the drain close makes
-// safe: the loop fills a composite iteration's cell before closing its scope,
-// and the barrier moves it into the positional slot once that iteration
+// safe: the loop fills a composite instance's cell before closing its scope,
+// and the barrier moves it into the positional slot once that instance
 // reports (SRD-090.A M3b).
 //
 // A leaf fan-out has no cells at all, and an instance that produced nothing
@@ -267,10 +267,10 @@ func TestCancelInstanceScopesSkipsALeaf(t *testing.T) {
 func TestCollectOutputStagesAFilledCell(t *testing.T) {
 	run := parallelRun{
 		outs: newIterationOutputs(3),
-		caps: map[int]*instanceCapture{
+		caps: map[int]*iterationCapture{
 			0: {item: "result", value: "done", filled: true},
 			1: {item: "result"}, // opened, produced no output
-			// 2 is a leaf iteration: no cell at all
+			// 2 is a leaf instance: no cell at all
 		},
 	}
 

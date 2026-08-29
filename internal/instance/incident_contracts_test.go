@@ -25,7 +25,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 )
 
-// failFirstOp fails only its very first call — across every iteration sharing
+// failFirstOp fails only its very first call — across every instance sharing
 // it — then succeeds; calls counts the total executions.
 func failFirstOp(t *testing.T, calls *atomic.Int32) service.Operation {
 	t.Helper()

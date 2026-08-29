@@ -71,7 +71,7 @@ type taskEntry struct {
 	// ord is the instance of an iterated activity this task belongs to
 	// (ADR-020 §2.12). N instances of one activity share a track, so the
 	// track alone cannot say which of them a completion is for — and
-	// delivering to the track would hand it to whichever iteration read
+	// delivering to the track would hand it to whichever instance read
 	// first. Zero for a lone activity, which has one execution anyway.
 	ord int
 }
@@ -141,7 +141,7 @@ func checkTaskArgs(taskID string, actor hi.Actor) error {
 const TaskRetryClass = "TASK_RETRY_AFTER_HYDRATION"
 
 // taskRoundtrip hands req to the loop and blocks for the reply, honoring ctx and
-// iteration shutdown.
+// instance shutdown.
 func (inst *Instance) taskRoundtrip(
 	ctx context.Context,
 	req taskRequest,
@@ -292,7 +292,7 @@ func (ls *loopState) completeTask(
 // Both halves matter once an activity can hold N tasks at once (ADR-020 §2.12):
 //
 //   - delivering on the TRACK's channel would hand the outcome to whichever
-//     iteration happened to read first, which is not necessarily the one whose
+//     instance happened to read first, which is not necessarily the one whose
 //     task was completed;
 //   - flipping the track out on the FIRST completion would drop every
 //     sibling's delivery at the dispatch gate, because a track that is no
@@ -332,12 +332,12 @@ func (ls *loopState) deliverCompletion(
 	// The identity is not dropped here: the instance has not finished, and its
 	// recorded state does not become `completed` until the barrier accounts
 	// for the report (took). Dropping it now would leave a window in which a
-	// checkpoint records that iteration as RUNNING WITH NO IDENTITY, and a
+	// checkpoint records that instance as RUNNING WITH NO IDENTITY, and a
 	// restore would mint a fresh one for work whose handle its holder is
 	// still carrying.
 	sub.completeIteration(entry.ord, completion, owner)
 
-	// the track leaves the parked set only when NO iteration still holds work.
+	// the track leaves the parked set only when NO instance still holds work.
 	if !sub.anyWaiting() {
 		ls.flipNotParked(entry.track)
 	}
@@ -470,7 +470,7 @@ func (ls *loopState) addTask(
 }
 
 // adoptRestoredTasks re-registers a restored FAN-OUT's parked-work identities,
-// one per iteration that still holds work (ADR-020 §2.12). Runs at loop start,
+// one per instance that still holds work (ADR-020 §2.12). Runs at loop start,
 // on the loop goroutine, before the loop serves its first request.
 //
 // The timing is the whole point. What hydrates a dehydrated instance is
@@ -503,7 +503,7 @@ func (ls *loopState) adoptRestoredTasks(ctx context.Context, initial []*track) {
 
 		for ord, id := range ids {
 			// REGISTERED, not announced. The task is already in the
-			// distributor's inbox — announced when its iteration first parked
+			// distributor's inbox — announced when its instance first parked
 			// and never withdrawn, which is the point of a wait that outlives
 			// its instance's residency (ADR-020 §2.1.1). Re-announcing says
 			// nothing new, and the iterations announce for themselves when
@@ -608,7 +608,7 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 	// restored execution adopts its recorded id inside, so a rehydrated task
 	// keeps the handle its inbox entry carries.
 	// no executor here: a born-parked waiter is the track's own, and a
-	// restored fan-out re-classifies per iteration when its decorator runs.
+	// restored fan-out re-classifies per instance when its decorator runs.
 	taskID, ord := t.humanTaskIdentity(nil)
 
 	ls.addTask(ctx, taskID, t, node, ord, nil)
@@ -628,7 +628,7 @@ func (ls *loopState) onTaskWaiting(ctx context.Context, ev trackEvent) {
 }
 
 // withdrawAllTasks withdraws every parked task and clears the registry, used on
-// iteration teardown when tasks are no longer completable (SRD-034). A fresh
+// instance teardown when tasks are no longer completable (SRD-034). A fresh
 // context is used since the instance context is already canceled at that point.
 func (ls *loopState) withdrawAllTasks() {
 	for id := range ls.tasks {
@@ -639,7 +639,7 @@ func (ls *loopState) withdrawAllTasks() {
 }
 
 // cleanupTask withdraws and drops any task owned by a track that ended without a
-// normal completion (canceled by an interrupting boundary or iteration terminate).
+// normal completion (canceled by an interrupting boundary or instance terminate).
 func (ls *loopState) cleanupTask(ctx context.Context, tr *track) {
 	// the entry is read by one field only, so range over keys: copying the whole
 	// value per iteration grew past gocritic's threshold when Eligibility gained
@@ -666,7 +666,7 @@ func (inst *Instance) withdrawTask(ctx context.Context, taskID string) {
 	}
 
 	// The task was retracted from the distributor (SRD-041 §3.4) — on completion,
-	// cancellation, or iteration teardown.
+	// cancellation, or instance teardown.
 	inst.report(observability.Fact{
 		Kind:    observability.KindTaskState,
 		Phase:   observability.PhaseWithdrawn,

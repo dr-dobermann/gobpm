@@ -75,7 +75,7 @@ func miUserTaskSnapshotWith(
 
 	ut, err := activities.NewUserTask("approve",
 		// three candidates, so a test can have a DIFFERENT person do each
-		// iteration — the case one entry per node loses.
+		// instance — the case one entry per node loses.
 		activities.WithCandidateUsers("alice", "bob", "carol"),
 		activities.WithOutput("result", "string", true),
 		activities.WithoutParams(), activities.WithLoop(mi),
@@ -168,7 +168,7 @@ func captureParkedFanOut(
 //
 // The whole chain is under test here: the capture records an identity per
 // instance, the restore registers them before the loop serves its first
-// request, each iteration takes back the id it was announced under, and a
+// request, each instance takes back the id it was announced under, and a
 // completion reaches the instance that owns it.
 func TestARestoredFanOutIsCompletedOnTheIdentitiesItAnnounced(t *testing.T) {
 	s := fanOutSnapshot(t, "cr-fan")
@@ -510,7 +510,7 @@ func TestAStandardLoopOverAUserTaskOffersATaskPerPass(t *testing.T) {
 }
 
 // TestIterationOwnersSurvivesTheInstanceBeingRebuilt (SRD-090.D FR-4): who did
-// which iteration rides the checkpoint.
+// which instance rides the checkpoint.
 //
 // It has to. A fan-out over human work exists because N approvals take days,
 // so being released and rebuilt is its ordinary state rather than an edge one
@@ -594,7 +594,7 @@ func TestIterationOwnersSurvivesTheInstanceBeingRebuilt(t *testing.T) {
 //
 // The register exists to be read AFTER the activity — that is the question
 // BPMN's counts cannot answer, since they end with the activation they
-// describe. A node asking it is therefore reading in a rebuilt iteration
+// describe. A node asking it is therefore reading in a rebuilt instance
 // whenever the process waited on anything, and a register rebuilt empty would
 // report an activity that processed three items as having processed none: a
 // wrong answer rather than a missing one.

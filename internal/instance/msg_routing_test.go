@@ -27,7 +27,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 )
 
-// SRD-085 M2 — the in-iteration half of iteration-correlated routing,
+// SRD-085 M2 — the in-instance half of iteration-correlated routing,
 // driven WITHOUT an engine: the fired definition is handed straight to
 // Instance.ProcessEvent, so the loop's subscription index, the key
 // derivation and the per-delivery binding are exercised where the
@@ -218,7 +218,7 @@ func firedConfirm(
 		nil, foundation.WithID(registeredID))
 }
 
-// TestIterationRoutingInInstance is SRD-085 T-2's in-iteration half:
+// TestIterationRoutingInInstance is SRD-085 T-2's in-instance half:
 // out-of-order deliveries serve exactly the matching iterations.
 func TestIterationRoutingInInstance(t *testing.T) {
 	got := make(chan string, 2)
@@ -341,7 +341,7 @@ func TestExtendReceiversDescendsDespiteAdderFailure(t *testing.T) {
 			"the adder's failure")
 }
 
-// TestKeylessRoutingRefusedInInstance is SRD-085 T-3's in-iteration
+// TestKeylessRoutingRefusedInInstance is SRD-085 T-3's in-instance
 // half: the SECOND keyless subscription faults the instance loud.
 func TestKeylessRoutingRefusedInInstance(t *testing.T) {
 	got := make(chan string, 2)
@@ -367,7 +367,7 @@ func TestKeylessRoutingRefusedInInstance(t *testing.T) {
 }
 
 // TestInstanceProcessID pins the discovery process axis on the
-// iteration itself (SRD-084 FR-3).
+// instance itself (SRD-084 FR-3).
 func TestInstanceProcessID(t *testing.T) {
 	got := make(chan string, 2)
 
@@ -384,13 +384,13 @@ func TestInstanceProcessID(t *testing.T) {
 // (FIX-040 §1.3): T-7 publishes ONE envelope after its restore, so a
 // rebuilt subscription index could be present without being right.
 // Here BOTH iterations are parked when the checkpoint is taken and BOTH
-// keys are delivered afterwards, so the restored iteration must rebuild
+// keys are delivered afterwards, so the restored instance must rebuild
 // two distinct subscriptions and route each delivery to its own.
 //
 // It is also the regression pin for the Stringer (see stringer.go).
-// Before it, this test could not exist: the capturing iteration stays
+// Before it, this test could not exist: the capturing instance stays
 // live while the restored one runs, both register message waits, and
-// the mock EventProducer's argument matcher formatted the live Iteration
+// the mock EventProducer's argument matcher formatted the live Instance
 // with %v on the registering goroutine — a reflective read of the
 // correlator's maps and mutexes racing the engine's own writes. The
 // test reported a data race in engine code that was innocent.

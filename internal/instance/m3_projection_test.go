@@ -34,7 +34,7 @@ func TestTokenStateProjection(t *testing.T) {
 	}
 }
 
-// TestM3LinearHistory runs a linear iteration with a fixed injected clock and
+// TestM3LinearHistory runs a linear instance with a fixed injected clock and
 // checks the derived token path history: it visits both nodes, ends Consumed,
 // has deterministic monotonic timestamps, and no active tokens remain.
 func TestM3LinearHistory(t *testing.T) {

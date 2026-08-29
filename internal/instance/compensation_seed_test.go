@@ -49,7 +49,7 @@ func TestCompensationHandlerNotSeeded(t *testing.T) {
 	}
 	linkAll(t, [2]flow.Element{start, work}, [2]flow.Element{work, end})
 
-	inst := runIteration(t, p)
+	inst := runInstance(t, p)
 
 	require.Equal(t, Completed, inst.State())
 	require.NoError(t, inst.LastErr())

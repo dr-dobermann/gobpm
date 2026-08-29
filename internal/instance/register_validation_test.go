@@ -39,7 +39,7 @@ func TestRegisterEventNilProcessorTerminal(t *testing.T) {
 		t.Fatal("instance did not reach a terminal state")
 	}
 
-	// Terminal iteration + nil processor: the nil guard runs before the
+	// Terminal instance + nil processor: the nil guard runs before the
 	// terminal-state branch builds proc.ID(), so this is a classified error,
 	// never a panic.
 	require.NotPanics(t, func() {

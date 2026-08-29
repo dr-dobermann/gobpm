@@ -115,7 +115,7 @@ func TestNodeProgressUnCollapsed(t *testing.T) {
 	phases := rec.phasesOf(observability.KindNodeProgress)
 	// Executing and Completed are the un-collapsed phases proving the stream no
 	// longer reports the 3-value token projection. (Entered fires at track
-	// creation inside New, before this iteration-level observer registers; the
+	// creation inside New, before this instance-level observer registers; the
 	// engine-scope observer, which registers earlier, sees it — T-4 covers that.)
 	require.True(t, phases[observability.PhaseExecuting], "a node is Executing")
 	require.True(t, phases[observability.PhaseCompleted], "a node Completes")

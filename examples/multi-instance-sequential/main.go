@@ -1,6 +1,6 @@
 // Command multi-instance-sequential demonstrates a BPMN sequential
 // Multi-Instance activity (§13.3.7, SRD-055): the activity runs once per
-// element of an input collection, the instances running one after another.
+// element of an input collection, the iterations running one after another.
 package main
 
 import (
@@ -23,7 +23,7 @@ func run() error {
 	fmt.Print(`
   multi-instance-sequential:
     start → orders [Multi-Instance over amounts, sequential] → end
-            (one instance per amount: 100, 250, 80 — each +20% tax)
+            (one iteration per amount: 100, 250, 80 — each +20% tax)
 
 `)
 

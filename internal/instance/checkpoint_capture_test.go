@@ -406,7 +406,7 @@ func TestCaptureArms(t *testing.T) {
 }
 
 // TestRestore covers SRD-070 T-4: the captured document rebuilds an
-// equal iteration — scopes, data, keys, the parked track — and the
+// equal instance — scopes, data, keys, the parked track — and the
 // guards are loud.
 func TestRestore(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
@@ -527,9 +527,9 @@ func TestRestore(t *testing.T) {
 
 // condSnapshotFor rebuilds the conditional snapshot carrying the
 // document's pinned version (the same-definition contract; node ids
-// differ per build, so the rebuild REUSES the source iteration's
+// differ per build, so the rebuild REUSES the source instance's
 // snapshot template via Clone semantics — here the simplest equivalent:
-// the recorded node must exist, so we clone from the parked iteration's
+// the recorded node must exist, so we clone from the parked instance's
 // own template).
 func condSnapshotFor(
 	t *testing.T, doc *checkpoint.Document,

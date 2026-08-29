@@ -8,7 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
-// buildBoard builds the parallel Multi-Instance review board: one instance per
+// buildBoard builds the parallel Multi-Instance review board: one iteration per
 // quorumSize is how many votes the Complex behavior waits for before throwing
 // "quorum-reached" — read by the behavior condition and by the example's own
 // assertion, so the check cannot drift from the behavior it checks.

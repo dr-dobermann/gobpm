@@ -24,7 +24,7 @@ type (
 		taskOpts  []options.Option
 		outputs   []*bpmncommon.ResourceParameter
 
-		// taskPriority is the BPMN iteration attribute of Table 10.14. The
+		// taskPriority is the BPMN instance attribute of Table 10.14. The
 		// standard defines no scale, direction or default, so the engine assigns
 		// it none either (ADR-020 v.3 §2.11).
 		taskPriority int
@@ -117,7 +117,7 @@ func WithAssignee(userID string) UsrTaskOption {
 }
 
 // WithAssigneeExpr sets the task's assignee from a FormalExpression evaluated per
-// iteration to the owning user id. Rejects a nil expression.
+// instance to the owning user id. Rejects a nil expression.
 func WithAssigneeExpr(expr data.FormalExpression) UsrTaskOption {
 	return func(cfg *usrTaskConfig) error {
 		a, err := hi.NewExprAssignment(hi.Assignee, expr)
@@ -143,7 +143,7 @@ func WithCandidateUsers(userIDs ...string) UsrTaskOption {
 }
 
 // WithCandidateUsersExpr sets the candidate users from a FormalExpression
-// evaluated per iteration to a list of user ids. Rejects a nil expression.
+// evaluated per instance to a list of user ids. Rejects a nil expression.
 func WithCandidateUsersExpr(expr data.FormalExpression) UsrTaskOption {
 	return func(cfg *usrTaskConfig) error {
 		a, err := hi.NewExprAssignment(hi.CandidateUsers, expr)
@@ -169,7 +169,7 @@ func WithCandidateGroups(groupIDs ...string) UsrTaskOption {
 }
 
 // WithCandidateGroupsExpr sets the candidate groups from a FormalExpression
-// evaluated per iteration to a list of group ids. Rejects a nil expression.
+// evaluated per instance to a list of group ids. Rejects a nil expression.
 func WithCandidateGroupsExpr(expr data.FormalExpression) UsrTaskOption {
 	return func(cfg *usrTaskConfig) error {
 		a, err := hi.NewExprAssignment(hi.CandidateGroups, expr)
@@ -231,7 +231,7 @@ func WithOutput(name, pType string, required bool) UsrTaskOption {
 	return UsrTaskOption(f)
 }
 
-// WithTaskPriority sets the UserTask's priority — the BPMN iteration attribute
+// WithTaskPriority sets the UserTask's priority — the BPMN instance attribute
 // of Table 10.14 (§10.3.4.1).
 //
 // The SETTER is an engine extension, registered as such in SAD-001 §14.2.

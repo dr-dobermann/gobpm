@@ -49,13 +49,13 @@ func TestParkingAHumanTaskMarksTHATExecutionAsWaiting(t *testing.T) {
 // TestTheIdentityRegisterIsLiveNotASnapshot (ADR-020 §2.12): the capture
 // cannot read the identities off the executor, because a release clears it
 // before the cut that records the wait — so the TRACK keeps them, recorded as
-// each iteration mints one.
+// each instance mints one.
 //
 // Recorded as minted rather than snapshotted at the release, because a release
 // can land part-way through parking N instances. Such a snapshot holds only
 // the identities minted so far, and every later capture preferred that stale
 // set to the live one — so a restored fan-out minted a fresh id for the
-// iteration the snapshot had missed, and the handle its holder was carrying
+// instance the snapshot had missed, and the handle its holder was carrying
 // named nothing.
 func TestTheIdentityRegisterIsLiveNotASnapshot(t *testing.T) {
 	_, tr, _ := fanOutTrack(t)
@@ -111,7 +111,7 @@ func TestAFanOutReadsBusyWhileItHasWorkToApply(t *testing.T) {
 }
 
 // TestARestoredFanOutOffersOnlyTheWorkStillOutstanding (ADR-020 §2.12): the
-// identities come back per ordinal, and a COMPLETED iteration is skipped — its
+// identities come back per ordinal, and a COMPLETED instance is skipped — its
 // task was withdrawn when it was done, and re-registering it would offer work
 // nobody can do.
 func TestARestoredFanOutOffersOnlyTheWorkStillOutstanding(t *testing.T) {

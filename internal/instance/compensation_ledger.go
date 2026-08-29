@@ -69,7 +69,7 @@ func compensationBoundaryHandlerOf(node flow.Node) flow.ActivityNode {
 // machinery (an embedded Sub-Process) or runs a child instance (a Call
 // Activity) — both are excluded from the evMoved leaf hook: a Sub-Process is
 // ledgered at completeScope, and a Call Activity never enters a ledger
-// (ADR-026 §2.9, cross-iteration compensation is out of scope).
+// (ADR-026 §2.9, cross-instance compensation is out of scope).
 func opensChildScope(node flow.Node) bool {
 	if _, ok := node.(interface{ IsEventSubProcess() bool }); ok {
 		return true
@@ -120,7 +120,7 @@ func (ls *loopState) recordLeafCompletion(ev trackEvent, departed flow.Node) {
 //
 // This used to cite "the ADR-025 §2.10 deferral", and that deferral no
 // longer exists: §2.10 was refreshed in v.3 and hands MI compensation to
-// ADR-026, which states the per-iteration rule, while §2.10 supplies the
+// ADR-026, which states the per-instance rule, while §2.10 supplies the
 // ordinal addressability it consumes. Both halves are decided and neither
 // is implemented — #327, which is what this skip now waits for.
 func (ls *loopState) recordScopeCompletion(

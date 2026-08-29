@@ -7,7 +7,7 @@ import (
 )
 
 // iterationFact is what an activity's iteration reports about itself: the
-// shape, the frozen total, and how the instances ended. It is the durable
+// shape, the frozen total, and how the iterations ended. It is the durable
 // half of §2.9's attributes — the counts themselves stay at the activity's
 // own scope, where a completionCondition and a composite body read them by
 // walk-up, and end with the activation.
@@ -23,7 +23,7 @@ type iterationFact struct {
 //
 // It is engine-published, so it is served through the reserved read-only
 // RUNTIME subtree rather than committed into the data plane: a process must be
-// able to READ how many instances ran and must not be able to overwrite the
+// able to READ how many iterations ran and must not be able to overwrite the
 // answer.
 //
 // Keyed by ACTIVITY ID rather than one runtime name per activity. Two reasons,
@@ -32,7 +32,7 @@ type iterationFact struct {
 // parallel gateway with a Multi-Instance on each arm being an ordinary model.
 // That is the same reason the counts themselves cannot be flat RUNTIME names.
 //
-// Guarded by its own mutex: entries are written on the instance-loop goroutine
+// Guarded by its own mutex: entries are written on the iteration-loop goroutine
 // as an activity progresses and read during expression evaluation on track
 // goroutines.
 type iterations struct {
@@ -82,7 +82,7 @@ func (i *iterations) records() map[string]checkpoint.ActivityIteration {
 }
 
 // restore adopts the accounts a checkpoint recorded, so what an activity did
-// survives the instance being released and rebuilt — the question is asked by
+// survives the iteration being released and rebuilt — the question is asked by
 // nodes AFTER it, which is exactly when a long wait has had time to dehydrate.
 func (i *iterations) restore(byActivity map[string]checkpoint.ActivityIteration) {
 	if len(byActivity) == 0 {

@@ -7,7 +7,7 @@ import (
 )
 
 // trackEvent is a message a track sends to the Instance event loop, which is
-// the sole owner of iteration lifecycle state. Tracks never mutate that state
+// the sole owner of instance lifecycle state. Tracks never mutate that state
 // directly — they emit these and loop() applies them in order.
 type trackEvent struct {
 	node         flow.Node
@@ -43,9 +43,9 @@ type trackEvent struct {
 	changes  []data.Change
 	// ord is the INSTANCE a capability wait belongs to, when the parking
 	// activity iterates (ADR-020 §2.12). Zero for a lone activity, which is
-	// also iteration 0's ordinal — the two are indistinguishable here and do
+	// also instance 0's ordinal — the two are indistinguishable here and do
 	// not need distinguishing: a lone activity has exactly one execution, so
-	// "iteration 0" names it correctly.
+	// "instance 0" names it correctly.
 	ord      int
 	compWait bool
 	kind     trackEventKind
@@ -142,7 +142,7 @@ const (
 	// evFailed: a track's run() returned in TrackFailed (its node execution errored).
 	// The loop surfaces the track's error as an instance failure (lastErr + terminate
 	// via Instance.fail) instead of treating it as a plain evEnded that would let the
-	// iteration complete silently. FIX-008.
+	// instance complete silently. FIX-008.
 	evFailed
 	// evWaiting: a track entered TrackWaitForEvent and parked on its evtCh. Emitted BEFORE
 	// the catch node registers its hub waiters (SRD-027 FR-5) so the loop records the track as
@@ -198,7 +198,7 @@ const (
 	// CallActivity). The loop resolves the declared inputs at the caller's scope, launches
 	// the child instance through the ProcessInvoker, records the call → track, and starts a
 	// watcher that reports the child's completion via a callReq to resume the track (ADR-023
-	// §2.7, SRD-050 FR-5/FR-6). It is the child-iteration peer of evJobWaiting — a Call
+	// §2.7, SRD-050 FR-5/FR-6). It is the child-instance peer of evJobWaiting — a Call
 	// Activity registers no hub waiter and parks for a whole child instance, not one job.
 	evCallWaiting
 	// evScopeHandlerFire: a scope-armed Event Sub-Process handler's trigger fired

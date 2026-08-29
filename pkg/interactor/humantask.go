@@ -20,7 +20,7 @@ type HumanTask interface {
 
 	// ResolveEligibility resolves the task's assignment triad against src via eng
 	// into a frozen Eligibility (ADR-020 v.2 §2.7). The engine calls it once, when
-	// the task is distributed and its iteration is still resident; every later
+	// the task is distributed and its instance is still resident; every later
 	// authorization check reads that snapshot, so a candidate set cannot shift
 	// under a waiting task.
 	ResolveEligibility(
@@ -52,7 +52,7 @@ type HumanTask interface {
 	// Roles returns the task's declared resource roles (for a TaskInfo).
 	Roles() []*hi.ResourceRole
 
-	// TaskPriority returns BPMN's taskPriority iteration attribute (for a
+	// TaskPriority returns BPMN's taskPriority instance attribute (for a
 	// TaskInfo). The engine reports it and acts on it nowhere.
 	TaskPriority() int
 

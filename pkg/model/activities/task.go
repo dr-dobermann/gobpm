@@ -56,7 +56,7 @@ func newTask(
 		err
 }
 
-// clone returns a per-iteration copy of the task: the embedded activity is cloned
+// clone returns a per-instance copy of the task: the embedded activity is cloned
 // (config shared by reference, fresh shell, zero dataPath) and the
 // multyInstance flag is copied as configuration.
 func (t *task) clone() (task, error) {
@@ -115,7 +115,7 @@ func (t *task) LoadData(ctx context.Context, f exec.Frame) error {
 
 		// the shared copy path (SRD-094 FR-3): a DataStoreReference source
 		// reads the engine-global Data Store (SRD-068 FR-4), any other is
-		// THIS iteration's DataObject resolved from the frame's scope by name
+		// THIS instance's DataObject resolved from the frame's scope by name
 		// (SRD-063 FR-5); a required input it cannot fill fails fast.
 		if err := dataflow.FillInput(
 			ctx, f, ia, dii[index], gating, t.owner()); err != nil {
@@ -149,7 +149,7 @@ func (t *task) instantiateData(f exec.Frame) error {
 	// data.Output, and both call sites here pass the constants — so this is an
 	// invariant violation, not a runtime failure, and it reports as one
 	// (FIX-034's errs.Invariant). Reporting rather than panicking keeps a
-	// faulted iteration from taking down an engine that is serving others.
+	// faulted instance from taking down an engine that is serving others.
 	inputs, err := t.IoSpec.Parameters(data.Input)
 	if err != nil {
 		return errs.Invariant("task %q: Input rejected: %w", t.Name(), err)
@@ -220,7 +220,7 @@ func (t *task) UploadData(ctx context.Context, f exec.Frame) error {
 
 		// the shared copy path (SRD-094 FR-3): a DataStoreReference target
 		// writes the engine-global Data Store (SRD-068 FR-4), any other is
-		// THIS iteration's DataObject updated in place (SRD-063 FR-5); an
+		// THIS instance's DataObject updated in place (SRD-063 FR-5); an
 		// optional output that wasn't produced has no value to push.
 		if err := dataflow.PushOutput(
 			ctx, f, oa, doo[index], t.owner()); err != nil {

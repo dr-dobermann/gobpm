@@ -11,7 +11,7 @@ import (
 
 // execEnv is the per-execution runtime environment the track hands a node
 // (ADR-010 §2.4): engine services and instance identity are delegated to the
-// Iteration; the data surface is backed by the execution's own frame.
+// Instance; the data surface is backed by the execution's own frame.
 type execEnv struct {
 	*Instance
 
@@ -23,7 +23,7 @@ type execEnv struct {
 
 // newExecEnv builds the environment of one node execution. t may be nil
 // for transient (non-track) frames — Terminate then falls back to the
-// iteration-level semantics.
+// instance-level semantics.
 func newExecEnv(inst *Instance, f *scope.Frame, t *track) *execEnv {
 	return &execEnv{
 		Instance: inst,
@@ -60,7 +60,7 @@ func (f reporterFunc) Report(ev observability.Fact) { f(ev) }
 // the handle observers' local fan-out IN ADDITION to the engine echo/fan-out
 // — exactly what every internal emitter gets. Without this override a node
 // would reach the raw engine sink and its facts would silently skip the
-// iteration's own observers.
+// instance's own observers.
 func (e *execEnv) Reporter() observability.Reporter {
 	return reporterFunc(e.report)
 }
@@ -69,7 +69,7 @@ func (e *execEnv) Reporter() observability.Reporter {
 // semantics (BPMN §13.5.6, ADR-023 §2.5): a Terminate End Event reached
 // INSIDE a sub-process terminates only its enclosing scope — the loop
 // discards that scope's tokens and the parent continues; at the root (or
-// from a track-less frame) it keeps the whole-iteration behavior.
+// from a track-less frame) it keeps the whole-instance behavior.
 func (e *execEnv) Terminate() {
 	if e.track == nil || e.track.scopePath == e.sc.root {
 		e.Instance.Terminate()
@@ -122,7 +122,7 @@ func (e *execEnv) Compensate(activityRef string, wait bool) {
 // terminates its residual tracks, and exits through the Cancel boundary (SRD-061
 // FR-4/FR-5). Unlike Terminate there is no root check — a Cancel End Event is
 // legal only inside a Transaction (model validation), so it never targets the
-// iteration root. A track-less frame has no Transaction to abort, so it is a
+// instance root. A track-less frame has no Transaction to abort, so it is a
 // no-op.
 func (e *execEnv) Cancel() {
 	if e.track == nil {

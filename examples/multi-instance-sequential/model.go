@@ -120,7 +120,7 @@ func reportTaxed(ctx context.Context, r service.DataReader) error {
 
 	// Sequential Multi-Instance keeps input ORDER: the output collection must
 	// hold each amount's taxed figure in the position its input had. A
-	// parallel run, a lost instance, or an output assembled out of order would
+	// parallel run, a lost iteration, or an output assembled out of order would
 	// all print a plausible-looking list and still exit 0 — so the exact
 	// sequence is what gets checked, not just the length.
 	if err := sameInts(got, wantTaxed()); err != nil {

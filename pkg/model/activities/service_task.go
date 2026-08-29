@@ -200,9 +200,9 @@ func (st *ServiceTask) Node() flow.Node {
 	return st
 }
 
-// Clone returns a per-iteration copy of the ServiceTask. The embedded task is
+// Clone returns a per-instance copy of the ServiceTask. The embedded task is
 // cloned (config shared by reference, fresh activity shell, zero dataPath) and
-// the implementation string is copied. The operation gets a per-iteration clone
+// the implementation string is copied. The operation gets a per-instance clone
 // (shared definition, fresh message carriers) so the exec-mutated message item
 // state is not shared across concurrent instances.
 func (st *ServiceTask) Clone() (flow.Node, error) {

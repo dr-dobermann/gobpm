@@ -131,7 +131,7 @@ func TestTaskData(t *testing.T) {
 
 			ctx := context.Background()
 
-			// the FRAME input iteration got the value from the input DataObject,
+			// the FRAME input instance got the value from the input DataObject,
 			// resolved by name from scope (SRD-063 FR-5).
 			in, err := f.GetDataByID("y")
 			require.NoError(t, err)

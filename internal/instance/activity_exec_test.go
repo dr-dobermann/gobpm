@@ -55,7 +55,7 @@ func TestExecForRoutesByLoopCharacteristics(t *testing.T) {
 }
 
 // TestNodeExecAwaits pins the member M3's residency rule depends on: a leaf
-// iteration reports awaitEvent exactly while it is parked, and awaitNothing
+// instance reports awaitEvent exactly while it is parked, and awaitNothing
 // otherwise. A leaf can hold no other kind — it opens no scope and owns no
 // child instance — and that is the whole reason a leaf contributes to
 // residency where a sub-process instance does not (ADR-025 §2.13).
@@ -75,10 +75,10 @@ func TestNodeExecAwaits(t *testing.T) {
 	require.Equal(t, awaitEvent, e.state().await)
 }
 
-// TestNodeExecStateOrdinal: a non-iterated activity is iteration zero of one,
+// TestNodeExecStateOrdinal: a non-iterated activity is instance zero of one,
 // and the ordinal is the join key the record, the projection and an incident
 // all name (ADR-025 §2.9.1). Keeping the identity uniform here is what
-// lets M2 add instances without special-casing the single-iteration path.
+// lets M2 add instances without special-casing the single-instance path.
 func TestNodeExecStateOrdinal(t *testing.T) {
 	tr := &track{}
 
@@ -102,7 +102,7 @@ func TestNodeExecDoneNeedsAnEndedStep(t *testing.T) {
 }
 
 // TestLeafDecoratorAwaitsItsLiveInstance: a decorator answers for the
-// iteration currently running, and reports nothing between instances. M3's
+// instance currently running, and reports nothing between instances. M3's
 // residency rule reads this — an activity whose instances are all finished
 // must not look like one that is waiting, or it would pin its process
 // instance resident forever (ADR-025 §2.13).
@@ -115,7 +115,7 @@ func TestLeafDecoratorAwaitsItsLiveInstance(t *testing.T) {
 	require.Equal(t, awaitNothing, d.state().await)
 	require.Equal(t, 0, d.state().ordinal)
 
-	// iteration 2 is running and parks
+	// instance 2 is running and parks
 	d.live.Store(&execHandle{e: newNodeExec(tr, &stepInfo{}, 2)})
 	tr.state = TrackWaitForEvent
 
@@ -140,9 +140,9 @@ func TestLeafDecoratorSatisfiesActivityExec(t *testing.T) {
 }
 
 // TestRefuseIfParked pins the guard's DECISION: an instance still waiting
-// stops the iteration, and the refusal names which iteration — a sequential
+// stops the iteration, and the refusal names which instance — a sequential
 // decorator that advanced past a parked one would run the next ordinal over
-// the same step and publish output as though every iteration had finished.
+// the same step and publish output as though every instance had finished.
 //
 // Reaching this from runIteration requires the construct the snapshot refuses
 // (an activity that both iterates and parks), so SRD-090.B covers the path;

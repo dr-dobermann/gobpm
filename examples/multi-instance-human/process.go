@@ -69,7 +69,7 @@ func buildProcess() (*process.Process, error) {
 	return p, nil
 }
 
-// buildApproval is the fan-out: one instance per reviewer, all offered at
+// buildApproval is the fan-out: one iteration per reviewer, all offered at
 // once, each completed on its own.
 //
 // The RESULT MAP is what makes the outcome readable. Without a declared
@@ -96,7 +96,7 @@ func buildApproval() (*activities.UserTask, error) {
 		return nil, err
 	}
 
-	// EACH INSTANCE RESOLVES ITS OWN ASSIGNEE, in its own data context: the
+	// EACH ITERATION RESOLVES ITS OWN ASSIGNEE, in its own data context: the
 	// task belongs to the reviewer that iteration was seeded with, and nobody
 	// else may complete it. The same expression, three answers — which is
 	// what a fan-out over human work is for.

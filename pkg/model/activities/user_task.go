@@ -30,7 +30,7 @@ const (
 //
 // The User Task can be implemented using different technologies, specified
 // by the implementation attribute. Besides the Web service technology, any
-// technology can be used. A User Task for iteration can be implemented using
+// technology can be used. A User Task for instance can be implemented using
 // WSHumanTask by setting the implementation attribute to
 // “http://docs.oasis-open.org/ns/bpel4people/ws-humantask/protocol/ 200803.”
 //
@@ -59,7 +59,7 @@ type UserTask struct {
 
 	task
 
-	// taskPriority is BPMN's Table 10.14 iteration attribute. The standard gives
+	// taskPriority is BPMN's Table 10.14 instance attribute. The standard gives
 	// it no scale, direction or default and nothing in §13 reads it, so the
 	// engine carries and reports it and acts on it nowhere (ADR-020 v.3 §2.11).
 	// Immutable after construction, so copied by value on Clone. It trails every
@@ -169,7 +169,7 @@ func (ut *UserTask) Renderers() []hi.Renderer {
 	return append([]hi.Renderer{}, ut.renderers...)
 }
 
-// TaskPriority returns the task's priority — BPMN's Table 10.14 iteration
+// TaskPriority returns the task's priority — BPMN's Table 10.14 instance
 // attribute (§10.3.4.1), whose entire normative text is "Returns the priority of
 // the User Task".
 //
@@ -198,7 +198,7 @@ func (ut *UserTask) Node() flow.Node {
 	return ut
 }
 
-// Clone returns a per-iteration copy of the UserTask. The embedded task is cloned
+// Clone returns a per-instance copy of the UserTask. The embedded task is cloned
 // (config shared by reference, fresh activity shell); the outputs resource and
 // renderers are shared by reference as immutable configuration.
 func (ut *UserTask) Clone() (flow.Node, error) {

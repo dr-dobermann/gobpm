@@ -1,6 +1,6 @@
 // Command multi-instance-parallel demonstrates a BPMN parallel Multi-Instance
 // activity (§13.3.7, SRD-056.A): the activity runs once per element of a
-// collection, all instances concurrently in distinct scopes, completing when
+// collection, all iterations concurrently in distinct scopes, completing when
 // the last drains.
 package main
 

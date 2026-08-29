@@ -22,7 +22,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 )
 
-// iterationVarsSeen runs a three-iteration iterated Service Task and returns
+// iterationVarsSeen runs a three-instance iterated Service Task and returns
 // what each pass read through its OWN data source — the surface a model reads
 // through, rather than the binder that wrote the values.
 func iterationVarsSeen(
@@ -115,7 +115,7 @@ func iterationVarsSeen(
 	return append([]map[string]string(nil), seen...)
 }
 
-// TestIterationVarsAreTheExecutionsOwn (SRD-090.D T-5, T-7): every iteration of
+// TestIterationVarsAreTheExecutionsOwn (SRD-090.D T-5, T-7): every instance of
 // an iterated activity reads ITERATION_NUMBER, ITERATION_ID and ITERATION_MODE
 // as ITS OWN, on both publication paths.
 //
@@ -172,7 +172,7 @@ func TestIterationVarsAreTheExecutionsOwn(t *testing.T) {
 }
 
 // TestIterationIDIsDerivedNotMinted (SRD-090.D T-6, ADR-025 §2.9.3): an
-// iteration's identity is assembled from state that already survives a
+// instance's identity is assembled from state that already survives a
 // checkpoint — the enclosing scope path, the activity id, the ordinal — so it
 // is stable with nothing stored for it.
 //

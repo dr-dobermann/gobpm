@@ -32,7 +32,7 @@ func buildPlainSnapshot(t *testing.T) *snapshot.Snapshot {
 	start, err := events.NewStartEvent("start")
 	require.NoError(t, err)
 
-	// A working (no-op) operation so the node executes per-iteration — exercising
+	// A working (no-op) operation so the node executes per-instance — exercising
 	// the clone-race — and the instances complete cleanly. (A no-implementation
 	// operation would fault the track and, since FIX-008, terminate the instance.)
 	op, err := gooper.New("noop",
@@ -67,7 +67,7 @@ func buildPlainSnapshot(t *testing.T) *snapshot.Snapshot {
 }
 
 // TestCloneRaceTwoInstances runs two instances built from ONE shared snapshot
-// concurrently. With the per-iteration node graph (ADR-009) each iteration owns a
+// concurrently. With the per-instance node graph (ADR-009) each instance owns a
 // private clone of every node, so the previously shared per-node runtime state
 // (dataPath, scope, operation messages) is never written from two goroutines at
 // once — the race detector stays clean and both instances complete.

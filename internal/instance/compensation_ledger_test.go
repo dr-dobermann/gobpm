@@ -46,7 +46,7 @@ func compHandler(t *testing.T, name string, ran *atomic.Int32) *activities.Servi
 
 // guard attaches a Compensation boundary routing to a fresh handler, returning
 // the container nodes to Add (the boundary and the handler are both container
-// nodes — like every boundary, they must be Added or the per-iteration clone
+// nodes — like every boundary, they must be Added or the per-instance clone
 // carries no attachment).
 func guard(t *testing.T, host flow.ActivityNode, handlerName string,
 	ran *atomic.Int32,
