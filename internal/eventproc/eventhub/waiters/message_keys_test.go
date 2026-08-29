@@ -2,6 +2,7 @@ package waiters_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -362,15 +363,33 @@ func TestStopDoesNotHoldTheWaiterLock(t *testing.T) {
 	var (
 		entered = make(chan struct{})
 		release = make(chan struct{})
+		first   sync.Once
 	)
 
+	// EXACTLY ONE caller takes the blocking branch, and `sync.Once` is what
+	// makes that true. Stop unsubscribes, and so does the service goroutine's
+	// own teardown, so this hook is entered TWICE and concurrently —
+	// FailingSubscription calls it before its lock and on every call, which is
+	// its contract (failing_test.go counts the calls).
+	//
+	// Deciding "am I first?" by reading `entered` and closing it if not —
+	// select/default — is check-then-act: both callers can see it open before
+	// either close lands, and the second close panics. That is not theoretical;
+	// it reddened `test-core` on 2026-08-29, and 200 isolated runs plus 8
+	// race-enabled package runs never reproduced it. The window is narrow, not
+	// absent.
 	broker := &messagingtest.FailingBroker{
 		OnUnsubscribe: func() {
-			select {
-			case <-entered: // the service goroutine's own teardown; let it pass
-			default:
+			blocking := false
+
+			first.Do(func() {
+				blocking = true
+
 				close(entered)
-				<-release
+			})
+
+			if blocking {
+				<-release // the later teardown passes straight through
 			}
 		},
 	}
