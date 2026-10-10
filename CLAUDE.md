@@ -224,9 +224,9 @@ no-op once let broken code reach CI):**
   Homebrew's `gtimeout` on macOS. When adding a CI tool, add the corresponding
   guard and installation/documentation path.
 - **The Go toolchain is pinned.** Every `go.mod` carries `toolchain
-  go1.25.12` and the workflow sets `go-version: '1.25.12'`, so local and CI
+  go1.26.9` and the workflow sets `go-version: '1.26.9'`, so local and CI
   scan the identical stdlib (govulncheck reports stdlib vulnerabilities per
-  toolchain patch — a bare `1.25` drifts between runs). To clear new stdlib
+  toolchain patch — a bare `1.26` drifts between runs). To clear new stdlib
   vulns, bump the toolchain line in every module plus the workflow together,
   then re-run `make ci`.
 

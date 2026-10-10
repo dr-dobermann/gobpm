@@ -2,7 +2,7 @@ module github.com/dr-dobermann/gobpm
 
 go 1.25
 
-toolchain go1.25.13
+toolchain go1.26.9
 
 require (
 	github.com/google/uuid v1.6.0
