@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The pinned toolchain is `go1.26.9`, and `adapters/sqlite` now requires
+  Go 1.26.** Go 1.25 left support when 1.27 shipped, so `go1.25.13` was the
+  last patch that line will get and stdlib advisories against it could no
+  longer be cleared. Every `go.mod` and both `go-version` pins in the check
+  workflow move together, as the parity rule requires. The root module and
+  the other adapters still declare `go 1.25`; only `adapters/sqlite` raises
+  its floor to `go 1.26.0`, because `modernc.org/sqlite` 1.60 and its
+  `modernc.org/libc` 1.77 declare it — the adapter moves from 1.59.0 to
+  1.60.1 in the same change.
+
 ## [v0.12.0] - 2026-08-29
 
 **A process can now be read from a `.bpmn` file, survive a restart on disk, and
