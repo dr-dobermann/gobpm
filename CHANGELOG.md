@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `modernc.org/libc` 1.77 declare it — the adapter moves from 1.59.0 to
   1.60.1 in the same change.
 
+### Fixed
+
+- **The weekly tool-pin check runs again.** `tool-pins.yml` carried a
+  `workflow: write` entry in its `permissions:` block; that is not a
+  permission scope GitHub Actions knows, so the whole file was rejected and
+  the workflow failed on every push without its schedule ever firing. The
+  block is back to the two scopes FIX-025 specifies.
+
 ## [v0.12.0] - 2026-08-29
 
 **A process can now be read from a `.bpmn` file, survive a restart on disk, and
