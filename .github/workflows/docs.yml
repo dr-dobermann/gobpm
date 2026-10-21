@@ -18,12 +18,14 @@ on:
       - "docs/**"
       - mkdocs.yml
       - scripts/mkdocs_hooks.py
+      - Makefile
       - .github/workflows/docs.yml
   pull_request:
     paths:
       - "docs/**"
       - mkdocs.yml
       - scripts/mkdocs_hooks.py
+      - Makefile
       - .github/workflows/docs.yml
   workflow_dispatch:
 
@@ -49,15 +51,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install the site toolchain
-        # Pins mirrored by MKDOCS_MATERIAL_VERSION / MKDOCS_AWESOME_NAV_VERSION
-        # in the Makefile (make docs-build) and swept by
-        # scripts/check-tool-pins.sh.
-        run: pip install mkdocs-material==9.7.7 mkdocs-awesome-nav==3.3.0
+        run: make docs-tools
 
       - name: Build the site (strict)
-        # The `python -m` form puts the repo root on sys.path — mkdocs.yml
-        # imports scripts.mkdocs_hooks.github_slugify during config load.
-        run: python -m mkdocs build --strict
+        run: make docs-build
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

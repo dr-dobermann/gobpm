@@ -119,9 +119,12 @@ COVER_PROFILES = $$(for d in $(CORE_MODULES); do \
 	done | sed 's/,$$//')
 
 # ---------------------------------------------------------------------------
-# Tooling — versions are the single source of truth, mirrored by the
-# "Install tools" step in .github/workflows/check.yml. `make tools` installs
-# them locally so a developer's environment matches CI exactly.
+# Tooling — these versions are the ONLY place a tool pin is written (FIX-042).
+# CI installs through `make tools` too (.github/workflows/check.yml), so a
+# developer's environment matches CI exactly and the weekly pin bump
+# (scripts/check-tool-pins.sh) edits this file alone.
+# internal/lintcfg's TestWorkflowsInstallThroughMake fails any PR that puts an
+# install command or a version back into a workflow.
 #
 # require-go-tool guards every target that shells out to one of these binaries:
 # without it a missing tool makes the step a silent no-op (e.g. `vuln`
@@ -157,6 +160,9 @@ define require-command
 }
 endef
 
+# The golangci-lint install.sh is fetched from the PINNED version tag, not
+# master, so the installer script itself is immutable (reproducible
+# supply-chain).
 tools:
 	$(GO) install github.com/vektra/mockery/v3@$(MOCKERY_VERSION)
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/$(GOLANGCI_VERSION)/install.sh \
@@ -169,8 +175,9 @@ tools:
 # ---------------------------------------------------------------------------
 # Documentation site (SRD-080) — builds docs/ into site/ with MkDocs.
 # NOT part of `make ci`: Python is not a prerequisite of the core gate; CI
-# builds and deploys the site in its own workflow (.github/workflows/docs.yml,
-# which mirrors this pin — swept by scripts/check-tool-pins.sh). The
+# builds and deploys the site in its own workflow (.github/workflows/docs.yml),
+# which installs through `make docs-tools` and builds through `make docs-build`,
+# so these pins are the only ones (FIX-042). The
 # `python3 -m` form puts the repo root on sys.path, which mkdocs.yml needs to
 # import scripts.mkdocs_hooks.github_slugify during config load.
 # ---------------------------------------------------------------------------
@@ -186,11 +193,19 @@ $(call require-command,python3,Install Python 3 to build the docs site.)
 	name="$${pkg%%:*}"; want="$${pkg##*:}"; \
 	actual="$$(python3 -c "from importlib.metadata import version; print(version('$$name'))" 2>/dev/null)"; \
 	if [ "$$actual" != "$$want" ]; then \
-		echo "ERROR: $$name $${actual:-is not installed}; the site build requires $$want. Run 'pip install $$name==$$want'."; \
+		echo "ERROR: $$name $${actual:-is not installed}; the site build requires $$want. Run 'make docs-tools'."; \
 		exit 1; \
 	fi; \
 done
 endef
+
+# docs-tools installs the pinned site toolchain. `python3 -m pip` puts the
+# packages into the interpreter require-mkdocs checks and docs-build runs.
+docs-tools:
+	$(call require-command,python3,Install Python 3 to build the docs site.)
+	python3 -m pip install mkdocs-material==$(MKDOCS_MATERIAL_VERSION) \
+		mkdocs-awesome-nav==$(MKDOCS_AWESOME_NAV_VERSION)
+.PHONY: docs-tools
 
 docs-build:
 	$(require-mkdocs)

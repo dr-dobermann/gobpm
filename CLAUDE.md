@@ -69,7 +69,7 @@ make clear
 make tag
 
 # Build the docs site (docs/ → site/, mkdocs build --strict; SRD-080) —
-# needs `pip install mkdocs-material==<MKDOCS_MATERIAL_VERSION from Makefile>`.
+# needs `make docs-tools` (installs the pinned site toolchain).
 # NOT part of `make ci`; CI runs it in .github/workflows/docs.yml and deploys
 # to https://dr-dobermann.github.io/gobpm/ on master.
 make docs-build
