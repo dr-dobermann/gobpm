@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # check-tool-pins.sh (FIX-025) — detect newer releases of the pinned dev
-# tools and, if any, bump them in BOTH the Makefile and the tool's CI workflow
-# (Dependabot can't see version strings embedded in build tooling). Writes
+# tools and, if any, bump their `*_VERSION` pin in the Makefile (Dependabot
+# can't see version strings embedded in build tooling). The Makefile is the
+# only place a pin is written: the workflows install through `make`, and this
+# script must never edit a workflow, since the GITHUB_TOKEN that pushes its
+# bump may not (FIX-042). Writes
 # `changed=true|false` to $GITHUB_OUTPUT and, when it bumped anything, the PR
 # body to /tmp/pin-notes.md. A no-op run exits 0. Run from the repo root.
 #
@@ -12,19 +15,17 @@
 set -euo pipefail
 
 makefile="Makefile"
-check_wf=".github/workflows/check.yml"
-docs_wf=".github/workflows/docs.yml"
 notes="/tmp/pin-notes.md"
 
-# name | Makefile *_VERSION var | source (go module or pypi:<pkg>) | workflow
+# name | Makefile *_VERSION var | source (go module or pypi:<pkg>)
 tools=(
-	"mockery|MOCKERY_VERSION|github.com/vektra/mockery/v3|$check_wf"
-	"golangci-lint|GOLANGCI_VERSION|github.com/golangci/golangci-lint/v2|$check_wf"
-	"govulncheck|GOVULNCHECK_VERSION|golang.org/x/vuln|$check_wf"
-	"covercheck|COVERCHECK_VERSION|github.com/dr-dobermann/covercheck|$check_wf"
-	"linkcheck|LINKCHECK_VERSION|github.com/dr-dobermann/linkcheck|$check_wf"
-	"mkdocs-material|MKDOCS_MATERIAL_VERSION|pypi:mkdocs-material|$docs_wf"
-	"mkdocs-awesome-nav|MKDOCS_AWESOME_NAV_VERSION|pypi:mkdocs-awesome-nav|$docs_wf"
+	"mockery|MOCKERY_VERSION|github.com/vektra/mockery/v3"
+	"golangci-lint|GOLANGCI_VERSION|github.com/golangci/golangci-lint/v2"
+	"govulncheck|GOVULNCHECK_VERSION|golang.org/x/vuln"
+	"covercheck|COVERCHECK_VERSION|github.com/dr-dobermann/covercheck"
+	"linkcheck|LINKCHECK_VERSION|github.com/dr-dobermann/linkcheck"
+	"mkdocs-material|MKDOCS_MATERIAL_VERSION|pypi:mkdocs-material"
+	"mkdocs-awesome-nav|MKDOCS_AWESOME_NAV_VERSION|pypi:mkdocs-awesome-nav"
 )
 
 latest_version() { # go module
@@ -45,7 +46,7 @@ current_pin() { # *_VERSION var
 changed=0
 
 for entry in "${tools[@]}"; do
-	IFS='|' read -r name var mod wf <<<"$entry"
+	IFS='|' read -r name var mod <<<"$entry"
 	cur="$(current_pin "$var")"
 	case "$mod" in
 	pypi:*) new="$(latest_pypi "${mod#pypi:}" || true)" ;;
@@ -68,12 +69,10 @@ for entry in "${tools[@]}"; do
 
 	echo "$name: $cur -> $new (bumping)"
 	esc="$(printf '%s' "$cur" | sed 's/[.]/\\./g')"
-	# Makefile: touch only the pin line itself — prose comments may cite a
-	# version string that collides with another tool's pin (the covercheck
-	# "-exclude-lines, v0.1.2+" note vs linkcheck's pin). Workflow: every
-	# occurrence is a legit bump target (install command + installer URL).
+	# Touch only the pin line itself — prose comments may cite a version
+	# string that collides with another tool's pin (the covercheck
+	# "-exclude-lines, v0.1.2+" note vs linkcheck's pin).
 	sed -i "s/^\(${var}[[:space:]]*:=[[:space:]]*\)${esc}\$/\1${new}/" "$makefile"
-	sed -i "s/${esc}/${new}/g" "$wf"
 	echo "- \`$name\`: \`$cur\` → \`$new\`" >>"$notes"
 	changed=1
 done

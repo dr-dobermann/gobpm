@@ -4,6 +4,9 @@ on:
     branches:
       - master
   pull_request:
+  # Started by tool-pins.yml on its bump branch: a PR opened with GITHUB_TOKEN
+  # triggers no pull_request run (FIX-042).
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -210,4 +211,62 @@ func TestWorkflowsInstallThroughMake(t *testing.T) {
 			"pins live only in the Makefile, and workflows install through "+
 			"`make tools` / `make docs-tools` (FIX-042):\n  %s",
 		strings.Join(violations, "\n  "))
+}
+
+// activeLines returns a workflow's lines with comments stripped and
+// surrounding space trimmed, so a commented-out step reads as absent.
+func activeLines(content string) []string {
+	lines := strings.Split(content, "\n")
+
+	for i, line := range lines {
+		code, _, _ := strings.Cut(line, "#")
+		lines[i] = strings.TrimSpace(code)
+	}
+
+	return lines
+}
+
+// TestBotDispatchesCI pins the contract that gets the bot's bump PR its CI. A
+// PR opened with GITHUB_TOKEN starts no pull_request run, so tool-pins.yml
+// dispatches check.yml and docs.yml on the bump branch itself (FIX-042). That
+// needs `actions: write`, a `workflow_dispatch` trigger on both targets, and
+// the dispatches made after the branch is pushed and the PR opened. Dropping
+// any one of these leaves the PR without its required check, silently — the
+// weekly run itself still goes green.
+func TestBotDispatchesCI(t *testing.T) {
+	dir := filepath.Join(repoRoot(t), ".github", "workflows")
+
+	read := func(name string) []string {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		require.NoError(t, err)
+
+		return activeLines(string(b))
+	}
+
+	for _, name := range []string{"check.yml", "docs.yml"} {
+		require.Contains(t, read(name), "workflow_dispatch:",
+			"%s must accept workflow_dispatch, or the bot cannot run it", name)
+	}
+
+	bot := read("tool-pins.yml")
+	at := func(line string) int {
+		i := slices.Index(bot, line)
+		require.GreaterOrEqual(t, i, 0, "tool-pins.yml lost the line %q", line)
+
+		return i
+	}
+
+	require.Contains(t, bot, "actions: write",
+		"tool-pins.yml needs `actions: write` for `gh workflow run`")
+
+	push := at(`git push -u origin "$branch"`)
+	pr := at(`gh pr create \`)
+
+	for _, wf := range []string{"check.yml", "docs.yml"} {
+		dispatch := at(`gh workflow run ` + wf + ` --ref "$branch"`)
+		require.Greater(t, dispatch, push,
+			"%s is dispatched before the branch exists on the remote", wf)
+		require.Greater(t, dispatch, pr,
+			"%s is dispatched before the PR is opened", wf)
+	}
 }
