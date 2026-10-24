@@ -574,12 +574,13 @@ examples-module-check:
 	fi; \
 	echo "example-module check: all $(words $(EXAMPLE_DIRS)) example directories are modules"
 
-# The ten core steps, in the order the REQUIRED CI job runs them. The workflow
-# runs each as its own job step, so the list exists in two places; workflow-check
-# below compares them rather than leaving the comment to assert it.
-CI_CORE_STEPS = mock-check link-check examples-module-check tidy-check-core \
-                lint-core build-core consumer-smoke test-core cover-check \
-                vuln-core
+# The eleven core steps, in the order the REQUIRED CI job runs them. The
+# workflow runs each as its own job step, so the list exists in two places;
+# workflow-check below compares them rather than leaving the comment to assert
+# it.
+CI_CORE_STEPS = workflow-check mock-check link-check examples-module-check \
+                tidy-check-core lint-core build-core consumer-smoke test-core \
+                cover-check vuln-core
 
 # The core gate. It runs through scripts/ci-run.sh, which announces each step
 # with its ordinal and elapsed time, heartbeats inside the long ones, and writes
@@ -592,12 +593,14 @@ CI_CORE_STEPS = mock-check link-check examples-module-check tidy-check-core \
 #
 # On GitHub each of these steps is its own workflow step (check.yml), so CI
 # already names and times them; this driver is what gives the same information
-# to a local run, where all ten happen inside one process.
+# to a local run, where all eleven happen inside one process.
 # workflow-check keeps CI_CORE_STEPS and .github/workflows/check.yml in step.
 # The workflow invokes each core step separately (`run: make <step>`), so the
 # list is duplicated by necessity — and a duplicated list that nothing compares
 # is a list that drifts. An independent review pointed out that the comment
-# above used to claim drift was impossible; this makes the claim true.
+# above used to claim drift was impossible; this makes the claim true. It is
+# itself the first core step (FIX-042): a comparison nothing runs is the same
+# unchecked claim one level up.
 workflow-check:
 	@tmp=$$(mktemp -d); \
 	grep -v '^[[:space:]]*#' .github/workflows/check.yml \
@@ -622,7 +625,7 @@ ci-core:
 # Umbrella target that runs the full local-equivalent of CI (BOTH CI jobs).
 # Use this before pushing to catch regressions before GitHub runs them.
 # test-core writes coverage.txt; cover-check consumes it (single test run).
-# One run, one verdict: `ci` drives all fourteen steps through a SINGLE driver
+# One run, one verdict: `ci` drives all fifteen steps through a SINGLE driver
 # invocation rather than calling ci-core and ci-examples in turn. Two
 # invocations would write $(CI_DIR)/last-run.json twice, and the second would
 # overwrite the first — leaving a file that describes half the run while

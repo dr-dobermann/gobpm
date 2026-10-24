@@ -82,17 +82,17 @@ make docs-serve
 
 `make ci` runs the exact local-equivalent of GitHub CI (`.github/workflows/check.yml`),
 across all modules. Run it before pushing — if it's green, CI is green. The REQUIRED
-half is `ci-core`, and its ten steps run in this order:
+half is `ci-core`, and its eleven steps run in this order:
 
-mock-check → **link-check** → **examples-module-check** → tidy-check → lint →
+**workflow-check** → mock-check → **link-check** → **examples-module-check** → tidy-check → lint →
 build → consumer-smoke → race tests → **diff-coverage gate** → govulncheck
 
-Four of those are easy to meet for the first time as a red gate, so they are worth
-knowing before you push: **mock-check** regenerates the mocks and fails if the result
-differs from what is committed (run `make gen_mock_files` after changing an
-interface); **consumer-smoke** builds a throwaway module against the library, so it
-catches a break in the public API that the repo's own packages do not; and the two
-below have their own paragraphs.
+Several of those are easy to meet for the first time as a red gate, so they are
+worth knowing before you push. The ones in bold have their own paragraphs below; two
+more are worth a line here: **mock-check** regenerates the mocks and fails if the
+result differs from what is committed (run `make gen_mock_files` after changing an
+interface), and **consumer-smoke** builds a throwaway module against the library, so
+it catches a break in the public API that the repo's own packages do not.
 
 On GitHub the same set is split into two parallel jobs for PR speed: the
 REQUIRED `check` job runs the core gate (`make ci-core` — the non-example
@@ -139,16 +139,23 @@ gate that way. The check lives in the REQUIRED core gate rather than the
 non-blocking examples job on purpose — a regression here is a hole in *that* job,
 and a guard in the half that can go red unnoticed guards nothing.
 
+The **workflow check** (`make workflow-check`) fails when `CI_CORE_STEPS` and the
+`run: make <step>` lines of `check.yml` disagree. GitHub runs each core step as its
+own workflow step, so the list exists in both files, and a step added to one and not
+the other runs locally but never on CI — or the reverse. Add a new core step in both
+places. It is the first core step, because a comparison that nothing runs only
+claims the two lists agree (FIX-042).
+
 ### Reading a gate run (FIX-039)
 
 `make ci` announces every step and records its own verdict, because an exit code
 alone did not survive the trip to whoever asked for it.
 
 ```
-[ 8/14] test-core              started 23:31:35 (typically 1m05s)
-[ 8/14] test-core              … 30s elapsed
-[ 8/14] test-core              ok 1m05s
-[full] verdict: PASS — 14/14 steps in 2m22s (see .ci/last-run.json)
+[ 9/15] test-core              started 23:31:35 (typically 1m05s)
+[ 9/15] test-core              … 30s elapsed
+[ 9/15] test-core              ok 1m05s
+[full] verdict: PASS — 15/15 steps in 2m22s (see .ci/last-run.json)
 ```
 
 **Judge a run by `.ci/last-run.json`, never by the exit code of whatever wrapped

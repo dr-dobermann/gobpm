@@ -61,6 +61,9 @@ jobs:
       - name: Install tools
         run: make tools
 
+      - name: Verify check.yml runs the core gate's steps
+        run: make workflow-check
+
       # All subsequent checks call into Makefile targets so that running
       # `make ci` locally matches what CI runs (this REQUIRED job = the
       # `ci-core` half; the parallel `examples` job below = the `ci-examples`
