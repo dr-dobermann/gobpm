@@ -4,6 +4,24 @@ VERSION = $(shell cat .version)
 # GO = /mnt/c/Dvl/go/bin/go.exe
 GO = go
 
+# Every `go` call runs on the toolchain the root go.mod names, whatever Go is
+# installed locally (FIX-042). A go.mod `toolchain` line only ever UPGRADES:
+# a local Go newer than the pin wins, so local runs used a different stdlib
+# from CI's, and a pinned tool built with the older Go crashed on it
+# (golangci-lint on go1.27: "file requires newer Go version"). Exported, so
+# the scripts and the Go-based tools that shell out to `go` inherit it. `:=`
+# rather than `?=`, so a GOTOOLCHAIN left in the shell cannot quietly break
+# parity; `make GOTOOLCHAIN=local …` still overrides it on purpose.
+# internal/lintcfg's TestToolchainPinIsUniform keeps every go.mod and the
+# workflow's go-version on this one value.
+GO_TOOLCHAIN_PIN := $(strip $(shell sed -n 's/^toolchain //p' \
+	$(dir $(abspath $(lastword $(MAKEFILE_LIST))))go.mod))
+ifeq ($(GO_TOOLCHAIN_PIN),)
+$(error the root go.mod has no `toolchain` line; make pins \
+	GOTOOLCHAIN to it (FIX-042))
+endif
+export GOTOOLCHAIN := $(GO_TOOLCHAIN_PIN)
+
 # DC = docker-compose.exe
 DC = docker compose
 

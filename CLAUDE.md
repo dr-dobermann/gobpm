@@ -233,9 +233,13 @@ no-op once let broken code reach CI):**
 - **The Go toolchain is pinned.** Every `go.mod` carries `toolchain
   go1.26.10` and the workflow sets `go-version: '1.26.10'`, so local and CI
   scan the identical stdlib (govulncheck reports stdlib vulnerabilities per
-  toolchain patch — a bare `1.26` drifts between runs). To clear new stdlib
-  vulns, bump the toolchain line in every module plus the workflow together,
-  then re-run `make ci`.
+  toolchain patch — a bare `1.26` drifts between runs). The Makefile exports
+  `GOTOOLCHAIN` set to the root go.mod's `toolchain` line, because that line
+  alone only upgrades: a newer local Go would otherwise win, and the pinned
+  golangci-lint crashes on one (FIX-042). `TestToolchainPinIsUniform` fails
+  when a go.mod or the workflow disagrees. To clear new stdlib vulns, bump the
+  toolchain line in every module plus the workflow together, then re-run
+  `make ci`.
 
 ## Architecture Overview
 

@@ -103,7 +103,34 @@ it (`grep -rn workflow-check` hits only its own definition and comments, and
 two Accepted docs, FIX-039 T-11 and SRD-088 NFR-2, that ran it by hand). The
 same defect it was written against, one level up.
 
-### §2.4 Why it was not caught
+### §2.4 A newer local Go overrides the toolchain pin
+
+Found while verifying this fix: on a machine with go1.27.0 installed, `make
+lint-core` fails in every module, on master as on this branch:
+
+```
+panic: file requires newer Go version go1.27 (application built with go1.26)
+```
+
+`golangci-lint v2.11.4` is built with go1.26 and cannot load go1.27's stdlib.
+CLAUDE.md's parity rule says "the Go toolchain is pinned", on the strength of
+every go.mod's `toolchain go1.26.9` line — but a `toolchain` line only ever
+**upgrades**: a local Go older than the pin switches up to it, a newer one
+simply runs. So the gate scans a different stdlib locally from CI's, and a
+pinned tool crashes on it. Nothing in the Makefile sets `GOTOOLCHAIN`. And
+nothing checks that the 60 `toolchain` lines and the workflow's two
+`go-version` pins agree, although the parity rule requires them to move
+together.
+
+### §2.5 The pinned toolchain itself became vulnerable
+
+Also found while verifying: `vuln-core` fails on master and this branch alike
+on GO-2026-6809 (crypto/x509 trusting compromised intermediate certificates),
+present in go1.26.9's stdlib and reachable from `memrepo` through
+`x509.Certificate.Verify`. It is fixed in go1.26.10. No PR can pass the
+required check until the toolchain moves.
+
+### §2.6 Why it was not caught
 
 FIX-025 §4 verified the script locally (a forced-stale probe bumping both
 files) and checked that the workflow YAML parses. Neither exercises a push with
@@ -203,10 +230,22 @@ contain `go install`, `pip install`, `install.sh`, or a `v`-prefixed
 version pattern catches a pin coming back in any other form (an action's
 `with: version:`, an `env:` entry), which the old literal-match test caught and
 the command check alone would not. It keeps the existing
-anti-vacuity guard in the form that fits: it asserts by name that it scanned
-`check.yml` and `docs.yml`, and that each contains its own `make tools` /
-`make docs-tools` line, so a moved directory or a dropped install step cannot
-leave it passing on an empty set. It runs in `test-core`, so on every PR.
+anti-vacuity guard in the form that fits: per job, not per file, it requires
+exactly one active `run: make tools` in check.yml's `check` and `examples` and
+one `run: make docs-tools` in docs.yml's `build`, so a moved directory, or an
+install step dropped, commented out or moved into another job, cannot leave it
+passing. `TestWorkflowViolations` and `TestMakeRunsByJob` pin the two rules on
+synthetic input, so the real-workflow test cannot pass because a rule went
+blind.
+
+`TestBotDispatchesCI` pins §3.2.5's contract on comment-stripped lines:
+`workflow_dispatch:` in check.yml and docs.yml, `actions: write` in
+tool-pins.yml, and both `gh workflow run <file> --ref "$branch"` lines after
+`git push` and after `gh pr create`. Losing any of them leaves the bot's PR
+without its required check while the weekly run itself stays green, so
+nothing else would notice.
+
+All of these run in `test-core`, so on every PR.
 
 #### §3.2.7 `CHANGELOG.md` — record the fix
 
@@ -235,6 +274,27 @@ section's "its ten steps run in this order" list, and its sample run output
   "all ten happen inside one process" → eleven, "`ci` drives all fourteen
   steps" → fifteen.
 
+#### §3.2.10 `Makefile` + `internal/lintcfg/toolchain_test.go` — pin GOTOOLCHAIN
+
+- The Makefile reads the root go.mod's `toolchain` line and exports
+  `GOTOOLCHAIN` set to it, so every `go` call — and every Go tool and script
+  that calls `go` — runs the pinned release whatever Go is installed. An empty
+  line stops make with an error rather than falling back to the local Go.
+  `:=` rather than `?=`, so a value left in the shell cannot break parity
+  unnoticed; `make GOTOOLCHAIN=…` still overrides it deliberately.
+- `TestToolchainPinIsUniform` requires every go.mod to carry the root's
+  `toolchain` line and check.yml's two jobs to set the same `go-version`,
+  naming the files that disagree. `TestToolchainPins` pins its two regexps on
+  synthetic input.
+- CLAUDE.md's parity rule and both READMEs say `make` pins the toolchain.
+
+#### §3.2.11 Every `go.mod`, `check.yml` and four docs — go1.26.10
+
+`toolchain go1.26.9` → `go1.26.10` in all 60 go.mod files and both
+`go-version` pins in check.yml, per the parity rule; CLAUDE.md, README.md,
+its twin README.ru.md and the installation guide name the new version. No `go`
+directive changes.
+
 ## §4 Verification
 
 One Go test changes (§3.2.6); the rest is checked by runs.
@@ -249,7 +309,10 @@ One Go test changes (§3.2.6); the rest is checked by runs.
 | V-4 | `go test ./internal/lintcfg/ -run TestWorkflowsInstallThroughMake`, then again with a `go install …` line, and separately an `env: X: v1.2.3` line, put back into `check.yml` | passes, then fails each time naming the file and line; reverted after |
 | V-5 | `sed 's/#.*//' .github/workflows/check.yml .github/workflows/docs.yml \| grep -nE 'v[0-9]+\.[0-9]+\.[0-9]+'` | no output (the same rule as V-4, by hand) |
 | V-6 | `make workflow-check`, then again with one `run: make <step>` line removed from `check.yml` | "check.yml runs exactly the 11 core steps", then `CI_CORE_STEPS and check.yml disagree`; reverted after. `make ci` (V-7) shows it as step 1 |
-| V-7 | `make ci` | PASS by `.ci/last-run.json` |
+| V-7 | `make ci`, with no `GOTOOLCHAIN` in the shell | PASS by `.ci/last-run.json` |
+| V-7a | `TestToolchainPinIsUniform`, then again with one adapter's go.mod on the old toolchain, one check.yml `go-version` moved alone, and an example go.mod without a toolchain line | passes, then fails each time naming the file; reverted after |
+| V-7c | The root go.mod's `toolchain` line removed, then any `make` target; separately, trailing spaces after it | make stops with the FIX-042 error; with the spaces, `$(GO) version` inside make still reports the pin (the value is stripped). Reverted after |
+| V-7d | `make lint-core` on a machine whose local Go is newer than the pin | passes (it panicked before §3.2.10) |
 | V-7b | The FIX-042 PR's own `check` and `docs / build` runs | green — the only pre-merge proof that `make tools`, `make docs-tools` and `make docs-build` work on a runner, and that `site/` lands where `upload-pages-artifact` reads it |
 
 ### §4.2 Post-merge (owner)
