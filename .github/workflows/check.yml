@@ -55,7 +55,7 @@ jobs:
           # bare '1.26' resolved to whatever patch the runner happened to
           # cache, drifting from local results (govulncheck reports stdlib
           # vulns per toolchain patch).
-          go-version: '1.26.9'
+          go-version: '1.26.10'
           cache: true
 
       - name: Install tools
@@ -139,7 +139,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.9'
+          go-version: '1.26.10'
           cache: true
 
       - name: Install tools
