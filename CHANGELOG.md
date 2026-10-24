@@ -9,11 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The pinned toolchain is `go1.26.9`, and `adapters/sqlite` now requires
+- **The pinned toolchain is `go1.26.10`, and `adapters/sqlite` now requires
   Go 1.26.** Go 1.25 left support when 1.27 shipped, so `go1.25.13` was the
   last patch that line will get and stdlib advisories against it could no
-  longer be cleared. Every `go.mod` and both `go-version` pins in the check
-  workflow move together, as the parity rule requires. The root module and
+  longer be cleared. The move went to `go1.26.9` first, then to `go1.26.10`
+  for GO-2026-6809, a `crypto/x509` advisory against 1.26.9. Every `go.mod`
+  and both `go-version` pins in the check workflow move together, as the
+  parity rule requires, and a test now fails when one of them is left
+  behind. The root module and
   the other adapters still declare `go 1.25`; only `adapters/sqlite` raises
   its floor to `go 1.26.0`, because `modernc.org/sqlite` 1.60 and its
   `modernc.org/libc` 1.77 declare it — the adapter moves from 1.59.0 to
@@ -21,11 +24,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **The weekly tool-pin check runs again.** `tool-pins.yml` carried a
-  `workflow: write` entry in its `permissions:` block; that is not a
-  permission scope GitHub Actions knows, so the whole file was rejected and
-  the workflow failed on every push without its schedule ever firing. The
-  block is back to the two scopes FIX-025 specifies.
+- **The weekly tool-pin check can open its bump PR, and the PR runs CI.**
+  Two defects stood in the way, one behind the other. First, the bump
+  rewrote each pin in the Makefile and again in the workflow that installed
+  the tool, and GitHub refuses a push that changes a workflow file from
+  `GITHUB_TOKEN` — no `permissions:` entry can grant that, which is why
+  adding one never worked (an unknown `workflow: write` scope even made
+  GitHub reject the whole file). The Makefile is now the only place a pin is
+  written: the check and docs workflows install through `make tools` and
+  `make docs-tools`, and a test fails any workflow line that installs a tool
+  or names a version itself. Second, a PR opened with `GITHUB_TOKEN` starts
+  no `pull_request` run, so the bump PR would have had no required check;
+  the bot now dispatches `check` and `docs` on its branch, which needs the
+  `actions: write` scope (FIX-042).
+- **`make` runs the pinned Go toolchain, whatever Go is installed.** A
+  `go.mod` `toolchain` line only ever upgrades, so a newer local Go used to
+  win — and the pinned golangci-lint panics on go1.27. The Makefile now
+  exports `GOTOOLCHAIN` from the root `go.mod`.
+- **`make workflow-check` runs in the gate.** It compares the core step list
+  with the check workflow's steps, and until now nothing ran it.
 
 ## [v0.12.0] - 2026-08-29
 

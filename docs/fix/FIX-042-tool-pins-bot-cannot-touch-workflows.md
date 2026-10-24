@@ -249,10 +249,12 @@ All of these run in `test-core`, so on every PR.
 
 #### §3.2.7 `CHANGELOG.md` — record the fix
 
-A `[Unreleased] → Fixed` entry for the rejected push and the CI-less PR. The
-existing entry "The weekly tool-pin check runs again" ends "back to the two
-scopes FIX-025 specifies"; it is amended to say `actions: write` is now the
-third.
+The existing `[Unreleased] → Fixed` entry "The weekly tool-pin check runs
+again" is replaced rather than amended: after `5cac1ec9` the check did start,
+but its push was rejected (§1.1), so the entry's claim never held. In its
+place, one entry for the rejected push and the CI-less PR, and one each for
+§3.2.10 and §3.2.9. The `[Unreleased] → Changed` toolchain entry, which named
+`go1.26.9`, names `go1.26.10` and why (§3.2.11).
 
 #### §3.2.8 `CLAUDE.md` — the docs-build note and the core step list
 
