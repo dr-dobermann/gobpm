@@ -39,7 +39,12 @@ latest_pypi() { # pypi package ("info" and its "version" precede "releases")
 }
 
 current_pin() { # *_VERSION var
-	grep -oE "^${1}[[:space:]]*:=[[:space:]]*\S+" "$makefile" | awk '{print $NF}'
+	grep -oE "^${1}[[:space:]]*:=[[:space:]]*\S+" "$makefile" | awk '{print $NF}' ||
+		{
+			echo "ERROR: $makefile has no '$1 := <version>' line;" \
+				"fix it before the bump can run" >&2
+			exit 1
+		}
 }
 
 : >"$notes"
@@ -73,6 +78,15 @@ for entry in "${tools[@]}"; do
 	# string that collides with another tool's pin (the covercheck
 	# "-exclude-lines, v0.1.2+" note vs linkcheck's pin).
 	sed -i "s/^\(${var}[[:space:]]*:=[[:space:]]*\)${esc}\$/\1${new}/" "$makefile"
+	# sed exits 0 when it substitutes nothing, which would record a bump that
+	# never happened; lintcfg's TestPinBotCoversEveryPin keeps every pin in
+	# the one form the expression above rewrites.
+	pinned="^${var}[[:space:]]*:=[[:space:]]*${new//./\\.}\$"
+	if ! grep -qE "$pinned" "$makefile"; then
+		echo "ERROR: $makefile has no '$var := $cur' line to rewrite;" \
+			"$name was not bumped to $new" >&2
+		exit 1
+	fi
 	echo "- \`$name\`: \`$cur\` → \`$new\`" >>"$notes"
 	changed=1
 done

@@ -297,6 +297,36 @@ section's "its ten steps run in this order" list, and its sample run output
 its twin README.ru.md and the installation guide name the new version. No `go`
 directive changes.
 
+#### §3.2.12 Hardening from the independent review
+
+The pre-merge review of the branch (doc-blind, another model family) found
+the plumbing tests and the script weaker than the properties they claim:
+
+- **CI reads Go from go.mod.** Both setup-go steps in check.yml use
+  `go-version-file: go.mod`; setup-go uses the `toolchain` directive when one
+  is present (its README at the pinned SHA). A Go bump is then the go.mod
+  files alone. `TestToolchainPinIsUniform` requires every setup-go step in
+  every workflow to read go.mod and forbids a `go-version:` key, replacing the
+  regexp over `go-version:` values and its count of two.
+- **One comment rule.** `stripComment` treats `#` as a comment only outside
+  quotes and after whitespace, so `echo "# x" && go install …` is no longer
+  read as a comment. Every workflow helper uses it; `makeRunsByJob` also
+  trims trailing space and CR and anchors `run:` as a step key.
+- **The install guard catches pins without a `v`** (each current Makefile pin
+  value, as a whole word), `go run …@`, `pip3`/`pipx`/`uv … install`, and
+  `.yaml` workflows.
+- **The bot's tool table is checked against the Makefile.**
+  `TestPinBotCoversEveryPin` requires the same `*_VERSION` set in both and
+  every pin in the `NAME := value` form the script's sed rewrites. The script
+  itself fails, naming the pin, when the line is missing or the sed changed
+  nothing — it used to record a bump that never happened.
+- **The dispatch contract is checked in one step.** `TestBotDispatchesCI` also
+  requires a single permissions block (a job-level one would replace
+  `actions: write`), the PR opened after the push, and both dispatches in the
+  step that pushed, where `$branch` is set.
+- The toolchain `sed` in the Makefile and `toolchainLine` both drop a
+  trailing `//` comment after the version.
+
 ## §4 Verification
 
 One Go test changes (§3.2.6); the rest is checked by runs.
@@ -315,6 +345,8 @@ One Go test changes (§3.2.6); the rest is checked by runs.
 | V-7a | `TestToolchainPinIsUniform`, then again with one adapter's go.mod on the old toolchain, one check.yml `go-version` moved alone, and an example go.mod without a toolchain line | passes, then fails each time naming the file; reverted after |
 | V-7c | The root go.mod's `toolchain` line removed, then any `make` target; separately, trailing spaces after it | make stops with the FIX-042 error; with the spaces, `$(GO) version` inside make still reports the pin (the value is stripped). Reverted after |
 | V-7d | `make lint-core` on a machine whose local Go is newer than the pin | passes (it panicked before §3.2.10) |
+| V-7e | §3.2.12 breakages, each reverted: `9.7.7` in an `env:`, `pip3 install`, `go install` after a quoted `#`, a `.yaml` workflow installing a tool, the `examples` install dropped, a dispatch moved to a later step, a job-level `permissions:`, `FOO_VERSION` added to the Makefile alone, a pin with `=`, a pin with a trailing comment, `go-version:` restored, `go-version-file` commented out | each fails its test |
+| V-7f | The script on a pin written with `=`, then on one with trailing space | exits 1 naming the pin; no `changed=true` |
 | V-7b | The FIX-042 PR's own `check` and `docs / build` runs | green — the only pre-merge proof that `make tools`, `make docs-tools` and `make docs-build` work on a runner, and that `site/` lands where `upload-pages-artifact` reads it |
 
 ### §4.2 Post-merge (owner)
@@ -411,6 +443,14 @@ first so the pin would read the new version.
   golangci-lint v2.15.0, govulncheck v1.9.0 and linkcheck v0.1.3 against the
   pinned v3.5.0, v2.11.4, v1.6.0 and v0.1.2 — the bot's first run after merge
   will open that PR, and V-8/V-9 are checked on it.
+
+- **The independent review hardened the guards (§3.2.12).** Twelve notes
+  across three lenses; six were agreed and fixed, the docs-pins move to a
+  `requirements.txt` was declined (it would put pins in a second place),
+  and one claimed `workflow-check` failure on `make tools` was wrong — the
+  filter already excludes it. The agreed fixes were all gaps between a test
+  and the property it named: a quoted `#` that hid an install, unprefixed
+  pins, a sed that could change nothing while the bot reported a bump.
 
 ### §8.3 Backlog
 

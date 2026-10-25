@@ -12,9 +12,10 @@ GO = go
 # the scripts and the Go-based tools that shell out to `go` inherit it. `:=`
 # rather than `?=`, so a GOTOOLCHAIN left in the shell cannot quietly break
 # parity; `make GOTOOLCHAIN=local …` still overrides it on purpose.
-# internal/lintcfg's TestToolchainPinIsUniform keeps every go.mod and the
-# workflow's go-version on this one value.
-GO_TOOLCHAIN_PIN := $(strip $(shell sed -n 's/^toolchain //p' \
+# CI's setup-go reads the same line (`go-version-file: go.mod`), and
+# internal/lintcfg's TestToolchainPinIsUniform keeps every go.mod on it.
+GO_TOOLCHAIN_PIN := $(strip $(shell \
+	sed -n 's|^toolchain[[:space:]]*\([^[:space:]/]*\).*|\1|p' \
 	$(dir $(abspath $(lastword $(MAKEFILE_LIST))))go.mod))
 ifeq ($(GO_TOOLCHAIN_PIN),)
 $(error the root go.mod has no `toolchain` line; make pins \

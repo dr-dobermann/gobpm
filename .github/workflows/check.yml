@@ -50,12 +50,13 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # Pinned to the exact patch the go.mod `toolchain` directive
-          # requires, so CI and local runs scan the identical stdlib. A
-          # bare '1.26' resolved to whatever patch the runner happened to
-          # cache, drifting from local results (govulncheck reports stdlib
-          # vulns per toolchain patch).
-          go-version: '1.26.10'
+          # The exact patch the go.mod `toolchain` directive names, read
+          # from go.mod itself so a Go bump never touches this file (FIX-042)
+          # — CI and local runs scan the identical stdlib. A bare '1.26'
+          # resolved to whatever patch the runner happened to cache,
+          # drifting from local results (govulncheck reports stdlib vulns
+          # per toolchain patch).
+          go-version-file: go.mod
           cache: true
 
       - name: Install tools
@@ -139,7 +140,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.10'
+          go-version-file: go.mod
           cache: true
 
       - name: Install tools
