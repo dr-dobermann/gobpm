@@ -1,7 +1,7 @@
 # FIX-042 «The tool-pin bot cannot push its bump, and its PR would never run CI»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft.
+**Status:** Accepted.
 **Date:** 2026-10-19.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/tool-pins-workflow-permission`.
@@ -368,16 +368,54 @@ a `Makefile` the bot has already moved forward, and the reverted tree fails
 
 ## §8 Implementation summary
 
-> ⚠️ TODO: fill after landing.
-
 ### §8.1 Stages by commit (branch `fix/tool-pins-workflow-permission`)
 | Stage | Commit | Scope |
 |---|---|---|
-| Doc | | FIX-042 (this document) |
+| Doc | `08fa5e8d` | FIX-042 (this document) |
+| M1 | `f4ec9dad` | §3.2.1–§3.2.3, §3.2.6 (`TestWorkflowViolations`, `TestMakeRunsByJob`, `TestWorkflowsInstallThroughMake`), §3.2.8 docs-build note |
+| M2 | `2485244d` | §3.2.4, §3.2.5, §3.2.2 `workflow_dispatch`, `TestBotDispatchesCI` |
+| M3 | `a5cb4bf2` | §3.2.9, §3.2.8 step list |
+| M3b | `e0fa5f25` | §3.2.11 — go1.26.10 across 60 go.mod, check.yml, four docs |
+| M3a | `2bf3c612` | §3.2.10 — GOTOOLCHAIN pin, `TestToolchainPins`, `TestToolchainPinIsUniform`; §2.4–§2.5 |
+| Docs | `56f12e64` | §3.2.7 CHANGELOG |
+
+`make ci` with no `GOTOOLCHAIN` in the shell on a go1.27.0 machine: PASS
+15/15 at `2bf3c612` (`.ci/last-run.json`). Diff coverage 100% of 0 changed
+coverable lines — every Go change is a `_test.go` file. M3b and M3a are
+numbered by the order they were found, not landed: the bump had to land
+first so the pin would read the new version.
 
 ### §8.2 Empirical findings vs the §3 draft
 
+- **No `tools-lint` target.** The plan split `tools` so the `examples` job
+  could install golangci-lint alone; `workflow-check` filters `make <target>`
+  lines in check.yml by exact name, and `tools` was already excluded. Both
+  jobs run `make tools` instead (§3.2.2).
+- **No push guard, and no `docs` output.** Two draft mechanisms in
+  §3.2.4/§3.2.5 were removed by the document review: the guard checked a
+  condition §3.2.4 makes impossible and would have discarded a valid bump; the
+  `docs=true` output existed only to skip one bounded site build. Both
+  workflows are dispatched unconditionally.
+- **Per job, not per file.** `TestWorkflowsInstallThroughMake` first counted
+  `run: make tools` lines per file; the milestone check showed an install
+  moved from `examples` into `check` would still pass. `makeRunsByJob` counts
+  per job (§3.2.6).
+- **The dispatch contract needed its own test.** Neither the forced-stale
+  probe nor the install test would notice the loss of `actions: write`, a
+  `workflow_dispatch` trigger or a dispatch line — the weekly run stays green
+  while the PR goes without CI. `TestBotDispatchesCI` was added in M2.
+- **Two defects outside the draft.** Verification hit a local go1.27 that
+  crashed the pinned golangci-lint (§2.4 → M3a) and GO-2026-6809 against
+  go1.26.9 (§2.5 → M3b). Both fail on master too; both were fixed here.
+- **The pins really are stale.** The V-3 probe resolved mockery v3.8.1,
+  golangci-lint v2.15.0, govulncheck v1.9.0 and linkcheck v0.1.3 against the
+  pinned v3.5.0, v2.11.4, v1.6.0 and v0.1.2 — the bot's first run after merge
+  will open that PR, and V-8/V-9 are checked on it.
+
 ### §8.3 Backlog
+
+None. V-7b (this PR's own CI runs) and V-8/V-9 (§4.2) are post-push checks
+for the owner, not deferred work.
 
 ## Open questions
 
