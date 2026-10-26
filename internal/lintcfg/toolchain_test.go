@@ -25,7 +25,10 @@ var (
 
 	// anyToolchainLine matches any toolchain directive, well-formed or not —
 	// indented too, so an indented one is quoted rather than reported absent.
-	anyToolchainLine = regexp.MustCompile(`(?m)^[ \t]*toolchain\b.*$`)
+	// The directive word must be followed by a blank or the end of the line,
+	// so a dependency path such as `toolchain.sh/foo` in a require block is
+	// not mistaken for one.
+	anyToolchainLine = regexp.MustCompile(`(?m)^[ \t]*toolchain(?:[ \t].*)?$`)
 
 	// setupGoStep matches the line that opens an actions/setup-go step.
 	setupGoStep = regexp.MustCompile(`^(-\s*)?uses:\s*actions/setup-go@`)
@@ -53,7 +56,10 @@ func toolchainPins(mods map[string]string) (map[string][]string, []string) {
 		case m != nil:
 			pins[m[1]] = append(pins[m[1]], name)
 		case anyToolchainLine.MatchString(content):
-			bad = append(bad, name+": "+anyToolchainLine.FindString(content))
+			bad = append(bad, fmt.Sprintf(
+				"%s: malformed toolchain line (want exactly "+
+					"\"toolchain goX.Y.Z\" at column 0): %q",
+				name, anyToolchainLine.FindString(content)))
 		default:
 			bad = append(bad, name+": no toolchain line")
 		}
@@ -120,6 +126,7 @@ func TestToolchainPins(t *testing.T) {
 		"d/go.mod": "module d\n\ntoolchain go1.26.10 // FIX-042\n",
 		"e/go.mod": "module e\n\ntoolchain go1.26\n",
 		"f/go.mod": "module f\n\n  toolchain go1.26.10\n",
+		"g/go.mod": "module g\n\nrequire (\n\ttoolchain.sh/foo v1.2.3\n)\n",
 	})
 	require.Equal(t, map[string][]string{
 		"1.26.10": {"a/go.mod"},
@@ -127,9 +134,13 @@ func TestToolchainPins(t *testing.T) {
 	}, pins)
 	require.Equal(t, []string{
 		"c/go.mod: no toolchain line",
-		"d/go.mod: toolchain go1.26.10 // FIX-042",
-		"e/go.mod: toolchain go1.26",
-		"f/go.mod:   toolchain go1.26.10",
+		`d/go.mod: malformed toolchain line (want exactly "toolchain goX.Y.Z" ` +
+			`at column 0): "toolchain go1.26.10 // FIX-042"`,
+		`e/go.mod: malformed toolchain line (want exactly "toolchain goX.Y.Z" ` +
+			`at column 0): "toolchain go1.26"`,
+		`f/go.mod: malformed toolchain line (want exactly "toolchain goX.Y.Z" ` +
+			`at column 0): "  toolchain go1.26.10"`,
+		"g/go.mod: no toolchain line",
 	}, bad)
 }
 

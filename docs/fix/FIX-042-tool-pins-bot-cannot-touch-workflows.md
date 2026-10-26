@@ -478,6 +478,11 @@ first so the pin would read the new version.
   seven rejected include a go.mod with two toolchain lines (Go itself refuses
   it: `repeated toolchain statement`) and a missing `git push` panicking
   `dispatchProblems` (an early return already reports it).
+  The fourth round, on those three, raised two notes about the wording of a
+  report — an indented toolchain line quoted without saying what was wrong
+  with it, and a dependency path such as `toolchain.sh/foo` quoted as if it
+  were the directive. Both were fixed; neither changes which files pass. By
+  the owner's decision that wording fix had no fifth review round.
 
 ### §8.3 Backlog
 
