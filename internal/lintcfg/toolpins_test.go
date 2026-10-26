@@ -88,11 +88,14 @@ func readWorkflows(t *testing.T) map[string]string {
 }
 
 // makefilePin matches a `NAME_VERSION := value` pin and, loosely, the
-// forms check-tool-pins.sh cannot rewrite — `=`, `?=`, `+=`, an `export` in
-// front, leading space — so TestPinBotCoversEveryPin reports them as
-// malformed instead of never seeing them.
-var makefilePin = regexp.MustCompile(`(?m)^[ \t]*(?:export[ \t]+)?` +
-	`([A-Z][A-Z0-9_]*_VERSION)[ \t]*[:?+]?=[ \t]*(\S*)`)
+// forms check-tool-pins.sh cannot rewrite — any other assignment operator
+// (`=`, `?=`, `+=`, `!=`, `::=`), an `export` or `override` in front, leading
+// spaces — so TestPinBotCoversEveryPin reports them as malformed instead of
+// never seeing them. Leading spaces only: a tab-indented line is a recipe,
+// shell rather than an assignment, and `\tGO_VERSION=1.26 ./build.sh` is not
+// a pin.
+var makefilePin = regexp.MustCompile(`(?m)^ *(?:(?:export|override)[ \t]+)*` +
+	`([A-Z][A-Z0-9_]*_VERSION)[ \t]*(?:::|[:?+!])?=[ \t]*(\S*)`)
 
 // makefilePins returns the Makefile's pin values, the literals no workflow
 // may repeat.
@@ -431,6 +434,21 @@ func TestPinTableProblems(t *testing.T) {
 		"malformed pin: export C_VERSION := v3.0.0",
 	}, pinTableProblems(
 		"A_VERSION ?= v1.0.0\nB_VERSION += 2.0.0\nexport C_VERSION := v3.0.0\n",
+		script))
+	require.Equal(t, []string{
+		"malformed pin:   C_VERSION := v3.0.0",
+		"malformed pin: A_VERSION != ./version.sh",
+		"malformed pin: B_VERSION ::= 2.0.0",
+		"malformed pin: override C_VERSION := v3.0.0",
+	}, pinTableProblems(
+		"A_VERSION != ./version.sh\nB_VERSION ::= 2.0.0\n"+
+			"override C_VERSION := v3.0.0\n  C_VERSION := v3.0.0\n",
+		script))
+
+	// A tab-indented line is a recipe, not an assignment: invisible.
+	require.Empty(t, pinTableProblems(
+		"A_VERSION := v1.0.0\nB_VERSION := 2.0.0\nC_VERSION := v3.0.0\n"+
+			"build:\n\tGO_VERSION=1.26 ./build.sh\n\texport D_VERSION=1\n",
 		script))
 }
 

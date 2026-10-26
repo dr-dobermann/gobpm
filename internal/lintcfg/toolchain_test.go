@@ -23,8 +23,9 @@ var (
 	toolchainLine = regexp.MustCompile(
 		`(?m)^toolchain[ \t]+go([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$`)
 
-	// anyToolchainLine matches any toolchain directive, well-formed or not.
-	anyToolchainLine = regexp.MustCompile(`(?m)^toolchain\b.*$`)
+	// anyToolchainLine matches any toolchain directive, well-formed or not —
+	// indented too, so an indented one is quoted rather than reported absent.
+	anyToolchainLine = regexp.MustCompile(`(?m)^[ \t]*toolchain\b.*$`)
 
 	// setupGoStep matches the line that opens an actions/setup-go step.
 	setupGoStep = regexp.MustCompile(`^(-\s*)?uses:\s*actions/setup-go@`)
@@ -118,6 +119,7 @@ func TestToolchainPins(t *testing.T) {
 		"c/go.mod": "module c\n\ngo 1.25\n",
 		"d/go.mod": "module d\n\ntoolchain go1.26.10 // FIX-042\n",
 		"e/go.mod": "module e\n\ntoolchain go1.26\n",
+		"f/go.mod": "module f\n\n  toolchain go1.26.10\n",
 	})
 	require.Equal(t, map[string][]string{
 		"1.26.10": {"a/go.mod"},
@@ -127,6 +129,7 @@ func TestToolchainPins(t *testing.T) {
 		"c/go.mod: no toolchain line",
 		"d/go.mod: toolchain go1.26.10 // FIX-042",
 		"e/go.mod: toolchain go1.26",
+		"f/go.mod:   toolchain go1.26.10",
 	}, bad)
 }
 

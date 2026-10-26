@@ -471,6 +471,13 @@ first so the pin would read the new version.
   among them that setup-go reads the `go` directive (its README at the pinned
   SHA says the `toolchain` directive wins) and that the script's pin check
   needs `pipefail` (it runs under `set -euo pipefail`).
+  The third round, on the second-round fixes, raised ten notes; three small
+  ones were agreed — a tab-indented recipe line read as a pin (pins may now
+  be indented by spaces only), the `!=`, `::=` and `override` forms unseen,
+  and an indented toolchain line reported as absent rather than quoted. The
+  seven rejected include a go.mod with two toolchain lines (Go itself refuses
+  it: `repeated toolchain statement`) and a missing `git push` panicking
+  `dispatchProblems` (an early return already reports it).
 
 ### §8.3 Backlog
 
