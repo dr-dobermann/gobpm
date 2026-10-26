@@ -44,16 +44,17 @@ func (inst *Instance) ReportJobCompletion(
 		return ctx.Err()
 	}
 
-	select {
-	case err := <-reply:
+	r, stopped, err := awaitReply(ctx, reply, inst.loopDone)
+	switch {
+	case err != nil:
 		return err
-	case <-inst.loopDone:
+	case stopped:
 		return errs.New(
 			errs.M("instance %q stopped before job reply", inst.ID()),
 			errs.C(errorClass, errs.InvalidState))
-	case <-ctx.Done():
-		return ctx.Err()
 	}
+
+	return r
 }
 
 // handleJobCompletion resolves the outcome's job to its parked track and resumes

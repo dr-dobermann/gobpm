@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exports `GOTOOLCHAIN` from the root `go.mod`.
 - **`make workflow-check` runs in the gate.** It compares the core step list
   with the check workflow's steps, and until now nothing ran it.
+- **A worker's, task's or scope's answer is no longer lost when it ends the
+  instance.** When the answer let the instance finish, the caller could wake
+  to find both the answer and the stop signal ready, and half the time it
+  reported "stopped before job reply" for a completion that had been applied.
+  `ReportJobCompletion`, task Take/Complete, the scope round-trip and
+  `AdHocView` now take the answer when it is there. `AdHocView`'s stop error
+  also names the instance again instead of printing `%!q(MISSING)` (FIX-042).
 
 ## [v0.12.0] - 2026-08-29
 

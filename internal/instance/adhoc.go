@@ -758,14 +758,15 @@ func (inst *Instance) AdHocView(
 		return nil, nil, ctx.Err()
 	}
 
-	select {
-	case r := <-req.reply:
-		return r.offered, r.running, r.err
-	case <-inst.loopDone:
+	r, stopped, err := awaitReply(ctx, req.reply, inst.loopDone)
+	switch {
+	case err != nil:
+		return nil, nil, err
+	case stopped:
 		return nil, nil, errs.New(
-			errs.M("instance %q stopped before the ad-hoc view"),
+			errs.M("instance %q stopped before the ad-hoc view", inst.ID()),
 			errs.C(errorClass, errs.InvalidState))
-	case <-ctx.Done():
-		return nil, nil, ctx.Err()
 	}
+
+	return r.offered, r.running, r.err
 }

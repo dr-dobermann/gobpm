@@ -48,6 +48,22 @@ Not yet observed, because no bump PR has ever been opened. Once §1.1 is fixed,
 no `check` run would appear on the bot's PR (reason in §2.2), so FIX-025
 §3.2.2's "the bump then rides normal CI" does not hold.
 
+### §1.3 This PR's own `check` failed on an engine test
+
+The first `check` run on the FIX-042 PR (#378) went red in `test-core`, on a
+test this branch does not touch:
+
+```
+--- FAIL: TestWorkerReportStatusCompletes (0.01s)
+    service_task_worker_internal_test.go:787:
+        Error: Received unexpected error:
+               Classes: [INSTANCE_ERROR, INVALID_OBJECT_STATE]
+               Message: instance "2518185837712988659" stopped before job reply
+```
+
+`make ci` had passed 15/15 locally, and 2,600 local runs of the test,
+on 1, 2 and 24 CPUs, did not reproduce it.
+
 ## §2 Root Cause Analysis
 
 ### §2.1 Each pin is written in two places, one of them a workflow file
@@ -135,6 +151,38 @@ required check until the toolchain moves.
 FIX-025 §4 verified the script locally (a forced-stale probe bumping both
 files) and checked that the workflow YAML parses. Neither exercises a push with
 `GITHUB_TOKEN`, and the first real run is the one in §1.1.
+
+### §2.7 A finished instance can lose the reply that finished it
+
+`ReportJobCompletion` in `internal/instance/jobs.go` hands its request to the
+instance loop, then waits:
+
+```go
+select {
+case err := <-reply:
+	return err
+case <-inst.loopDone:
+	return errs.New(errs.M("instance %q stopped before job reply", inst.ID()), …)
+case <-ctx.Done():
+	return ctx.Err()
+}
+```
+
+`handleJobCompletion` resumes the parked track and sends `nil` on the buffered
+`reply`. In the test that resume is the last work the instance has: the track
+reaches the end event, the loop exits, and its deferred `close(inst.loopDone)`
+runs. If the caller has not been scheduled by then, both cases are ready, and
+Go's `select` picks one at random, so about half of those late wake-ups report
+a stop for a reply that did arrive. A two-CPU runner makes the late wake-up
+likely; a 24-core desktop almost never sees it.
+
+The same wait is written out in `taskRoundtrip` (`tasks.go`), `scopeExchange`
+(`scope_decorator.go`) and `AdHocView` (`adhoc.go`). `watchCall`
+(`calls.go`) and `SubmitIncidentOp` (`incident.go`) wait differently and are
+not affected. The `AdHocView` copy also passes no argument for its `%q`, so it
+prints `%!q(MISSING)`. `go vet` misses this, because `errs.M` calls
+`fmt.Sprintf` inside a closure, so vet doesn't treat it as a printf wrapper.
+A grep of every `errs.M` call with a verb and no argument finds only this one.
 
 ## §3 Solution
 
@@ -342,6 +390,21 @@ the plumbing tests and the script weaker than the properties they claim:
   malformed), and the script's post-`sed` check escaping only dots (it now
   compares strings).
 
+#### §3.2.13 `internal/instance` — prefer the reply over the stop (§2.7)
+
+A new `awaitReply[T]` in `internal/instance/reply.go` holds the wait once.
+When `loopDone` fires it still takes a reply that is already in the channel,
+and reports a stop only when there is none. The loop's last send happens
+before it closes `loopDone`, so a reply sent at all is always seen. The check
+is exact, not a retry or a timeout. The four callers use it and keep their
+own error messages. `AdHocView` gains its missing `inst.ID()`.
+
+`reply_internal_test.go` adds `TestAwaitReplyPrefersTheReply` (reply ready
+and `loopDone` closed, 1,000 times), `TestAwaitReplyWithoutAnAnswer` (stop,
+canceled context), `TestAdHocViewStoppedNamesTheInstance`, and
+`TestRoundtripsAfterAccept`, which runs the job, task and ad-hoc callers
+through a stop and a cancellation after the loop has taken the request.
+
 ## §4 Verification
 
 One Go test changes (§3.2.6); the rest is checked by runs.
@@ -363,6 +426,7 @@ One Go test changes (§3.2.6); the rest is checked by runs.
 | V-7e | §3.2.12 breakages, each reverted: `9.7.7` in an `env:`, `pip3 install`, `go install` after a quoted `#`, a `.yaml` workflow installing a tool, the `examples` install dropped, a dispatch moved to a later step, a job-level `permissions:`, `FOO_VERSION` added to the Makefile alone, a pin with `=`, a pin with a trailing comment, `go-version:` restored, `go-version-file` commented out | each fails its test |
 | V-7f | The script on a pin written with `=`, then on one with trailing space | exits 1 naming the pin; no `changed=true` |
 | V-7g | Second-round breakages, each reverted: the apostrophe fallback removed, the `d < push` case removed, `makefilePin` narrowed back, `toolchainLine` accepting a `//` comment or a two-part version, check.yml losing a setup-go step | each fails its test |
+| V-10 | `TestAwaitReplyPrefersTheReply`, then again with `awaitReply`'s second look at `reply` removed; `TestAdHocViewStoppedNamesTheInstance` with `adhoc.go` from `origin/master` | passes; then fails on the first iteration ("Should be false"), and the message shows `%!q(MISSING)` |
 | V-7b | The FIX-042 PR's own `check` and `docs / build` runs | green — the only pre-merge proof that `make tools`, `make docs-tools` and `make docs-build` work on a runner, and that `site/` lands where `upload-pages-artifact` reads it |
 
 ### §4.2 Post-merge (owner)
