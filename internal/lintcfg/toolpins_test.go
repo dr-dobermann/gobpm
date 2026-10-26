@@ -15,7 +15,10 @@ import (
 // stripComment drops a YAML comment from one line. A '#' starts a comment
 // only outside quotes and at the start of the line or after whitespace, as
 // YAML has it, so `echo "# x" && go install …` keeps its install command and
-// `uses: x@<sha> # v7.0.1` loses the release note dependabot keeps there.
+// `uses: x@<sha> # v7.0.1` loses the release note dependabot keeps there. A
+// quote left open at the end of the line was an apostrophe in plain text
+// (`- name: the repo's pins # …`), not a string, so the line is cut at its
+// first whitespace-preceded '#' instead.
 func stripComment(line string) string {
 	var quote rune
 
@@ -27,12 +30,26 @@ func stripComment(line string) string {
 			}
 		case r == '\'' || r == '"':
 			quote = r
-		case r == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
+		case isCommentStart(line, i):
 			return line[:i]
 		}
 	}
 
+	if quote != 0 {
+		for i := range line {
+			if isCommentStart(line, i) {
+				return line[:i]
+			}
+		}
+	}
+
 	return line
+}
+
+// isCommentStart reports whether line[i] is a '#' that YAML would read as the
+// start of a comment: at the start of the line or after whitespace.
+func isCommentStart(line string, i int) bool {
+	return line[i] == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t')
 }
 
 // activeLines returns a workflow's lines with comments stripped and
@@ -71,9 +88,11 @@ func readWorkflows(t *testing.T) map[string]string {
 }
 
 // makefilePin matches a `NAME_VERSION := value` pin and, loosely, the
-// malformed forms (`=` instead of `:=`) TestPinBotCoversEveryPin rejects.
-var makefilePin = regexp.MustCompile(
-	`(?m)^([A-Z][A-Z0-9_]*_VERSION)[ \t]*:?=[ \t]*(\S*)`)
+// forms check-tool-pins.sh cannot rewrite — `=`, `?=`, `+=`, an `export` in
+// front, leading space — so TestPinBotCoversEveryPin reports them as
+// malformed instead of never seeing them.
+var makefilePin = regexp.MustCompile(`(?m)^[ \t]*(?:export[ \t]+)?` +
+	`([A-Z][A-Z0-9_]*_VERSION)[ \t]*[:?+]?=[ \t]*(\S*)`)
 
 // makefilePins returns the Makefile's pin values, the literals no workflow
 // may repeat.
@@ -133,12 +152,13 @@ func workflowViolations(name, content string, pins []string) []string {
 // TestStripComment pins the comment rule the other workflow helpers share.
 func TestStripComment(t *testing.T) {
 	for line, want := range map[string]string{
-		"  # whole line":                    "  ",
-		"  - uses: a@3d3c42e # v7.0.1":      "  - uses: a@3d3c42e ",
-		`  run: echo "# x" && go install a`: `  run: echo "# x" && go install a`,
-		"  run: echo 'a # b' # c":           "  run: echo 'a # b' ",
-		"  url: https://x/y#anchor":         "  url: https://x/y#anchor",
-		"jobs:":                             "jobs:",
+		"  # whole line":                      "  ",
+		"  - uses: a@3d3c42e # v7.0.1":        "  - uses: a@3d3c42e ",
+		`  run: echo "# x" && go install a`:   `  run: echo "# x" && go install a`,
+		"  run: echo 'a # b' # c":             "  run: echo 'a # b' ",
+		"  url: https://x/y#anchor":           "  url: https://x/y#anchor",
+		"  - name: the repo's pins # v2.11.4": "  - name: the repo's pins ",
+		"jobs:":                               "jobs:",
 	} {
 		require.Equal(t, want, stripComment(line), "line %q", line)
 	}
@@ -403,6 +423,15 @@ func TestPinTableProblems(t *testing.T) {
 	}, pinTableProblems(
 		"A_VERSION = v1.0.0\nB_VERSION := 2.0.0 # pinned\nD_VERSION := v4.0.0\n",
 		script))
+
+	// Forms the script's sed cannot rewrite must surface, not disappear.
+	require.Equal(t, []string{
+		"malformed pin: A_VERSION ?= v1.0.0",
+		"malformed pin: B_VERSION += 2.0.0",
+		"malformed pin: export C_VERSION := v3.0.0",
+	}, pinTableProblems(
+		"A_VERSION ?= v1.0.0\nB_VERSION += 2.0.0\nexport C_VERSION := v3.0.0\n",
+		script))
 }
 
 // TestPinBotCoversEveryPin keeps the Makefile's pins and the weekly bump's
@@ -449,7 +478,8 @@ func dispatchProblems(lines []string, dispatched ...string) []string {
 
 	if blocks != 1 {
 		problems = append(problems, fmt.Sprintf(
-			"%d permissions blocks; a job-level one replaces the workflow's", blocks))
+			"%d permissions blocks; a job-level one replaces the workflow's "+
+				"for its job, and the bot has one job", blocks))
 	}
 
 	if !slices.Contains(lines, "actions: write") {
@@ -474,6 +504,9 @@ func dispatchProblems(lines []string, dispatched ...string) []string {
 			problems = append(problems, wf+" is not dispatched")
 		case d < pr:
 			problems = append(problems, wf+" is dispatched before the PR is opened")
+		case d < push:
+			problems = append(problems,
+				wf+" is dispatched before the branch is pushed")
 		case slices.ContainsFunc(lines[push:d], func(l string) bool {
 			return strings.HasPrefix(l, "- ")
 		}):
@@ -505,7 +538,8 @@ func TestDispatchProblems(t *testing.T) {
 	}{
 		"job-level permissions": {edit(func(l []string) []string {
 			return slices.Insert(l, 4, "permissions:")
-		}), "2 permissions blocks; a job-level one replaces the workflow's"},
+		}), "2 permissions blocks; a job-level one replaces the workflow's " +
+			"for its job, and the bot has one job"},
 		"no actions: write": {edit(func(l []string) []string {
 			return slices.Delete(l, 2, 3)
 		}), "no `actions: write` for `gh workflow run`"},
@@ -519,6 +553,10 @@ func TestDispatchProblems(t *testing.T) {
 		"dispatch missing": {edit(func(l []string) []string {
 			return l[:11]
 		}), "check.yml is not dispatched"},
+		"PR, then dispatch, then push": {edit(func(l []string) []string {
+			l[8], l[9], l[11] = l[9], l[11], l[8]
+			return l
+		}), "check.yml is dispatched before the branch is pushed"},
 	} {
 		require.Contains(t, dispatchProblems(tt.lines, "check.yml"), tt.want, name)
 	}

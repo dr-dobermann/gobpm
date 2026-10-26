@@ -324,8 +324,22 @@ the plumbing tests and the script weaker than the properties they claim:
   requires a single permissions block (a job-level one would replace
   `actions: write`), the PR opened after the push, and both dispatches in the
   step that pushed, where `$branch` is set.
-- The toolchain `sed` in the Makefile and `toolchainLine` both drop a
-  trailing `//` comment after the version.
+- **The toolchain line is exact.** `toolchainLine` accepts only `toolchain
+  goX.Y.Z` with nothing after it, and reports any other toolchain line by
+  file: setup-go reads the line itself, a two-part version would float to the
+  runner's patch, and how setup-go reads a trailing `//` comment is not
+  verified. The Makefile's `sed` still strips such a comment, harmlessly. The
+  first review round asked for the comment to be *accepted*; the second
+  showed that trusted a reader nobody had checked, and the acceptance was
+  reverted.
+- The second review round also found: a `dispatchProblems` panic when the
+  dispatch sits between the PR and the push (now reported), the setup-go
+  count summed over every workflow instead of check.yml's own, an apostrophe
+  in a plain YAML value read as an opening quote (a quote still open at the
+  end of the line now falls back to the whitespace rule), pins written `?=`,
+  `+=` or `export NAME :=` invisible to every check (now reported as
+  malformed), and the script's post-`sed` check escaping only dots (it now
+  compares strings).
 
 ## §4 Verification
 
@@ -347,6 +361,7 @@ One Go test changes (§3.2.6); the rest is checked by runs.
 | V-7d | `make lint-core` on a machine whose local Go is newer than the pin | passes (it panicked before §3.2.10) |
 | V-7e | §3.2.12 breakages, each reverted: `9.7.7` in an `env:`, `pip3 install`, `go install` after a quoted `#`, a `.yaml` workflow installing a tool, the `examples` install dropped, a dispatch moved to a later step, a job-level `permissions:`, `FOO_VERSION` added to the Makefile alone, a pin with `=`, a pin with a trailing comment, `go-version:` restored, `go-version-file` commented out | each fails its test |
 | V-7f | The script on a pin written with `=`, then on one with trailing space | exits 1 naming the pin; no `changed=true` |
+| V-7g | Second-round breakages, each reverted: the apostrophe fallback removed, the `d < push` case removed, `makefilePin` narrowed back, `toolchainLine` accepting a `//` comment or a two-part version, check.yml losing a setup-go step | each fails its test |
 | V-7b | The FIX-042 PR's own `check` and `docs / build` runs | green — the only pre-merge proof that `make tools`, `make docs-tools` and `make docs-build` work on a runner, and that `site/` lands where `upload-pages-artifact` reads it |
 
 ### §4.2 Post-merge (owner)
@@ -451,6 +466,11 @@ first so the pin would read the new version.
   filter already excludes it. The agreed fixes were all gaps between a test
   and the property it named: a quoted `#` that hid an install, unprefixed
   pins, a sed that could change nothing while the bot reported a bump.
+  The second round, on that commit alone (`qwen3.8-max`, the agy quota being
+  exhausted), raised fifteen notes: eleven agreed and fixed, four rejected —
+  among them that setup-go reads the `go` directive (its README at the pinned
+  SHA says the `toolchain` directive wins) and that the script's pin check
+  needs `pipefail` (it runs under `set -euo pipefail`).
 
 ### §8.3 Backlog
 

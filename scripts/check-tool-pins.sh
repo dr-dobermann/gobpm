@@ -80,9 +80,9 @@ for entry in "${tools[@]}"; do
 	sed -i "s/^\(${var}[[:space:]]*:=[[:space:]]*\)${esc}\$/\1${new}/" "$makefile"
 	# sed exits 0 when it substitutes nothing, which would record a bump that
 	# never happened; lintcfg's TestPinBotCoversEveryPin keeps every pin in
-	# the one form the expression above rewrites.
-	pinned="^${var}[[:space:]]*:=[[:space:]]*${new//./\\.}\$"
-	if ! grep -qE "$pinned" "$makefile"; then
+	# the one form the expression above rewrites. Compared as strings, so a
+	# version like `v1.2.3+incompatible` needs no escaping.
+	if [ "$(current_pin "$var")" != "$new" ]; then
 		echo "ERROR: $makefile has no '$var := $cur' line to rewrite;" \
 			"$name was not bumped to $new" >&2
 		exit 1
