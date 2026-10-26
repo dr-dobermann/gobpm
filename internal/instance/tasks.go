@@ -158,16 +158,17 @@ func (inst *Instance) taskRoundtrip(
 		return interactor.TaskView{}, ctx.Err()
 	}
 
-	select {
-	case r := <-req.reply:
-		return r.view, r.err
-	case <-inst.loopDone:
+	r, stopped, err := awaitReply(ctx, req.reply, inst.loopDone)
+	switch {
+	case err != nil:
+		return interactor.TaskView{}, err
+	case stopped:
 		return interactor.TaskView{}, errs.New(
 			errs.M("instance %q stopped before task reply", inst.ID()),
 			errs.C(errorClass, errs.InvalidState, TaskRetryClass))
-	case <-ctx.Done():
-		return interactor.TaskView{}, ctx.Err()
 	}
+
+	return r.view, r.err
 }
 
 // handleTaskRequest services one Take/Complete on the loop goroutine (SRD-034

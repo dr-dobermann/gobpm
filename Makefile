@@ -4,6 +4,25 @@ VERSION = $(shell cat .version)
 # GO = /mnt/c/Dvl/go/bin/go.exe
 GO = go
 
+# Every `go` call runs on the toolchain the root go.mod names, whatever Go is
+# installed locally (FIX-042). A go.mod `toolchain` line only ever UPGRADES:
+# a local Go newer than the pin wins, so local runs used a different stdlib
+# from CI's, and a pinned tool built with the older Go crashed on it
+# (golangci-lint on go1.27: "file requires newer Go version"). Exported, so
+# the scripts and the Go-based tools that shell out to `go` inherit it. `:=`
+# rather than `?=`, so a GOTOOLCHAIN left in the shell cannot quietly break
+# parity; `make GOTOOLCHAIN=local …` still overrides it on purpose.
+# CI's setup-go reads the same line (`go-version-file: go.mod`), and
+# internal/lintcfg's TestToolchainPinIsUniform keeps every go.mod on it.
+GO_TOOLCHAIN_PIN := $(strip $(shell \
+	sed -n 's|^toolchain[[:space:]]*\([^[:space:]/]*\).*|\1|p' \
+	$(dir $(abspath $(lastword $(MAKEFILE_LIST))))go.mod))
+ifeq ($(GO_TOOLCHAIN_PIN),)
+$(error the root go.mod has no `toolchain` line; make pins \
+	GOTOOLCHAIN to it (FIX-042))
+endif
+export GOTOOLCHAIN := $(GO_TOOLCHAIN_PIN)
+
 # DC = docker-compose.exe
 DC = docker compose
 
@@ -119,9 +138,12 @@ COVER_PROFILES = $$(for d in $(CORE_MODULES); do \
 	done | sed 's/,$$//')
 
 # ---------------------------------------------------------------------------
-# Tooling — versions are the single source of truth, mirrored by the
-# "Install tools" step in .github/workflows/check.yml. `make tools` installs
-# them locally so a developer's environment matches CI exactly.
+# Tooling — these versions are the ONLY place a tool pin is written (FIX-042).
+# CI installs through `make tools` too (.github/workflows/check.yml), so a
+# developer's environment matches CI exactly and the weekly pin bump
+# (scripts/check-tool-pins.sh) edits this file alone.
+# internal/lintcfg's TestWorkflowsInstallThroughMake fails any PR that puts an
+# install command or a version back into a workflow.
 #
 # require-go-tool guards every target that shells out to one of these binaries:
 # without it a missing tool makes the step a silent no-op (e.g. `vuln`
@@ -157,6 +179,9 @@ define require-command
 }
 endef
 
+# The golangci-lint install.sh is fetched from the PINNED version tag, not
+# master, so the installer script itself is immutable (reproducible
+# supply-chain).
 tools:
 	$(GO) install github.com/vektra/mockery/v3@$(MOCKERY_VERSION)
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/$(GOLANGCI_VERSION)/install.sh \
@@ -169,8 +194,9 @@ tools:
 # ---------------------------------------------------------------------------
 # Documentation site (SRD-080) — builds docs/ into site/ with MkDocs.
 # NOT part of `make ci`: Python is not a prerequisite of the core gate; CI
-# builds and deploys the site in its own workflow (.github/workflows/docs.yml,
-# which mirrors this pin — swept by scripts/check-tool-pins.sh). The
+# builds and deploys the site in its own workflow (.github/workflows/docs.yml),
+# which installs through `make docs-tools` and builds through `make docs-build`,
+# so these pins are the only ones (FIX-042). The
 # `python3 -m` form puts the repo root on sys.path, which mkdocs.yml needs to
 # import scripts.mkdocs_hooks.github_slugify during config load.
 # ---------------------------------------------------------------------------
@@ -186,11 +212,19 @@ $(call require-command,python3,Install Python 3 to build the docs site.)
 	name="$${pkg%%:*}"; want="$${pkg##*:}"; \
 	actual="$$(python3 -c "from importlib.metadata import version; print(version('$$name'))" 2>/dev/null)"; \
 	if [ "$$actual" != "$$want" ]; then \
-		echo "ERROR: $$name $${actual:-is not installed}; the site build requires $$want. Run 'pip install $$name==$$want'."; \
+		echo "ERROR: $$name $${actual:-is not installed}; the site build requires $$want. Run 'make docs-tools'."; \
 		exit 1; \
 	fi; \
 done
 endef
+
+# docs-tools installs the pinned site toolchain. `python3 -m pip` puts the
+# packages into the interpreter require-mkdocs checks and docs-build runs.
+docs-tools:
+	$(call require-command,python3,Install Python 3 to build the docs site.)
+	python3 -m pip install mkdocs-material==$(MKDOCS_MATERIAL_VERSION) \
+		mkdocs-awesome-nav==$(MKDOCS_AWESOME_NAV_VERSION)
+.PHONY: docs-tools
 
 docs-build:
 	$(require-mkdocs)
@@ -559,12 +593,13 @@ examples-module-check:
 	fi; \
 	echo "example-module check: all $(words $(EXAMPLE_DIRS)) example directories are modules"
 
-# The ten core steps, in the order the REQUIRED CI job runs them. The workflow
-# runs each as its own job step, so the list exists in two places; workflow-check
-# below compares them rather than leaving the comment to assert it.
-CI_CORE_STEPS = mock-check link-check examples-module-check tidy-check-core \
-                lint-core build-core consumer-smoke test-core cover-check \
-                vuln-core
+# The eleven core steps, in the order the REQUIRED CI job runs them. The
+# workflow runs each as its own job step, so the list exists in two places;
+# workflow-check below compares them rather than leaving the comment to assert
+# it.
+CI_CORE_STEPS = workflow-check mock-check link-check examples-module-check \
+                tidy-check-core lint-core build-core consumer-smoke test-core \
+                cover-check vuln-core
 
 # The core gate. It runs through scripts/ci-run.sh, which announces each step
 # with its ordinal and elapsed time, heartbeats inside the long ones, and writes
@@ -577,12 +612,14 @@ CI_CORE_STEPS = mock-check link-check examples-module-check tidy-check-core \
 #
 # On GitHub each of these steps is its own workflow step (check.yml), so CI
 # already names and times them; this driver is what gives the same information
-# to a local run, where all ten happen inside one process.
+# to a local run, where all eleven happen inside one process.
 # workflow-check keeps CI_CORE_STEPS and .github/workflows/check.yml in step.
 # The workflow invokes each core step separately (`run: make <step>`), so the
 # list is duplicated by necessity — and a duplicated list that nothing compares
 # is a list that drifts. An independent review pointed out that the comment
-# above used to claim drift was impossible; this makes the claim true.
+# above used to claim drift was impossible; this makes the claim true. It is
+# itself the first core step (FIX-042): a comparison nothing runs is the same
+# unchecked claim one level up.
 workflow-check:
 	@tmp=$$(mktemp -d); \
 	grep -v '^[[:space:]]*#' .github/workflows/check.yml \
@@ -607,7 +644,7 @@ ci-core:
 # Umbrella target that runs the full local-equivalent of CI (BOTH CI jobs).
 # Use this before pushing to catch regressions before GitHub runs them.
 # test-core writes coverage.txt; cover-check consumes it (single test run).
-# One run, one verdict: `ci` drives all fourteen steps through a SINGLE driver
+# One run, one verdict: `ci` drives all fifteen steps through a SINGLE driver
 # invocation rather than calling ci-core and ci-examples in turn. Two
 # invocations would write $(CI_DIR)/last-run.json twice, and the second would
 # overwrite the first — leaving a file that describes half the run while

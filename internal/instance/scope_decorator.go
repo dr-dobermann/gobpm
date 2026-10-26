@@ -192,16 +192,17 @@ func (inst *Instance) scopeExchange(
 		return scopeReply{}, ctx.Err()
 	}
 
-	select {
-	case r := <-req.reply:
-		return r, r.err
-	case <-inst.loopDone:
+	r, stopped, err := awaitReply(ctx, req.reply, inst.loopDone)
+	switch {
+	case err != nil:
+		return scopeReply{}, err
+	case stopped:
 		return scopeReply{}, errs.New(
 			errs.M("instance %q stopped before scope reply", inst.ID()),
 			errs.C(errorClass, errs.InvalidState))
-	case <-ctx.Done():
-		return scopeReply{}, ctx.Err()
 	}
+
+	return r, r.err
 }
 
 // handleScopeRequest is the loop-side half of the scope protocol (mirroring

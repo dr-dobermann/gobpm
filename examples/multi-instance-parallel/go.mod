@@ -2,7 +2,7 @@ module multi-instance-parallel
 
 go 1.25
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 replace github.com/dr-dobermann/gobpm => ../..
 

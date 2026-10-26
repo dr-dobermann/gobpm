@@ -4,6 +4,9 @@ on:
     branches:
       - master
   pull_request:
+  # Started by tool-pins.yml on its bump branch: a PR opened with GITHUB_TOKEN
+  # triggers no pull_request run (FIX-042).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -47,26 +50,20 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # Pinned to the exact patch the go.mod `toolchain` directive
-          # requires, so CI and local runs scan the identical stdlib. A
-          # bare '1.26' resolved to whatever patch the runner happened to
-          # cache, drifting from local results (govulncheck reports stdlib
-          # vulns per toolchain patch).
-          go-version: '1.26.9'
+          # The exact patch the go.mod `toolchain` directive names, read
+          # from go.mod itself so a Go bump never touches this file (FIX-042)
+          # — CI and local runs scan the identical stdlib. A bare '1.26'
+          # resolved to whatever patch the runner happened to cache,
+          # drifting from local results (govulncheck reports stdlib vulns
+          # per toolchain patch).
+          go-version-file: go.mod
           cache: true
 
-      # Tool installation — pinned versions, CI-specific (not in Makefile to keep
-      # Makefile local-friendly without forcing version installs).
       - name: Install tools
-        run: |
-          go install github.com/vektra/mockery/v3@v3.5.0
-          # install.sh fetched from the PINNED version tag, not master, so the
-          # installer script itself is immutable (reproducible supply-chain).
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.11.4/install.sh \
-            | sh -s -- -b "$(go env GOPATH)/bin" v2.11.4
-          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
-          go install github.com/dr-dobermann/covercheck/cmd/covercheck@v0.2.0
-          go install github.com/dr-dobermann/linkcheck/cmd/linkcheck@v0.1.2
+        run: make tools
+
+      - name: Verify check.yml runs the core gate's steps
+        run: make workflow-check
 
       # All subsequent checks call into Makefile targets so that running
       # `make ci` locally matches what CI runs (this REQUIRED job = the
@@ -143,13 +140,11 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.9'
+          go-version-file: go.mod
           cache: true
 
       - name: Install tools
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.11.4/install.sh \
-            | sh -s -- -b "$(go env GOPATH)/bin" v2.11.4
+        run: make tools
 
       - name: Examples sweep (tidy + lint + build + run)
         run: make ci-examples

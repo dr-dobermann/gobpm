@@ -36,11 +36,16 @@ files, which are easy to forget to revert. Workspace mode is the recommended pat
 
 Before pushing, run `make ci` locally. It runs the same checks GitHub Actions runs:
 
+  * `make workflow-check` — fails when the core step list in the Makefile
+    (`CI_CORE_STEPS`) and the steps `.github/workflows/check.yml` runs disagree;
+    a new core step goes in both
   * `make mock-check` — regenerates the mocks and fails if the result differs from
     what is committed; run `make gen_mock_files` after changing an interface
   * `make link-check` — fails on any relative link in the repository's Markdown
     that does not resolve, reporting `file:line`. The checker is the pinned
     external tool `dr-dobermann/linkcheck`; `make tools` installs it
+  * `make examples-module-check` — fails when a directory under `examples/` has
+    no `go.mod`, since such an example is built but never run
   * `make tidy-check-all` — verifies every module's `go.mod` and `go.sum` are tidy
   * `make lint-all-modules` — runs `golangci-lint` (with the depguard
     import-direction rules from ADR-003 §4.4) and `gofmt` on every module; use
@@ -59,7 +64,10 @@ Before pushing, run `make ci` locally. It runs the same checks GitHub Actions ru
   * `make vuln` — runs `govulncheck` against all modules
 
 The CI workflow (`.github/workflows/check.yml`) calls these same Makefile targets
-so there is no drift between local and CI behavior.
+so there is no drift between local and CI behavior — tool installation included:
+CI runs `make tools` too, and the Makefile is the only place a tool version is
+pinned. `make` also runs every Go command on the toolchain the root `go.mod`
+names (it exports `GOTOOLCHAIN`), whatever Go you have installed.
 
 ## Submitting changes
 

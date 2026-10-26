@@ -1,9 +1,11 @@
 name: Tool pin updates
 
-# Weekly (and on-demand) check for newer releases of the go-install dev-tool
-# pins that live in the Makefile + check.yml — the niche Dependabot can't cover
-# (FIX-025). On drift it opens a PR bumping both files, which then rides normal
-# CI so a breaking tool update surfaces in the PR, not on trunk.
+# Weekly (and on-demand) check for newer releases of the dev-tool pins in the
+# Makefile — the niche Dependabot can't cover (FIX-025). The Makefile is the
+# only place a pin lives (FIX-042). On drift it opens a PR bumping the Makefile
+# and dispatches `check` and `docs` on that branch, so a breaking tool update
+# surfaces in the PR, not on trunk. The dispatch is needed because a PR opened
+# with GITHUB_TOKEN starts no `pull_request` run.
 on:
   schedule:
     - cron: "0 6 * * 1" # Mondays, 06:00 UTC
@@ -12,6 +14,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write # `gh workflow run` — the CI dispatch on the bump branch
 
 jobs:
   update:
@@ -40,3 +43,5 @@ jobs:
           gh pr create \
             --title "chore: bump pinned dev-tool versions" \
             --body-file /tmp/pin-notes.md
+          gh workflow run check.yml --ref "$branch"
+          gh workflow run docs.yml --ref "$branch"

@@ -494,7 +494,7 @@ make build        # build to ./bin/
 make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (run after `make test-all`)
 ```
 
-`make ci` is the contract: green locally ⇒ green on CI. The Go toolchain is pinned (`go.mod` → `go1.26.9`) so local and CI scan the identical standard library.
+`make ci` is the contract: green locally ⇒ green on CI. The Go toolchain is pinned (`go.mod` → `go1.26.10`) so local and CI scan the identical standard library.
 
 ### How we work
 
@@ -505,8 +505,8 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 
 ### Requirements
 
-- Go (toolchain pinned to `go1.26.9` via `go.mod`; `GOTOOLCHAIN=auto` fetches it automatically)
-- Pinned Go dev tools via `make tools`: [mockery v3](https://github.com/vektra/mockery), [golangci-lint v2](https://golangci-lint.run/), [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck), and [covercheck](https://github.com/dr-dobermann/covercheck). Make targets reject missing or stale versions instead of failing later with incompatible flags or config.
+- Go (toolchain pinned to `go1.26.10` via `go.mod`; `make` pins `GOTOOLCHAIN` to it and fetches it automatically, whatever Go is installed)
+- Pinned Go dev tools via `make tools`: [mockery v3](https://github.com/vektra/mockery), [golangci-lint v2](https://golangci-lint.run/), [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck), [covercheck](https://github.com/dr-dobermann/covercheck), and [linkcheck](https://github.com/dr-dobermann/linkcheck). Make targets reject missing or stale versions instead of failing later with incompatible flags or config.
 - GNU `timeout` for the end-to-end example gate. Linux provides it as
   `timeout`; on macOS install Homebrew coreutils once with
   `brew install coreutils` (the Makefile automatically detects `gtimeout`).
