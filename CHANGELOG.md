@@ -14,9 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last patch that line will get and stdlib advisories against it could no
   longer be cleared. The move went to `go1.26.9` first, then to `go1.26.10`
   for GO-2026-6809, a `crypto/x509` advisory against 1.26.9. Every `go.mod`
-  and both `go-version` pins in the check workflow move together, as the
-  parity rule requires, and a test now fails when one of them is left
-  behind. The root module and
+  moves together, as the parity rule requires, and a test now fails when one
+  is left behind; the check workflow reads the version from `go.mod`
+  (`go-version-file`), so a Go bump no longer touches it. The root module and
   the other adapters still declare `go 1.25`; only `adapters/sqlite` raises
   its floor to `go 1.26.0`, because `modernc.org/sqlite` 1.60 and its
   `modernc.org/libc` 1.77 declare it — the adapter moves from 1.59.0 to

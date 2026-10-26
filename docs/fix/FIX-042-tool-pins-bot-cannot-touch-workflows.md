@@ -287,7 +287,8 @@ section's "its ten steps run in this order" list, and its sample run output
 - `TestToolchainPinIsUniform` requires every go.mod to carry the root's
   `toolchain` line and check.yml's two jobs to set the same `go-version`,
   naming the files that disagree. `TestToolchainPins` pins its two regexps on
-  synthetic input.
+  synthetic input. (§3.2.12 later replaced the `go-version` half: check.yml
+  reads `go-version-file: go.mod`, and the test forbids a `go-version:` key.)
 - CLAUDE.md's parity rule and both READMEs say `make` pins the toolchain.
 
 #### §3.2.11 Every `go.mod`, `check.yml` and four docs — go1.26.10
@@ -356,7 +357,7 @@ One Go test changes (§3.2.6); the rest is checked by runs.
 | V-5 | `sed 's/#.*//' .github/workflows/check.yml .github/workflows/docs.yml \| grep -nE 'v[0-9]+\.[0-9]+\.[0-9]+'` | no output (the same rule as V-4, by hand) |
 | V-6 | `make workflow-check`, then again with one `run: make <step>` line removed from `check.yml` | "check.yml runs exactly the 11 core steps", then `CI_CORE_STEPS and check.yml disagree`; reverted after. `make ci` (V-7) shows it as step 1 |
 | V-7 | `make ci`, with no `GOTOOLCHAIN` in the shell | PASS by `.ci/last-run.json` |
-| V-7a | `TestToolchainPinIsUniform`, then again with one adapter's go.mod on the old toolchain, one check.yml `go-version` moved alone, and an example go.mod without a toolchain line | passes, then fails each time naming the file; reverted after |
+| V-7a | `TestToolchainPinIsUniform`, then again with one adapter's go.mod on the old toolchain, one check.yml `go-version` moved alone, and an example go.mod without a toolchain line | passes, then fails each time naming the file; reverted after (the `go-version` case became V-7e's "`go-version:` restored" once §3.2.12 landed) |
 | V-7c | The root go.mod's `toolchain` line removed, then any `make` target; separately, trailing spaces after it | make stops with the FIX-042 error; with the spaces, `$(GO) version` inside make still reports the pin (the value is stripped). Reverted after |
 | V-7d | `make lint-core` on a machine whose local Go is newer than the pin | passes (it panicked before §3.2.10) |
 | V-7e | §3.2.12 breakages, each reverted: `9.7.7` in an `env:`, `pip3 install`, `go install` after a quoted `#`, a `.yaml` workflow installing a tool, the `examples` install dropped, a dispatch moved to a later step, a job-level `permissions:`, `FOO_VERSION` added to the Makefile alone, a pin with `=`, a pin with a trailing comment, `go-version:` restored, `go-version-file` commented out | each fails its test |
@@ -425,9 +426,15 @@ a `Makefile` the bot has already moved forward, and the reverted tree fails
 | M3b | `e0fa5f25` | §3.2.11 — go1.26.10 across 60 go.mod, check.yml, four docs |
 | M3a | `2bf3c612` | §3.2.10 — GOTOOLCHAIN pin, `TestToolchainPins`, `TestToolchainPinIsUniform`; §2.4–§2.5 |
 | Docs | `56f12e64` | §3.2.7 CHANGELOG |
+| Docs | `6dcc38f2` | §8, status Accepted |
+| M4 | `3cf47e71` | §3.2.12 — review round 1: `go-version-file`, `stripComment`, wider install guard, `TestPinBotCoversEveryPin`, dispatch contract |
+| M5 | `de4d8ae3` | §3.2.12 — review round 2: exact toolchain line, per-file setup-go count, `pinTableProblems` / `dispatchProblems` |
+| M6 | `4c608f9d` | §3.2.12 — review round 3: pins indented by spaces only, `!=` / `::=` / `override` |
+| M7 | `d4d2bd88` | §3.2.12 — review round 4: wording of the toolchain report |
 
 `make ci` with no `GOTOOLCHAIN` in the shell on a go1.27.0 machine: PASS
-15/15 at `2bf3c612` (`.ci/last-run.json`). Diff coverage 100% of 0 changed
+15/15 at `2bf3c612`, and again after every later milestone, last at
+`d4d2bd88` (`.ci/last-run.json`). Diff coverage 100% of 0 changed
 coverable lines — every Go change is a `_test.go` file. M3b and M3a are
 numbered by the order they were found, not landed: the bump had to land
 first so the pin would read the new version.
