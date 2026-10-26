@@ -495,11 +495,14 @@ a `Makefile` the bot has already moved forward, and the reverted tree fails
 | M5 | `de4d8ae3` | §3.2.12 — review round 2: exact toolchain line, per-file setup-go count, `pinTableProblems` / `dispatchProblems` |
 | M6 | `4c608f9d` | §3.2.12 — review round 3: pins indented by spaces only, `!=` / `::=` / `override` |
 | M7 | `d4d2bd88` | §3.2.12 — review round 4: wording of the toolchain report |
+| M8 | `7abfd018` | §3.2.13 — `awaitReply`, the four callers, `AdHocView`'s `%q`; §1.3, §2.7, V-10 |
 
 `make ci` with no `GOTOOLCHAIN` in the shell on a go1.27.0 machine: PASS
 15/15 at `2bf3c612`, and again after every later milestone, last at
-`d4d2bd88` (`.ci/last-run.json`). Diff coverage 100% of 0 changed
-coverable lines — every Go change is a `_test.go` file. M3b and M3a are
+`d4d2bd88` (`.ci/last-run.json`). Through M7 diff coverage was 100% of 0
+changed coverable lines, because every Go change was a `_test.go` file. M8
+is the first production change: `make ci` PASS 15/15, and diff coverage
+100% of 35 changed coverable lines at `7abfd018`. M3b and M3a are
 numbered by the order they were found, not landed: the bump had to land
 first so the pin would read the new version.
 
