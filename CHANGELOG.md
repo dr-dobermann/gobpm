@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A weekly vulnerability scan of master.** `govulncheck` used to run only
+  when code was pushed, so a vulnerability published in a dependency between
+  pushes waited for the next PR to show up. `vuln.yml` now runs
+  `make vuln-core` every Monday against master's real `go.mod` files, without
+  relying on GitHub's dependency graph (which a failed Dependabot graph
+  update had just left a version behind).
+
 ### Changed
 
 - **The pinned toolchain is `go1.26.10`, and `adapters/sqlite` now requires
