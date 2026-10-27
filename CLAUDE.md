@@ -104,6 +104,11 @@ dependency graph).
 Locally `make ci` still runs BOTH halves — the full gate stays obligatory
 before every push.
 
+A third workflow, `vuln.yml`, runs `make vuln-core` on master every Monday
+(and by hand via `workflow_dispatch`). `check` scans only when code is
+pushed, so without it a vulnerability published between pushes would wait
+for the next PR. It installs through `make tools` like the other jobs.
+
 The **diff-coverage gate** (`make cover-check`, SRD-002) fails when the lines a change
 adds/modifies are covered below `COVER_MIN` (95% now, rising toward 100). It judges
 only changed lines — reusing the per-module `coverage.txt` files `test-all` writes, one

@@ -1,0 +1,33 @@
+name: vuln
+on:
+  # `check` runs govulncheck only when code is pushed, so a vulnerability
+  # published between pushes would wait for the next PR. This weekly run
+  # scans master's real go.mod files whether or not anything changed, and
+  # does not depend on GitHub's dependency graph, which a failed Dependabot
+  # graph update can leave stale.
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vuln:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # Same toolchain as `check`: govulncheck reports stdlib
+          # vulnerabilities per toolchain patch (FIX-042).
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tools
+        run: make tools
+
+      - name: Scan core modules for known vulnerabilities
+        run: make vuln-core

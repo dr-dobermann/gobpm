@@ -326,15 +326,16 @@ func TestWorkflowsInstallThroughMake(t *testing.T) {
 	// A guard that finds nothing and passes is worse than no guard: it reports
 	// success while measuring an empty set. Every job that needs tools must
 	// install them through make exactly once — check.yml's `check` and
-	// `examples`, docs.yml's `build` — so a moved directory, or one job's
-	// install step dropped, commented out or moved into another job, fails
-	// here instead.
+	// `examples`, docs.yml's `build`, vuln.yml's `vuln` — so a moved
+	// directory, or one job's install step dropped, commented out or moved
+	// into another job, fails here instead.
 	for _, want := range []struct {
 		file, target string
 		jobs         []string
 	}{
 		{"check.yml", "tools", []string{"check", "examples"}},
 		{"docs.yml", "docs-tools", []string{"build"}},
+		{"vuln.yml", "tools", []string{"vuln"}},
 	} {
 		content, ok := files[want.file]
 		require.True(t, ok, "%s not found — have the workflows moved?", want.file)
