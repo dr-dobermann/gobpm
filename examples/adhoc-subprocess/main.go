@@ -72,12 +72,12 @@ func run() error {
 	// notify-customer and escalate — whose relative order is genuinely up to
 	// the scheduler — and closes only once both have settled. So the two
 	// checkable claims are the boundaries, not the middle.
-	if err := runLog.first("gather-logs"); err != nil {
+	if err := runLog.first(actGatherLogs); err != nil {
 		return fmt.Errorf("router order: %w", err)
 	}
 
-	if err := runLog.last("close-incident",
-		"gather-logs", "notify-customer", "escalate"); err != nil {
+	if err := runLog.last(actCloseIncident,
+		actGatherLogs, actNotifyCustomer, actEscalate); err != nil {
 		return fmt.Errorf("router order: %w", err)
 	}
 

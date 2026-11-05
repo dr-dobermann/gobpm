@@ -15,6 +15,9 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 )
 
+// keyEUR is the rates entry both tasks commit, so the second one updates it.
+const keyEUR = "EUR"
+
 // ratesTask builds an in-process task whose operation commits a data-keyed
 // rates map under the item id "rates" — committing it at the activity boundary
 // is what the commit-diff walks per entry (ADR-011 v.7 §2.9.4/§2.9.7).
@@ -57,13 +60,13 @@ func buildProcess() (*process.Process, error) {
 	}
 
 	publish, err := ratesTask("publish",
-		map[string]float64{"EUR": 1.08, "GBP": 1.27})
+		map[string]float64{keyEUR: 1.08, "GBP": 1.27})
 	if err != nil {
 		return nil, err
 	}
 
 	reprice, err := ratesTask("reprice",
-		map[string]float64{"EUR": 1.09, "JPY": 161})
+		map[string]float64{keyEUR: 1.09, "JPY": 161})
 	if err != nil {
 		return nil, err
 	}

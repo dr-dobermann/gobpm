@@ -17,7 +17,7 @@ func mapDemos() error {
 
 	// Dynamic tier: assemble a dictionary, grow it key-by-key, read a ["key"]
 	// path. Keys enumerate in sorted order regardless of insertion order.
-	fx := values.MustMap(map[string]float64{"USD": 1.0, "EUR": 1.08})
+	fx := values.MustMap(map[string]float64{"USD": 1.0, keyEUR: 1.08})
 	if err := fx.SetEntry(ctx, "GBP", 1.27); err != nil {
 		return fmt.Errorf("set GBP: %w", err)
 	}
