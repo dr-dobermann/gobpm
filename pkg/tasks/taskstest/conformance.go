@@ -30,6 +30,9 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
+// topicCharge is the topic the suite's jobs are queued on.
+const topicCharge tasks.Topic = "charge"
+
 // fetchWait bounds a FetchAndLock that must return. It is a hang-breaker, not
 // a latency assertion: an adapter over a remote queue may take a network round
 // trip, and waiting costs nothing when the job is already queued.
@@ -259,7 +262,7 @@ func enqueueAndLock(
 }
 
 func testEnqueueThenFetchLocks(t tb, d tasks.WorkerDispatcher) {
-	got := enqueueAndLock(t, d, "j1", "charge")
+	got := enqueueAndLock(t, d, "j1", topicCharge)
 
 	if got.ID != "j1" {
 		t.Fatalf("fetched job %q, want j1", got.ID)
@@ -285,7 +288,7 @@ func testFetchOnlyRequestedTopics(t tb, d tasks.WorkerDispatcher) {
 	defer cancel()
 
 	//nolint:errcheck // an empty fetch may report either way; the count is the test
-	jobs, _ := d.FetchAndLock(fctx, "w1", []tasks.Topic{"charge"}, time.Minute)
+	jobs, _ := d.FetchAndLock(fctx, "w1", []tasks.Topic{topicCharge}, time.Minute)
 	if len(jobs) != 0 {
 		t.Fatalf("fetch on topic charge returned %d job(s) from topic other",
 			len(jobs))
@@ -311,7 +314,7 @@ func testFetchWakesOnEnqueue(t tb, d tasks.WorkerDispatcher) {
 		close(entered)
 
 		jobs, err := d.FetchAndLock(
-			ctx, "w1", []tasks.Topic{"charge"}, time.Minute)
+			ctx, "w1", []tasks.Topic{topicCharge}, time.Minute)
 		done <- result{err: err, jobs: jobs}
 	}()
 
@@ -330,7 +333,7 @@ func testFetchWakesOnEnqueue(t tb, d tasks.WorkerDispatcher) {
 	}
 
 	if err := d.Enqueue(
-		context.Background(), tasks.Job{ID: "j1", Topic: "charge"},
+		context.Background(), tasks.Job{ID: "j1", Topic: topicCharge},
 	); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
@@ -364,7 +367,7 @@ func testFetchHonorsContextCancel(t tb, d tasks.WorkerDispatcher) {
 		close(entered)
 
 		//nolint:errcheck // the assertion is that it RETURNS, not what it returns
-		_, _ = d.FetchAndLock(ctx, "w1", []tasks.Topic{"charge"}, time.Minute)
+		_, _ = d.FetchAndLock(ctx, "w1", []tasks.Topic{topicCharge}, time.Minute)
 		close(done)
 	}()
 
@@ -392,13 +395,13 @@ func testFetchHonorsContextCancel(t tb, d tasks.WorkerDispatcher) {
 // testLockedJobNotRefetched: a locked job is exclusive for its lock duration,
 // or two workers run the same service task.
 func testLockedJobNotRefetched(t tb, d tasks.WorkerDispatcher) {
-	enqueueAndLock(t, d, "j1", "charge")
+	enqueueAndLock(t, d, "j1", topicCharge)
 
 	ctx, cancel := context.WithTimeout(context.Background(), absenceWait)
 	defer cancel()
 
 	//nolint:errcheck // a refused fetch may report either way; the count is the test
-	jobs, _ := d.FetchAndLock(ctx, "w2", []tasks.Topic{"charge"}, time.Minute)
+	jobs, _ := d.FetchAndLock(ctx, "w2", []tasks.Topic{topicCharge}, time.Minute)
 	if len(jobs) != 0 {
 		t.Fatal("a job locked to w1 was fetched again by w2 — two workers " +
 			"would run the same task")
@@ -407,7 +410,7 @@ func testLockedJobNotRefetched(t tb, d tasks.WorkerDispatcher) {
 
 func testEnqueueRejectsEmptyID(t tb, d tasks.WorkerDispatcher) {
 	if err := d.Enqueue(
-		context.Background(), tasks.Job{Topic: "charge"},
+		context.Background(), tasks.Job{Topic: topicCharge},
 	); err == nil {
 		t.Fatal("Enqueue must reject a job with no ID — nothing could later " +
 			"complete it")
@@ -417,7 +420,7 @@ func testEnqueueRejectsEmptyID(t tb, d tasks.WorkerDispatcher) {
 // testExtendLockIsHolderOnly: only the holder may extend, or any worker can
 // keep another's job locked.
 func testExtendLockIsHolderOnly(t tb, d tasks.WorkerDispatcher) {
-	enqueueAndLock(t, d, "j1", "charge")
+	enqueueAndLock(t, d, "j1", topicCharge)
 
 	if err := d.ExtendLock(
 		context.Background(), "j1", "w2", time.Minute,
@@ -428,7 +431,7 @@ func testExtendLockIsHolderOnly(t tb, d tasks.WorkerDispatcher) {
 
 func testCompleteReachesSink(t tb, d tasks.WorkerDispatcher) {
 	s := bindSink(t, d)
-	enqueueAndLock(t, d, "j1", "charge")
+	enqueueAndLock(t, d, "j1", topicCharge)
 
 	if err := d.Complete(context.Background(), "j1", "w1", nil); err != nil {
 		t.Fatalf("Complete: %v", err)
@@ -446,7 +449,7 @@ func testCompleteReachesSink(t tb, d tasks.WorkerDispatcher) {
 
 func testReportBpmnErrorReachesSink(t tb, d tasks.WorkerDispatcher) {
 	s := bindSink(t, d)
-	enqueueAndLock(t, d, "j1", "charge")
+	enqueueAndLock(t, d, "j1", topicCharge)
 
 	if err := d.ReportBpmnError(
 		context.Background(), "j1", "w1", "E_DECLINED", "card declined",
@@ -465,7 +468,7 @@ func testReportBpmnErrorReachesSink(t tb, d tasks.WorkerDispatcher) {
 
 func testReportStatusReachesSink(t tb, d tasks.WorkerDispatcher) {
 	s := bindSink(t, d)
-	enqueueAndLock(t, d, "j1", "charge")
+	enqueueAndLock(t, d, "j1", topicCharge)
 
 	if err := d.ReportStatus(
 		context.Background(), "j1", "w1", values.NewVariable("PARTIAL"),
@@ -481,7 +484,7 @@ func testReportStatusReachesSink(t tb, d tasks.WorkerDispatcher) {
 
 func testFailReachesSink(t tb, d tasks.WorkerDispatcher) {
 	s := bindSink(t, d)
-	enqueueAndLock(t, d, "j1", "charge")
+	enqueueAndLock(t, d, "j1", topicCharge)
 
 	if err := d.Fail(
 		context.Background(), "j1", "w1", tasks.Fault{Cause: errors.New("upstream 503")},
@@ -499,7 +502,7 @@ func testFailReachesSink(t tb, d tasks.WorkerDispatcher) {
 // the lock must be rejected, or a stale worker can complete a job another
 // worker is actively running.
 func testReportsAreHolderOnly(t tb, d tasks.WorkerDispatcher) {
-	enqueueAndLock(t, d, "j1", "charge")
+	enqueueAndLock(t, d, "j1", topicCharge)
 
 	if err := d.Complete(context.Background(), "j1", "w2", nil); err == nil {
 		t.Fatal("Complete by a non-holder must be rejected")

@@ -8,7 +8,7 @@ func CheckStr(str, errMsg string, errorClasses ...string) error {
 	if str == "" {
 		return New(
 			M(errMsg),
-			func(ecc []string) errOption {
+			func(ecc []string) Option {
 				res := []string{}
 				for _, ec := range ecc {
 					ec = strings.TrimSpace(ec)

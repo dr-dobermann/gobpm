@@ -25,7 +25,7 @@ func (sflowOption) Option() {}
 
 // --------------- options.Configureator interface -----------------------------
 
-// Validate checks SequenceFlow configureation errors.
+// Validate checks SequenceFlow configuration errors.
 func (fc *sflowConfig) Validate() error {
 	// for the moment there is no valuable validation for SequenceFlow config.
 	return nil

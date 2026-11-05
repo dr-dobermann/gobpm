@@ -142,6 +142,16 @@ var policy = map[elementKey]dispositionKind{
 	{local: tagRelationship, ctx: ctxDefinitions}: skipped,
 }
 
+// The sections the table below repeats, one constant per section, so a
+// re-pin is a single edit.
+const (
+	secTask         = "§13.3.3"
+	secSubProcess   = "§13.3.4"
+	secEvents       = "§13.5"
+	secData         = "§10.4.1"
+	secConversation = "§9.5.1"
+)
+
 // sections pins the BPMN 2.0 § for elements the converter refuses, so the
 // UnsupportedElementError carries actionable modeler feedback (ADR-024
 // §2.7 / SAD-001 §5). A tag absent from the table yields an error
@@ -162,41 +172,41 @@ var policy = map[elementKey]dispositionKind{
 // event. The one-line section index in that file used to say otherwise
 // and was the source of nine wrong data pins (SRD-089.F FR-8).
 var sections = map[string]string{
-	"sendTask":                   "§13.3.3",
-	"receiveTask":                "§13.3.3",
-	"scriptTask":                 "§13.3.3",
-	"businessRuleTask":           "§13.3.3",
-	"callActivity":               "§13.3.3",
-	"subProcess":                 "§13.3.4",
-	"adHocSubProcess":            "§13.3.4",
-	"transaction":                "§13.3.4",
+	"sendTask":                   secTask,
+	"receiveTask":                secTask,
+	"scriptTask":                 secTask,
+	"businessRuleTask":           secTask,
+	"callActivity":               secTask,
+	"subProcess":                 secSubProcess,
+	"adHocSubProcess":            secSubProcess,
+	"transaction":                secSubProcess,
 	"complexGateway":             "§13.4",
-	"intermediateCatchEvent":     "§13.5",
-	"intermediateThrowEvent":     "§13.5",
+	"intermediateCatchEvent":     secEvents,
+	"intermediateThrowEvent":     secEvents,
 	"boundaryEvent":              "§13.5.5",
-	"messageEventDefinition":     "§13.5",
-	"timerEventDefinition":       "§13.5",
-	"signalEventDefinition":      "§13.5",
-	"errorEventDefinition":       "§13.5",
-	"escalationEventDefinition":  "§13.5",
-	"compensateEventDefinition":  "§13.5",
-	"conditionalEventDefinition": "§13.5",
-	"linkEventDefinition":        "§13.5",
-	"terminateEventDefinition":   "§13.5",
-	"cancelEventDefinition":      "§13.5",
+	"messageEventDefinition":     secEvents,
+	"timerEventDefinition":       secEvents,
+	"signalEventDefinition":      secEvents,
+	"errorEventDefinition":       secEvents,
+	"escalationEventDefinition":  secEvents,
+	"compensateEventDefinition":  secEvents,
+	"conditionalEventDefinition": secEvents,
+	"linkEventDefinition":        secEvents,
+	"terminateEventDefinition":   secEvents,
+	"cancelEventDefinition":      secEvents,
 	"itemDefinition":             "§8.4.10",
-	"dataObject":                 "§10.4.1",
-	"dataObjectReference":        "§10.4.1",
-	"dataStore":                  "§10.4.1",
-	"dataStoreReference":         "§10.4.1",
-	"ioSpecification":            "§10.4.1",
-	"property":                   "§10.4.1",
-	"dataInput":                  "§10.4.1",
-	"dataOutput":                 "§10.4.1",
-	"inputSet":                   "§10.4.1",
-	"outputSet":                  "§10.4.1",
-	"dataInputAssociation":       "§10.4.1",
-	"dataOutputAssociation":      "§10.4.1",
+	"dataObject":                 secData,
+	"dataObjectReference":        secData,
+	"dataStore":                  secData,
+	"dataStoreReference":         secData,
+	"ioSpecification":            secData,
+	"property":                   secData,
+	"dataInput":                  secData,
+	"dataOutput":                 secData,
+	"inputSet":                   secData,
+	"outputSet":                  secData,
+	"dataInputAssociation":       secData,
+	"dataOutputAssociation":      secData,
 	// §13.3.6 and §13.3.7 on the extract's own heading
 	// (semantics/multi-instance.md:3); the §13.3.5 both rows carried
 	// before SRD-089.H was supported by no extract line (its FR-6).
@@ -224,12 +234,12 @@ var sections = map[string]string{
 	"participant":   "§9.2.1",
 	"messageFlow":   "§9.3",
 
-	"conversation":            "§9.5.1",
-	"subConversation":         "§9.5.1",
-	"callConversation":        "§9.5.1",
-	"globalConversation":      "§9.5.1",
-	"conversationLink":        "§9.5.1",
-	"conversationAssociation": "§9.5.1",
+	"conversation":            secConversation,
+	"subConversation":         secConversation,
+	"callConversation":        secConversation,
+	"globalConversation":      secConversation,
+	"conversationLink":        secConversation,
+	"conversationAssociation": secConversation,
 }
 
 // dispositionFor answers what to do with local in ctx when no parser

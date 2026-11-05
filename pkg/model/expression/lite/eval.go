@@ -111,7 +111,7 @@ func (e *evaluator) evalUnary(ctx context.Context, n unaryNode) (any, error) {
 	}
 
 	switch n.op {
-	case "not":
+	case kwNot:
 		b, ok := v.(bool)
 		if !ok {
 			return nil, evalErr("'not' needs a bool operand", n.pos())
@@ -131,7 +131,7 @@ func (e *evaluator) evalUnary(ctx context.Context, n unaryNode) (any, error) {
 
 // evalBinary evaluates the boolean, comparison and arithmetic operators.
 func (e *evaluator) evalBinary(ctx context.Context, n binNode) (any, error) {
-	if n.op == "and" || n.op == "or" {
+	if n.op == kwAnd || n.op == kwOr {
 		return e.evalLogical(ctx, n)
 	}
 
@@ -165,7 +165,7 @@ func (e *evaluator) evalLogical(ctx context.Context, n binNode) (any, error) {
 		return nil, evalErr("'"+n.op+"' needs bool operands", n.pos())
 	}
 
-	if (n.op == "and" && !lb) || (n.op == "or" && lb) {
+	if (n.op == kwAnd && !lb) || (n.op == kwOr && lb) {
 		return lb, nil
 	}
 

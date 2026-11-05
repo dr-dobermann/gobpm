@@ -22,7 +22,7 @@ func decErr(kind, msg string) error {
 // scalarDecoders is the kind→builder table (data-over-code): each
 // parses the scalar's string form back into a typed values.Variable.
 var scalarDecoders = map[string]func(s string) (data.Value, error){
-	"bool": func(s string) (data.Value, error) {
+	kindBool: func(s string) (data.Value, error) {
 		v, err := strconv.ParseBool(s)
 		if err != nil {
 			return nil, err
@@ -30,20 +30,20 @@ var scalarDecoders = map[string]func(s string) (data.Value, error){
 
 		return values.NewVariable(v), nil
 	},
-	"string": func(s string) (data.Value, error) {
+	kindString: func(s string) (data.Value, error) {
 		return values.NewVariable(s), nil
 	},
-	"int":    intDecoder(func(v int64) data.Value { return values.NewVariable(int(v)) }),
-	"int8":   intDecoder(func(v int64) data.Value { return values.NewVariable(int8(v)) }),
-	"int16":  intDecoder(func(v int64) data.Value { return values.NewVariable(int16(v)) }),
-	"int32":  intDecoder(func(v int64) data.Value { return values.NewVariable(int32(v)) }),
-	"int64":  intDecoder(func(v int64) data.Value { return values.NewVariable(v) }),
-	"uint":   uintDecoder(func(v uint64) data.Value { return values.NewVariable(uint(v)) }),
-	"uint8":  uintDecoder(func(v uint64) data.Value { return values.NewVariable(uint8(v)) }),
-	"uint16": uintDecoder(func(v uint64) data.Value { return values.NewVariable(uint16(v)) }),
-	"uint32": uintDecoder(func(v uint64) data.Value { return values.NewVariable(uint32(v)) }),
-	"uint64": uintDecoder(func(v uint64) data.Value { return values.NewVariable(v) }),
-	"float32": func(s string) (data.Value, error) {
+	kindInt:    intDecoder(func(v int64) data.Value { return values.NewVariable(int(v)) }),
+	kindInt8:   intDecoder(func(v int64) data.Value { return values.NewVariable(int8(v)) }),
+	kindInt16:  intDecoder(func(v int64) data.Value { return values.NewVariable(int16(v)) }),
+	kindInt32:  intDecoder(func(v int64) data.Value { return values.NewVariable(int32(v)) }),
+	kindInt64:  intDecoder(func(v int64) data.Value { return values.NewVariable(v) }),
+	kindUint:   uintDecoder(func(v uint64) data.Value { return values.NewVariable(uint(v)) }),
+	kindUint8:  uintDecoder(func(v uint64) data.Value { return values.NewVariable(uint8(v)) }),
+	kindUint16: uintDecoder(func(v uint64) data.Value { return values.NewVariable(uint16(v)) }),
+	kindUint32: uintDecoder(func(v uint64) data.Value { return values.NewVariable(uint32(v)) }),
+	kindUint64: uintDecoder(func(v uint64) data.Value { return values.NewVariable(v) }),
+	kindFloat32: func(s string) (data.Value, error) {
 		v, err := strconv.ParseFloat(s, 32)
 		if err != nil {
 			return nil, err
@@ -51,7 +51,7 @@ var scalarDecoders = map[string]func(s string) (data.Value, error){
 
 		return values.NewVariable(float32(v)), nil
 	},
-	"float64": func(s string) (data.Value, error) {
+	kindFloat64: func(s string) (data.Value, error) {
 		v, err := strconv.ParseFloat(s, 64)
 		if err != nil {
 			return nil, err
@@ -259,39 +259,39 @@ var (
 
 func init() { //nolint:gochecknoinits // breaks the decodeNode init cycle
 	arrayBuilders = map[string]func(context.Context, []node) (data.Value, error){
-		"bool":    typedArray[bool],
-		"string":  typedArray[string],
-		"int":     typedArray[int],
-		"int8":    typedArray[int8],
-		"int16":   typedArray[int16],
-		"int32":   typedArray[int32],
-		"int64":   typedArray[int64],
-		"uint":    typedArray[uint],
-		"uint8":   typedArray[uint8],
-		"uint16":  typedArray[uint16],
-		"uint32":  typedArray[uint32],
-		"uint64":  typedArray[uint64],
-		"float32": typedArray[float32],
-		"float64": typedArray[float64],
-		kindTime:  typedArray[time.Time],
+		kindBool:    typedArray[bool],
+		kindString:  typedArray[string],
+		kindInt:     typedArray[int],
+		kindInt8:    typedArray[int8],
+		kindInt16:   typedArray[int16],
+		kindInt32:   typedArray[int32],
+		kindInt64:   typedArray[int64],
+		kindUint:    typedArray[uint],
+		kindUint8:   typedArray[uint8],
+		kindUint16:  typedArray[uint16],
+		kindUint32:  typedArray[uint32],
+		kindUint64:  typedArray[uint64],
+		kindFloat32: typedArray[float32],
+		kindFloat64: typedArray[float64],
+		kindTime:    typedArray[time.Time],
 	}
 
 	mapBuilders = map[string]func(context.Context, node, []string) (data.Value, error){
-		"bool":    typedMap[bool],
-		"string":  typedMap[string],
-		"int":     typedMap[int],
-		"int8":    typedMap[int8],
-		"int16":   typedMap[int16],
-		"int32":   typedMap[int32],
-		"int64":   typedMap[int64],
-		"uint":    typedMap[uint],
-		"uint8":   typedMap[uint8],
-		"uint16":  typedMap[uint16],
-		"uint32":  typedMap[uint32],
-		"uint64":  typedMap[uint64],
-		"float32": typedMap[float32],
-		"float64": typedMap[float64],
-		kindTime:  typedMap[time.Time],
+		kindBool:    typedMap[bool],
+		kindString:  typedMap[string],
+		kindInt:     typedMap[int],
+		kindInt8:    typedMap[int8],
+		kindInt16:   typedMap[int16],
+		kindInt32:   typedMap[int32],
+		kindInt64:   typedMap[int64],
+		kindUint:    typedMap[uint],
+		kindUint8:   typedMap[uint8],
+		kindUint16:  typedMap[uint16],
+		kindUint32:  typedMap[uint32],
+		kindUint64:  typedMap[uint64],
+		kindFloat32: typedMap[float32],
+		kindFloat64: typedMap[float64],
+		kindTime:    typedMap[time.Time],
 	}
 }
 

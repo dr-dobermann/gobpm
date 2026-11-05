@@ -44,7 +44,7 @@ type datum struct {
 	Value node   `json:"value"`
 }
 
-// The composite kind tags; scalar tags are the Go kind names.
+// The composite kind tags.
 const (
 	kindArray  = "array"
 	kindRecord = "record"
@@ -55,6 +55,25 @@ const (
 	// in the staging record and in the published output alike (SRD-082
 	// FR-4; before it, one nil poisoned every later checkpoint).
 	kindNil = "nil"
+)
+
+// The scalar kind tags: the Go kind names. Encoder and decoder share them,
+// so a checkpoint written by one is read back by the other.
+const (
+	kindBool    = "bool"
+	kindString  = "string"
+	kindInt     = "int"
+	kindInt8    = "int8"
+	kindInt16   = "int16"
+	kindInt32   = "int32"
+	kindInt64   = "int64"
+	kindUint    = "uint"
+	kindUint8   = "uint8"
+	kindUint16  = "uint16"
+	kindUint32  = "uint32"
+	kindUint64  = "uint64"
+	kindFloat32 = "float32"
+	kindFloat64 = "float64"
 )
 
 // EncodeData encodes one scope's committed data set. The scopePath
@@ -282,14 +301,14 @@ func encodeAny(
 
 	switch t := x.(type) {
 	case bool:
-		return node{Kind: "bool", Scalar: strconv.FormatBool(t)}, nil
+		return node{Kind: kindBool, Scalar: strconv.FormatBool(t)}, nil
 	case string:
-		return node{Kind: "string", Scalar: t}, nil
+		return node{Kind: kindString, Scalar: t}, nil
 	case float32:
-		return node{Kind: "float32",
+		return node{Kind: kindFloat32,
 			Scalar: strconv.FormatFloat(float64(t), 'g', -1, 32)}, nil
 	case float64:
-		return node{Kind: "float64",
+		return node{Kind: kindFloat64,
 			Scalar: strconv.FormatFloat(t, 'g', -1, 64)}, nil
 	case time.Time:
 		return node{Kind: kindTime,
@@ -307,25 +326,25 @@ func encodeAny(
 func encodeIntScalar(x any) (node, bool) {
 	switch t := x.(type) {
 	case int:
-		return node{Kind: "int", Scalar: strconv.FormatInt(int64(t), 10)}, true
+		return node{Kind: kindInt, Scalar: strconv.FormatInt(int64(t), 10)}, true
 	case int8:
-		return node{Kind: "int8", Scalar: strconv.FormatInt(int64(t), 10)}, true
+		return node{Kind: kindInt8, Scalar: strconv.FormatInt(int64(t), 10)}, true
 	case int16:
-		return node{Kind: "int16", Scalar: strconv.FormatInt(int64(t), 10)}, true
+		return node{Kind: kindInt16, Scalar: strconv.FormatInt(int64(t), 10)}, true
 	case int32:
-		return node{Kind: "int32", Scalar: strconv.FormatInt(int64(t), 10)}, true
+		return node{Kind: kindInt32, Scalar: strconv.FormatInt(int64(t), 10)}, true
 	case int64:
-		return node{Kind: "int64", Scalar: strconv.FormatInt(t, 10)}, true
+		return node{Kind: kindInt64, Scalar: strconv.FormatInt(t, 10)}, true
 	case uint:
-		return node{Kind: "uint", Scalar: strconv.FormatUint(uint64(t), 10)}, true
+		return node{Kind: kindUint, Scalar: strconv.FormatUint(uint64(t), 10)}, true
 	case uint8:
-		return node{Kind: "uint8", Scalar: strconv.FormatUint(uint64(t), 10)}, true
+		return node{Kind: kindUint8, Scalar: strconv.FormatUint(uint64(t), 10)}, true
 	case uint16:
-		return node{Kind: "uint16", Scalar: strconv.FormatUint(uint64(t), 10)}, true
+		return node{Kind: kindUint16, Scalar: strconv.FormatUint(uint64(t), 10)}, true
 	case uint32:
-		return node{Kind: "uint32", Scalar: strconv.FormatUint(uint64(t), 10)}, true
+		return node{Kind: kindUint32, Scalar: strconv.FormatUint(uint64(t), 10)}, true
 	case uint64:
-		return node{Kind: "uint64", Scalar: strconv.FormatUint(t, 10)}, true
+		return node{Kind: kindUint64, Scalar: strconv.FormatUint(t, 10)}, true
 	}
 
 	return node{}, false
