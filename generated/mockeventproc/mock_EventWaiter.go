@@ -18,10 +18,19 @@ func NewMockEventWaiter(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockEventWaiter {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockEventWaiter{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -40,8 +49,8 @@ func (_m *MockEventWaiter) EXPECT() *MockEventWaiter_Expecter {
 }
 
 // AddEventProcessor provides a mock function for the type MockEventWaiter
-func (_mock *MockEventWaiter) AddEventProcessor(v eventproc.EventProcessor) error {
-	ret := _mock.Called(v)
+func (_mock *MockEventWaiter) AddEventProcessor(eventProcessor eventproc.EventProcessor) error {
+	ret := _mock.Called(eventProcessor)
 
 	if len(ret) == 0 {
 		panic("no return value specified for AddEventProcessor")
@@ -49,7 +58,7 @@ func (_mock *MockEventWaiter) AddEventProcessor(v eventproc.EventProcessor) erro
 
 	var r0 error
 	if returnFunc, ok := ret.Get(0).(func(eventproc.EventProcessor) error); ok {
-		r0 = returnFunc(v)
+		r0 = returnFunc(eventProcessor)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -62,12 +71,12 @@ type MockEventWaiter_AddEventProcessor_Call struct {
 }
 
 // AddEventProcessor is a helper method to define mock.On call
-//   - v eventproc.EventProcessor
-func (_e *MockEventWaiter_Expecter) AddEventProcessor(v interface{}) *MockEventWaiter_AddEventProcessor_Call {
-	return &MockEventWaiter_AddEventProcessor_Call{Call: _e.mock.On("AddEventProcessor", v)}
+//   - eventProcessor eventproc.EventProcessor
+func (_e *MockEventWaiter_Expecter) AddEventProcessor(eventProcessor any) *MockEventWaiter_AddEventProcessor_Call {
+	return &MockEventWaiter_AddEventProcessor_Call{Call: _e.mock.On("AddEventProcessor", eventProcessor)}
 }
 
-func (_c *MockEventWaiter_AddEventProcessor_Call) Run(run func(v eventproc.EventProcessor)) *MockEventWaiter_AddEventProcessor_Call {
+func (_c *MockEventWaiter_AddEventProcessor_Call) Run(run func(eventProcessor eventproc.EventProcessor)) *MockEventWaiter_AddEventProcessor_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 eventproc.EventProcessor
 		if args[0] != nil {
@@ -85,7 +94,7 @@ func (_c *MockEventWaiter_AddEventProcessor_Call) Return(err error) *MockEventWa
 	return _c
 }
 
-func (_c *MockEventWaiter_AddEventProcessor_Call) RunAndReturn(run func(v eventproc.EventProcessor) error) *MockEventWaiter_AddEventProcessor_Call {
+func (_c *MockEventWaiter_AddEventProcessor_Call) RunAndReturn(run func(eventProcessor eventproc.EventProcessor) error) *MockEventWaiter_AddEventProcessor_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -218,8 +227,8 @@ func (_c *MockEventWaiter_EventProcessors_Call) Run(run func()) *MockEventWaiter
 	return _c
 }
 
-func (_c *MockEventWaiter_EventProcessors_Call) Return(vs []eventproc.EventProcessor) *MockEventWaiter_EventProcessors_Call {
-	_c.Call.Return(vs)
+func (_c *MockEventWaiter_EventProcessors_Call) Return(eventProcessors []eventproc.EventProcessor) *MockEventWaiter_EventProcessors_Call {
+	_c.Call.Return(eventProcessors)
 	return _c
 }
 
@@ -296,7 +305,7 @@ type MockEventWaiter_Process_Call struct {
 
 // Process is a helper method to define mock.On call
 //   - eventDefinition flow.EventDefinition
-func (_e *MockEventWaiter_Expecter) Process(eventDefinition interface{}) *MockEventWaiter_Process_Call {
+func (_e *MockEventWaiter_Expecter) Process(eventDefinition any) *MockEventWaiter_Process_Call {
 	return &MockEventWaiter_Process_Call{Call: _e.mock.On("Process", eventDefinition)}
 }
 
@@ -324,8 +333,8 @@ func (_c *MockEventWaiter_Process_Call) RunAndReturn(run func(eventDefinition fl
 }
 
 // RemoveEventProcessor provides a mock function for the type MockEventWaiter
-func (_mock *MockEventWaiter) RemoveEventProcessor(v eventproc.EventProcessor) error {
-	ret := _mock.Called(v)
+func (_mock *MockEventWaiter) RemoveEventProcessor(eventProcessor eventproc.EventProcessor) error {
+	ret := _mock.Called(eventProcessor)
 
 	if len(ret) == 0 {
 		panic("no return value specified for RemoveEventProcessor")
@@ -333,7 +342,7 @@ func (_mock *MockEventWaiter) RemoveEventProcessor(v eventproc.EventProcessor) e
 
 	var r0 error
 	if returnFunc, ok := ret.Get(0).(func(eventproc.EventProcessor) error); ok {
-		r0 = returnFunc(v)
+		r0 = returnFunc(eventProcessor)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -346,12 +355,12 @@ type MockEventWaiter_RemoveEventProcessor_Call struct {
 }
 
 // RemoveEventProcessor is a helper method to define mock.On call
-//   - v eventproc.EventProcessor
-func (_e *MockEventWaiter_Expecter) RemoveEventProcessor(v interface{}) *MockEventWaiter_RemoveEventProcessor_Call {
-	return &MockEventWaiter_RemoveEventProcessor_Call{Call: _e.mock.On("RemoveEventProcessor", v)}
+//   - eventProcessor eventproc.EventProcessor
+func (_e *MockEventWaiter_Expecter) RemoveEventProcessor(eventProcessor any) *MockEventWaiter_RemoveEventProcessor_Call {
+	return &MockEventWaiter_RemoveEventProcessor_Call{Call: _e.mock.On("RemoveEventProcessor", eventProcessor)}
 }
 
-func (_c *MockEventWaiter_RemoveEventProcessor_Call) Run(run func(v eventproc.EventProcessor)) *MockEventWaiter_RemoveEventProcessor_Call {
+func (_c *MockEventWaiter_RemoveEventProcessor_Call) Run(run func(eventProcessor eventproc.EventProcessor)) *MockEventWaiter_RemoveEventProcessor_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 eventproc.EventProcessor
 		if args[0] != nil {
@@ -369,7 +378,7 @@ func (_c *MockEventWaiter_RemoveEventProcessor_Call) Return(err error) *MockEven
 	return _c
 }
 
-func (_c *MockEventWaiter_RemoveEventProcessor_Call) RunAndReturn(run func(v eventproc.EventProcessor) error) *MockEventWaiter_RemoveEventProcessor_Call {
+func (_c *MockEventWaiter_RemoveEventProcessor_Call) RunAndReturn(run func(eventProcessor eventproc.EventProcessor) error) *MockEventWaiter_RemoveEventProcessor_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -398,7 +407,7 @@ type MockEventWaiter_Service_Call struct {
 
 // Service is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockEventWaiter_Expecter) Service(ctx interface{}) *MockEventWaiter_Service_Call {
+func (_e *MockEventWaiter_Expecter) Service(ctx any) *MockEventWaiter_Service_Call {
 	return &MockEventWaiter_Service_Call{Call: _e.mock.On("Service", ctx)}
 }
 

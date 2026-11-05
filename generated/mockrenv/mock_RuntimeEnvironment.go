@@ -28,10 +28,19 @@ func NewMockRuntimeEnvironment(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockRuntimeEnvironment {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockRuntimeEnvironment{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -188,7 +197,7 @@ type MockRuntimeEnvironment_Compensate_Call struct {
 // Compensate is a helper method to define mock.On call
 //   - activityRef string
 //   - wait bool
-func (_e *MockRuntimeEnvironment_Expecter) Compensate(activityRef interface{}, wait interface{}) *MockRuntimeEnvironment_Compensate_Call {
+func (_e *MockRuntimeEnvironment_Expecter) Compensate(activityRef any, wait any) *MockRuntimeEnvironment_Compensate_Call {
 	return &MockRuntimeEnvironment_Compensate_Call{Call: _e.mock.On("Compensate", activityRef, wait)}
 }
 
@@ -279,7 +288,7 @@ type MockRuntimeEnvironment_Escalate_Call struct {
 
 // Escalate is a helper method to define mock.On call
 //   - code string
-func (_e *MockRuntimeEnvironment_Expecter) Escalate(code interface{}) *MockRuntimeEnvironment_Escalate_Call {
+func (_e *MockRuntimeEnvironment_Expecter) Escalate(code any) *MockRuntimeEnvironment_Escalate_Call {
 	return &MockRuntimeEnvironment_Escalate_Call{Call: _e.mock.On("Escalate", code)}
 }
 
@@ -434,7 +443,7 @@ type MockRuntimeEnvironment_Find_Call struct {
 // Find is a helper method to define mock.On call
 //   - ctx context.Context
 //   - name string
-func (_e *MockRuntimeEnvironment_Expecter) Find(ctx interface{}, name interface{}) *MockRuntimeEnvironment_Find_Call {
+func (_e *MockRuntimeEnvironment_Expecter) Find(ctx any, name any) *MockRuntimeEnvironment_Find_Call {
 	return &MockRuntimeEnvironment_Find_Call{Call: _e.mock.On("Find", ctx, name)}
 }
 
@@ -501,7 +510,7 @@ type MockRuntimeEnvironment_GetData_Call struct {
 
 // GetData is a helper method to define mock.On call
 //   - name string
-func (_e *MockRuntimeEnvironment_Expecter) GetData(name interface{}) *MockRuntimeEnvironment_GetData_Call {
+func (_e *MockRuntimeEnvironment_Expecter) GetData(name any) *MockRuntimeEnvironment_GetData_Call {
 	return &MockRuntimeEnvironment_GetData_Call{Call: _e.mock.On("GetData", name)}
 }
 
@@ -563,7 +572,7 @@ type MockRuntimeEnvironment_GetDataByID_Call struct {
 
 // GetDataByID is a helper method to define mock.On call
 //   - id string
-func (_e *MockRuntimeEnvironment_Expecter) GetDataByID(id interface{}) *MockRuntimeEnvironment_GetDataByID_Call {
+func (_e *MockRuntimeEnvironment_Expecter) GetDataByID(id any) *MockRuntimeEnvironment_GetDataByID_Call {
 	return &MockRuntimeEnvironment_GetDataByID_Call{Call: _e.mock.On("GetDataByID", id)}
 }
 
@@ -715,7 +724,7 @@ type MockRuntimeEnvironment_List_Call struct {
 
 // List is a helper method to define mock.On call
 //   - path string
-func (_e *MockRuntimeEnvironment_Expecter) List(path interface{}) *MockRuntimeEnvironment_List_Call {
+func (_e *MockRuntimeEnvironment_Expecter) List(path any) *MockRuntimeEnvironment_List_Call {
 	return &MockRuntimeEnvironment_List_Call{Call: _e.mock.On("List", path)}
 }
 
@@ -910,9 +919,9 @@ type MockRuntimeEnvironment_Put_Call struct {
 
 // Put is a helper method to define mock.On call
 //   - dd ...data.Data
-func (_e *MockRuntimeEnvironment_Expecter) Put(dd ...interface{}) *MockRuntimeEnvironment_Put_Call {
+func (_e *MockRuntimeEnvironment_Expecter) Put(dd ...any) *MockRuntimeEnvironment_Put_Call {
 	return &MockRuntimeEnvironment_Put_Call{Call: _e.mock.On("Put",
-		append([]interface{}{}, dd...)...)}
+		append([]any{}, dd...)...)}
 }
 
 func (_c *MockRuntimeEnvironment_Put_Call) Run(run func(dd ...data.Data)) *MockRuntimeEnvironment_Put_Call {

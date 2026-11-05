@@ -17,10 +17,19 @@ func NewMockEventProcessor(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockEventProcessor {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockEventProcessor{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -107,7 +116,7 @@ type MockEventProcessor_ProcessEvent_Call struct {
 // ProcessEvent is a helper method to define mock.On call
 //   - context1 context.Context
 //   - eventDefinition flow.EventDefinition
-func (_e *MockEventProcessor_Expecter) ProcessEvent(context1 interface{}, eventDefinition interface{}) *MockEventProcessor_ProcessEvent_Call {
+func (_e *MockEventProcessor_Expecter) ProcessEvent(context1 any, eventDefinition any) *MockEventProcessor_ProcessEvent_Call {
 	return &MockEventProcessor_ProcessEvent_Call{Call: _e.mock.On("ProcessEvent", context1, eventDefinition)}
 }
 
