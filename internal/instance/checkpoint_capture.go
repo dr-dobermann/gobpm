@@ -625,7 +625,7 @@ func (inst *Instance) reportCheckpointDeferred(reason string) {
 		Kind:  observability.KindInstanceState,
 		Phase: observability.PhaseCheckpointDeferred,
 		Details: map[string]string{
-			"reason":                    reason,
+			observability.AttrReason:    reason,
 			observability.AttrProcessID: inst.s.ProcessID,
 			observability.AttrVersion:   strconv.Itoa(inst.s.Version),
 		},

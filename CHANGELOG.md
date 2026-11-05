@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+
+- **`errs.Option`, and three more `observability` keys.** `errs.E`, `M`, `C`
+  and `D` returned an unexported type, so a caller could pass them to
+  `errs.New` but never name or collect them; the type is now exported as
+  `errs.Option` (still sealed — only those four implement it).
+  `AttrIncidentID`, `AttrAction` and `AttrReason` join the attribute
+  vocabulary (ADR-022 v.4) — see Fixed.
 - **A weekly vulnerability scan of master.** `govulncheck` used to run only
   when code was pushed, so a vulnerability published in a dependency between
   pushes waited for the next PR to show up. `vuln.yml` now runs
@@ -18,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+
+- **Dev tools move to the latest pins**: mockery v3.9.0, golangci-lint
+  v2.15.0, govulncheck v1.9.0, linkcheck v0.1.3, mkdocs-material 9.8.0. The
+  mocks under `generated/` are regenerated (named parameters, `any` for
+  `interface{}`), and the code the stricter linter flagged is fixed rather
+  than silenced: repeated literals become constants — the checkpoint codec's
+  scalar kind tags, which its encoder and decoder must spell alike; the
+  expression language's `and`/`or`/`not`; the BPMN converter's § pins — and
+  a `//nolint:gosec` that the new gosec no longer needs is removed.
 - **The pinned toolchain is `go1.26.10`, and `adapters/sqlite` now requires
   Go 1.26.** Go 1.25 left support when 1.27 shipped, so `go1.25.13` was the
   last patch that line will get and stdlib advisories against it could no
@@ -33,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+
+- **`incident_id` is a registered key.** It names which incident a fact or
+  log record is about, so ADR-022 §2.5 required it in the canonical
+  vocabulary, but it was hand-typed at every call site — the vocabulary test
+  checks literals only for keys that already have a constant, so it could
+  not see one that never got one. Incident and recovery reports now use
+  `observability.AttrIncidentID`, `AttrAction` and `AttrReason`; the key
+  strings themselves are unchanged.
 - **The weekly tool-pin check can open its bump PR, and the PR runs CI.**
   Two defects stood in the way, one behind the other. First, the bump
   rewrote each pin in the Makefile and again in the workflow that installed

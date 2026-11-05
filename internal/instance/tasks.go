@@ -762,7 +762,7 @@ func (inst *Instance) denyByResolutionFailure(
 		NodeName: node.Name(),
 		Details: map[string]string{
 			observability.AttrTaskID: taskID,
-			"reason":                 "eligibility_resolution_failed",
+			observability.AttrReason: "eligibility_resolution_failed",
 			"effect":                 "denied_all_actors",
 		},
 	})

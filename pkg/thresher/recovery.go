@@ -142,7 +142,7 @@ func (t *Thresher) finishOrphanedChild(
 		Phase: observability.PhaseTerminated,
 		Details: map[string]string{
 			observability.AttrInstanceID: rec.ID,
-			"reason":                     "caller-terminal",
+			observability.AttrReason:     "caller-terminal",
 			"caller":                     parentID,
 		},
 	})
@@ -455,7 +455,7 @@ func (t *Thresher) reportRecoveryFailure(id string, err error) {
 		Phase: observability.PhaseFailed,
 		Details: map[string]string{
 			observability.AttrInstanceID: id,
-			"reason":                     "recovery",
+			observability.AttrReason:     "recovery",
 			observability.AttrError:      err.Error(),
 		},
 	})

@@ -308,6 +308,14 @@ const (
 	// there is nothing more specific to report it by.
 	AttrObserverType = "observer_type"
 
+	// AttrIncidentID names the incident a fact or log record is about
+	// (ADR-036 v.2). AttrAction says what happened to it — raised, retried,
+	// resolved — and AttrReason why an instance or task reached the state the
+	// fact reports.
+	AttrIncidentID = "incident_id"
+	AttrAction     = "action"
+	AttrReason     = "reason"
+
 	// Model elements that name a real BPMN or engine object but had no
 	// canonical key, so every call site spelled them by hand (FIX-035 §1.4).
 	// AttrAssociationSourceID is spelled in full: the bare "source_id" it

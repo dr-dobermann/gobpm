@@ -460,7 +460,7 @@ func (t *Thresher) reportWakeFailure(instanceID string, err error) {
 		Phase: observability.PhaseFailed,
 		Details: map[string]string{
 			observability.AttrInstanceID: instanceID,
-			"reason":                     "wake",
+			observability.AttrReason:     "wake",
 			observability.AttrError:      err.Error(),
 		},
 	})

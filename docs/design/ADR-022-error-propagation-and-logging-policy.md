@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.3 |
+| Version | v.4 |
 | Date | 2026-07-31 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-002 v.2](ADR-002-extension-architecture.md) (the observability extensions and the visible-by-default posture), [SAD-001 v.1.1](SAD-001-vision-and-architecture.md) (library-first: the embedder owns the process, the engine owes it diagnosability) |
@@ -164,14 +164,15 @@ registration is required:
 | Data | `data_name`, `data_store`, `item_id`, `association_id`, `association_source_id`, `expression_id` |
 | Decision / script | `decision_ref`, `decision_name`, `implementation`, `result_variable`, `operation_id`, `operation_name`, `renderer_id` |
 | Observation | `observer_type` |
+| Incidents | `incident_id` (the incident an event is about — raised, retried, resolved; [ADR-036 v.2](ADR-036-incidents-and-fault-tolerance.md)) |
 | Compensation | `activity_ref` (the activity a compensation targets — distinct from `node_id`, which names where the fact occurred) |
 | The error | `error` |
 
 **Descriptive attributes** — free-form by design, no registration required:
-`attempts`, `backoff`, `candidates`, `chosen_flows`, `loop_counter`, `ordinal`,
-`output_count`, `row_count`, `rule_count`, `script_format`, `selected_by`,
-`stage`, `stop_reason`, `transaction_method`, plus one-off counts and
-durations (`deadline`, `duration`, a `processors`/`catchers` count).
+`action`, `attempts`, `backoff`, `candidates`, `chosen_flows`, `loop_counter`,
+`ordinal`, `output_count`, `reason`, `row_count`, `rule_count`, `script_format`,
+`selected_by`, `stage`, `stop_reason`, `transaction_method`, plus one-off counts
+and durations (`deadline`, `duration`, a `processors`/`catchers` count).
 
 **A canonical key is absent when its value is not known, never approximated.**
 The pair that names a callable makes this concrete. `called_key` carries the
@@ -344,6 +345,7 @@ None.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.4 | 2026-11-05 | Ruslan Gabitov | `incident_id` joins the canonical keys under a new Incidents row: it names which incident a fact or log record is about, so by §2.5 it should have been registered when incidents landed ([ADR-036 v.2](ADR-036-incidents-and-fault-tolerance.md)). It was not, and it lived in code as a bare string literal — the gate missed it, because the literal check only knows keys that already have a constant. `action` (what happened to an incident: raised, retried, resolved) and `reason` (why an instance or task reached its state) join the descriptive list; each now has an `Attr*` constant too, so the call sites that retyped them reach one spelling. Found when golangci-lint v2.15's goconst flagged the repeated literals. Outgoing pins are left at the versions this contract was written against (SAD-001 v.1.1, ADR-002 v.2, ADR-013 v.2): the change adds keys and touches nothing they govern. |
 | v.3 | 2026-08-28 | Ruslan Gabitov | `called_namespace` joins the Definition-lineage canonical keys. A Call Activity's reference is a key optionally qualified by the namespace of the document that declared the callable ([ADR-023 v.5](ADR-023-sub-process-and-call-activity.md) §2.7), so the pair is what names the callable — and a fact carrying only half of it names something else. It is present on a call fact only when the reference was qualified: an absent attribute then reads as "unqualified", a fact about the file, rather than as a dropped value. |
 | v.2 | 2026-08-01 | Ruslan Gabitov | Accepted. **The vocabulary is reconciled with the code and gated in both directions.** §2.5's registration rule ("new entity keys join by a version bump") was enforced by nothing and had not held: 28 of the 47 `Attr*` constants had entered the code without reaching the table, and two keys the table already carried — `event_definition_type`, `event_processor_id` — existed in code only as bare string literals, so the vocabulary was unenforced in BOTH directions. §2.5 now lists all 50 keys, split by an explicit criterion: a **canonical** key names which object the event is about (id, name, address, or the kind the engine addresses it by) and requires registration; a **descriptive** attribute characterises the event itself (count, order, reason, outcome) and is free-form. Two judgment calls are stated rather than left implicit — an aggregate of ids (`candidates`, `chosen_flows`) is descriptive because it enumerates rather than references, and `script_format` is descriptive where `topic` is canonical because a format is a shared category, not one queue. Adds `observer_type` (the concrete Go type of a host observer whose OnFact panicked — the only handle the engine has on a host-supplied value it assigns no id). Adds the rule that both directions are TESTED, not trusted, so a key present in code but not in this table, or in this table but hand-typed at a call site, fails the build. Outgoing pin refreshed at the bump: SAD-001 v.1 → v.1.1 (stale); ADR-002 v.2 and ADR-013 v.2 verified current. No change to §2.1–§2.4 or §2.6 — propagation, handling boundaries, levels and silence-is-opt-out are unchanged. |
 | v.1 | 2026-07-11 | Ruslan Gabitov | Accepted (authored 2026-07-10). The error-propagation and logging contract: handle-exactly-once (log XOR return); three propagation patterns (lone-call return, errors.Join, contextual wrap); the enumerated handling boundaries (goroutine tops, best-effort ops, deliberate ignores with log+comment) with the public API edge explicitly NOT a logging boundary, a **fail-fast-vs-best-effort discriminator** (judge by the failure surface — an invariant-only failure propagates, not logs — added during implementation from the WaiterFired finding), and a carve-out for logger-less components (model constructors, console driver) that propagate or comment; level discipline (Error/Warn/Info/Debug with hot-path and expected-no-op corollaries); the canonical attribute vocabulary (grounded against the code: adds `event_definition_type`/`event_processor_id`/`worker_id`/`topic`/`start_node_id`, splits `correlation_key`/`correlation_value`, frees count attributes); silence-is-opt-out; logs vs ObsEvent stream separation. Grounded in Go practice (BPMN is silent on observability). Landed by its accompanying FIX (the discard sweep + existing-log audit); Accepted after that FIX's /check-srd landing gate passed. |
