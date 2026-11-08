@@ -15,10 +15,19 @@ func NewMockPropertyAdder(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockPropertyAdder {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockPropertyAdder{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -60,7 +69,7 @@ type MockPropertyAdder_AddProperty_Call struct {
 
 // AddProperty is a helper method to define mock.On call
 //   - p *data.Property
-func (_e *MockPropertyAdder_Expecter) AddProperty(p interface{}) *MockPropertyAdder_AddProperty_Call {
+func (_e *MockPropertyAdder_Expecter) AddProperty(p any) *MockPropertyAdder_AddProperty_Call {
 	return &MockPropertyAdder_AddProperty_Call{Call: _e.mock.On("AddProperty", p)}
 }
 

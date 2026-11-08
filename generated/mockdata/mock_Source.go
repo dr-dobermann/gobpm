@@ -17,10 +17,19 @@ func NewMockSource(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockSource {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockSource{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -74,7 +83,7 @@ type MockSource_Find_Call struct {
 // Find is a helper method to define mock.On call
 //   - ctx context.Context
 //   - name string
-func (_e *MockSource_Expecter) Find(ctx interface{}, name interface{}) *MockSource_Find_Call {
+func (_e *MockSource_Expecter) Find(ctx any, name any) *MockSource_Find_Call {
 	return &MockSource_Find_Call{Call: _e.mock.On("Find", ctx, name)}
 }
 

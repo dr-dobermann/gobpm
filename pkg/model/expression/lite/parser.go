@@ -122,7 +122,7 @@ func (p *parser) parseOr() (node, error) {
 			return nil, err
 		}
 
-		left = binNode{op: "or", left: left, right: right, base: at(t.off)}
+		left = binNode{op: kwOr, left: left, right: right, base: at(t.off)}
 	}
 
 	return left, nil
@@ -143,7 +143,7 @@ func (p *parser) parseAnd() (node, error) {
 			return nil, err
 		}
 
-		left = binNode{op: "and", left: left, right: right, base: at(t.off)}
+		left = binNode{op: kwAnd, left: left, right: right, base: at(t.off)}
 	}
 
 	return left, nil
@@ -159,7 +159,7 @@ func (p *parser) parseNot() (node, error) {
 			return nil, err
 		}
 
-		return unaryNode{op: "not", operand: operand, base: at(t.off)}, nil
+		return unaryNode{op: kwNot, operand: operand, base: at(t.off)}, nil
 	}
 
 	return p.parseComparison()

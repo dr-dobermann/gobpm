@@ -16,10 +16,19 @@ func NewMockElement(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockElement {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockElement{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -61,7 +70,7 @@ type MockElement_BindTo_Call struct {
 
 // BindTo is a helper method to define mock.On call
 //   - container flow.Container
-func (_e *MockElement_Expecter) BindTo(container interface{}) *MockElement_BindTo_Call {
+func (_e *MockElement_Expecter) BindTo(container any) *MockElement_BindTo_Call {
 	return &MockElement_BindTo_Call{Call: _e.mock.On("BindTo", container)}
 }
 

@@ -76,8 +76,8 @@ type ApplicationError struct {
 	Classes []string          `json:"classes"`
 }
 
-// New returns pointer on created with errOptions ApplicationError.
-func New(errOpts ...errOption) *ApplicationError {
+// New builds an ApplicationError from the given options.
+func New(errOpts ...Option) *ApplicationError {
 	eCfg := errConfig{
 		err:     nil,
 		msg:     defaultMessage,

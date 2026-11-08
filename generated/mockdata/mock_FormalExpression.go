@@ -18,10 +18,19 @@ func NewMockFormalExpression(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockFormalExpression {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockFormalExpression{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -121,7 +130,7 @@ type MockFormalExpression_Evaluate_Call struct {
 // Evaluate is a helper method to define mock.On call
 //   - ctx context.Context
 //   - source data.Source
-func (_e *MockFormalExpression_Expecter) Evaluate(ctx interface{}, source interface{}) *MockFormalExpression_Evaluate_Call {
+func (_e *MockFormalExpression_Expecter) Evaluate(ctx any, source any) *MockFormalExpression_Evaluate_Call {
 	return &MockFormalExpression_Evaluate_Call{Call: _e.mock.On("Evaluate", ctx, source)}
 }
 

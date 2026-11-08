@@ -8,6 +8,12 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 )
 
+// The two decisions a reviewer can submit.
+const (
+	decisionApproved = "approved"
+	decisionRejected = "rejected"
+)
+
 // answer does what a person would: opens the task, claims it so nobody else
 // can, and submits a decision.
 //
@@ -30,9 +36,9 @@ func (i *inbox) answer(ctx context.Context, taskID, who string) {
 		return
 	}
 
-	decision := "approved"
+	decision := decisionApproved
 	if who == "carol" {
-		decision = "rejected"
+		decision = decisionRejected
 	}
 
 	out := []data.Data{

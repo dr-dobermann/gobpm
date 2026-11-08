@@ -19,10 +19,19 @@ func NewMockEventHub(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockEventHub {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockEventHub{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -65,7 +74,7 @@ type MockEventHub_PropagateEvent_Call struct {
 // PropagateEvent is a helper method to define mock.On call
 //   - context1 context.Context
 //   - eventDefinition flow.EventDefinition
-func (_e *MockEventHub_Expecter) PropagateEvent(context1 interface{}, eventDefinition interface{}) *MockEventHub_PropagateEvent_Call {
+func (_e *MockEventHub_Expecter) PropagateEvent(context1 any, eventDefinition any) *MockEventHub_PropagateEvent_Call {
 	return &MockEventHub_PropagateEvent_Call{Call: _e.mock.On("PropagateEvent", context1, eventDefinition)}
 }
 
@@ -122,7 +131,7 @@ type MockEventHub_RegisterEvent_Call struct {
 // RegisterEvent is a helper method to define mock.On call
 //   - eventProcessor eventproc.EventProcessor
 //   - eventDefinition flow.EventDefinition
-func (_e *MockEventHub_Expecter) RegisterEvent(eventProcessor interface{}, eventDefinition interface{}) *MockEventHub_RegisterEvent_Call {
+func (_e *MockEventHub_Expecter) RegisterEvent(eventProcessor any, eventDefinition any) *MockEventHub_RegisterEvent_Call {
 	return &MockEventHub_RegisterEvent_Call{Call: _e.mock.On("RegisterEvent", eventProcessor, eventDefinition)}
 }
 
@@ -179,7 +188,7 @@ type MockEventHub_RegisterPersistentEvent_Call struct {
 // RegisterPersistentEvent is a helper method to define mock.On call
 //   - ep eventproc0.EventProcessor
 //   - eDef flow.EventDefinition
-func (_e *MockEventHub_Expecter) RegisterPersistentEvent(ep interface{}, eDef interface{}) *MockEventHub_RegisterPersistentEvent_Call {
+func (_e *MockEventHub_Expecter) RegisterPersistentEvent(ep any, eDef any) *MockEventHub_RegisterPersistentEvent_Call {
 	return &MockEventHub_RegisterPersistentEvent_Call{Call: _e.mock.On("RegisterPersistentEvent", ep, eDef)}
 }
 
@@ -235,7 +244,7 @@ type MockEventHub_RemoveWaiter_Call struct {
 
 // RemoveWaiter is a helper method to define mock.On call
 //   - eDefID string
-func (_e *MockEventHub_Expecter) RemoveWaiter(eDefID interface{}) *MockEventHub_RemoveWaiter_Call {
+func (_e *MockEventHub_Expecter) RemoveWaiter(eDefID any) *MockEventHub_RemoveWaiter_Call {
 	return &MockEventHub_RemoveWaiter_Call{Call: _e.mock.On("RemoveWaiter", eDefID)}
 }
 
@@ -286,7 +295,7 @@ type MockEventHub_Run_Call struct {
 
 // Run is a helper method to define mock.On call
 //   - context1 context.Context
-func (_e *MockEventHub_Expecter) Run(context1 interface{}) *MockEventHub_Run_Call {
+func (_e *MockEventHub_Expecter) Run(context1 any) *MockEventHub_Run_Call {
 	return &MockEventHub_Run_Call{Call: _e.mock.On("Run", context1)}
 }
 
@@ -337,7 +346,7 @@ type MockEventHub_Shutdown_Call struct {
 
 // Shutdown is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockEventHub_Expecter) Shutdown(ctx interface{}) *MockEventHub_Shutdown_Call {
+func (_e *MockEventHub_Expecter) Shutdown(ctx any) *MockEventHub_Shutdown_Call {
 	return &MockEventHub_Shutdown_Call{Call: _e.mock.On("Shutdown", ctx)}
 }
 
@@ -388,7 +397,7 @@ type MockEventHub_Start_Call struct {
 
 // Start is a helper method to define mock.On call
 //   - context1 context.Context
-func (_e *MockEventHub_Expecter) Start(context1 interface{}) *MockEventHub_Start_Call {
+func (_e *MockEventHub_Expecter) Start(context1 any) *MockEventHub_Start_Call {
 	return &MockEventHub_Start_Call{Call: _e.mock.On("Start", context1)}
 }
 
@@ -440,7 +449,7 @@ type MockEventHub_UnregisterEvent_Call struct {
 // UnregisterEvent is a helper method to define mock.On call
 //   - ep eventproc.EventProcessor
 //   - eDefID string
-func (_e *MockEventHub_Expecter) UnregisterEvent(ep interface{}, eDefID interface{}) *MockEventHub_UnregisterEvent_Call {
+func (_e *MockEventHub_Expecter) UnregisterEvent(ep any, eDefID any) *MockEventHub_UnregisterEvent_Call {
 	return &MockEventHub_UnregisterEvent_Call{Call: _e.mock.On("UnregisterEvent", ep, eDefID)}
 }
 
@@ -496,7 +505,7 @@ type MockEventHub_WaiterFired_Call struct {
 
 // WaiterFired is a helper method to define mock.On call
 //   - eDefID string
-func (_e *MockEventHub_Expecter) WaiterFired(eDefID interface{}) *MockEventHub_WaiterFired_Call {
+func (_e *MockEventHub_Expecter) WaiterFired(eDefID any) *MockEventHub_WaiterFired_Call {
 	return &MockEventHub_WaiterFired_Call{Call: _e.mock.On("WaiterFired", eDefID)}
 }
 

@@ -17,10 +17,19 @@ func NewMockAssociationSource(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockAssociationSource {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockAssociationSource{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -63,7 +72,7 @@ type MockAssociationSource_AddFlow_Call struct {
 // AddFlow is a helper method to define mock.On call
 //   - sequenceFlow *flow.SequenceFlow
 //   - direction data.Direction
-func (_e *MockAssociationSource_Expecter) AddFlow(sequenceFlow interface{}, direction interface{}) *MockAssociationSource_AddFlow_Call {
+func (_e *MockAssociationSource_Expecter) AddFlow(sequenceFlow any, direction any) *MockAssociationSource_AddFlow_Call {
 	return &MockAssociationSource_AddFlow_Call{Call: _e.mock.On("AddFlow", sequenceFlow, direction)}
 }
 
@@ -119,7 +128,7 @@ type MockAssociationSource_BindOutgoing_Call struct {
 
 // BindOutgoing is a helper method to define mock.On call
 //   - oa *data.Association
-func (_e *MockAssociationSource_Expecter) BindOutgoing(oa interface{}) *MockAssociationSource_BindOutgoing_Call {
+func (_e *MockAssociationSource_Expecter) BindOutgoing(oa any) *MockAssociationSource_BindOutgoing_Call {
 	return &MockAssociationSource_BindOutgoing_Call{Call: _e.mock.On("BindOutgoing", oa)}
 }
 
@@ -170,7 +179,7 @@ type MockAssociationSource_BindTo_Call struct {
 
 // BindTo is a helper method to define mock.On call
 //   - container flow.Container
-func (_e *MockAssociationSource_Expecter) BindTo(container interface{}) *MockAssociationSource_BindTo_Call {
+func (_e *MockAssociationSource_Expecter) BindTo(container any) *MockAssociationSource_BindTo_Call {
 	return &MockAssociationSource_BindTo_Call{Call: _e.mock.On("BindTo", container)}
 }
 

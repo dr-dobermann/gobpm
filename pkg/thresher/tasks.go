@@ -222,7 +222,7 @@ func (t *Thresher) gateComplete(taskID string, actor hi.Actor) error {
 			t.reportTaskOwnership(taskID, observability.PhaseFailed,
 				map[string]string{
 					observability.AttrUserID: actor.UserID(),
-					"reason":                 reason,
+					observability.AttrReason: reason,
 				})
 		}
 

@@ -17,10 +17,19 @@ func NewMockFrame(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockFrame {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockFrame{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -165,7 +174,7 @@ type MockFrame_GetData_Call struct {
 
 // GetData is a helper method to define mock.On call
 //   - name string
-func (_e *MockFrame_Expecter) GetData(name interface{}) *MockFrame_GetData_Call {
+func (_e *MockFrame_Expecter) GetData(name any) *MockFrame_GetData_Call {
 	return &MockFrame_GetData_Call{Call: _e.mock.On("GetData", name)}
 }
 
@@ -227,7 +236,7 @@ type MockFrame_GetDataByID_Call struct {
 
 // GetDataByID is a helper method to define mock.On call
 //   - id string
-func (_e *MockFrame_Expecter) GetDataByID(id interface{}) *MockFrame_GetDataByID_Call {
+func (_e *MockFrame_Expecter) GetDataByID(id any) *MockFrame_GetDataByID_Call {
 	return &MockFrame_GetDataByID_Call{Call: _e.mock.On("GetDataByID", id)}
 }
 
@@ -324,7 +333,7 @@ type MockFrame_InstantiateInputs_Call struct {
 
 // InstantiateInputs is a helper method to define mock.On call
 //   - defs []*data.Parameter
-func (_e *MockFrame_Expecter) InstantiateInputs(defs interface{}) *MockFrame_InstantiateInputs_Call {
+func (_e *MockFrame_Expecter) InstantiateInputs(defs any) *MockFrame_InstantiateInputs_Call {
 	return &MockFrame_InstantiateInputs_Call{Call: _e.mock.On("InstantiateInputs", defs)}
 }
 
@@ -375,7 +384,7 @@ type MockFrame_InstantiateOutputs_Call struct {
 
 // InstantiateOutputs is a helper method to define mock.On call
 //   - defs []*data.Parameter
-func (_e *MockFrame_Expecter) InstantiateOutputs(defs interface{}) *MockFrame_InstantiateOutputs_Call {
+func (_e *MockFrame_Expecter) InstantiateOutputs(defs any) *MockFrame_InstantiateOutputs_Call {
 	return &MockFrame_InstantiateOutputs_Call{Call: _e.mock.On("InstantiateOutputs", defs)}
 }
 
@@ -426,7 +435,7 @@ type MockFrame_LoadProperties_Call struct {
 
 // LoadProperties is a helper method to define mock.On call
 //   - defs []*data.Property
-func (_e *MockFrame_Expecter) LoadProperties(defs interface{}) *MockFrame_LoadProperties_Call {
+func (_e *MockFrame_Expecter) LoadProperties(defs any) *MockFrame_LoadProperties_Call {
 	return &MockFrame_LoadProperties_Call{Call: _e.mock.On("LoadProperties", defs)}
 }
 
@@ -561,7 +570,7 @@ type MockFrame_RecordDataMovement_Call struct {
 //   - write bool
 //   - name string
 //   - storeRef string
-func (_e *MockFrame_Expecter) RecordDataMovement(engineStore interface{}, write interface{}, name interface{}, storeRef interface{}) *MockFrame_RecordDataMovement_Call {
+func (_e *MockFrame_Expecter) RecordDataMovement(engineStore any, write any, name any, storeRef any) *MockFrame_RecordDataMovement_Call {
 	return &MockFrame_RecordDataMovement_Call{Call: _e.mock.On("RecordDataMovement", engineStore, write, name, storeRef)}
 }
 
@@ -616,7 +625,7 @@ type MockFrame_SetReceived_Call struct {
 
 // SetReceived is a helper method to define mock.On call
 //   - item *data.ItemDefinition
-func (_e *MockFrame_Expecter) SetReceived(item interface{}) *MockFrame_SetReceived_Call {
+func (_e *MockFrame_Expecter) SetReceived(item any) *MockFrame_SetReceived_Call {
 	return &MockFrame_SetReceived_Call{Call: _e.mock.On("SetReceived", item)}
 }
 

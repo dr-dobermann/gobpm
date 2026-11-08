@@ -286,14 +286,14 @@ func (ls *loopState) raiseIncident(ctx context.Context, t *track) {
 		observability.AttrInstanceID, ls.inst.ID(),
 		observability.AttrNodeID, inc.nodeID,
 		observability.AttrNodeName, inc.nodeName,
-		"incident_id", inc.id,
+		observability.AttrIncidentID, inc.id,
 		observability.AttrAttempts, inc.attempts,
 		observability.AttrError, inc.cause)
 
 	details := map[string]string{
-		"action":                "raised",
-		"incident_id":           inc.id,
-		observability.AttrError: inc.cause,
+		observability.AttrAction:     "raised",
+		observability.AttrIncidentID: inc.id,
+		observability.AttrError:      inc.cause,
 	}
 	if inc.causeClass != "" {
 		details["cause_class"] = inc.causeClass
@@ -615,8 +615,8 @@ func (ls *loopState) closeIncident(
 	ls.inst.openIncCount.Add(-1)
 
 	details := map[string]string{
-		"action":      to.String(),
-		"incident_id": inc.id,
+		observability.AttrAction:     to.String(),
+		observability.AttrIncidentID: inc.id,
 	}
 	for k, v := range extraDetails {
 		details[k] = v
@@ -756,9 +756,9 @@ func (ls *loopState) scheduleIncidentRetry(inc *incident, cause error) {
 		NodeID:   inc.nodeID,
 		NodeName: inc.nodeName,
 		Details: map[string]string{
-			"action":      "retry-scheduled",
-			"incident_id": inc.id,
-			"retry_at":    inc.retryAt.Format(time.RFC3339Nano),
+			observability.AttrAction:     "retry-scheduled",
+			observability.AttrIncidentID: inc.id,
+			"retry_at":                   inc.retryAt.Format(time.RFC3339Nano),
 		},
 	})
 }
@@ -831,7 +831,7 @@ func (ls *loopState) retryIncident(ctx context.Context, inc *incident) {
 		ls.inst.Logger().Error("incident retry: node not in snapshot",
 			observability.AttrInstanceID, ls.inst.ID(),
 			observability.AttrNodeID, inc.nodeID,
-			"incident_id", inc.id)
+			observability.AttrIncidentID, inc.id)
 
 		inc.state = incidentOpen
 		inc.retryAt = time.Time{}
@@ -844,7 +844,7 @@ func (ls *loopState) retryIncident(ctx context.Context, inc *incident) {
 		ls.inst.Logger().Error("incident retry: track build failed",
 			observability.AttrInstanceID, ls.inst.ID(),
 			observability.AttrNodeID, inc.nodeID,
-			"incident_id", inc.id,
+			observability.AttrIncidentID, inc.id,
 			observability.AttrError, err.Error())
 
 		inc.state = incidentOpen
@@ -871,9 +871,9 @@ func (ls *loopState) retryIncident(ctx context.Context, inc *incident) {
 		NodeID:   inc.nodeID,
 		NodeName: inc.nodeName,
 		Details: map[string]string{
-			"action":      "retried",
-			"incident_id": inc.id,
-			"prev_track":  prevTrackID,
+			observability.AttrAction:     "retried",
+			observability.AttrIncidentID: inc.id,
+			"prev_track":                 prevTrackID,
 		},
 	})
 
@@ -928,9 +928,9 @@ func (ls *loopState) closeIncidentsOnProgress(t *track) {
 			NodeID:   inc.nodeID,
 			NodeName: inc.nodeName,
 			Details: map[string]string{
-				"action":      "resolved",
-				"incident_id": inc.id,
-				"resolution":  "retry",
+				observability.AttrAction:     "resolved",
+				observability.AttrIncidentID: inc.id,
+				"resolution":                 "retry",
 			},
 		})
 	}

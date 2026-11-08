@@ -46,9 +46,9 @@ func checkDistinctTasks(box *inbox) error {
 // happened to answer last.
 func checkDecisions(ctx context.Context, r service.DataReader) error {
 	want := map[string]string{
-		"alice": "approved",
-		"bob":   "approved",
-		"carol": "rejected",
+		"alice": decisionApproved,
+		"bob":   decisionApproved,
+		"carol": decisionRejected,
 	}
 
 	d, err := r.GetData("decisions")

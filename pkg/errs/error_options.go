@@ -17,19 +17,21 @@ type (
 		classes []string
 	}
 
-	errOption interface {
+	// Option configures the ApplicationError that New builds. The options are
+	// E, M, C and D; the interface is sealed, so no other package implements it.
+	Option interface {
 		apply(cfg *errConfig) error
 	}
 
 	errFunc func(cfg *errConfig) error
 )
 
-// ------------------ errOption interface --------------------------------------
+// ------------------ Option interface --------------------------------------
 //
-// apply implements errOption interface for errFunc.
+// apply implements the Option interface for errFunc.
 func (ef errFunc) apply(cfg *errConfig) error {
 	if cfg == nil {
-		return fmt.Errorf("empty error configureation")
+		return fmt.Errorf("empty error configuration")
 	}
 
 	return ef(cfg)
@@ -46,7 +48,7 @@ func (cfg *errConfig) newError() *ApplicationError {
 }
 
 // E adds error into errConfig.
-func E(err error) errOption {
+func E(err error) Option {
 	f := func(cfg *errConfig) error {
 		if err == nil {
 			return fmt.Errorf("empty error")
@@ -61,7 +63,7 @@ func E(err error) errOption {
 }
 
 // M fills the message in errConfig.
-func M(format string, values ...any) errOption {
+func M(format string, values ...any) Option {
 	f := func(cfg *errConfig) error {
 		format = strings.Trim(format, " ")
 		if format == "" {
@@ -77,7 +79,7 @@ func M(format string, values ...any) errOption {
 }
 
 // C adds error classes into the errConfig.
-func C(classes ...string) errOption {
+func C(classes ...string) Option {
 	f := func(cfg *errConfig) error {
 		for _, c := range classes {
 			c = strings.Trim(c, " ")
@@ -97,7 +99,7 @@ func C(classes ...string) errOption {
 // or boxing, keeping error construction cheap on hot paths (FIX-019). Callers
 // stringify non-string values explicitly (strconv.Itoa, string(namedType),
 // x.ID()) — do not reintroduce `any` here.
-func D(k, v string) errOption {
+func D(k, v string) Option {
 	f := func(cfg *errConfig) error {
 		k = strings.Trim(k, " ")
 		if k != "" && v != "" {

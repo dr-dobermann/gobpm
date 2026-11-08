@@ -453,7 +453,7 @@ func complexMissing(cx *complexSpec) string {
 	}
 
 	if cx.condition == nil {
-		return "condition"
+		return tagCondition
 	}
 
 	return "event (with an event definition inside)"
@@ -722,7 +722,7 @@ func (p *parser) parseComplexChild(cx *complexSpec, se xml.StartElement) error {
 	}
 
 	switch se.Name.Local {
-	case "condition":
+	case tagCondition:
 		body, err := p.readText(se)
 		if err != nil {
 			return err
@@ -732,7 +732,7 @@ func (p *parser) parseComplexChild(cx *complexSpec, se xml.StartElement) error {
 			cx.condition = &exprSpec{
 				ownerKind: tagComplexBehavior,
 				ownerID:   fallbackName(cx.id, p.owner),
-				role:      "condition",
+				role:      tagCondition,
 				id:        attrValue(se, "id"),
 				lang:      attrValue(se, "language"),
 				body:      body,

@@ -17,10 +17,19 @@ func NewMockAssociationTarget(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockAssociationTarget {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockAssociationTarget{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -63,7 +72,7 @@ type MockAssociationTarget_AddFlow_Call struct {
 // AddFlow is a helper method to define mock.On call
 //   - sequenceFlow *flow.SequenceFlow
 //   - direction data.Direction
-func (_e *MockAssociationTarget_Expecter) AddFlow(sequenceFlow interface{}, direction interface{}) *MockAssociationTarget_AddFlow_Call {
+func (_e *MockAssociationTarget_Expecter) AddFlow(sequenceFlow any, direction any) *MockAssociationTarget_AddFlow_Call {
 	return &MockAssociationTarget_AddFlow_Call{Call: _e.mock.On("AddFlow", sequenceFlow, direction)}
 }
 
@@ -119,7 +128,7 @@ type MockAssociationTarget_BindIncoming_Call struct {
 
 // BindIncoming is a helper method to define mock.On call
 //   - ia *data.Association
-func (_e *MockAssociationTarget_Expecter) BindIncoming(ia interface{}) *MockAssociationTarget_BindIncoming_Call {
+func (_e *MockAssociationTarget_Expecter) BindIncoming(ia any) *MockAssociationTarget_BindIncoming_Call {
 	return &MockAssociationTarget_BindIncoming_Call{Call: _e.mock.On("BindIncoming", ia)}
 }
 
@@ -170,7 +179,7 @@ type MockAssociationTarget_BindTo_Call struct {
 
 // BindTo is a helper method to define mock.On call
 //   - container flow.Container
-func (_e *MockAssociationTarget_Expecter) BindTo(container interface{}) *MockAssociationTarget_BindTo_Call {
+func (_e *MockAssociationTarget_Expecter) BindTo(container any) *MockAssociationTarget_BindTo_Call {
 	return &MockAssociationTarget_BindTo_Call{Call: _e.mock.On("BindTo", container)}
 }
 

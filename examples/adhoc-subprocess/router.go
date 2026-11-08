@@ -24,11 +24,11 @@ func (triageRouter) Next(
 	// Nothing has happened yet: the container has just opened, and the first
 	// answer is the standard's "initially enabled" set.
 	case s.Last == "":
-		return []string{"gather-logs"}, nil
+		return []string{actGatherLogs}, nil
 
 	// The logs are in. Now the decision reads the case's own data — this is what
 	// makes ad-hoc routing more than counting activities.
-	case s.Last == "gather-logs":
+	case s.Last == actGatherLogs:
 		severity, err := readSeverity(ctx, s)
 		if err != nil {
 			return nil, err
@@ -39,12 +39,12 @@ func (triageRouter) Next(
 			// start and run concurrently.
 			fmt.Println("  ▷ router: severity is high → notify AND escalate")
 
-			return []string{"notify-customer", "escalate"}, nil
+			return []string{actNotifyCustomer, actEscalate}, nil
 		}
 
 		fmt.Println("  ▷ router: severity is low → notify only")
 
-		return []string{"notify-customer"}, nil
+		return []string{actNotifyCustomer}, nil
 
 	// One of the fork's branches finished. If its sibling is still working,
 	// answer empty: that ends only this track, and the Router will be asked
@@ -57,10 +57,10 @@ func (triageRouter) Next(
 		return nil, nil
 
 	// Everything has drained and the incident has not been closed yet.
-	case s.Completed["close-incident"] == 0:
+	case s.Completed[actCloseIncident] == 0:
 		fmt.Println("  ▷ router: all work settled → close the incident")
 
-		return []string{"close-incident"}, nil
+		return []string{actCloseIncident}, nil
 
 	// Nothing left to do. The empty answer leaves no track behind, the scope
 	// drains, and the Ad-Hoc Sub-Process completes — there is no separate

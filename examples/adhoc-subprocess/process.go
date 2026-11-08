@@ -15,6 +15,15 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 )
 
+// The triage container's activities. The Router answers with these names, so
+// the model and the routing share one spelling.
+const (
+	actGatherLogs     = "gather-logs"
+	actNotifyCustomer = "notify-customer"
+	actEscalate       = "escalate"
+	actCloseIncident  = "close-incident"
+)
+
 // buildProcess assembles: start → triage (Ad-Hoc) → end.
 //
 // The triage container holds four activities and NO sequence flows between
@@ -47,10 +56,10 @@ func buildProcess(log *runLog, severity string) (*process.Process, error) {
 	}
 
 	for _, step := range []struct{ name, says string }{
-		{"gather-logs", "collected the incident logs"},
-		{"notify-customer", "told the customer we are on it"},
-		{"escalate", "paged the on-call engineer"},
-		{"close-incident", "closed the incident"},
+		{actGatherLogs, "collected the incident logs"},
+		{actNotifyCustomer, "told the customer we are on it"},
+		{actEscalate, "paged the on-call engineer"},
+		{actCloseIncident, "closed the incident"},
 	} {
 		task, terr := reportTask(log, step.name, step.says)
 		if terr != nil {

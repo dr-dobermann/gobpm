@@ -18,10 +18,19 @@ func NewMockEventProducer(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockEventProducer {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockEventProducer{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -64,7 +73,7 @@ type MockEventProducer_PropagateEvent_Call struct {
 // PropagateEvent is a helper method to define mock.On call
 //   - context1 context.Context
 //   - eventDefinition flow.EventDefinition
-func (_e *MockEventProducer_Expecter) PropagateEvent(context1 interface{}, eventDefinition interface{}) *MockEventProducer_PropagateEvent_Call {
+func (_e *MockEventProducer_Expecter) PropagateEvent(context1 any, eventDefinition any) *MockEventProducer_PropagateEvent_Call {
 	return &MockEventProducer_PropagateEvent_Call{Call: _e.mock.On("PropagateEvent", context1, eventDefinition)}
 }
 
@@ -121,7 +130,7 @@ type MockEventProducer_RegisterEvent_Call struct {
 // RegisterEvent is a helper method to define mock.On call
 //   - eventProcessor eventproc.EventProcessor
 //   - eventDefinition flow.EventDefinition
-func (_e *MockEventProducer_Expecter) RegisterEvent(eventProcessor interface{}, eventDefinition interface{}) *MockEventProducer_RegisterEvent_Call {
+func (_e *MockEventProducer_Expecter) RegisterEvent(eventProcessor any, eventDefinition any) *MockEventProducer_RegisterEvent_Call {
 	return &MockEventProducer_RegisterEvent_Call{Call: _e.mock.On("RegisterEvent", eventProcessor, eventDefinition)}
 }
 
@@ -178,7 +187,7 @@ type MockEventProducer_UnregisterEvent_Call struct {
 // UnregisterEvent is a helper method to define mock.On call
 //   - ep eventproc.EventProcessor
 //   - eDefID string
-func (_e *MockEventProducer_Expecter) UnregisterEvent(ep interface{}, eDefID interface{}) *MockEventProducer_UnregisterEvent_Call {
+func (_e *MockEventProducer_Expecter) UnregisterEvent(ep any, eDefID any) *MockEventProducer_UnregisterEvent_Call {
 	return &MockEventProducer_UnregisterEvent_Call{Call: _e.mock.On("UnregisterEvent", ep, eDefID)}
 }
 

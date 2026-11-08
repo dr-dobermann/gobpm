@@ -229,7 +229,7 @@ func newCondition(fs flowSpec, docLang string) (data.FormalExpression, error) {
 	return newBoolExpression(exprSpec{
 		ownerKind: tagSequenceFlow,
 		ownerID:   fs.id,
-		role:      "condition",
+		role:      tagCondition,
 		id:        fs.condID,
 		lang:      fs.condLang,
 		body:      fs.condBody,

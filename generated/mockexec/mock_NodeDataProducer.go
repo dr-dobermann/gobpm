@@ -20,10 +20,19 @@ func NewMockNodeDataProducer(t interface {
 	mock.TestingT
 	Cleanup(func())
 }) *MockNodeDataProducer {
+	if helper, ok := t.(interface{ Helper() }); ok {
+		helper.Helper()
+	}
+
 	mock := &MockNodeDataProducer{}
 	mock.Mock.Test(t)
 
-	t.Cleanup(func() { mock.AssertExpectations(t) })
+	t.Cleanup(func() {
+		if helper, ok := t.(interface{ Helper() }); ok {
+			helper.Helper()
+		}
+		mock.AssertExpectations(t)
+	})
 
 	return mock
 }
@@ -66,7 +75,7 @@ type MockNodeDataProducer_AddFlow_Call struct {
 // AddFlow is a helper method to define mock.On call
 //   - sequenceFlow *flow.SequenceFlow
 //   - direction data.Direction
-func (_e *MockNodeDataProducer_Expecter) AddFlow(sequenceFlow interface{}, direction interface{}) *MockNodeDataProducer_AddFlow_Call {
+func (_e *MockNodeDataProducer_Expecter) AddFlow(sequenceFlow any, direction any) *MockNodeDataProducer_AddFlow_Call {
 	return &MockNodeDataProducer_AddFlow_Call{Call: _e.mock.On("AddFlow", sequenceFlow, direction)}
 }
 
@@ -122,7 +131,7 @@ type MockNodeDataProducer_BindTo_Call struct {
 
 // BindTo is a helper method to define mock.On call
 //   - container flow.Container
-func (_e *MockNodeDataProducer_Expecter) BindTo(container interface{}) *MockNodeDataProducer_BindTo_Call {
+func (_e *MockNodeDataProducer_Expecter) BindTo(container any) *MockNodeDataProducer_BindTo_Call {
 	return &MockNodeDataProducer_BindTo_Call{Call: _e.mock.On("BindTo", container)}
 }
 
@@ -679,7 +688,7 @@ type MockNodeDataProducer_UploadData_Call struct {
 // UploadData is a helper method to define mock.On call
 //   - context1 context.Context
 //   - frame exec.Frame
-func (_e *MockNodeDataProducer_Expecter) UploadData(context1 interface{}, frame interface{}) *MockNodeDataProducer_UploadData_Call {
+func (_e *MockNodeDataProducer_Expecter) UploadData(context1 any, frame any) *MockNodeDataProducer_UploadData_Call {
 	return &MockNodeDataProducer_UploadData_Call{Call: _e.mock.On("UploadData", context1, frame)}
 }
 

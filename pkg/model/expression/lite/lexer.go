@@ -34,14 +34,22 @@ type token struct {
 	kind tokKind
 }
 
+// The logical keywords. The lexer reads them, and the parser and evaluator
+// carry them as operator names, so all three share one spelling.
+const (
+	kwAnd = "and"
+	kwOr  = "or"
+	kwNot = "not"
+)
+
 // keywords maps bare identifiers onto their keyword kinds.
 var keywords = map[string]tokKind{
 	"true":  tkTrue,
 	"false": tkFalse,
 	"nil":   tkNil,
-	"and":   tkAnd,
-	"or":    tkOr,
-	"not":   tkNot,
+	kwAnd:   tkAnd,
+	kwOr:    tkOr,
+	kwNot:   tkNot,
 }
 
 // syntaxErr builds the classified syntax error naming the byte offset.
