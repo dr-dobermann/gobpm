@@ -871,9 +871,10 @@ func (ls *loopState) retryIncident(ctx context.Context, inc *incident) {
 		NodeID:   inc.nodeID,
 		NodeName: inc.nodeName,
 		Details: map[string]string{
-			observability.AttrAction:     "retried",
-			observability.AttrIncidentID: inc.id,
-			"prev_track":                 prevTrackID,
+			observability.AttrAction:      "retried",
+			observability.AttrIncidentID:  inc.id,
+			observability.AttrTrackID:     inc.trackID,
+			observability.AttrPrevTrackID: prevTrackID,
 		},
 	})
 

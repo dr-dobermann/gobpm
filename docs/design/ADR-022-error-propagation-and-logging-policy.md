@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.4 |
+| Version | v.5 |
 | Date | 2026-07-31 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-002 v.2](ADR-002-extension-architecture.md) (the observability extensions and the visible-by-default posture), [SAD-001 v.1.1](SAD-001-vision-and-architecture.md) (library-first: the embedder owns the process, the engine owes it diagnosability) |
@@ -156,7 +156,7 @@ registration is required:
 
 | Domain | Canonical keys |
 |---|---|
-| Instance / flow | `instance_id`, `track_id`, `node_id`, `node_name`, `process_id`, `process_name`, `start_node_id`, `scope_path`, `data_path`, `flow_id` |
+| Instance / flow | `instance_id`, `track_id`, `prev_track_id`, `node_id`, `node_name`, `process_id`, `process_name`, `start_node_id`, `scope_path`, `data_path`, `flow_id` |
 | Definition lineage | `version`, `parent_instance_id`, `child_instance_id`, `call_activity_node_id`, `called_key`, `called_namespace`, `called_version` |
 | Human / worker tasks | `task_id`, `job_id`, `worker_id`, `topic`, `user_id`, `from_user_id`, `to_user_id` |
 | Events / waiters | `event_definition_id`, `event_definition_type`, `event_processor_id`, `waiter_id`, `signal`, `message_name`, `escalation`, `link_name`, `arm_id`, `requester_id` |
@@ -345,6 +345,7 @@ None.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.5 | 2026-11-07 | Ruslan Gabitov | `prev_track_id` joins the Instance / flow canonical keys. An incident retry hands the incident from the failed track to a new one, and its fact named only the failed one, under the unregistered key `prev_track`; it now carries the new track as `track_id` and the failed one as `prev_track_id` — a pair, like `from_user_id` / `to_user_id`, because a hand-over has two subjects. The same sweep moved a call-recovery fact's `caller` to `parent_instance_id`, the key every other fact of a child instance already used; that needs no bump, since the key was registered. Outgoing pins unchanged from v.4. |
 | v.4 | 2026-11-05 | Ruslan Gabitov | `incident_id` joins the canonical keys under a new Incidents row: it names which incident a fact or log record is about, so by §2.5 it should have been registered when incidents landed ([ADR-036 v.2](ADR-036-incidents-and-fault-tolerance.md)). It was not, and it lived in code as a bare string literal — the gate missed it, because the literal check only knows keys that already have a constant. `action` (what happened to an incident: raised, retried, resolved) and `reason` (why an instance or task reached its state) join the descriptive list; each now has an `Attr*` constant too, so the call sites that retyped them reach one spelling. Found when golangci-lint v2.15's goconst flagged the repeated literals. Outgoing pins are left at the versions this contract was written against (SAD-001 v.1.1, ADR-002 v.2, ADR-013 v.2): the change adds keys and touches nothing they govern. |
 | v.3 | 2026-08-28 | Ruslan Gabitov | `called_namespace` joins the Definition-lineage canonical keys. A Call Activity's reference is a key optionally qualified by the namespace of the document that declared the callable ([ADR-023 v.5](ADR-023-sub-process-and-call-activity.md) §2.7), so the pair is what names the callable — and a fact carrying only half of it names something else. It is present on a call fact only when the reference was qualified: an absent attribute then reads as "unqualified", a fact about the file, rather than as a dropped value. |
 | v.2 | 2026-08-01 | Ruslan Gabitov | Accepted. **The vocabulary is reconciled with the code and gated in both directions.** §2.5's registration rule ("new entity keys join by a version bump") was enforced by nothing and had not held: 28 of the 47 `Attr*` constants had entered the code without reaching the table, and two keys the table already carried — `event_definition_type`, `event_processor_id` — existed in code only as bare string literals, so the vocabulary was unenforced in BOTH directions. §2.5 now lists all 50 keys, split by an explicit criterion: a **canonical** key names which object the event is about (id, name, address, or the kind the engine addresses it by) and requires registration; a **descriptive** attribute characterises the event itself (count, order, reason, outcome) and is free-form. Two judgment calls are stated rather than left implicit — an aggregate of ids (`candidates`, `chosen_flows`) is descriptive because it enumerates rather than references, and `script_format` is descriptive where `topic` is canonical because a format is a shared category, not one queue. Adds `observer_type` (the concrete Go type of a host observer whose OnFact panicked — the only handle the engine has on a host-supplied value it assigns no id). Adds the rule that both directions are TESTED, not trusted, so a key present in code but not in this table, or in this table but hand-typed at a call site, fails the build. Outgoing pin refreshed at the bump: SAD-001 v.1 → v.1.1 (stale); ADR-002 v.2 and ADR-013 v.2 verified current. No change to §2.1–§2.4 or §2.6 — propagation, handling boundaries, levels and silence-is-opt-out are unchanged. |

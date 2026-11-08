@@ -1008,6 +1008,47 @@ func TestIncidentRetryRespawns(t *testing.T) {
 	})
 }
 
+// The retried fact names both ends of the hand-over: the new track the retry
+// runs on as track_id, the failed one as prev_track_id.
+func TestIncidentRetriedFactNamesBothTracks(t *testing.T) {
+	inst, _ := lineInstance(t, enginert.Default(), flakyOp(t, 1),
+		activities.WithIncidentRetryPolicy(
+			capPolicy{backoff: 10 * time.Millisecond, max: 5}))
+
+	fr := &factRecorder{}
+	inst.AddObserver(fr.add)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	require.Eventually(t, func() bool { return inst.State() == Completed },
+		3*time.Second, 5*time.Millisecond)
+
+	// the fan-out is asynchronous: wait for the fact, not just the state.
+	var retried []observability.Fact
+
+	require.Eventually(t, func() bool {
+		retried = retried[:0]
+
+		for _, f := range fr.byPhase(observability.PhaseIncident) {
+			if f.Kind == observability.KindFault &&
+				f.Details[observability.AttrAction] == "retried" {
+				retried = append(retried, f)
+			}
+		}
+
+		return len(retried) == 1
+	}, 3*time.Second, 5*time.Millisecond)
+
+	d := retried[0].Details
+	require.NotEmpty(t, d[observability.AttrTrackID])
+	require.NotEmpty(t, d[observability.AttrPrevTrackID])
+	require.NotEqual(t, d[observability.AttrPrevTrackID],
+		d[observability.AttrTrackID],
+		"the retry runs on a new track, not the failed one")
+}
+
 // T-8: policy resolution — the engine-wide default applies when the activity
 // carries none, and a scheduled retry exposes its deadline on the view.
 func TestIncidentRetryPolicySchedules(t *testing.T) {
