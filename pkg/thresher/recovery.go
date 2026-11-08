@@ -141,9 +141,9 @@ func (t *Thresher) finishOrphanedChild(
 		Kind:  observability.KindInstanceState,
 		Phase: observability.PhaseTerminated,
 		Details: map[string]string{
-			observability.AttrInstanceID: rec.ID,
-			observability.AttrReason:     "caller-terminal",
-			"caller":                     parentID,
+			observability.AttrInstanceID:       rec.ID,
+			observability.AttrReason:           "caller-terminal",
+			observability.AttrParentInstanceID: parentID,
 		},
 	})
 

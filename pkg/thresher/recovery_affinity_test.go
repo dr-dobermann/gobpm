@@ -196,7 +196,7 @@ func TestRecoveryAffinityTerminalCaller(t *testing.T) {
 
 	// the fan-out is asynchronous — poll, as the other fact assertions do.
 	require.Eventually(t, func() bool {
-		return sawTerminatedFor(fw, childID)
+		return sawTerminatedFor(fw, childID, parentID)
 	}, 3*time.Second, 5*time.Millisecond,
 		"the finished cascade is reported, never silent")
 
@@ -207,8 +207,8 @@ func TestRecoveryAffinityTerminalCaller(t *testing.T) {
 }
 
 // sawTerminatedFor reports whether the cascade-finish fact for id was
-// emitted (SRD-087 FR-6).
-func sawTerminatedFor(fw *factWatch, id string) bool {
+// emitted (SRD-087 FR-6), naming its caller under the canonical key.
+func sawTerminatedFor(fw *factWatch, id, parentID string) bool {
 	fw.mu.Lock()
 	defer fw.mu.Unlock()
 
@@ -216,7 +216,8 @@ func sawTerminatedFor(fw *factWatch, id string) bool {
 		if f.Kind == observability.KindInstanceState &&
 			f.Phase == observability.PhaseTerminated &&
 			f.Details[observability.AttrInstanceID] == id &&
-			f.Details["reason"] == "caller-terminal" {
+			f.Details["reason"] == "caller-terminal" &&
+			f.Details[observability.AttrParentInstanceID] == parentID {
 			return true
 		}
 	}

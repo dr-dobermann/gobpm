@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Two fact details move to their vocabulary keys** (ADR-022 v.5).
+  *Observers that read the old keys must switch.* The incident `retried`
+  fact named only the failed track, as `prev_track`; it now carries the new
+  track the retry runs on as `track_id` and the failed one as
+  `prev_track_id`. The call-recovery `Terminated` fact (`reason:
+  caller-terminal`) named the caller as `caller`; it now uses
+  `parent_instance_id`, the key every other fact of a child instance
+  already carries.
+
 
 - **Dev tools move to the latest pins**: mockery v3.9.0, golangci-lint
   v2.15.0, govulncheck v1.9.0, linkcheck v0.1.3, mkdocs-material 9.8.0. The

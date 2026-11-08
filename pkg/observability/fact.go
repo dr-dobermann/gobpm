@@ -208,6 +208,10 @@ const (
 	AttrProcessID   = "process_id"
 	AttrStartNodeID = "start_node_id"
 	AttrTaskID      = "task_id"
+	// AttrPrevTrackID names the track a fact moves AWAY from, when the fact
+	// is about a hand-over between two tracks — an incident retry runs on a
+	// new track (AttrTrackID) and leaves the failed one behind.
+	AttrPrevTrackID = "prev_track_id"
 	// AttrUserID names the actor a human-task fact is about — the claimer, the
 	// releaser, or the completer. AttrFromUserID/AttrToUserID name the two parties
 	// of a reassignment, which has no single subject (SRD-073 FR-8).
