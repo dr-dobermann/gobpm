@@ -201,7 +201,7 @@ tools:
 # import scripts.mkdocs_hooks.github_slugify during config load.
 # ---------------------------------------------------------------------------
 
-MKDOCS_MATERIAL_VERSION    := 9.8.0
+MKDOCS_MATERIAL_VERSION    := 9.8.1
 MKDOCS_AWESOME_NAV_VERSION := 3.3.0
 
 # The docs analogue of require-go-tool: presence alone is insufficient, the
