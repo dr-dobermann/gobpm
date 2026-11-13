@@ -1,13 +1,10 @@
 module github.com/dr-dobermann/gobpm
 
-go 1.25
+go 1.27
 
-toolchain go1.26.10
+toolchain go1.27.4
 
-require (
-	github.com/google/uuid v1.6.0
-	github.com/stretchr/testify v1.12.1
-)
+require github.com/stretchr/testify v1.12.1
 
 require (
 	github.com/stretchr/objx v0.5.3 // indirect

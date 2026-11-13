@@ -3,9 +3,9 @@ package foundation_test
 import (
 	"sync"
 	"testing"
+	"uuid"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 

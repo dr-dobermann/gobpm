@@ -1,8 +1,8 @@
 module github.com/dr-dobermann/gobpm/adapters/sqlite
 
-go 1.26.0
+go 1.27
 
-toolchain go1.26.10
+toolchain go1.27.4
 
 replace github.com/dr-dobermann/gobpm => ../..
 

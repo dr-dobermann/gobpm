@@ -155,7 +155,7 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 // crash the drain goroutine or affect others (ADR-013 v.2 §5), and RETURNING
 // what it recovered so the caller can report it. A nil recovered value means
 // OnFact returned normally: since Go 1.21 a panic(nil) is recovered as a
-// non-nil *runtime.PanicNilError, and every module pins toolchain go1.25.12, so
+// non-nil *runtime.PanicNilError, and every module declares go 1.27, so
 // nil is an unambiguous "no panic" rather than a lost one.
 //
 // The stack is captured only when wantStack is set. A broken observer panics on
