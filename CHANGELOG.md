@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Go 1.27 is now required.** *Consumers on Go 1.25 or 1.26 must upgrade.*
+  Every module declares `go 1.27` (the SQLite adapter was on `go 1.26.0`, the
+  rest on `go 1.25`) and pins `toolchain go1.27.4`. The move was prompted by
+  GO-2026-6859, an HTTP/1 server crash in `net/http` that go1.26.10 carries
+  and govulncheck reports as reachable, which turned every PR's vulnerability
+  scan red. Go 1.27 also brings a stdlib `uuid` package, so the root module no
+  longer requires `github.com/google/uuid` (its only use was a test). It stays
+  in `adapters/sqlite` as an indirect dependency of `modernc.org/libc`.
+
 - **Two fact details move to their vocabulary keys** (ADR-022 v.5).
   *Observers that read the old keys must switch.* The incident `retried`
   fact named only the failed track, as `prev_track`; it now carries the new

@@ -19,10 +19,9 @@ flowchart LR
 
 ## Requirements
 
-- **Go 1.25 or newer.** The module declares `go 1.25` and pins `toolchain
-  go1.26.10`; an older toolchain will refuse to build it. The SQLite adapter
-  (`adapters/sqlite`) is the one exception: its driver requires **Go 1.26**,
-  so that module declares `go 1.26.0`.
+- **Go 1.27 or newer.** Every module, the adapters included, declares
+  `go 1.27` and pins `toolchain go1.27.4`; an older toolchain will refuse to
+  build it.
 - **A module-enabled project** (a `go.mod`). Starting fresh:
 
   ```bash

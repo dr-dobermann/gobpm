@@ -1,8 +1,8 @@
 module github.com/dr-dobermann/gobpm/adapters/dtable
 
-go 1.25
+go 1.27
 
-toolchain go1.26.10
+toolchain go1.27.4
 
 replace github.com/dr-dobermann/gobpm => ../..
 
