@@ -154,9 +154,15 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 // deliver calls the observer, containing any panic so one bad observer cannot
 // crash the drain goroutine or affect others (ADR-013 v.2 §5), and RETURNING
 // what it recovered so the caller can report it. A nil recovered value means
-// OnFact returned normally: since Go 1.21 a panic(nil) is recovered as a
-// non-nil *runtime.PanicNilError, and every module declares go 1.27, so
-// nil is an unambiguous "no panic" rather than a lost one.
+// OnFact returned normally. Since Go 1.21 a panic(nil) is recovered as a
+// non-nil *runtime.PanicNilError unless the panicnil GODEBUG setting is on, and
+// that setting's default comes from the go line of the binary's MAIN module,
+// not from this one. What makes the default hold is that the go command refuses
+// a main module whose go line is lower than a dependency's: every embedding
+// application declares go 1.27 or later, so panicnil defaults to off and nil is
+// an unambiguous "no panic" rather than a lost one. An application that sets
+// GODEBUG=panicnil=1 explicitly gets the pre-1.21 behavior, and a panic(nil)
+// in its observer then reads as a normal return.
 //
 // The stack is captured only when wantStack is set. A broken observer panics on
 // every Fact, and debug.Stack formats the whole goroutine stack, so paying for
