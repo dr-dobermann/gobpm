@@ -153,7 +153,7 @@ COVER_PROFILES = $$(for d in $(CORE_MODULES); do \
 # linker and require the exact CI pin.
 # ---------------------------------------------------------------------------
 
-MOCKERY_VERSION     := v3.9.0
+MOCKERY_VERSION     := v3.9.1
 GOLANGCI_VERSION    := v2.15.0
 GOVULNCHECK_VERSION := v1.9.0
 COVERCHECK_VERSION  := v0.2.0
