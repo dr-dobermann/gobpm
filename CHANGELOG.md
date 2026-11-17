@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Contributions must agree to a future Apache-2.0 license.** gobpm is
+  LGPL-3.0 and intends to move to Apache-2.0 (#386). Contributors keep the
+  copyright in their own work, so `CONTRIBUTING.md` now requires every pull
+  request to include a statement agreeing that its changes may be relicensed
+  under Apache-2.0. Without the statement, the pull request is not merged.
+
 - **Go 1.27 is now required.** *Consumers on Go 1.25 or 1.26 must upgrade.*
   Every module declares `go 1.27` (the SQLite adapter was on `go 1.26.0`, the
   rest on `go 1.25`) and pins `toolchain go1.27.4`. The move was prompted by

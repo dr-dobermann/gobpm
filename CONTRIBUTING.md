@@ -69,6 +69,25 @@ CI runs `make tools` too, and the Makefile is the only place a tool version is
 pinned. `make` also runs every Go command on the toolchain the root `go.mod`
 names (it exports `GOTOOLCHAIN`), whatever Go you have installed.
 
+## Licensing of contributions
+
+gobpm is currently licensed under LGPL-3.0, and the project intends to move to
+the Apache License 2.0
+([#386](https://github.com/dr-dobermann/gobpm/issues/386)). Changing a license
+needs the agreement of everyone who holds copyright in the code, and there is
+no contributor license agreement here, so every contributor keeps the
+copyright in their own work. To keep that move possible, **a pull request is
+merged only if its author agrees to the following**, by including this
+statement in the pull request description:
+
+> I agree that my contributions in this pull request are distributed under the
+> project's current license, LGPL-3.0, and may be relicensed under the Apache
+> License, Version 2.0.
+
+A pull request without the statement is not merged until the author adds it.
+If someone else's work is part of your pull request, they must agree as well,
+in a comment on the pull request.
+
 ## Submitting changes
 
 Please send a [GitHub Pull Request to gobpm](https://github.com/dr-dobermann/gobpm/compare) with a clear list of what you've done (read more about [pull requests](http://help.github.com/pull-requests/)). We can always use more test coverage. Please follow our coding conventions (below) and make sure all of your commits are atomic (one feature per commit).
