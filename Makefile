@@ -155,7 +155,7 @@ COVER_PROFILES = $$(for d in $(CORE_MODULES); do \
 
 MOCKERY_VERSION     := v3.9.1
 GOLANGCI_VERSION    := v2.15.0
-GOVULNCHECK_VERSION := v1.9.0
+GOVULNCHECK_VERSION := v1.10.0
 COVERCHECK_VERSION  := v0.2.0
 LINKCHECK_VERSION   := v0.1.3
 
@@ -201,7 +201,7 @@ tools:
 # import scripts.mkdocs_hooks.github_slugify during config load.
 # ---------------------------------------------------------------------------
 
-MKDOCS_MATERIAL_VERSION    := 9.8.1
+MKDOCS_MATERIAL_VERSION    := 9.8.2
 MKDOCS_AWESOME_NAV_VERSION := 3.3.0
 
 # The docs analogue of require-go-tool: presence alone is insufficient, the
